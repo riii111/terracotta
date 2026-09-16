@@ -1,0 +1,38 @@
+[package]
+name = "terracotta"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+description = "Review Terraform plan changes against Git evidence"
+repository = "https://github.com/riii111/terracotta"
+publish = false
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+crossterm = "0.29"
+ratatui = "0.30"
+
+[lints.rust]
+redundant_imports = "deny"
+unreachable_pub = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+absolute_paths = "warn"
+dbg_macro = "deny"
+exit = "deny"
+get_unwrap = "deny"
+mem_forget = "deny"
+todo = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+allow_attributes_without_reason = "deny"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"

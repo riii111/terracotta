@@ -1,0 +1,16 @@
+/target/
+/.direnv/
+/result
+/result-*
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfplan.json
+crash.log
+crash.*.log
