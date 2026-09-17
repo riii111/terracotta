@@ -74,7 +74,6 @@ jobs:
           tool: nextest
       - run: cargo nextest run --locked --all-targets --all-features --profile ci
       - name: Build release binary
-        if: runner.os == 'Linux'
         run: cargo build --locked --release
       - run: cargo run --locked -- --version
 
