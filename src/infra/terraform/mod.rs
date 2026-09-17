@@ -12,8 +12,9 @@ mod workspace;
 
 pub(crate) use command::{
     CancellationToken, ProcessRunner, SystemProcessRunner, TerraformExecutionError,
+    TerraformExecutionErrorKind,
 };
-pub(crate) use plan::run_plan_with_events_with_runner;
+pub(crate) use plan::run_plan_with_events_with_runner_and_phase;
 pub(crate) use workspace::read_workspace_with_runner;
 
 #[cfg(test)]

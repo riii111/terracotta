@@ -20,6 +20,7 @@ use crate::app::source_location::{
 
 const MIN_HEIGHT: u16 = 11;
 const MIN_WIDTH: u16 = 48;
+const ANALYSIS_PREFIX: &str = "Analysis incomplete: ";
 
 pub(super) fn run_synthetic() -> io::Result<()> {
     let mut state = synthetic_state();
@@ -44,12 +45,12 @@ fn run_plan_list(terminal: &mut DefaultTerminal, state: &mut PlanListState) -> i
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ListInput {
+pub(super) enum ListInput {
     Selection(PlanListAction),
     Quit,
 }
 
-fn key_to_action(key: KeyEvent) -> Option<ListInput> {
+pub(super) fn key_to_action(key: KeyEvent) -> Option<ListInput> {
     if matches!(key.code, KeyCode::Char('q'))
         || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
     {
@@ -67,7 +68,7 @@ fn key_to_action(key: KeyEvent) -> Option<ListInput> {
     }
 }
 
-fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
+pub(super) fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         render_terminal_too_small(frame, area);
@@ -80,35 +81,82 @@ fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
     let content_area = block.inner(area);
     frame.render_widget(block, area);
 
-    let unsupported_summary = state.unsupported_summary();
-    let unsupported_height = u16::from(unsupported_summary.is_some());
+    let notices = notice_lines(state, content_area.width as usize);
+    let notice_height = match notices.len() {
+        0 => 0,
+        1 => 1,
+        _ => 2,
+    };
+    let context_height = u16::from(state.context().is_some()) * 2;
+    let separator_height = u16::from(notice_height < 2);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(context_height),
             Constraint::Length(1),
             Constraint::Length(2),
-            Constraint::Length(1),
-            Constraint::Length(unsupported_height),
+            Constraint::Length(separator_height),
+            Constraint::Length(notice_height),
             Constraint::Min(1),
             Constraint::Length(1),
         ])
         .split(content_area);
 
-    frame.render_widget(
-        Paragraph::new(Line::from(format!("compare {}", state.comparison()))),
-        chunks[0],
-    );
-    frame.render_widget(Paragraph::new(summary_lines(state)), chunks[1]);
-    frame.render_widget(separator(chunks[2].width), chunks[2]);
-
-    if let Some(summary) = unsupported_summary {
-        frame.render_widget(Paragraph::new(summary), chunks[3]);
-    } else {
-        frame.render_widget(Paragraph::new(""), chunks[3]);
+    if let Some(context) = state.context() {
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(format!("cwd {}", context.root().display())),
+                Line::from(format!(
+                    "workspace {}   git {}",
+                    context.workspace(),
+                    context.git()
+                )),
+            ]),
+            chunks[0],
+        );
     }
 
-    render_rows(frame, state, chunks[4]);
-    frame.render_widget(Paragraph::new(footer_line()), chunks[5]);
+    frame.render_widget(
+        Paragraph::new(Line::from(format!("compare {}", state.comparison()))),
+        chunks[1],
+    );
+    frame.render_widget(Paragraph::new(summary_lines(state)), chunks[2]);
+    frame.render_widget(separator(chunks[3].width), chunks[3]);
+
+    if !notices.is_empty() {
+        frame.render_widget(Paragraph::new(notices), chunks[4]);
+    }
+
+    render_rows(frame, state, chunks[5]);
+    frame.render_widget(Paragraph::new(footer_line()), chunks[6]);
+}
+
+fn notice_lines(state: &PlanListState, width: usize) -> Vec<Line<'static>> {
+    let unsupported = state.unsupported_summary();
+    let analysis = state.analysis_issues().first().map(|first| {
+        let suffix = match state.analysis_issues().len() {
+            0 | 1 => String::new(),
+            count => format!(" (+{} more)", count - 1),
+        };
+        let issue_width = width
+            .saturating_sub(ANALYSIS_PREFIX.len())
+            .saturating_sub(suffix.chars().count());
+        format!(
+            "{ANALYSIS_PREFIX}{}{}",
+            truncate_end(first, issue_width),
+            suffix
+        )
+    });
+
+    match (unsupported, analysis) {
+        (Some(summary), Some(analysis)) => vec![
+            Line::from(truncate_end(&summary, width)),
+            Line::from(analysis),
+        ],
+        (Some(summary), None) => vec![Line::from(truncate_end(&summary, width))],
+        (None, Some(analysis)) => vec![Line::from(analysis)],
+        (None, None) => Vec::new(),
+    }
 }
 
 fn render_terminal_too_small(frame: &mut Frame<'_>, area: Rect) {
@@ -401,9 +449,15 @@ fn synthetic_change(address: &str, kind: ResourceChangeKind, action: PlanAction)
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use crossterm::event::{KeyEventKind, KeyEventState};
     use ratatui::buffer::Buffer;
 
+    use crate::app::attribution::AnalysisIssue;
+    use crate::app::review::{
+        PlanReview, ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus,
+    };
     use crate::ui::test_support::{buffer_text, render_to_buffer as render_test_buffer};
 
     use super::*;
@@ -412,6 +466,53 @@ mod tests {
 
     fn render_to_buffer(state: &PlanListState, width: u16, height: u16) -> Buffer {
         render_test_buffer((width, height), |frame| render_plan_list(frame, state))
+    }
+
+    fn connected_state() -> PlanListState {
+        let change = synthetic_change(
+            "aws_instance.api",
+            ResourceChangeKind::Update,
+            PlanAction::Update,
+        );
+        let attribution = attribute_changes(std::slice::from_ref(&change), &[], &[])
+            .pop()
+            .expect("one change should produce one attribution");
+        let review = PlanReview::new(
+            PathBuf::from("/infra/prod"),
+            "default".to_owned(),
+            Plan {
+                changes: vec![change],
+                summary: PlanSummary {
+                    updates: 1,
+                    ..PlanSummary::default()
+                },
+                unsupported_changes: vec![UnsupportedChange {
+                    scope: UnsupportedChangeScope::Output,
+                    address: "output.value".to_owned(),
+                    actions: vec![PlanAction::Update],
+                    kind: UnsupportedChangeKind::Output,
+                    reason: None,
+                    action_type: None,
+                }],
+            },
+            Vec::new(),
+            vec![attribution],
+            ReviewComparison::new(
+                ReviewComparisonBasis::WorkingTreeVsHead,
+                None,
+                None,
+                None,
+                None,
+                ReviewComparisonStatus::Complete,
+            ),
+            vec![
+                AnalysisIssue::git("first analysis issue"),
+                AnalysisIssue::git("second analysis issue"),
+                AnalysisIssue::git("third analysis issue"),
+            ],
+        )
+        .with_git("feature/review".to_owned());
+        PlanListState::from_review(&review).expect("review data should build a list")
     }
 
     #[test]
@@ -449,6 +550,41 @@ mod tests {
 
         assert!(text.contains("No resource changes."), "{text}");
         assert!(text.contains("Needs review: 0 / 0"));
+    }
+
+    #[test]
+    fn connected_list_keeps_context_and_summarizes_issues_at_minimum_size() {
+        let state = connected_state();
+        let text = buffer_text(&render_to_buffer(&state, MIN_WIDTH, MIN_HEIGHT));
+
+        assert!(text.contains("cwd /infra/prod"), "{text}");
+        assert!(text.contains("workspace default"), "{text}");
+        assert!(text.contains("git feature/review"), "{text}");
+        assert!(text.contains("Needs review: 1 / 1"), "{text}");
+        assert!(text.contains("Analysis incomplete"), "{text}");
+        assert!(text.contains("(+2 more)"), "{text}");
+        assert!(
+            text.contains("Up/Down/j/k select   q/Ctrl-C quit"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn connected_list_keeps_both_notices_at_minimum_width() {
+        let state = connected_state();
+        let text = buffer_text(&render_to_buffer(&state, MIN_WIDTH, MIN_HEIGHT));
+
+        assert!(text.contains("Unshown changes: output (1)"), "{text}");
+        assert!(
+            text.contains("Analysis incomplete: first analys..."),
+            "{text}"
+        );
+        assert!(text.contains("(+2 more)"), "{text}");
+        assert!(text.contains("Needs review: 1 / 1"), "{text}");
+        assert!(
+            text.contains("Up/Down/j/k select   q/Ctrl-C quit"),
+            "{text}"
+        );
     }
 
     #[test]

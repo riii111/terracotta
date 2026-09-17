@@ -1,8 +1,12 @@
-use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use super::attribution::{AttributionStatus, ResourceAttribution};
 use super::plan::{Plan, PlanSummary, ResourceChange, ResourceChangeKind, UnsupportedChangeKind};
+use super::review::PlanReview;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PlanListError {
@@ -49,11 +53,20 @@ pub(crate) enum PlanListAction {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PlanListState {
+    context: Option<PlanListContext>,
     comparison: String,
     summary: PlanSummary,
     items: Vec<PlanListItem>,
     unsupported: Vec<UnsupportedChangeKind>,
+    analysis_issues: Vec<String>,
     selected: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PlanListContext {
+    root: PathBuf,
+    workspace: String,
+    git: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,6 +76,34 @@ pub(crate) struct PlanListItem {
 }
 
 impl PlanListState {
+    pub(crate) fn from_review(review: &PlanReview) -> Result<Self, PlanListError> {
+        let mut state = Self::from_plan(
+            review.plan().clone(),
+            review.attributions().to_vec(),
+            review.comparison().label(),
+        )?;
+
+        if let Some(message) = review.comparison().status().message() {
+            state.analysis_issues.push(message.to_owned());
+        }
+        for issue in review.analysis_issues() {
+            if !state
+                .analysis_issues
+                .iter()
+                .any(|known| known == issue.message())
+            {
+                state.analysis_issues.push(issue.message().to_owned());
+            }
+        }
+        state.context = Some(PlanListContext {
+            root: review.root().to_owned(),
+            workspace: review.workspace().to_owned(),
+            git: review.git().to_owned(),
+        });
+
+        Ok(state)
+    }
+
     pub(crate) fn from_plan(
         plan: Plan,
         attributions: Vec<ResourceAttribution>,
@@ -97,6 +138,7 @@ impl PlanListState {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(Self {
+            context: None,
             comparison: comparison.into(),
             summary: plan.summary,
             items,
@@ -105,16 +147,19 @@ impl PlanListState {
                 .into_iter()
                 .map(|change| change.kind)
                 .collect(),
+            analysis_issues: Vec::new(),
             selected: 0,
         })
     }
 
     pub(crate) fn empty(comparison: impl Into<String>) -> Self {
         Self {
+            context: None,
             comparison: comparison.into(),
             summary: PlanSummary::default(),
             items: Vec::new(),
             unsupported: Vec::new(),
+            analysis_issues: Vec::new(),
             selected: 0,
         }
     }
@@ -135,6 +180,11 @@ impl PlanListState {
     #[must_use]
     pub(crate) fn comparison(&self) -> &str {
         &self.comparison
+    }
+
+    #[must_use]
+    pub(crate) const fn context(&self) -> Option<&PlanListContext> {
+        self.context.as_ref()
     }
 
     #[must_use]
@@ -173,6 +223,11 @@ impl PlanListState {
             .collect::<Vec<_>>()
             .join(", ");
         Some(format!("Unshown changes: {kinds}"))
+    }
+
+    #[must_use]
+    pub(crate) fn analysis_issues(&self) -> &[String] {
+        &self.analysis_issues
     }
 }
 
@@ -226,6 +281,23 @@ impl PlanListItem {
     }
 }
 
+impl PlanListContext {
+    #[must_use]
+    pub(crate) fn root(&self) -> &Path {
+        &self.root
+    }
+
+    #[must_use]
+    pub(crate) fn workspace(&self) -> &str {
+        &self.workspace
+    }
+
+    #[must_use]
+    pub(crate) fn git(&self) -> &str {
+        &self.git
+    }
+}
+
 impl UnsupportedChangeKind {
     const fn label(self) -> &'static str {
         match self {
@@ -245,6 +317,8 @@ impl UnsupportedChangeKind {
 
 #[cfg(test)]
 mod tests {
+    use super::super::attribution::AnalysisIssue;
+    use super::super::review::{ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus};
     use super::*;
 
     fn state() -> PlanListState {
@@ -323,6 +397,50 @@ mod tests {
                 changes: 1,
                 attributions: 0,
             }
+        );
+    }
+
+    #[test]
+    fn review_list_preserves_incomplete_comparison_and_analysis_reasons() {
+        let source = state();
+        let review = PlanReview::new(
+            PathBuf::from("infra"),
+            "default".to_owned(),
+            Plan {
+                changes: source
+                    .items
+                    .iter()
+                    .map(|item| item.change.clone())
+                    .collect(),
+                summary: source.summary,
+                unsupported_changes: Vec::new(),
+            },
+            Vec::new(),
+            source
+                .items
+                .iter()
+                .map(|item| item.attribution.clone())
+                .collect(),
+            ReviewComparison::new(
+                ReviewComparisonBasis::WorkingTreeVsHead,
+                None,
+                None,
+                None,
+                None,
+                ReviewComparisonStatus::Incomplete("comparison unavailable".to_owned()),
+            ),
+            vec![AnalysisIssue::git("analysis unavailable")],
+        )
+        .with_git("feature/review".to_owned());
+
+        let list = PlanListState::from_review(&review).expect("review data should build a list");
+
+        assert_eq!(
+            list.analysis_issues(),
+            &[
+                "comparison unavailable".to_owned(),
+                "analysis unavailable".to_owned()
+            ]
         );
     }
 }
