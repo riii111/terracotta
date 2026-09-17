@@ -11,13 +11,14 @@ use ratatui::{DefaultTerminal, Frame};
 use crate::app::attribution::{SourceLineChange as AttributionSourceLineChange, attribute_changes};
 use crate::app::plan::{
     Plan, PlanAction, PlanSummary, PlanValue, ResourceChange, ResourceChangeKind, ResourceMode,
+    UnsupportedChange, UnsupportedChangeKind, UnsupportedChangeScope,
 };
 use crate::app::plan_list::{PlanListAction, PlanListItem, PlanListState};
 use crate::app::source_location::{
     ResourceAddress, ResourceSourceLocation, SourceFileAnalysis, SourceRange, SourceSide,
 };
 
-const MIN_HEIGHT: u16 = 10;
+const MIN_HEIGHT: u16 = 11;
 const MIN_WIDTH: u16 = 48;
 
 /// Runs the development-only plan list with synthetic plan and attribution data.
@@ -372,7 +373,14 @@ fn synthetic_state() -> PlanListState {
                 replaces: 1,
                 deletes: 1,
             },
-            unsupported_changes: Vec::new(),
+            unsupported_changes: vec![UnsupportedChange {
+                scope: UnsupportedChangeScope::Output,
+                address: "output.synthetic".to_owned(),
+                actions: vec![PlanAction::Update],
+                kind: UnsupportedChangeKind::Output,
+                reason: None,
+                action_type: None,
+            }],
         },
         attributions,
         "working tree vs HEAD",
@@ -404,7 +412,6 @@ mod tests {
     use ratatui::buffer::{Buffer, Cell};
 
     use super::*;
-    use crate::app::plan::{UnsupportedChange, UnsupportedChangeKind, UnsupportedChangeScope};
 
     fn render_to_buffer(state: &PlanListState, width: u16, height: u16) -> Buffer {
         let backend = TestBackend::new(width, height);
@@ -499,11 +506,12 @@ mod tests {
     }
 
     #[test]
-    fn minimum_supported_size_keeps_selected_wrapped_item_visible() {
+    fn minimum_supported_size_keeps_wrapped_item_and_unshown_summary_visible() {
         let mut state = synthetic_state();
         state.apply(PlanListAction::SelectNext);
         let text = buffer_text(&render_to_buffer(&state, MIN_WIDTH, MIN_HEIGHT));
 
+        assert!(text.contains("Unshown changes: output (1)"), "{text}");
         assert!(
             text.contains("aws_s3_bucket.logs_with_a_very_long_r..."),
             "{text}"
