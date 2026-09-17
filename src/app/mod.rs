@@ -8,4 +8,5 @@ pub(crate) mod attribution;
 pub(crate) mod plan;
 pub(crate) mod plan_list;
 pub(crate) mod progress;
+pub(crate) mod review;
 pub(crate) mod source_location;

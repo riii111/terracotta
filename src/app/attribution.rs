@@ -19,6 +19,9 @@ pub(crate) enum AttributionStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AnalysisIssueKind {
+    Git,
+    ConfigurationChanged,
+    ConfigurationUnavailable,
     UnsupportedAddress,
     UnsupportedResourceMode,
     Source(SourceIssueKind),
@@ -33,6 +36,68 @@ pub(crate) struct AnalysisIssue {
 }
 
 impl AnalysisIssue {
+    #[must_use]
+    pub(crate) fn git(message: impl Into<String>) -> Self {
+        Self {
+            kind: AnalysisIssueKind::Git,
+            path: None,
+            side: None,
+            message: message.into(),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn configuration_changed(path: &Path) -> Self {
+        Self {
+            kind: AnalysisIssueKind::ConfigurationChanged,
+            path: Some(path.to_owned()),
+            side: None,
+            message: format!(
+                "Terraform configuration changed during review: {}",
+                path.display()
+            ),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn configuration_differs_from_head(path: &Path) -> Self {
+        Self {
+            kind: AnalysisIssueKind::ConfigurationChanged,
+            path: Some(path.to_owned()),
+            side: None,
+            message: format!(
+                "Terraform configuration differs from HEAD during comparison: {}",
+                path.display()
+            ),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn unsupported_configuration(path: &Path) -> Self {
+        Self {
+            kind: AnalysisIssueKind::ConfigurationChanged,
+            path: Some(path.to_owned()),
+            side: None,
+            message: format!(
+                "Terraform configuration is outside direct matching: {}",
+                path.display()
+            ),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn configuration_unavailable(
+        path: Option<&Path>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: AnalysisIssueKind::ConfigurationUnavailable,
+            path: path.map(Path::to_owned),
+            side: None,
+            message: message.into(),
+        }
+    }
+
     #[must_use]
     fn unsupported_address(address: &str) -> Self {
         Self {
@@ -213,6 +278,16 @@ impl ResourceAttribution {
     pub(crate) const fn needs_review(&self) -> bool {
         matches!(self.status, AttributionStatus::NoMatch) || !self.analysis.is_complete()
     }
+
+    fn add_analysis_issues(&mut self, issues: &[AnalysisIssue]) {
+        if issues.is_empty() {
+            return;
+        }
+
+        let mut all_issues = self.analysis.issues().to_vec();
+        all_issues.extend_from_slice(issues);
+        self.analysis = AnalysisStatus::from_issues(all_issues);
+    }
 }
 
 pub(crate) fn attribute_changes(
@@ -224,6 +299,15 @@ pub(crate) fn attribute_changes(
         .iter()
         .map(|change| attribute_change(change, source_files, changed_lines))
         .collect()
+}
+
+pub(crate) fn mark_analysis_incomplete(
+    attributions: &mut [ResourceAttribution],
+    issues: &[AnalysisIssue],
+) {
+    for attribution in attributions {
+        attribution.add_analysis_issues(issues);
+    }
 }
 
 fn attribute_change(

@@ -4,4 +4,5 @@
 )]
 
 pub(crate) mod git;
+pub(crate) mod review;
 pub(crate) mod terraform;
