@@ -146,6 +146,8 @@ pub enum UnsupportedChangeScope {
     Resource,
     Output,
     ResourceDrift,
+    DeferredResource,
+    ActionInvocation,
 }
 
 impl UnsupportedChangeScope {
@@ -155,6 +157,8 @@ impl UnsupportedChangeScope {
             Self::Resource => "resource",
             Self::Output => "output",
             Self::ResourceDrift => "resource-drift",
+            Self::DeferredResource => "deferred-resource",
+            Self::ActionInvocation => "action-invocation",
         }
     }
 }
@@ -168,6 +172,9 @@ pub enum UnsupportedChangeKind {
     Import,
     UnknownAction,
     UnsupportedActions,
+    Deferred,
+    ActionInvocation,
+    DeferredActionInvocation,
 }
 
 impl UnsupportedChangeKind {
@@ -181,6 +188,9 @@ impl UnsupportedChangeKind {
             Self::Import => "import",
             Self::UnknownAction => "unknown-action",
             Self::UnsupportedActions => "unsupported-actions",
+            Self::Deferred => "deferred",
+            Self::ActionInvocation => "action-invocation",
+            Self::DeferredActionInvocation => "deferred-action-invocation",
         }
     }
 }
@@ -191,6 +201,8 @@ pub struct UnsupportedChange {
     pub address: String,
     pub actions: Vec<PlanAction>,
     pub kind: UnsupportedChangeKind,
+    pub reason: Option<String>,
+    pub action_type: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

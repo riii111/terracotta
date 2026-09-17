@@ -83,12 +83,24 @@ fn parse_plan_document(document: &Value) -> Result<Plan, PlanParseError> {
         parse_resource_change(resource, &mut changes, &mut unsupported_changes)?;
     }
 
+    if let Some(deferred_changes) = root.get("deferred_changes") {
+        parse_deferred_changes(deferred_changes, &mut unsupported_changes)?;
+    }
+
     if let Some(resource_drift) = root.get("resource_drift") {
         parse_resource_drift(resource_drift, &mut unsupported_changes)?;
     }
 
     if let Some(output_changes) = root.get("output_changes") {
         parse_output_changes(output_changes, &mut unsupported_changes)?;
+    }
+
+    if let Some(action_invocations) = root.get("action_invocations") {
+        parse_action_invocations(action_invocations, &mut unsupported_changes)?;
+    }
+
+    if let Some(deferred_action_invocations) = root.get("deferred_action_invocations") {
+        parse_deferred_action_invocations(deferred_action_invocations, &mut unsupported_changes)?;
     }
 
     let summary = summarize(&changes);
@@ -147,6 +159,8 @@ fn parse_resource_change(
             } else {
                 UnsupportedChangeKind::Move
             },
+            reason: None,
+            action_type: None,
         });
         return Ok(());
     }
@@ -175,10 +189,121 @@ fn parse_resource_change(
                 address,
                 actions,
                 kind,
+                reason: None,
+                action_type: None,
             });
             Ok(())
         }
     }
+}
+
+fn parse_deferred_changes(
+    deferred_changes: &Value,
+    unsupported_changes: &mut Vec<UnsupportedChange>,
+) -> Result<(), PlanParseError> {
+    if deferred_changes.is_null() {
+        return Ok(());
+    }
+
+    let deferred_changes = deferred_changes
+        .as_array()
+        .ok_or(PlanParseError::InvalidField("deferred_changes"))?;
+
+    for deferred_change in deferred_changes {
+        let deferred_change = deferred_change
+            .as_object()
+            .ok_or(PlanParseError::InvalidField("deferred change"))?;
+        let reason = required_string(deferred_change, "reason")?.to_owned();
+        let resource = required_object(deferred_change, "resource_change")?;
+        let address = required_string(resource, "address")?.to_owned();
+        parse_resource_mode(resource)?;
+        let change = required_object(resource, "change")?;
+        let actions = parse_actions(change, "deferred resource change actions")?;
+
+        unsupported_changes.push(UnsupportedChange {
+            scope: UnsupportedChangeScope::DeferredResource,
+            address,
+            actions,
+            kind: UnsupportedChangeKind::Deferred,
+            reason: Some(reason),
+            action_type: None,
+        });
+    }
+
+    Ok(())
+}
+
+fn parse_action_invocations(
+    action_invocations: &Value,
+    unsupported_changes: &mut Vec<UnsupportedChange>,
+) -> Result<(), PlanParseError> {
+    if action_invocations.is_null() {
+        return Ok(());
+    }
+
+    let action_invocations = action_invocations
+        .as_array()
+        .ok_or(PlanParseError::InvalidField("action_invocations"))?;
+
+    for action_invocation in action_invocations {
+        let action_invocation = action_invocation
+            .as_object()
+            .ok_or(PlanParseError::InvalidField("action invocation"))?;
+        let (address, action_type) = parse_action_invocation_metadata(action_invocation)?;
+
+        unsupported_changes.push(UnsupportedChange {
+            scope: UnsupportedChangeScope::ActionInvocation,
+            address,
+            actions: Vec::new(),
+            kind: UnsupportedChangeKind::ActionInvocation,
+            reason: None,
+            action_type: Some(action_type),
+        });
+    }
+
+    Ok(())
+}
+
+fn parse_deferred_action_invocations(
+    deferred_action_invocations: &Value,
+    unsupported_changes: &mut Vec<UnsupportedChange>,
+) -> Result<(), PlanParseError> {
+    if deferred_action_invocations.is_null() {
+        return Ok(());
+    }
+
+    let deferred_action_invocations = deferred_action_invocations
+        .as_array()
+        .ok_or(PlanParseError::InvalidField("deferred_action_invocations"))?;
+
+    for deferred_action_invocation in deferred_action_invocations {
+        let deferred_action_invocation = deferred_action_invocation
+            .as_object()
+            .ok_or(PlanParseError::InvalidField("deferred action invocation"))?;
+        let reason = required_string(deferred_action_invocation, "reason")?.to_owned();
+        let action_invocation = required_object(deferred_action_invocation, "action_invocation")?;
+        let (address, action_type) = parse_action_invocation_metadata(action_invocation)?;
+
+        unsupported_changes.push(UnsupportedChange {
+            scope: UnsupportedChangeScope::ActionInvocation,
+            address,
+            actions: Vec::new(),
+            kind: UnsupportedChangeKind::DeferredActionInvocation,
+            reason: Some(reason),
+            action_type: Some(action_type),
+        });
+    }
+
+    Ok(())
+}
+
+fn parse_action_invocation_metadata(
+    action_invocation: &Map<String, Value>,
+) -> Result<(String, String), PlanParseError> {
+    let address = required_string(action_invocation, "address")?.to_owned();
+    let action_type = required_string(action_invocation, "type")?.to_owned();
+
+    Ok((address, action_type))
 }
 
 fn parse_output_changes(
@@ -205,6 +330,8 @@ fn parse_output_changes(
                 address: address.clone(),
                 actions,
                 kind: UnsupportedChangeKind::Output,
+                reason: None,
+                action_type: None,
             });
         }
     }
@@ -239,6 +366,8 @@ fn parse_resource_drift(
                 address,
                 actions,
                 kind: UnsupportedChangeKind::Drift,
+                reason: None,
+                action_type: None,
             });
         }
     }
@@ -664,6 +793,66 @@ mod tests {
             UnsupportedChangeScope::Output
         );
         assert_eq!(plan.unsupported_changes[4].address, "public_ip");
+    }
+
+    #[test]
+    fn retains_deferred_resources_and_action_invocations_as_unsupported_changes() {
+        let input = json!({
+            "format_version": "1.2",
+            "resource_changes": [],
+            "deferred_changes": [{
+                "reason": "resource_config_unknown",
+                "resource_change": resource(
+                    "aws_instance.deferred",
+                    "managed",
+                    json!(["create"])
+                )
+            }],
+            "action_invocations": [{
+                "address": "aws_instance.api.action",
+                "type": "notify",
+                "name": "notify"
+            }],
+            "deferred_action_invocations": [{
+                "reason": "deferred_prereq",
+                "action_invocation": {
+                    "address": "aws_instance.deferred_action",
+                    "type": "notify",
+                    "name": "notify"
+                }
+            }]
+        });
+
+        let plan = parse_plan_json(&input.to_string()).expect("extended plan should parse");
+
+        assert!(plan.changes.is_empty());
+        assert!(plan.has_changes());
+        assert_eq!(plan.unsupported_change_count(), 3);
+
+        let deferred = &plan.unsupported_changes[0];
+        assert_eq!(deferred.scope, UnsupportedChangeScope::DeferredResource);
+        assert_eq!(deferred.kind, UnsupportedChangeKind::Deferred);
+        assert_eq!(deferred.address, "aws_instance.deferred");
+        assert_eq!(deferred.actions, vec![PlanAction::Create]);
+        assert_eq!(deferred.reason.as_deref(), Some("resource_config_unknown"));
+        assert_eq!(deferred.action_type, None);
+
+        let action = &plan.unsupported_changes[1];
+        assert_eq!(action.scope, UnsupportedChangeScope::ActionInvocation);
+        assert_eq!(action.kind, UnsupportedChangeKind::ActionInvocation);
+        assert_eq!(action.address, "aws_instance.api.action");
+        assert!(action.actions.is_empty());
+        assert_eq!(action.reason, None);
+        assert_eq!(action.action_type.as_deref(), Some("notify"));
+
+        let deferred_action = &plan.unsupported_changes[2];
+        assert_eq!(
+            deferred_action.kind,
+            UnsupportedChangeKind::DeferredActionInvocation
+        );
+        assert_eq!(deferred_action.address, "aws_instance.deferred_action");
+        assert_eq!(deferred_action.reason.as_deref(), Some("deferred_prereq"));
+        assert_eq!(deferred_action.action_type.as_deref(), Some("notify"));
     }
 
     #[test]
