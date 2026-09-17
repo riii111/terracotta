@@ -475,6 +475,12 @@ fn scan_string(
                     index += 1;
                 }
             }
+            b'$' | b'%' if source.as_bytes().get(index + 1) == Some(&b'{') => {
+                match skip_template_expression(source, index + 2, line_starts) {
+                    Ok(end) => index = end,
+                    Err(message) => return Err((source.len(), message)),
+                }
+            }
             b'"' => {
                 return Ok((index + 1, source[start + 1..index].to_owned()));
             }
@@ -497,6 +503,58 @@ fn scan_string(
             "unterminated string on line {}",
             line_number(line_starts, start)
         ),
+    ))
+}
+
+fn skip_template_expression(
+    source: &str,
+    start: usize,
+    line_starts: &[usize],
+) -> Result<usize, String> {
+    let mut index = start;
+    let mut depth = 1;
+    while index < source.len() {
+        let bytes = source.as_bytes();
+        match bytes[index] {
+            b'"' => match scan_string(source, index, line_starts) {
+                Ok((end, _)) => index = end,
+                Err((_, message)) => return Err(message),
+            },
+            b'#' => index = skip_line(source, index + 1),
+            b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                index = skip_line(source, index + 2);
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                if let Some(end) = source[index + 2..].find("*/") {
+                    index += end + 4;
+                } else {
+                    return Err(format!(
+                        "unterminated block comment on line {}",
+                        line_number(line_starts, index)
+                    ));
+                }
+            }
+            b'<' if bytes.get(index + 1) == Some(&b'<') => {
+                index = skip_heredoc(source, index, line_starts)?;
+            }
+            b'{' => {
+                depth += 1;
+                index += 1;
+            }
+            b'}' => {
+                depth -= 1;
+                index += 1;
+                if depth == 0 {
+                    return Ok(index);
+                }
+            }
+            _ => index += source[index..].chars().next().map_or(1, char::len_utf8),
+        }
+    }
+
+    Err(format!(
+        "unterminated template expression on line {}",
+        line_number(line_starts, start.saturating_sub(2))
     ))
 }
 
@@ -635,6 +693,24 @@ resource "test_resource" "example" {
 
         assert_eq!(resources.len(), 1);
         assert_eq!(resources[0].range, SourceRange::new(2, 8));
+        assert!(result.is_complete());
+    }
+
+    #[test]
+    fn ignores_template_interpolation_strings_and_braces() {
+        let result = parse_files([after(
+            r#"resource "terraform_data" "main" {
+  input = "${format("%s}", "x")}"
+}
+"#,
+        )]);
+
+        let resource = result.resources().next().expect("resource source block");
+        assert_eq!(
+            resource.address,
+            ResourceAddress::new("terraform_data", "main")
+        );
+        assert_eq!(resource.range, SourceRange::new(1, 3));
         assert!(result.is_complete());
     }
 
