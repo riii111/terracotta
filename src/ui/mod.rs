@@ -6,6 +6,7 @@ use std::{
 
 use crossterm::event::{self, Event};
 use ratatui::DefaultTerminal;
+use ratatui::widgets::ListState;
 
 use crate::app::{
     execution::{ExecutionAction, ExecutionStage, ExecutionState},
@@ -34,6 +35,7 @@ pub(crate) fn run_connected(
 ) -> io::Result<UiOutcome> {
     let mut execution = Some(state);
     let mut list = None;
+    let mut list_view = ListState::default();
     let mut detail = None;
     let mut failed = false;
 
@@ -47,7 +49,9 @@ pub(crate) fn run_connected(
         } else if let Some(state) = detail.as_ref() {
             terminal.draw(|frame| resource_detail::render_resource_detail(frame, state))?;
         } else if let Some(state) = list.as_ref() {
-            terminal.draw(|frame| plan_list::render_plan_list(frame, state))?;
+            terminal.draw(|frame| {
+                plan_list::render_plan_list_with_state(frame, state, &mut list_view);
+            })?;
         }
 
         if event::poll(Duration::from_millis(100))?
@@ -62,9 +66,19 @@ pub(crate) fn run_connected(
                 let size = terminal.size()?;
                 let viewport_height = state.viewport_height(size.height);
                 match resource_detail::key_to_input(key) {
-                    Some(resource_detail::DetailInput::Back) => detail = None,
+                    Some(resource_detail::DetailInput::Back) => {
+                        if let Some(list_state) = list.as_mut() {
+                            list_state.apply(PlanListAction::SelectResource(state.item_index()));
+                        }
+                        detail = None;
+                    }
                     Some(resource_detail::DetailInput::Quit) => {
                         return Ok(UiOutcome::Reviewed);
+                    }
+                    Some(resource_detail::DetailInput::Navigate(navigation)) => {
+                        if let Some(list_state) = list.as_mut() {
+                            state.navigate(navigation, list_state);
+                        }
                     }
                     Some(resource_detail::DetailInput::Action(action)) => {
                         state.apply(action, size.width.saturating_sub(2), viewport_height);

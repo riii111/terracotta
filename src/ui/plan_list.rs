@@ -29,6 +29,7 @@ pub(super) fn run_synthetic() -> io::Result<()> {
 }
 
 fn run_plan_list(terminal: &mut DefaultTerminal, state: &mut PlanListState) -> io::Result<()> {
+    let mut list_view = ListState::default();
     let mut detail = None;
     loop {
         if let Some(detail_state) = detail.as_ref() {
@@ -36,7 +37,7 @@ fn run_plan_list(terminal: &mut DefaultTerminal, state: &mut PlanListState) -> i
                 super::resource_detail::render_resource_detail(frame, detail_state);
             })?;
         } else {
-            terminal.draw(|frame| render_plan_list(frame, state))?;
+            terminal.draw(|frame| render_plan_list_with_state(frame, state, &mut list_view))?;
         }
 
         if event::poll(Duration::from_millis(100))?
@@ -47,8 +48,14 @@ fn run_plan_list(terminal: &mut DefaultTerminal, state: &mut PlanListState) -> i
                 let size = terminal.size()?;
                 let viewport_height = detail_state.viewport_height(size.height);
                 match super::resource_detail::key_to_input(key) {
-                    Some(super::resource_detail::DetailInput::Back) => detail = None,
+                    Some(super::resource_detail::DetailInput::Back) => {
+                        state.apply(PlanListAction::SelectResource(detail_state.item_index()));
+                        detail = None;
+                    }
                     Some(super::resource_detail::DetailInput::Quit) => return Ok(()),
+                    Some(super::resource_detail::DetailInput::Navigate(navigation)) => {
+                        detail_state.navigate(navigation, state);
+                    }
                     Some(super::resource_detail::DetailInput::Action(action)) => {
                         detail_state.apply(action, size.width.saturating_sub(2), viewport_height);
                     }
@@ -156,7 +163,11 @@ pub(super) fn handle_search_input(state: &mut PlanListState, key: KeyEvent) -> b
     }
 }
 
-pub(super) fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
+pub(super) fn render_plan_list_with_state(
+    frame: &mut Frame<'_>,
+    state: &PlanListState,
+    list_state: &mut ListState,
+) {
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         render_terminal_too_small(frame, area);
@@ -228,7 +239,7 @@ pub(super) fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
         frame.render_widget(Paragraph::new(notices), chunks[5]);
     }
 
-    render_rows(frame, state, chunks[6]);
+    render_rows(frame, state, chunks[6], list_state);
     frame.render_widget(
         Paragraph::new(footer_line(state, content_area.width as usize)),
         chunks[7],
@@ -282,8 +293,15 @@ fn render_terminal_too_small(frame: &mut Frame<'_>, area: Rect) {
     frame.render_widget(message, area);
 }
 
-fn render_rows(frame: &mut Frame<'_>, state: &PlanListState, area: Rect) {
+fn render_rows(
+    frame: &mut Frame<'_>,
+    state: &PlanListState,
+    area: Rect,
+    list_state: &mut ListState,
+) {
     if state.visible_count() == 0 {
+        *list_state.selected_mut() = None;
+        *list_state.offset_mut() = 0;
         let message = if state.items().is_empty() {
             "No resource changes.".to_owned()
         } else if !state.search().is_empty() {
@@ -315,8 +333,8 @@ fn render_rows(frame: &mut Frame<'_>, state: &PlanListState, area: Rect) {
                 .bg(Color::DarkGray)
                 .add_modifier(Modifier::UNDERLINED),
         );
-    let mut list_state = ListState::default().with_selected(state.selected());
-    frame.render_stateful_widget(list, area, &mut list_state);
+    *list_state.selected_mut() = state.selected();
+    frame.render_stateful_widget(list, area, list_state);
 }
 
 fn list_item(item: &PlanListItem, width: usize) -> ListItem<'static> {
@@ -638,7 +656,19 @@ mod tests {
     mod render_snapshots;
 
     fn render_to_buffer(state: &PlanListState, width: u16, height: u16) -> Buffer {
-        render_test_buffer((width, height), |frame| render_plan_list(frame, state))
+        let mut list_state = ListState::default();
+        render_to_buffer_with_state(state, width, height, &mut list_state)
+    }
+
+    fn render_to_buffer_with_state(
+        state: &PlanListState,
+        width: u16,
+        height: u16,
+        list_state: &mut ListState,
+    ) -> Buffer {
+        render_test_buffer((width, height), |frame| {
+            render_plan_list_with_state(frame, state, list_state);
+        })
     }
 
     fn connected_state() -> PlanListState {
@@ -849,6 +879,25 @@ mod tests {
             key_to_action(key(KeyCode::Char('/'), KeyModifiers::NONE)),
             Some(ListInput::StartSearch)
         );
+    }
+
+    #[test]
+    fn list_offset_survives_detail_return_until_selection_needs_visibility() {
+        let mut state = synthetic_state();
+        state.apply(PlanListAction::SelectResource(2));
+        let mut list_state = ListState::default();
+
+        render_to_buffer_with_state(&state, 80, 11, &mut list_state);
+        let original_offset = list_state.offset();
+        assert!(original_offset > 0);
+
+        state.apply(PlanListAction::SelectResource(3));
+        render_to_buffer_with_state(&state, 80, 11, &mut list_state);
+        assert_eq!(list_state.offset(), original_offset);
+
+        state.apply(PlanListAction::SelectResource(0));
+        render_to_buffer_with_state(&state, 80, 11, &mut list_state);
+        assert!(list_state.offset() < original_offset);
     }
 
     #[test]

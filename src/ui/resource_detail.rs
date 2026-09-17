@@ -11,7 +11,7 @@ use crate::app::attribute_diff::{
 };
 use crate::app::attribution::{AttributionStatus, ResourceAttribution};
 use crate::app::plan::{ReplacePathSegment, ResourceChangeKind};
-use crate::app::plan_list::{PlanListContext, PlanListItem, PlanListState};
+use crate::app::plan_list::{PlanListAction, PlanListContext, PlanListItem, PlanListState};
 use crate::app::source_location::{SourceFileAnalysis, SourceSide};
 
 const MIN_HEIGHT: u16 = 8;
@@ -27,8 +27,15 @@ pub(super) enum DetailAction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ResourceNavigation {
+    Previous,
+    Next,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DetailInput {
     Action(DetailAction),
+    Navigate(ResourceNavigation),
     Back,
     Quit,
 }
@@ -86,6 +93,24 @@ impl ResourceDetailState {
             scroll: 0,
             expanded_groups: Vec::new(),
         })
+    }
+
+    pub(super) fn navigate(&mut self, navigation: ResourceNavigation, list: &mut PlanListState) {
+        let target = match navigation {
+            ResourceNavigation::Previous => self.index.checked_sub(1),
+            ResourceNavigation::Next => self
+                .index
+                .checked_add(1)
+                .filter(|index| *index < self.total),
+        };
+        let Some(target) = target else {
+            return;
+        };
+
+        list.apply(PlanListAction::SelectResource(target));
+        if let Some(next) = Self::from_list(list) {
+            *self = next;
+        }
     }
 
     pub(super) fn apply(
@@ -174,6 +199,8 @@ pub(super) fn key_to_input(key: KeyEvent) -> Option<DetailInput> {
     let action = match key.code {
         KeyCode::Up | KeyCode::Char('k') => DetailAction::SelectPrevious,
         KeyCode::Down | KeyCode::Char('j') => DetailAction::SelectNext,
+        KeyCode::Char('[') => return Some(DetailInput::Navigate(ResourceNavigation::Previous)),
+        KeyCode::Char(']') => return Some(DetailInput::Navigate(ResourceNavigation::Next)),
         KeyCode::Enter => DetailAction::ToggleExpansion,
         KeyCode::PageUp => DetailAction::PageUp,
         KeyCode::PageDown => DetailAction::PageDown,
@@ -622,7 +649,7 @@ fn separator(width: u16) -> Paragraph<'static> {
 }
 
 const fn footer_line() -> &'static str {
-    "Up/Down/j/k select   Enter expand/collapse   PageUp/PageDown scroll   Esc back   q quit"
+    "Up/Down/j/k select   Enter expand/collapse   PageUp/PageDown scroll   [ / ] prev/next   Esc back   q quit"
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -853,6 +880,28 @@ mod tests {
         ResourceDetailState::from_list(&list).expect("selected item should open")
     }
 
+    fn navigation_list() -> PlanListState {
+        let mut worker = change();
+        worker.address = "aws_instance.worker".to_owned();
+        let mut bucket = change();
+        bucket.address = "aws_s3_bucket.logs".to_owned();
+        let changes = vec![change(), worker, bucket];
+        let attributions = attribute_changes(&changes, &[], &[]);
+        PlanListState::from_plan(
+            Plan {
+                changes,
+                summary: PlanSummary {
+                    updates: 3,
+                    ..PlanSummary::default()
+                },
+                unsupported_changes: Vec::new(),
+            },
+            attributions,
+            "working tree vs HEAD",
+        )
+        .expect("navigation fixture should build a list")
+    }
+
     fn expansion_change() -> ResourceChange {
         ResourceChange {
             address: "aws_instance.api".to_owned(),
@@ -944,6 +993,7 @@ mod tests {
         assert!(text.contains("Up/Down/j/k select"), "{text}");
         assert!(text.contains("Esc back"), "{text}");
         assert!(text.contains("Enter expand/collapse"), "{text}");
+        assert!(text.contains("[ / ] prev/next"), "{text}");
         assert!(!text.contains("reveal"), "{text}");
     }
 
@@ -996,6 +1046,62 @@ mod tests {
             key_to_input(key(KeyCode::Enter)),
             Some(DetailInput::Action(DetailAction::ToggleExpansion))
         );
+        assert_eq!(
+            key_to_input(key(KeyCode::Char('['))),
+            Some(DetailInput::Navigate(ResourceNavigation::Previous))
+        );
+        assert_eq!(
+            key_to_input(key(KeyCode::Char(']'))),
+            Some(DetailInput::Navigate(ResourceNavigation::Next))
+        );
+    }
+
+    #[test]
+    fn resource_navigation_follows_search_order_and_resets_detail_state() {
+        let mut list = navigation_list();
+        list.apply(PlanListAction::BeginSearch);
+        list.apply(PlanListAction::SetSearch("aws_instance".to_owned()));
+        list.apply(PlanListAction::ConfirmSearch);
+
+        let mut detail = ResourceDetailState::from_list(&list).expect("resource should open");
+        detail.selected = 1;
+        detail.scroll = 3;
+        detail.expanded_groups.push(AttributeGroup::Unchanged);
+
+        detail.navigate(ResourceNavigation::Next, &mut list);
+
+        assert_eq!(detail.item.address(), "aws_instance.worker");
+        assert_eq!(detail.item_index(), 1);
+        assert_eq!(detail.total_items(), 2);
+        assert_eq!(detail.selected, 0);
+        assert_eq!(detail.scroll(), 0);
+        assert!(detail.expanded_groups.is_empty());
+        assert_eq!(list.selected(), Some(1));
+
+        detail.navigate(ResourceNavigation::Next, &mut list);
+        assert_eq!(detail.item.address(), "aws_instance.worker");
+        assert_eq!(list.selected(), Some(1));
+
+        detail.navigate(ResourceNavigation::Previous, &mut list);
+        assert_eq!(detail.item.address(), "aws_instance.api");
+        assert_eq!(list.selected(), Some(0));
+    }
+
+    #[test]
+    fn resource_navigation_stops_when_search_has_one_item() {
+        let mut list = navigation_list();
+        list.apply(PlanListAction::BeginSearch);
+        list.apply(PlanListAction::SetSearch("worker".to_owned()));
+        list.apply(PlanListAction::ConfirmSearch);
+        let mut detail = ResourceDetailState::from_list(&list).expect("resource should open");
+
+        detail.navigate(ResourceNavigation::Previous, &mut list);
+        detail.navigate(ResourceNavigation::Next, &mut list);
+
+        assert_eq!(detail.item.address(), "aws_instance.worker");
+        assert_eq!(detail.item_index(), 0);
+        assert_eq!(detail.total_items(), 1);
+        assert_eq!(list.selected(), Some(0));
     }
 
     #[test]
