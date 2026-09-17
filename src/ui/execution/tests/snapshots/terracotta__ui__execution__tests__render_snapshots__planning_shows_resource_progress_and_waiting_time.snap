@@ -1,24 +1,55 @@
 ---
 source: src/ui/execution/tests/render_snapshots.rs
-expression: "buffer_text(&render_to_buffer(&state, started_at + Duration::from_secs(5),\n100, 20))"
+expression: "buffer_text(&render_to_buffer(REPRESENTATIVE_TERMINAL_SIZE, |frame|\nrender_execution(frame, &state, started_at + Duration::from_secs(5)),))"
 ---
-┌Terracotta / Planning─────────────────────────────────────────────────────────────────────────────┐
-│cwd infra/prod   workspace default                                                                │
-│git feature/network   compare working tree vs HEAD                                                │
-│| Processing    Follow: On                                                                        │
-│Waiting for Terraform... 2s                                                                       │
-│Elapsed 5.0s                                                                                      │
-│  [done] aws_vpc.main                         Refresh complete                                    │
-│  [run] aws_instance.api                     Refreshing                                           │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│──────────────────────────────────────────────────────────────────────────────────────────────────│
-│Up/Down/PageUp/PageDown scroll   End follow latest   Ctrl-C cancel                                │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌Terracotta / Planning──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│cwd infra/prod   workspace default                                                                                                                                 │
+│git feature/network   compare working tree vs HEAD                                                                                                                 │
+│| Processing    Follow: On                                                                                                                                         │
+│Waiting for Terraform... 2s                                                                                                                                        │
+│Elapsed 5.0s                                                                                                                                                       │
+│  [done] aws_vpc.main                         Refresh complete                                                                                                     │
+│  [run] aws_instance.api                     Refreshing                                                                                                            │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
+│Up/Down/PageUp/PageDown scroll   End follow latest   Ctrl-C cancel                                                                                                 │
+└───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

@@ -402,23 +402,16 @@ fn synthetic_change(address: &str, kind: ResourceChangeKind, action: PlanAction)
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyEventKind, KeyEventState};
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
 
-    use crate::ui::test_support::buffer_text;
+    use crate::ui::test_support::{buffer_text, render_to_buffer as render_test_buffer};
 
     use super::*;
 
     mod render_snapshots;
 
     fn render_to_buffer(state: &PlanListState, width: u16, height: u16) -> Buffer {
-        let backend = TestBackend::new(width, height);
-        let mut terminal = Terminal::new(backend).expect("test terminal should be created");
-        terminal
-            .draw(|frame| render_plan_list(frame, state))
-            .expect("test frame should render");
-        terminal.backend().buffer().clone()
+        render_test_buffer((width, height), |frame| render_plan_list(frame, state))
     }
 
     #[test]

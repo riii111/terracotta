@@ -1,4 +1,5 @@
 use super::*;
+use crate::ui::test_support::REPRESENTATIVE_TERMINAL_SIZE;
 
 #[test]
 fn planning_shows_resource_progress_and_waiting_time() {
@@ -26,8 +27,8 @@ fn planning_shows_resource_progress_and_waiting_time() {
     insta::assert_snapshot!(buffer_text(&render_to_buffer(
         &state,
         started_at + Duration::from_secs(5),
-        100,
-        20
+        REPRESENTATIVE_TERMINAL_SIZE.0,
+        REPRESENTATIVE_TERMINAL_SIZE.1,
     )));
 }
 
@@ -67,6 +68,6 @@ fn narrow_failure_wraps_diagnostic_and_preserves_quit_hint() {
         &state,
         started_at + Duration::from_secs(2),
         60,
-        20
+        20,
     )));
 }

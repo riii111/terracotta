@@ -432,11 +432,10 @@ fn footer_line(stage: ExecutionStage) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
 
     use crate::ui::test_support::buffer_text;
+    use crate::ui::test_support::render_to_buffer as render_test_buffer;
 
     use super::super::super::app::progress::{
         DiagnosticPoint, DiagnosticPosition, DiagnosticSource,
@@ -450,12 +449,7 @@ mod tests {
     }
 
     fn render_to_buffer(state: &ExecutionState, now: Instant, width: u16, height: u16) -> Buffer {
-        let backend = TestBackend::new(width, height);
-        let mut terminal = Terminal::new(backend).expect("test terminal should be created");
-        terminal
-            .draw(|frame| render_execution(frame, state, now))
-            .expect("test frame should render");
-        terminal.backend().buffer().clone()
+        render_test_buffer((width, height), |frame| render_execution(frame, state, now))
     }
 
     fn resource_event(at: Instant, address: &str, kind: ResourceEventKind) -> ExecutionEvent {
