@@ -237,6 +237,11 @@ impl ExecutionProgress {
     }
 
     #[must_use]
+    pub(crate) fn last_event_at(&self) -> Option<Instant> {
+        self.events.last().map(|event| event.received_at)
+    }
+
+    #[must_use]
     pub(crate) const fn termination(&self) -> Option<ProcessTermination> {
         self.termination
     }
