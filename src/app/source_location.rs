@@ -1,8 +1,3 @@
-#![allow(
-    clippy::redundant_pub_crate,
-    reason = "source-location types are shared only within the crate"
-)]
-
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

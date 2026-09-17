@@ -1,8 +1,3 @@
-#![allow(
-    clippy::redundant_pub_crate,
-    reason = "HCL parsing is shared only within the crate"
-)]
-
 use std::{
     collections::HashMap,
     fs, io,
