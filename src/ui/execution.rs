@@ -8,6 +8,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 
+use crate::app::copy::CopyTarget;
 use crate::app::execution::{
     ExecutionAction, ExecutionContext, ExecutionScroll, ExecutionStage, ExecutionState,
 };
@@ -67,7 +68,7 @@ fn run_execution(terminal: &mut DefaultTerminal, state: &mut ExecutionState) -> 
                     let (current_offset, max_offset) = execution_scroll_position(state, body);
                     state.apply_scroll(action, current_offset, max_offset);
                 }
-                None => {}
+                Some(ExecutionInput::Copy(_)) | None => {}
             }
         }
     }
@@ -77,6 +78,7 @@ fn run_execution(terminal: &mut DefaultTerminal, state: &mut ExecutionState) -> 
 pub(super) enum ExecutionInput {
     Action(ExecutionAction),
     Scroll(ExecutionScroll),
+    Copy(CopyTarget),
     Quit,
 }
 
@@ -94,6 +96,13 @@ pub(super) fn execution_key_to_input(
 
     if stage == ExecutionStage::Failed && key.code == KeyCode::Char('q') {
         return Some(ExecutionInput::Quit);
+    }
+    if stage == ExecutionStage::Failed && key.modifiers == KeyModifiers::NONE {
+        match key.code {
+            KeyCode::Char('y') => return Some(ExecutionInput::Copy(CopyTarget::Diagnostic)),
+            KeyCode::Char('Y') => return Some(ExecutionInput::Copy(CopyTarget::Result)),
+            _ => {}
+        }
     }
 
     match key.code {
@@ -139,10 +148,7 @@ pub(super) fn render_execution(frame: &mut Frame<'_>, state: &ExecutionState, no
     frame.render_widget(paragraph.scroll((scroll, 0)), chunks[2]);
     frame.render_widget(separator(chunks[3].width), chunks[3]);
     frame.render_widget(
-        Paragraph::new(wrapped_lines(
-            &[footer_line(state.stage()).to_owned()],
-            chunks[4].width,
-        )),
+        Paragraph::new(wrapped_lines(&[footer_line(state)], chunks[4].width)),
         chunks[4],
     );
 }
@@ -167,10 +173,9 @@ fn execution_fixed_heights(state: &ExecutionState, width: u16) -> (u16, u16) {
     let context_height = u16::try_from(wrapped_lines(&context_lines(state), width).len())
         .unwrap_or(u16::MAX)
         .max(1);
-    let footer_height =
-        u16::try_from(wrapped_lines(&[footer_line(state.stage()).to_owned()], width).len())
-            .unwrap_or(u16::MAX)
-            .max(1);
+    let footer_height = u16::try_from(wrapped_lines(&[footer_line(state)], width).len())
+        .unwrap_or(u16::MAX)
+        .max(1);
     (context_height, footer_height)
 }
 
@@ -425,12 +430,16 @@ fn separator(width: u16) -> Paragraph<'static> {
     Paragraph::new("─".repeat(usize::from(width))).style(Style::default().fg(Color::DarkGray))
 }
 
-fn footer_line(stage: ExecutionStage) -> &'static str {
-    if stage == ExecutionStage::Failed {
-        "Up/Down/PageUp/PageDown scroll   q/Ctrl-C quit"
+fn footer_line(state: &ExecutionState) -> String {
+    let notice = state
+        .copy_notice()
+        .map_or_else(String::new, |notice| format!("{}   ", notice.message()));
+    let footer = if state.stage() == ExecutionStage::Failed {
+        "y diagnostic   Y result   Up/Down/PageUp/PageDown scroll   q/Ctrl-C quit"
     } else {
         "Up/Down/PageUp/PageDown scroll   End follow latest   Ctrl-C cancel"
-    }
+    };
+    format!("{notice}{footer}")
 }
 
 #[cfg(test)]
@@ -778,6 +787,27 @@ mod tests {
                 ExecutionStage::Failed,
             ),
             Some(ExecutionInput::Quit)
+        );
+        assert_eq!(
+            execution_key_to_input(
+                key(KeyCode::Char('y'), KeyModifiers::NONE),
+                ExecutionStage::Planning,
+            ),
+            None
+        );
+        assert_eq!(
+            execution_key_to_input(
+                key(KeyCode::Char('y'), KeyModifiers::NONE),
+                ExecutionStage::Failed,
+            ),
+            Some(ExecutionInput::Copy(CopyTarget::Diagnostic))
+        );
+        assert_eq!(
+            execution_key_to_input(
+                key(KeyCode::Char('Y'), KeyModifiers::NONE),
+                ExecutionStage::Failed,
+            ),
+            Some(ExecutionInput::Copy(CopyTarget::Result))
         );
     }
 }
