@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+hcl = { package = "hcl-rs", version = "0.19.8" }
 
 [dev-dependencies]
 crossterm = "0.29"
