@@ -19,14 +19,39 @@ use crate::infra::terraform::hcl::HclSourceFile;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ComparisonBasis {
     WorkingTreeVsHead,
+    HeadVsMergeBase,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum GitDiffStatus {
     Complete,
-    OutsideRepository { message: String },
-    HeadUnavailable { message: String },
-    Failed { operation: String, message: String },
+    OutsideRepository {
+        message: String,
+    },
+    HeadUnavailable {
+        message: String,
+    },
+    CompareRefUnavailable {
+        reference: String,
+        message: String,
+    },
+    AmbiguousCompareRef {
+        reference: String,
+        message: String,
+    },
+    NoCommonAncestor {
+        reference: String,
+        message: String,
+    },
+    AmbiguousMergeBase {
+        reference: String,
+        merge_bases: Vec<String>,
+        message: String,
+    },
+    Failed {
+        operation: String,
+        message: String,
+    },
 }
 
 impl GitDiffStatus {
@@ -41,7 +66,42 @@ impl GitDiffStatus {
             Self::Complete => None,
             Self::OutsideRepository { message }
             | Self::HeadUnavailable { message }
+            | Self::CompareRefUnavailable { message, .. }
+            | Self::AmbiguousCompareRef { message, .. }
+            | Self::NoCommonAncestor { message, .. }
+            | Self::AmbiguousMergeBase { message, .. }
             | Self::Failed { message, .. } => Some(message),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ComparisonMetadata {
+    basis: ComparisonBasis,
+    compare_ref: Option<String>,
+    resolved_commit: Option<String>,
+    head_commit: Option<String>,
+    merge_base: Option<String>,
+}
+
+impl ComparisonMetadata {
+    const fn working_tree() -> Self {
+        Self {
+            basis: ComparisonBasis::WorkingTreeVsHead,
+            compare_ref: None,
+            resolved_commit: None,
+            head_commit: None,
+            merge_base: None,
+        }
+    }
+
+    fn for_compare_ref(compare_ref: &str) -> Self {
+        Self {
+            basis: ComparisonBasis::HeadVsMergeBase,
+            compare_ref: Some(compare_ref.to_owned()),
+            resolved_commit: None,
+            head_commit: None,
+            merge_base: None,
         }
     }
 }
@@ -50,7 +110,7 @@ impl GitDiffStatus {
 pub(crate) struct GitDiff {
     root: PathBuf,
     repository_root: Option<PathBuf>,
-    basis: ComparisonBasis,
+    comparison: ComparisonMetadata,
     status: GitDiffStatus,
     before: Vec<HclSourceFile>,
     after: Vec<HclSourceFile>,
@@ -70,7 +130,27 @@ impl GitDiff {
 
     #[must_use]
     pub(crate) const fn basis(&self) -> ComparisonBasis {
-        self.basis
+        self.comparison.basis
+    }
+
+    #[must_use]
+    pub(crate) fn compare_ref(&self) -> Option<&str> {
+        self.comparison.compare_ref.as_deref()
+    }
+
+    #[must_use]
+    pub(crate) fn resolved_commit(&self) -> Option<&str> {
+        self.comparison.resolved_commit.as_deref()
+    }
+
+    #[must_use]
+    pub(crate) fn head_commit(&self) -> Option<&str> {
+        self.comparison.head_commit.as_deref()
+    }
+
+    #[must_use]
+    pub(crate) fn merge_base(&self) -> Option<&str> {
+        self.comparison.merge_base.as_deref()
     }
 
     #[must_use]
@@ -180,7 +260,7 @@ pub(crate) fn collect_diff(root: &Path) -> GitDiff {
     };
 
     match resolve_head(&repository_root) {
-        Ok(()) => collect_head_diff(root, repository_root, &root_spec),
+        Ok(_) => collect_head_diff(root, repository_root, &root_spec),
         Err(HeadError::Unavailable(message)) => {
             collect_without_head(root, repository_root, &root_spec, message)
         }
@@ -190,6 +270,166 @@ pub(crate) fn collect_diff(root: &Path) -> GitDiff {
             &error.operation,
             &error.message,
         ),
+    }
+}
+
+pub(crate) fn collect_diff_against_ref(root: &Path, compare_ref: &str) -> GitDiff {
+    let comparison = ComparisonMetadata::for_compare_ref(compare_ref);
+    let root = match fs::canonicalize(root) {
+        Ok(root) if root.is_dir() => root,
+        Ok(root) => {
+            return failed_diff_with_comparison(
+                root,
+                None,
+                "read Terraform root",
+                "the Terraform root is not a directory",
+                comparison,
+            );
+        }
+        Err(error) => {
+            let message = error.to_string();
+            return failed_diff_with_comparison(
+                root.to_owned(),
+                None,
+                "read Terraform root",
+                &message,
+                comparison,
+            );
+        }
+    };
+
+    let repository_root = match discover_repository(&root) {
+        Ok(repository_root) => repository_root,
+        Err(DiscoveryError::OutsideRepository(message)) => {
+            return unavailable_diff_with_comparison(
+                root,
+                None,
+                GitDiffStatus::OutsideRepository { message },
+                comparison,
+            );
+        }
+        Err(DiscoveryError::Failed(error)) => {
+            return failed_diff_with_comparison(
+                root,
+                None,
+                &error.operation,
+                &error.message,
+                comparison,
+            );
+        }
+    };
+
+    let root_relative = match root.strip_prefix(&repository_root) {
+        Ok(relative) => relative,
+        Err(error) => {
+            let message = error.to_string();
+            return failed_diff_with_comparison(
+                root,
+                Some(repository_root),
+                "resolve Terraform root",
+                &message,
+                comparison,
+            );
+        }
+    };
+    let root_spec = if root_relative.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        root_relative.to_owned()
+    };
+
+    let resolution = match resolve_comparison(&repository_root, compare_ref, comparison) {
+        Ok(resolution) => resolution,
+        Err(error) => return (*error).into_diff(root, Some(repository_root)),
+    };
+
+    collect_commit_diff(
+        root,
+        repository_root,
+        &root_spec,
+        &resolution.before_revision,
+        &resolution.after_revision,
+        resolution.comparison,
+    )
+}
+
+fn collect_commit_diff(
+    root: PathBuf,
+    repository_root: PathBuf,
+    root_spec: &Path,
+    before_revision: &str,
+    after_revision: &str,
+    comparison: ComparisonMetadata,
+) -> GitDiff {
+    let changed_files = match changed_files_between(
+        &repository_root,
+        &root,
+        root_spec,
+        before_revision,
+        after_revision,
+    ) {
+        Ok(files) => files,
+        Err(error) => {
+            return failed_diff_with_comparison(
+                root,
+                Some(repository_root),
+                &error.operation,
+                &error.message,
+                comparison,
+            );
+        }
+    };
+    let (before, after) = match load_commit_sources(
+        &repository_root,
+        &changed_files,
+        before_revision,
+        after_revision,
+    ) {
+        Ok(sources) => sources,
+        Err(error) => {
+            return failed_diff_with_comparison(
+                root,
+                Some(repository_root),
+                &error.operation,
+                &error.message,
+                comparison,
+            );
+        }
+    };
+    let mut changed_lines = match changed_lines_between(
+        &repository_root,
+        &root,
+        root_spec,
+        before_revision,
+        after_revision,
+    ) {
+        Ok(changed_lines) => changed_lines,
+        Err(error) => {
+            return failed_diff_with_comparison(
+                root,
+                Some(repository_root),
+                &error.operation,
+                &error.message,
+                comparison,
+            );
+        }
+    };
+    add_missing_added_line_ranges(&mut changed_lines, &after, &changed_files);
+    changed_lines.sort_by(|left, right| {
+        left.path()
+            .cmp(right.path())
+            .then_with(|| source_side_order(left.side()).cmp(&source_side_order(right.side())))
+            .then_with(|| left.range().start_line().cmp(&right.range().start_line()))
+    });
+
+    GitDiff {
+        root,
+        repository_root: Some(repository_root),
+        comparison,
+        status: GitDiffStatus::Complete,
+        before,
+        after,
+        changed_lines,
     }
 }
 
@@ -251,7 +491,7 @@ fn collect_head_diff(root: PathBuf, repository_root: PathBuf, root_spec: &Path) 
     GitDiff {
         root,
         repository_root: Some(repository_root),
-        basis: ComparisonBasis::WorkingTreeVsHead,
+        comparison: ComparisonMetadata::working_tree(),
         status: GitDiffStatus::Complete,
         before,
         after,
@@ -304,7 +544,7 @@ fn collect_without_head(
     GitDiff {
         root,
         repository_root: Some(repository_root),
-        basis: ComparisonBasis::WorkingTreeVsHead,
+        comparison: ComparisonMetadata::working_tree(),
         status: GitDiffStatus::HeadUnavailable { message },
         before: Vec::new(),
         after,
@@ -341,7 +581,7 @@ fn discover_repository(root: &Path) -> Result<PathBuf, DiscoveryError> {
     })
 }
 
-fn resolve_head(repository_root: &Path) -> Result<(), HeadError> {
+fn resolve_head(repository_root: &Path) -> Result<String, HeadError> {
     let output = run_git(
         repository_root,
         "resolve HEAD",
@@ -349,10 +589,233 @@ fn resolve_head(repository_root: &Path) -> Result<(), HeadError> {
     )
     .map_err(HeadError::Failed)?;
     if output.status.success() {
-        Ok(())
+        single_commit(&output, "resolve HEAD").map_err(HeadError::Failed)
     } else {
         let error = GitCommandError::from_output("resolve HEAD", &output);
         Err(HeadError::Unavailable(error.message))
+    }
+}
+
+struct ResolvedComparison {
+    comparison: ComparisonMetadata,
+    before_revision: String,
+    after_revision: String,
+}
+
+struct ComparisonResolutionError {
+    comparison: ComparisonMetadata,
+    failure: ComparisonResolutionFailure,
+}
+
+enum ComparisonResolutionFailure {
+    HeadUnavailable(String),
+    HeadFailed(GitCommandError),
+    CompareRefUnavailable(String),
+    AmbiguousCompareRef(String),
+    CompareRefFailed(GitCommandError),
+    NoCommonAncestor,
+    AmbiguousMergeBase(Vec<String>),
+    MergeBaseFailed(GitCommandError),
+}
+
+impl ComparisonResolutionError {
+    fn into_diff(self, root: PathBuf, repository_root: Option<PathBuf>) -> GitDiff {
+        let Some(reference) = self.comparison.compare_ref.clone() else {
+            return failed_diff_with_comparison(
+                root,
+                repository_root,
+                "resolve comparison",
+                "comparison ref is missing",
+                self.comparison,
+            );
+        };
+        let status = match self.failure {
+            ComparisonResolutionFailure::HeadUnavailable(message) => {
+                GitDiffStatus::HeadUnavailable { message }
+            }
+            ComparisonResolutionFailure::HeadFailed(error)
+            | ComparisonResolutionFailure::CompareRefFailed(error)
+            | ComparisonResolutionFailure::MergeBaseFailed(error) => GitDiffStatus::Failed {
+                operation: error.operation,
+                message: error.message,
+            },
+            ComparisonResolutionFailure::CompareRefUnavailable(message) => {
+                GitDiffStatus::CompareRefUnavailable { reference, message }
+            }
+            ComparisonResolutionFailure::AmbiguousCompareRef(message) => {
+                GitDiffStatus::AmbiguousCompareRef { reference, message }
+            }
+            ComparisonResolutionFailure::NoCommonAncestor => GitDiffStatus::NoCommonAncestor {
+                reference,
+                message: "the comparison ref and HEAD have no common ancestor".to_owned(),
+            },
+            ComparisonResolutionFailure::AmbiguousMergeBase(merge_bases) => {
+                let message = format!(
+                    "the comparison basis has multiple merge-bases: {}",
+                    merge_bases.join(", ")
+                );
+                GitDiffStatus::AmbiguousMergeBase {
+                    reference,
+                    merge_bases,
+                    message,
+                }
+            }
+        };
+        unavailable_diff_with_comparison(root, repository_root, status, self.comparison)
+    }
+}
+
+fn resolve_comparison(
+    repository_root: &Path,
+    compare_ref: &str,
+    mut comparison: ComparisonMetadata,
+) -> Result<ResolvedComparison, Box<ComparisonResolutionError>> {
+    let head_commit = resolve_head(repository_root).map_err(|error| {
+        Box::new(ComparisonResolutionError {
+            comparison: comparison.clone(),
+            failure: match error {
+                HeadError::Unavailable(message) => {
+                    ComparisonResolutionFailure::HeadUnavailable(message)
+                }
+                HeadError::Failed(error) => ComparisonResolutionFailure::HeadFailed(error),
+            },
+        })
+    })?;
+    comparison.head_commit = Some(head_commit.clone());
+
+    let resolved_commit = resolve_compare_ref(repository_root, compare_ref).map_err(|error| {
+        Box::new(ComparisonResolutionError {
+            comparison: comparison.clone(),
+            failure: match error {
+                CompareRefError::Unavailable(message) => {
+                    ComparisonResolutionFailure::CompareRefUnavailable(message)
+                }
+                CompareRefError::Ambiguous(message) => {
+                    ComparisonResolutionFailure::AmbiguousCompareRef(message)
+                }
+                CompareRefError::Failed(error) => {
+                    ComparisonResolutionFailure::CompareRefFailed(error)
+                }
+            },
+        })
+    })?;
+    comparison.resolved_commit = Some(resolved_commit.clone());
+
+    let merge_base =
+        resolve_merge_base(repository_root, &resolved_commit, &head_commit).map_err(|error| {
+            Box::new(ComparisonResolutionError {
+                comparison: comparison.clone(),
+                failure: match error {
+                    MergeBaseError::NoCommonAncestor => {
+                        ComparisonResolutionFailure::NoCommonAncestor
+                    }
+                    MergeBaseError::Ambiguous(merge_bases) => {
+                        ComparisonResolutionFailure::AmbiguousMergeBase(merge_bases)
+                    }
+                    MergeBaseError::Failed(error) => {
+                        ComparisonResolutionFailure::MergeBaseFailed(error)
+                    }
+                },
+            })
+        })?;
+    comparison.merge_base = Some(merge_base.clone());
+
+    Ok(ResolvedComparison {
+        comparison,
+        before_revision: merge_base,
+        after_revision: head_commit,
+    })
+}
+
+fn resolve_compare_ref(
+    repository_root: &Path,
+    compare_ref: &str,
+) -> Result<String, CompareRefError> {
+    if compare_ref.is_empty() {
+        return Err(CompareRefError::Unavailable(
+            "the comparison ref is empty".to_owned(),
+        ));
+    }
+
+    let revision = format!("{compare_ref}^{{commit}}");
+    let output = run_git(
+        repository_root,
+        "resolve comparison ref",
+        [
+            OsStr::new("rev-parse"),
+            OsStr::new("--verify"),
+            OsStr::new("--end-of-options"),
+            OsStr::new(&revision),
+        ],
+    )
+    .map_err(CompareRefError::Failed)?;
+    if output.status.success() {
+        if output.stderr.iter().any(|byte| !byte.is_ascii_whitespace()) {
+            return Err(CompareRefError::Ambiguous(
+                String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            ));
+        }
+        single_commit(&output, "resolve comparison ref").map_err(CompareRefError::Failed)
+    } else {
+        let error = GitCommandError::from_output("resolve comparison ref", &output);
+        Err(CompareRefError::Unavailable(error.message))
+    }
+}
+
+fn resolve_merge_base(
+    repository_root: &Path,
+    compare_commit: &str,
+    head_commit: &str,
+) -> Result<String, MergeBaseError> {
+    let output = run_git(
+        repository_root,
+        "resolve merge-base",
+        [
+            OsStr::new("merge-base"),
+            OsStr::new("--all"),
+            OsStr::new(compare_commit),
+            OsStr::new(head_commit),
+        ],
+    )
+    .map_err(MergeBaseError::Failed)?;
+    if !output.status.success() {
+        let error = GitCommandError::from_output("resolve merge-base", &output);
+        if output.status.code() == Some(1) && output.stderr.iter().all(u8::is_ascii_whitespace) {
+            return Err(MergeBaseError::NoCommonAncestor);
+        }
+        return Err(MergeBaseError::Failed(error));
+    }
+
+    let bases = String::from_utf8(output.stdout)
+        .map_err(|error| {
+            MergeBaseError::Failed(parse_error("resolve merge-base", &error.to_string()))
+        })?
+        .lines()
+        .map(str::trim)
+        .filter(|base| !base.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    match bases.as_slice() {
+        [] => Err(MergeBaseError::NoCommonAncestor),
+        [merge_base] => Ok(merge_base.clone()),
+        _ => Err(MergeBaseError::Ambiguous(bases)),
+    }
+}
+
+fn single_commit(output: &Output, operation: &str) -> Result<String, GitCommandError> {
+    let commits = String::from_utf8(output.stdout.clone())
+        .map_err(|error| parse_error(operation, &error.to_string()))?
+        .lines()
+        .map(str::trim)
+        .filter(|commit| !commit.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    match commits.as_slice() {
+        [commit] => Ok(commit.clone()),
+        _ => Err(parse_error(
+            operation,
+            "Git did not resolve exactly one commit",
+        )),
     }
 }
 
@@ -370,6 +833,30 @@ fn changed_files(
             OsStr::new("--no-renames"),
             OsStr::new("-z"),
             OsStr::new("HEAD"),
+            OsStr::new("--"),
+            root_spec.as_os_str(),
+        ],
+    )?;
+    parse_name_status(&output.stdout, repository_root, root)
+}
+
+fn changed_files_between(
+    repository_root: &Path,
+    root: &Path,
+    root_spec: &Path,
+    before_revision: &str,
+    after_revision: &str,
+) -> Result<Vec<ChangedFile>, GitCommandError> {
+    let output = checked_git(
+        repository_root,
+        "read Git commit changes",
+        [
+            OsStr::new("diff"),
+            OsStr::new("--name-status"),
+            OsStr::new("--no-renames"),
+            OsStr::new("-z"),
+            OsStr::new(before_revision),
+            OsStr::new(after_revision),
             OsStr::new("--"),
             root_spec.as_os_str(),
         ],
@@ -586,6 +1073,47 @@ fn load_sources(
     Ok((before, after))
 }
 
+fn load_commit_sources(
+    repository_root: &Path,
+    files: &[ChangedFile],
+    before_revision: &str,
+    after_revision: &str,
+) -> Result<(Vec<HclSourceFile>, Vec<HclSourceFile>), GitCommandError> {
+    let mut before = Vec::new();
+    let mut after = Vec::new();
+    for file in files {
+        match file.kind {
+            FileChangeKind::Added => after.push(read_revision_source(
+                repository_root,
+                after_revision,
+                &file.path,
+                SourceSide::After,
+            )?),
+            FileChangeKind::Modified => {
+                before.push(read_revision_source(
+                    repository_root,
+                    before_revision,
+                    &file.path,
+                    SourceSide::Before,
+                )?);
+                after.push(read_revision_source(
+                    repository_root,
+                    after_revision,
+                    &file.path,
+                    SourceSide::After,
+                )?);
+            }
+            FileChangeKind::Deleted => before.push(read_revision_source(
+                repository_root,
+                before_revision,
+                &file.path,
+                SourceSide::Before,
+            )?),
+        }
+    }
+    Ok((before, after))
+}
+
 fn load_after_sources(
     repository_root: &Path,
     files: &[ChangedFile],
@@ -597,23 +1125,28 @@ fn load_after_sources(
 }
 
 fn read_head_source(repository_root: &Path, path: &Path) -> Result<HclSourceFile, GitCommandError> {
-    let revision_path = format!("HEAD:{}", path.to_string_lossy());
+    read_revision_source(repository_root, "HEAD", path, SourceSide::Before)
+}
+
+fn read_revision_source(
+    repository_root: &Path,
+    revision: &str,
+    path: &Path,
+    side: SourceSide,
+) -> Result<HclSourceFile, GitCommandError> {
+    let revision_path = format!("{revision}:{}", path.to_string_lossy());
     let output = checked_git(
         repository_root,
-        "read HEAD source",
+        "read Git commit source",
         ["show", revision_path.as_str()],
     )?;
     let source = String::from_utf8(output.stdout).map_err(|error| {
         parse_error(
-            "read HEAD source",
+            "read Git commit source",
             &format!("source is not valid UTF-8: {error}"),
         )
     })?;
-    Ok(HclSourceFile::new(
-        repository_root.join(path),
-        source,
-        SourceSide::Before,
-    ))
+    Ok(HclSourceFile::new(repository_root.join(path), source, side))
 }
 
 fn read_working_tree_source(path: &Path) -> Result<HclSourceFile, GitCommandError> {
@@ -643,6 +1176,35 @@ fn changed_lines(
             OsStr::new("--src-prefix=a/"),
             OsStr::new("--dst-prefix=b/"),
             OsStr::new("HEAD"),
+            OsStr::new("--"),
+            root_spec.as_os_str(),
+        ],
+    )?;
+    parse_diff_hunks(&output.stdout, repository_root, root)
+}
+
+fn changed_lines_between(
+    repository_root: &Path,
+    root: &Path,
+    root_spec: &Path,
+    before_revision: &str,
+    after_revision: &str,
+) -> Result<Vec<SourceLineChange>, GitCommandError> {
+    let output = checked_git(
+        repository_root,
+        "read Git commit diff hunks",
+        [
+            OsStr::new("-c"),
+            OsStr::new("core.quotePath=false"),
+            OsStr::new("diff"),
+            OsStr::new("--no-ext-diff"),
+            OsStr::new("--no-renames"),
+            OsStr::new("--unified=0"),
+            OsStr::new("--no-color"),
+            OsStr::new("--src-prefix=a/"),
+            OsStr::new("--dst-prefix=b/"),
+            OsStr::new(before_revision),
+            OsStr::new(after_revision),
             OsStr::new("--"),
             root_spec.as_os_str(),
         ],
@@ -919,10 +1481,24 @@ const fn unavailable_diff(
     repository_root: Option<PathBuf>,
     status: GitDiffStatus,
 ) -> GitDiff {
+    unavailable_diff_with_comparison(
+        root,
+        repository_root,
+        status,
+        ComparisonMetadata::working_tree(),
+    )
+}
+
+const fn unavailable_diff_with_comparison(
+    root: PathBuf,
+    repository_root: Option<PathBuf>,
+    status: GitDiffStatus,
+    comparison: ComparisonMetadata,
+) -> GitDiff {
     GitDiff {
         root,
         repository_root,
-        basis: ComparisonBasis::WorkingTreeVsHead,
+        comparison,
         status,
         before: Vec::new(),
         after: Vec::new(),
@@ -936,13 +1512,30 @@ fn failed_diff(
     operation: &str,
     message: &str,
 ) -> GitDiff {
-    unavailable_diff(
+    failed_diff_with_comparison(
+        root,
+        repository_root,
+        operation,
+        message,
+        ComparisonMetadata::working_tree(),
+    )
+}
+
+fn failed_diff_with_comparison(
+    root: PathBuf,
+    repository_root: Option<PathBuf>,
+    operation: &str,
+    message: &str,
+    comparison: ComparisonMetadata,
+) -> GitDiff {
+    unavailable_diff_with_comparison(
         root,
         repository_root,
         GitDiffStatus::Failed {
             operation: operation.to_owned(),
             message: message.to_owned(),
         },
+        comparison,
     )
 }
 
@@ -953,6 +1546,18 @@ enum DiscoveryError {
 
 enum HeadError {
     Unavailable(String),
+    Failed(GitCommandError),
+}
+
+enum CompareRefError {
+    Unavailable(String),
+    Ambiguous(String),
+    Failed(GitCommandError),
+}
+
+enum MergeBaseError {
+    NoCommonAncestor,
+    Ambiguous(Vec<String>),
     Failed(GitCommandError),
 }
 
@@ -1067,6 +1672,156 @@ mod tests {
         assert_eq!(result.changed_lines()[0].range(), SourceRange::new(2, 2));
         assert_eq!(result.changed_lines()[1].side(), SourceSide::After);
         assert_eq!(result.changed_lines()[1].range(), SourceRange::new(2, 3));
+    }
+
+    #[test]
+    fn compares_commits_without_including_dirty_worktree_changes() {
+        let repository = TestRepository::new();
+        write(
+            &repository,
+            "main.tf",
+            "resource \"example\" \"one\" {\n  value = \"base\"\n}\n",
+        );
+        repository.commit("initial");
+        git(&repository.path, &["branch", "compare"]);
+        git(&repository.path, &["switch", "compare"]);
+        write(
+            &repository,
+            "main.tf",
+            "resource \"example\" \"one\" {\n  value = \"compare\"\n}\n",
+        );
+        repository.commit("compare change");
+        git(&repository.path, &["switch", "-c", "feature"]);
+        write(
+            &repository,
+            "main.tf",
+            "resource \"example\" \"one\" {\n  value = \"feature\"\n}\n",
+        );
+        repository.commit("feature change");
+        write(
+            &repository,
+            "main.tf",
+            "resource \"example\" \"one\" {\n  value = \"dirty\"\n}\n",
+        );
+
+        let result = collect_diff_against_ref(&repository.path, "compare");
+
+        assert_eq!(result.status(), &GitDiffStatus::Complete);
+        assert_eq!(result.basis(), ComparisonBasis::HeadVsMergeBase);
+        assert_eq!(result.compare_ref(), Some("compare"));
+        assert_eq!(
+            result.before()[0].source(),
+            "resource \"example\" \"one\" {\n  value = \"compare\"\n}\n"
+        );
+        assert_eq!(
+            result.after()[0].source(),
+            "resource \"example\" \"one\" {\n  value = \"feature\"\n}\n"
+        );
+        assert_eq!(result.resolved_commit(), result.merge_base());
+        assert!(result.head_commit().is_some());
+        assert_eq!(result.changed_lines().len(), 2);
+        assert_eq!(result.changed_lines()[0].range(), SourceRange::new(2, 2));
+        assert_eq!(result.changed_lines()[1].range(), SourceRange::new(2, 2));
+    }
+
+    #[test]
+    fn reports_an_unavailable_comparison_ref_with_the_requested_ref() {
+        let repository = TestRepository::new();
+        write(&repository, "main.tf", "resource \"example\" \"one\" {}\n");
+        repository.commit("initial");
+
+        let result = collect_diff_against_ref(&repository.path, "missing");
+
+        assert!(matches!(
+            result.status(),
+            GitDiffStatus::CompareRefUnavailable { reference, message }
+                if reference == "missing" && !message.is_empty()
+        ));
+        assert_eq!(result.compare_ref(), Some("missing"));
+        assert!(result.resolved_commit().is_none());
+        assert!(result.head_commit().is_some());
+    }
+
+    #[test]
+    fn reports_when_a_comparison_ref_name_is_ambiguous() {
+        let repository = TestRepository::new();
+        write(&repository, "main.tf", "resource \"example\" \"one\" {}\n");
+        repository.commit("initial");
+        git(&repository.path, &["branch", "compare"]);
+        git(&repository.path, &["tag", "compare"]);
+
+        let result = collect_diff_against_ref(&repository.path, "compare");
+
+        assert!(matches!(
+            result.status(),
+            GitDiffStatus::AmbiguousCompareRef { reference, message }
+                if reference == "compare" && !message.is_empty()
+        ));
+        assert_eq!(result.compare_ref(), Some("compare"));
+        assert!(result.resolved_commit().is_none());
+        assert!(result.head_commit().is_some());
+    }
+
+    #[test]
+    fn reports_when_comparison_commits_have_no_common_ancestor() {
+        let repository = TestRepository::new();
+        write(&repository, "main.tf", "resource \"example\" \"one\" {}\n");
+        repository.commit("initial");
+        git(&repository.path, &["branch", "root"]);
+        git(&repository.path, &["switch", "--orphan", "unrelated"]);
+        write(&repository, "other.tf", "resource \"example\" \"two\" {}\n");
+        repository.commit("unrelated");
+
+        let result = collect_diff_against_ref(&repository.path, "root");
+
+        assert!(matches!(
+            result.status(),
+            GitDiffStatus::NoCommonAncestor { reference, message }
+                if reference == "root" && !message.is_empty()
+        ));
+        assert!(result.resolved_commit().is_some());
+        assert!(result.head_commit().is_some());
+        assert!(result.merge_base().is_none());
+    }
+
+    #[test]
+    fn reports_ambiguous_comparison_when_merge_base_is_not_unique() {
+        let repository = TestRepository::new();
+        write(&repository, "base.tf", "resource \"example\" \"base\" {}\n");
+        repository.commit("initial");
+        git(&repository.path, &["branch", "base"]);
+        git(&repository.path, &["switch", "-c", "branch-a"]);
+        write(&repository, "a.tf", "resource \"example\" \"a\" {}\n");
+        repository.commit("branch a");
+        git(&repository.path, &["branch", "a-tip"]);
+        git(&repository.path, &["switch", "-c", "branch-b", "base"]);
+        write(&repository, "b.tf", "resource \"example\" \"b\" {}\n");
+        repository.commit("branch b");
+        git(&repository.path, &["branch", "b-tip"]);
+        git(&repository.path, &["switch", "branch-a"]);
+        git(
+            &repository.path,
+            &["merge", "--no-ff", "--no-edit", "b-tip"],
+        );
+        git(&repository.path, &["switch", "branch-b"]);
+        git(
+            &repository.path,
+            &["merge", "--no-ff", "--no-edit", "a-tip"],
+        );
+
+        let result = collect_diff_against_ref(&repository.path, "branch-a");
+
+        assert!(matches!(
+            result.status(),
+            GitDiffStatus::AmbiguousMergeBase {
+                reference,
+                merge_bases,
+                message,
+            } if reference == "branch-a" && merge_bases.len() == 2 && !message.is_empty()
+        ));
+        assert!(result.resolved_commit().is_some());
+        assert!(result.head_commit().is_some());
+        assert!(result.merge_base().is_none());
     }
 
     #[test]
