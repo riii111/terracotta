@@ -82,7 +82,11 @@ pub(super) fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
     frame.render_widget(block, area);
 
     let notices = notice_lines(state, content_area.width as usize);
-    let notice_height = notices.len() as u16;
+    let notice_height = match notices.len() {
+        0 => 0,
+        1 => 1,
+        _ => 2,
+    };
     let context_height = u16::from(state.context().is_some()) * 2;
     let separator_height = u16::from(notice_height < 2);
     let chunks = Layout::default()
