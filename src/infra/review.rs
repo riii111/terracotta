@@ -64,6 +64,12 @@ pub(crate) fn run_review_with_events_with_runner(
     let source_files = parse_git_sources(&git_diff);
     let configuration_comparison = git::compare_configuration(&git_diff, &configuration_before);
     let mut analysis_issues = git_analysis_issues(&git_diff);
+    for path in configuration_before.differing_source_paths(git_diff.before(), git_diff.after()) {
+        push_unique(
+            &mut analysis_issues,
+            AnalysisIssue::configuration_changed(&path),
+        );
+    }
     add_configuration_issues(
         &mut analysis_issues,
         &configuration_before,

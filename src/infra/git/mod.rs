@@ -215,6 +215,31 @@ impl ConfigurationSnapshot {
         &self.issues
     }
 
+    #[must_use]
+    pub(crate) fn differing_source_paths(
+        &self,
+        before: &[HclSourceFile],
+        after: &[HclSourceFile],
+    ) -> Vec<PathBuf> {
+        let mut paths = before
+            .iter()
+            .map(|source| source.path().to_owned())
+            .chain(after.iter().map(|source| source.path().to_owned()))
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths.dedup();
+        paths
+            .into_iter()
+            .filter(|path| {
+                let expected = after
+                    .iter()
+                    .find(|source| source.path() == path)
+                    .map(|source| source.source().as_bytes());
+                self.file_contents(path) != expected
+            })
+            .collect()
+    }
+
     fn file_contents(&self, path: &Path) -> Option<&[u8]> {
         self.files
             .iter()
