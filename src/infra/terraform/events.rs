@@ -8,23 +8,10 @@ use crate::app::progress::{
     ResourceEventKind,
 };
 
-const SUPPORTED_UI_SCHEMA_MAJOR: u64 = 1;
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum UiSchemaState {
-    #[default]
-    Unverified,
-    Supported,
-    Rejected {
-        major: Option<u64>,
-    },
-}
-
 #[derive(Default)]
 pub(crate) struct TerraformEventParser {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
-    ui_schema_state: [UiSchemaState; 2],
 }
 
 impl TerraformEventParser {
@@ -54,7 +41,7 @@ impl TerraformEventParser {
             return Vec::new();
         }
         let line = std::mem::take(buffer);
-        self.parse_line(stream, &line, received_at)
+        Self::parse_line(stream, &line, received_at)
             .into_iter()
             .collect()
     }
@@ -64,28 +51,6 @@ impl TerraformEventParser {
             EventStream::Stdout => &mut self.stdout,
             EventStream::Stderr => &mut self.stderr,
         }
-    }
-
-    const fn ui_schema_state(&self, stream: EventStream) -> UiSchemaState {
-        match stream {
-            EventStream::Stdout => self.ui_schema_state[0],
-            EventStream::Stderr => self.ui_schema_state[1],
-        }
-    }
-
-    const fn ui_schema_state_mut(&mut self, stream: EventStream) -> &mut UiSchemaState {
-        match stream {
-            EventStream::Stdout => &mut self.ui_schema_state[0],
-            EventStream::Stderr => &mut self.ui_schema_state[1],
-        }
-    }
-
-    const fn ui_schema_is_supported(&self, stream: EventStream) -> bool {
-        matches!(self.ui_schema_state(stream), UiSchemaState::Supported)
-    }
-
-    const fn reject_ui_schema(&mut self, stream: EventStream, major: Option<u64>) {
-        *self.ui_schema_state_mut(stream) = UiSchemaState::Rejected { major };
     }
 
     fn take_complete_lines(
@@ -107,12 +72,11 @@ impl TerraformEventParser {
         }
         lines
             .into_iter()
-            .filter_map(|line| self.parse_line(stream, &line, received_at))
+            .filter_map(|line| Self::parse_line(stream, &line, received_at))
             .collect()
     }
 
     fn parse_line(
-        &mut self,
         stream: EventStream,
         line: &[u8],
         received_at: Instant,
@@ -123,7 +87,7 @@ impl TerraformEventParser {
 
         let text = String::from_utf8_lossy(line);
         let kind = match serde_json::from_str::<Value>(&text) {
-            Ok(value) => parse_json_event(self, stream, &value, &text),
+            Ok(value) => parse_json_event(stream, &value, &text),
             Err(_) => {
                 ExecutionEventKind::Diagnostic(non_json_diagnostic(stream, text.into_owned()))
             }
@@ -132,21 +96,8 @@ impl TerraformEventParser {
     }
 }
 
-fn parse_json_event(
-    parser: &mut TerraformEventParser,
-    stream: EventStream,
-    value: &Value,
-    raw: &str,
-) -> ExecutionEventKind {
+fn parse_json_event(stream: EventStream, value: &Value, raw: &str) -> ExecutionEventKind {
     let Some(object) = value.as_object() else {
-        if !parser.ui_schema_is_supported(stream) {
-            return ExecutionEventKind::Diagnostic(unsupported_schema_diagnostic(
-                stream,
-                parser.rejected_ui_schema_major(stream),
-                "Terraform UI schema version has not been accepted for this stream.".to_owned(),
-                raw.to_owned(),
-            ));
-        }
         return ExecutionEventKind::Diagnostic(unknown_event_diagnostic(
             stream,
             None,
@@ -163,17 +114,7 @@ fn parse_json_event(
         .and_then(Value::as_str)
         .map(str::to_owned);
 
-    if event_type.as_deref() != Some("version") && !parser.ui_schema_is_supported(stream) {
-        return ExecutionEventKind::Diagnostic(unsupported_schema_diagnostic(
-            stream,
-            parser.rejected_ui_schema_major(stream),
-            "Terraform UI schema version has not been accepted for this stream.".to_owned(),
-            raw.to_owned(),
-        ));
-    }
-
     match event_type.as_deref() {
-        Some("version") => parse_version_event(parser, stream, object, message, raw),
         Some("diagnostic") => parse_diagnostic(object).map_or_else(
             || {
                 ExecutionEventKind::Diagnostic(unknown_event_diagnostic(
@@ -197,7 +138,8 @@ fn parse_json_event(
             ExecutionEventKind::Summary,
         ),
         Some(
-            "log"
+            "version"
+            | "log"
             | "initializing_modules_message"
             | "outputs"
             | "test_abstract"
@@ -233,68 +175,6 @@ fn parse_json_event(
             raw.to_owned(),
         )),
     }
-}
-
-fn parse_version_event(
-    parser: &mut TerraformEventParser,
-    stream: EventStream,
-    object: &Map<String, Value>,
-    message: Option<String>,
-    raw: &str,
-) -> ExecutionEventKind {
-    if let UiSchemaState::Rejected { major } = parser.ui_schema_state(stream) {
-        return ExecutionEventKind::Diagnostic(unsupported_schema_diagnostic(
-            stream,
-            major,
-            "The Terraform UI event stream was already rejected.".to_owned(),
-            raw.to_owned(),
-        ));
-    }
-    let Some(ui) = object.get("ui").and_then(Value::as_str) else {
-        parser.reject_ui_schema(stream, None);
-        return ExecutionEventKind::Diagnostic(unsupported_schema_diagnostic(
-            stream,
-            None,
-            "Version event is missing the UI schema version.".to_owned(),
-            raw.to_owned(),
-        ));
-    };
-    let Some(major) = ui_schema_major(ui) else {
-        parser.reject_ui_schema(stream, None);
-        return ExecutionEventKind::Diagnostic(unsupported_schema_diagnostic(
-            stream,
-            None,
-            format!("UI schema version is invalid: {ui}"),
-            raw.to_owned(),
-        ));
-    };
-    if major != SUPPORTED_UI_SCHEMA_MAJOR {
-        parser.reject_ui_schema(stream, Some(major));
-        return ExecutionEventKind::Diagnostic(unsupported_schema_diagnostic(
-            stream,
-            Some(major),
-            format!("UI schema major {major} is unsupported."),
-            raw.to_owned(),
-        ));
-    }
-    *parser.ui_schema_state_mut(stream) = UiSchemaState::Supported;
-    ExecutionEventKind::Informational {
-        event_type: "version".to_owned(),
-        message,
-    }
-}
-
-impl TerraformEventParser {
-    const fn rejected_ui_schema_major(&self, stream: EventStream) -> Option<u64> {
-        match self.ui_schema_state(stream) {
-            UiSchemaState::Rejected { major } => major,
-            UiSchemaState::Unverified | UiSchemaState::Supported => None,
-        }
-    }
-}
-
-fn ui_schema_major(version: &str) -> Option<u64> {
-    version.split('.').next()?.parse().ok()
 }
 
 fn resource_event_kind(event_type: &str) -> Option<ResourceEventKind> {
@@ -430,22 +310,6 @@ const fn non_json_diagnostic(stream: EventStream, text: String) -> Diagnostic {
     }
 }
 
-fn unsupported_schema_diagnostic(
-    stream: EventStream,
-    major: Option<u64>,
-    detail: String,
-    raw: String,
-) -> Diagnostic {
-    Diagnostic {
-        severity: DiagnosticSeverity::Error,
-        summary: "Unsupported Terraform UI schema".to_owned(),
-        detail: Some(detail),
-        position: None,
-        source: DiagnosticSource::UnsupportedSchema { stream, major },
-        raw: Some(raw),
-    }
-}
-
 fn unknown_event_diagnostic(
     stream: EventStream,
     event_type: Option<String>,
@@ -475,17 +339,6 @@ mod tests {
     #[test]
     fn parses_split_refresh_events_by_resource_address() {
         let mut parser = TerraformEventParser::new();
-        assert!(
-            parser
-                .push(
-                    EventStream::Stdout,
-                    br#"{"type":"version","ui":"1.0"}
-"#,
-                    Instant::now(),
-                )
-                .iter()
-                .all(|event| matches!(&event.kind, ExecutionEventKind::Informational { .. }))
-        );
         let first = br#"{"type":"refresh_start","hook":{"resource":{"addr":"aws_vpc.main"}}}
 "#;
         let second = br#"{"type":"refresh_complete","hook":{"resource":{"addr":"aws_vpc.main"}}}
@@ -520,12 +373,6 @@ mod tests {
     #[test]
     fn preserves_interleaved_streams_and_waits_for_a_complete_line() {
         let mut parser = TerraformEventParser::new();
-        parser.push(
-            EventStream::Stdout,
-            br#"{"type":"version","ui":"1.0"}
-"#,
-            Instant::now(),
-        );
         let stdout = br#"{"type":"refresh_start","hook":{"resource":{"addr":"aws_vpc.main"}}}
 "#;
         let stderr = b"provider warning";
@@ -565,12 +412,6 @@ mod tests {
     #[test]
     fn parses_summary_and_diagnostic_position_without_inventing_progress_total() {
         let mut parser = TerraformEventParser::new();
-        parser.push(
-            EventStream::Stdout,
-            br#"{"type":"version","ui":"1.0"}
-"#,
-            Instant::now(),
-        );
         let summary = json!({
             "type": "change_summary",
             "changes": {"add": 2, "change": 2, "remove": 2, "operation": "plan"}
@@ -631,12 +472,6 @@ mod tests {
     #[test]
     fn retains_unknown_json_and_long_non_json_stderr() {
         let mut parser = TerraformEventParser::new();
-        parser.push(
-            EventStream::Stdout,
-            br#"{"type":"version","ui":"1.0"}
-"#,
-            Instant::now(),
-        );
         let unknown = br#"{"@message":"Future event occurred","type":"future_event","payload":{"value":"kept"}}
 "#;
         let unknown_events = parser.push(EventStream::Stdout, unknown, Instant::now());
@@ -668,7 +503,7 @@ mod tests {
         let mut parser = TerraformEventParser::new();
         let events = parser.push(
             EventStream::Stdout,
-            br#"{"@message":"Terraform 1.9.0","type":"version","ui":"1.0"}
+            br#"{"@message":"Terraform 1.9.0","type":"version"}
 "#,
             Instant::now(),
         );
@@ -699,74 +534,6 @@ mod tests {
             &events[1].kind,
             ExecutionEventKind::Informational { event_type, .. }
                 if event_type == "planned_action_invocation"
-        ));
-    }
-
-    #[test]
-    fn reports_unsupported_ui_schema_major_as_a_diagnostic() {
-        let mut parser = TerraformEventParser::new();
-        let events = parser.push(
-            EventStream::Stdout,
-            br#"{"@message":"Terraform future","type":"version","ui":"2.0"}
-"#,
-            Instant::now(),
-        );
-
-        assert!(matches!(
-            &events[0].kind,
-            ExecutionEventKind::Diagnostic(Diagnostic {
-                source: DiagnosticSource::UnsupportedSchema {
-                    stream: EventStream::Stdout,
-                    major: Some(2)
-                },
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn rejects_typed_events_after_unsupported_ui_schema_version() {
-        let mut parser = TerraformEventParser::new();
-        let events = parser.push(
-            EventStream::Stdout,
-            br#"{"type":"refresh_start","hook":{"resource":{"addr":"aws_vpc.main"}}}
-{"type":"version","ui":"2.0"}
-{"type":"refresh_start","hook":{"resource":{"addr":"aws_vpc.main"}}}
-{"type":"change_summary","changes":{"add":1,"change":0,"remove":0}}
-"#,
-            Instant::now(),
-        );
-
-        assert_eq!(events.len(), 4);
-        assert!(matches!(
-            &events[0].kind,
-            ExecutionEventKind::Diagnostic(Diagnostic {
-                source: DiagnosticSource::UnsupportedSchema {
-                    stream: EventStream::Stdout,
-                    major: None
-                },
-                ..
-            })
-        ));
-        assert!(matches!(
-            &events[2].kind,
-            ExecutionEventKind::Diagnostic(Diagnostic {
-                source: DiagnosticSource::UnsupportedSchema {
-                    stream: EventStream::Stdout,
-                    major: Some(2)
-                },
-                ..
-            })
-        ));
-        assert!(matches!(
-            &events[3].kind,
-            ExecutionEventKind::Diagnostic(Diagnostic {
-                source: DiagnosticSource::UnsupportedSchema {
-                    stream: EventStream::Stdout,
-                    major: Some(2)
-                },
-                ..
-            })
         ));
     }
 }

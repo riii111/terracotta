@@ -1137,9 +1137,6 @@ mod tests {
 
     #[test]
     fn delivers_plan_events_before_process_termination_and_keeps_show_silent() {
-        let version = br#"{"type":"version","ui":"1.0"}
-"#
-        .to_vec();
         let refresh_start =
             br#"{"type":"refresh_start","hook":{"resource":{"addr":"aws_vpc.main"}}}
 "#
@@ -1151,7 +1148,7 @@ mod tests {
         let runner = FakeRunner::new([
             streaming_process(
                 ProcessStatus::Exited(0),
-                [version, refresh_start, refresh_complete],
+                [refresh_start, refresh_complete],
                 [b"provider warning".to_vec()],
             ),
             show_process(),
@@ -1172,25 +1169,20 @@ mod tests {
         assert!(result.plan().changes.is_empty());
         assert!(matches!(
             events.first().map(|event| &event.kind),
-            Some(ExecutionEventKind::Informational { event_type, .. })
-                if event_type == "version"
-        ));
-        assert!(matches!(
-            events.get(1).map(|event| &event.kind),
             Some(ExecutionEventKind::Resource(ResourceEvent {
                 address,
                 kind: ResourceEventKind::RefreshStart,
             })) if address == "aws_vpc.main"
         ));
         assert!(matches!(
-            events.get(2).map(|event| &event.kind),
+            events.get(1).map(|event| &event.kind),
             Some(ExecutionEventKind::Resource(ResourceEvent {
                 kind: ResourceEventKind::RefreshComplete,
                 ..
             }))
         ));
         assert!(matches!(
-            events.get(3).map(|event| &event.kind),
+            events.get(2).map(|event| &event.kind),
             Some(ExecutionEventKind::Diagnostic(Diagnostic {
                 source: DiagnosticSource::NonJson {
                     stream: EventStream::Stderr

@@ -90,10 +90,6 @@ pub(crate) enum DiagnosticSource {
         stream: EventStream,
         event_type: Option<String>,
     },
-    UnsupportedSchema {
-        stream: EventStream,
-        major: Option<u64>,
-    },
     NonJson {
         stream: EventStream,
     },
