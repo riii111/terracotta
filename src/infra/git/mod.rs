@@ -755,9 +755,7 @@ fn resolve_compare_ref_with_env(
             .map_err(|error| CompareRefError::Unavailable(error.message));
     }
 
-    if is_git_directory_pseudo_ref(compare_ref)
-        && let Some(commit) = resolve_git_directory_ref(repository_root, compare_ref, environment)?
-    {
+    if let Some(commit) = resolve_git_directory_ref(repository_root, compare_ref, environment)? {
         return Ok(commit);
     }
 
@@ -845,21 +843,6 @@ fn is_valid_comparison_ref_name(
     Ok(output.status.success())
 }
 
-fn is_git_directory_pseudo_ref(compare_ref: &str) -> bool {
-    matches!(
-        compare_ref,
-        "HEAD"
-            | "FETCH_HEAD"
-            | "ORIG_HEAD"
-            | "MERGE_HEAD"
-            | "CHERRY_PICK_HEAD"
-            | "REVERT_HEAD"
-            | "REBASE_HEAD"
-            | "BISECT_HEAD"
-            | "AUTO_MERGE"
-    )
-}
-
 fn resolve_git_directory_ref(
     repository_root: &Path,
     compare_ref: &str,
@@ -902,9 +885,44 @@ fn resolve_git_directory_ref(
         return Ok(None);
     }
 
-    resolve_commit_revision(repository_root, compare_ref, environment)
-        .map(Some)
-        .map_err(|error| CompareRefError::Unavailable(error.message))
+    let content = fs::read(&path).map_err(|error| {
+        CompareRefError::Failed(parse_error("read Git directory ref", &error.to_string()))
+    })?;
+    if !looks_like_git_directory_ref(compare_ref, &content) {
+        return Ok(None);
+    }
+
+    Ok(resolve_commit_revision(repository_root, compare_ref, environment).ok())
+}
+
+fn looks_like_git_directory_ref(compare_ref: &str, content: &[u8]) -> bool {
+    if compare_ref == "HEAD"
+        && content
+            .strip_prefix(b"ref: refs/")
+            .is_some_and(|ref_name| !ref_name.is_empty())
+    {
+        return true;
+    }
+
+    let Ok(content) = std::str::from_utf8(content) else {
+        return false;
+    };
+    let lines = content.lines().filter(|line| !line.is_empty());
+    let mut has_line = false;
+    for line in lines {
+        let Some(object_id) = line.split_whitespace().next() else {
+            return false;
+        };
+        if !is_object_id(object_id) {
+            return false;
+        }
+        has_line = true;
+    }
+    has_line
+}
+
+fn is_object_id(value: &str) -> bool {
+    matches!(value.len(), 40 | 64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn resolve_commit_revision(
@@ -2077,6 +2095,49 @@ mod tests {
         assert_eq!(
             result.before()[0].source(),
             "resource \"example\" \"one\" {\n  value = \"pseudo-ref\"\n}\n"
+        );
+        assert_eq!(
+            result.after()[0].source(),
+            "resource \"example\" \"one\" {\n  value = \"tag\"\n}\n"
+        );
+    }
+
+    #[test]
+    fn resolves_a_custom_git_directory_root_ref_before_namespace_expansion() {
+        let repository = TestRepository::new();
+        write(
+            &repository,
+            "main.tf",
+            "resource \"example\" \"one\" {\n  value = \"root-ref\"\n}\n",
+        );
+        repository.commit("root-ref target");
+        write(
+            &repository,
+            "main.tf",
+            "resource \"example\" \"one\" {\n  value = \"tag\"\n}\n",
+        );
+        repository.commit("tag target");
+        git(&repository.path, &["tag", "CUSTOM_HEAD"]);
+        let root_ref_path = git_output(
+            &repository.path,
+            &["rev-parse", "--git-path", "CUSTOM_HEAD"],
+        );
+        let root_ref_target = git_output(&repository.path, &["rev-parse", "HEAD^"]);
+        let root_ref_path = PathBuf::from(root_ref_path);
+        let root_ref_path = if root_ref_path.is_absolute() {
+            root_ref_path
+        } else {
+            repository.path.join(root_ref_path)
+        };
+        fs::write(root_ref_path, format!("{root_ref_target}\n"))
+            .expect("write Git directory root ref");
+
+        let result = collect_diff_against_ref(&repository.path, "CUSTOM_HEAD");
+
+        assert_eq!(result.status(), &GitDiffStatus::Complete);
+        assert_eq!(
+            result.before()[0].source(),
+            "resource \"example\" \"one\" {\n  value = \"root-ref\"\n}\n"
         );
         assert_eq!(
             result.after()[0].source(),
