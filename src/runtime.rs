@@ -15,12 +15,14 @@ use crate::{
         review::PlanReviewMessage,
     },
     infra::{
-        clipboard::ClipboardExecutor,
-        review,
+        ClipboardExecutor, review,
         terraform::{CancellationToken, TerraformExecutionErrorKind},
     },
     ui::{self, UiOutcome},
 };
+
+#[cfg(feature = "test-support")]
+use crate::test_support;
 
 const EXECUTION_FAILURE: u8 = 1;
 const INTERRUPTED: u8 = 130;
@@ -81,11 +83,11 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
         cancellation: cancellation.clone(),
         handle: Some(worker),
     };
-    let mut clipboard = ClipboardExecutor::from_environment();
+    let mut clipboard = ClipboardExecutor::new();
     let context = initial_execution_context(root, compare_ref);
     let ui_result = run_terminal(|terminal| {
-        #[cfg(debug_assertions)]
-        if std::env::var_os("TERRACOTTA_TEST_PANIC_AFTER_DRAW").is_some() {
+        #[cfg(feature = "test-support")]
+        if test_support::panic_after_draw_requested() {
             terminal.draw(|_| {})?;
             panic!("synthetic terminal panic");
         }

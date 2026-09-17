@@ -1,5 +1,3 @@
-use std::{env, ffi::OsStr, fs, path::PathBuf};
-
 use arboard::Clipboard;
 
 use crate::app::copy::{CopyEffect, CopyResult};
@@ -27,44 +25,6 @@ impl SystemClipboard {
         match self.write(effect.text()) {
             Ok(()) => CopyResult::Written,
             Err(_) => CopyResult::Failed,
-        }
-    }
-}
-
-pub(crate) struct FileClipboard {
-    path: PathBuf,
-}
-
-impl ClipboardWriter for FileClipboard {
-    fn write(&mut self, text: &str) -> Result<(), ClipboardError> {
-        fs::write(&self.path, text).map_err(|_| ClipboardError)
-    }
-}
-
-pub(crate) enum ClipboardExecutor {
-    System(SystemClipboard),
-    File(FileClipboard),
-    Unavailable,
-}
-
-impl ClipboardExecutor {
-    #[must_use]
-    pub(crate) fn from_environment() -> Self {
-        match env::var_os("TERRACOTTA_TEST_CLIPBOARD") {
-            Some(path) if path == OsStr::new("unavailable") => Self::Unavailable,
-            Some(path) => Self::File(FileClipboard { path: path.into() }),
-            None => Self::System(SystemClipboard::new()),
-        }
-    }
-
-    pub(crate) fn execute(&mut self, effect: &CopyEffect) -> CopyResult {
-        match self {
-            Self::System(clipboard) => clipboard.execute(effect),
-            Self::File(clipboard) => match clipboard.write(effect.text()) {
-                Ok(()) => CopyResult::Written,
-                Err(_) => CopyResult::Failed,
-            },
-            Self::Unavailable => CopyResult::Failed,
         }
     }
 }

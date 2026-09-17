@@ -9,6 +9,8 @@ mod app;
 )]
 mod infra;
 pub(crate) mod runtime;
+#[cfg(feature = "test-support")]
+pub(crate) mod test_support;
 
 pub mod ui;
 

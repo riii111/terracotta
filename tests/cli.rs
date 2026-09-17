@@ -46,7 +46,7 @@ fn plan_argument_errors_follow_clap_without_initializing_a_tui() {
     assert!(!output.stderr.contains(&0x1b));
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, feature = "test-support"))]
 mod pty_tests {
     use std::{
         env, fs,
