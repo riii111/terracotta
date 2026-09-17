@@ -745,6 +745,11 @@ fn resolve_compare_ref_with_env(
         ));
     }
 
+    if compare_ref.starts_with("refs/") {
+        return resolve_commit_revision(repository_root, compare_ref, environment)
+            .map_err(|error| CompareRefError::Unavailable(error.message));
+    }
+
     let candidates = comparison_ref_candidates(repository_root, compare_ref, environment)?;
     if !candidates.is_empty() {
         if candidates.len() > 1 {
@@ -1885,6 +1890,37 @@ mod tests {
             resolve_compare_ref_with_env(&repository.path, "compare", &[("GIT_TRACE", "1")]);
 
         assert!(matches!(result, Ok(commit) if commit.len() == 40));
+    }
+
+    #[test]
+    fn resolves_a_fully_qualified_ref_without_short_name_expansion() {
+        let repository = TestRepository::new();
+        write(
+            &repository,
+            "main.tf",
+            "resource \"example\" \"one\" {\n  value = \"branch\"\n}\n",
+        );
+        repository.commit("branch target");
+        git(&repository.path, &["branch", "foo"]);
+        write(
+            &repository,
+            "main.tf",
+            "resource \"example\" \"one\" {\n  value = \"tag\"\n}\n",
+        );
+        repository.commit("tag target");
+        git(&repository.path, &["tag", "refs/heads/foo"]);
+
+        let result = collect_diff_against_ref(&repository.path, "refs/heads/foo");
+
+        assert_eq!(result.status(), &GitDiffStatus::Complete);
+        assert_eq!(
+            result.before()[0].source(),
+            "resource \"example\" \"one\" {\n  value = \"branch\"\n}\n"
+        );
+        assert_eq!(
+            result.after()[0].source(),
+            "resource \"example\" \"one\" {\n  value = \"tag\"\n}\n"
+        );
     }
 
     #[test]
