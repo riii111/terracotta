@@ -85,6 +85,7 @@ pub(super) struct ResourceDetailState {
     source_files: Vec<SourceFileAnalysis>,
     index: usize,
     total: usize,
+    plan_resource_count: usize,
     selected: usize,
     scroll: u16,
     expanded_groups: Vec<AttributeGroup>,
@@ -111,6 +112,7 @@ impl ResourceDetailState {
             item,
             index: state.selected()?,
             total: state.visible_count(),
+            plan_resource_count: state.items().len(),
             selected: 0,
             scroll: 0,
             expanded_groups: Vec::new(),
@@ -210,7 +212,12 @@ impl ResourceDetailState {
             CopyTarget::Plan => self.plan_copy_text.clone()?,
             CopyTarget::Diagnostic | CopyTarget::Result => return None,
         };
-        Some(CopyEffect::new(target, self.total, text))
+        let resource_count = match target {
+            CopyTarget::Resource => self.total,
+            CopyTarget::Plan => self.plan_resource_count,
+            CopyTarget::Diagnostic | CopyTarget::Result => return None,
+        };
+        Some(CopyEffect::new(target, resource_count, text))
     }
 
     #[must_use]
@@ -1118,6 +1125,38 @@ mod tests {
         ResourceDetailState::from_list(&list).expect("selected item should open")
     }
 
+    fn filtered_review_list() -> PlanListState {
+        let mut worker = change();
+        worker.address = "aws_instance.worker".to_owned();
+        let changes = vec![change(), worker];
+        let attributions = attribute_changes(&changes, &[], &[]);
+        let review = PlanReview::new(
+            PathBuf::from("/infra/prod"),
+            "default".to_owned(),
+            Plan {
+                changes,
+                summary: PlanSummary {
+                    updates: 2,
+                    ..PlanSummary::default()
+                },
+                unsupported_changes: Vec::new(),
+            },
+            Vec::new(),
+            attributions,
+            ReviewComparison::new(
+                ReviewComparisonBasis::WorkingTreeVsHead,
+                None,
+                None,
+                None,
+                None,
+                ReviewComparisonStatus::Complete,
+            ),
+            Vec::new(),
+        )
+        .with_git("feature/resize".to_owned());
+        PlanListState::from_review(&review).expect("review should build a list")
+    }
+
     fn navigation_list() -> PlanListState {
         let mut worker = change();
         worker.address = "aws_instance.worker".to_owned();
@@ -1315,6 +1354,27 @@ mod tests {
         assert!(copied_text.contains("<sensitive>"));
         assert!(!copied_text.contains("old-secret"));
         assert!(!copied_text.contains("new-secret"));
+    }
+
+    #[test]
+    fn plan_copy_notice_counts_resources_outside_search_scope() {
+        let mut list = filtered_review_list();
+        list.apply(PlanListAction::BeginSearch);
+        list.apply(PlanListAction::SetSearch("api".to_owned()));
+        list.apply(PlanListAction::ConfirmSearch);
+
+        let detail = ResourceDetailState::from_list(&list).expect("filtered item should open");
+        assert_eq!(detail.total_items(), 1);
+        assert_eq!(
+            detail
+                .copy_effect(CopyTarget::Plan)
+                .expect("plan copy should be available")
+                .success_notice(),
+            CopyNotice::Copied {
+                target: CopyTarget::Plan,
+                resource_count: 2,
+            }
+        );
     }
 
     #[test]
