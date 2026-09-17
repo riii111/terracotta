@@ -170,7 +170,8 @@ pub(super) fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
 
     let notices = notice_lines(state, content_area.width as usize);
     let summary = summary_lines(state);
-    let search_height = u16::from(state.searching());
+    let has_search = state.searching() || !state.search().is_empty();
+    let search_height = u16::from(has_search);
     let notice_height = match notices.len() {
         0 => 0,
         1 => 1,
@@ -211,8 +212,13 @@ pub(super) fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
         chunks[1],
     );
     frame.render_widget(Paragraph::new(summary), chunks[2]);
-    if state.searching() {
-        frame.render_widget(Paragraph::new(format!("/ {}_", state.search())), chunks[3]);
+    if has_search {
+        let search_line = if state.searching() {
+            format!("/ {}_", state.search())
+        } else {
+            format!("Search: {}", state.search())
+        };
+        frame.render_widget(Paragraph::new(search_line), chunks[3]);
     }
     frame.render_widget(separator(chunks[4].width), chunks[4]);
 
@@ -382,41 +388,40 @@ fn summary_lines(state: &PlanListState) -> Vec<Line<'static>> {
             action_style(ResourceChangeKind::Delete),
         ),
     ]);
-    if state.filter() == PlanListFilter::All && state.search().is_empty() {
+    if state.filter() == PlanListFilter::All && !has_search(state) {
         return vec![
             action_line,
             Line::from(vec![needs_review, Span::raw("   Filter: All")]),
         ];
     }
 
-    let search = if state.search().is_empty() {
-        String::new()
+    let showing = if state.filter() == PlanListFilter::All {
+        format!(
+            "Needs review: {} / {}",
+            state.needs_review_count(),
+            state.items().len()
+        )
     } else {
-        format!("  Search: {}", state.search())
+        format!(
+            "Review {}/{}",
+            state.needs_review_count(),
+            state.items().len()
+        )
     };
     vec![
         action_line,
         Line::from(format!(
-            "{}  Filter: {}{}  Showing {}/{}",
-            if state.filter() == PlanListFilter::All {
-                format!(
-                    "Needs review: {} / {}",
-                    state.needs_review_count(),
-                    state.items().len()
-                )
-            } else {
-                format!(
-                    "Review {}/{}",
-                    state.needs_review_count(),
-                    state.items().len()
-                )
-            },
+            "{}  Filter: {}  Showing {}/{}",
+            showing,
             state.filter().label(),
-            search,
             state.visible_count(),
             state.items().len()
         )),
     ]
+}
+
+fn has_search(state: &PlanListState) -> bool {
+    state.searching() || !state.search().is_empty()
 }
 
 fn footer_line(state: &PlanListState, width: usize) -> Line<'static> {
@@ -877,10 +882,7 @@ mod tests {
         state.apply(PlanListAction::SetSearch("AWS_S3".to_owned()));
         let text = buffer_text(&render_to_buffer(&state, 100, 16));
 
-        assert!(
-            text.contains("Filter: All  Search: AWS_S3  Showing 1/4"),
-            "{text}"
-        );
+        assert!(text.contains("Filter: All  Showing 1/4"), "{text}");
         assert!(text.contains("/ AWS_S3_"), "{text}");
         assert!(
             text.contains("Type to search  Enter confirm  Esc cancel  Ctrl-C quit"),
@@ -889,12 +891,28 @@ mod tests {
         assert!(text.contains("aws_s3_bucket"), "{text}");
         assert!(!text.contains("aws_instance.api"), "{text}");
 
+        state.apply(PlanListAction::ConfirmSearch);
+        let text = buffer_text(&render_to_buffer(&state, 100, 16));
+        assert!(text.contains("Search: AWS_S3"), "{text}");
+
         state.apply(PlanListAction::SetSearch("missing".to_owned()));
         let text = buffer_text(&render_to_buffer(&state, 100, 16));
         assert!(
             text.contains("No matching resources. Search: missing"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn search_at_minimum_width_keeps_summary_and_showing_counts() {
+        let mut state = synthetic_state();
+        state.apply(PlanListAction::BeginSearch);
+        state.apply(PlanListAction::SetSearch("security".to_owned()));
+        let text = buffer_text(&render_to_buffer(&state, MIN_WIDTH, MIN_HEIGHT));
+
+        assert!(text.contains("Needs review: 2 / 4"), "{text}");
+        assert!(text.contains("Showing 1/4"), "{text}");
+        assert!(text.contains("/ security_"), "{text}");
     }
 
     #[test]
