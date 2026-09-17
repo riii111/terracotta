@@ -889,7 +889,7 @@ fn footer_line(state: &ResourceDetailState, now: Instant, width: u16) -> String 
             "{copy_controls}Up/Down/j/k select   Enter expand/collapse   PageUp/PageDown scroll   [ / ] prev/next   Esc back   q quit"
         )
     };
-    format!("{prefix}{notice}{controls}")
+    format!("{notice}{prefix}{controls}")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1375,6 +1375,20 @@ mod tests {
                 resource_count: 2,
             }
         );
+    }
+
+    #[test]
+    fn copy_notice_starts_detail_footer_while_reveal_is_active() {
+        let mut state = sensitive_sibling_state();
+        select_attribute(&mut state, "password");
+        let now = Instant::now();
+        state.apply_at(DetailAction::Reveal, 96, 40, now);
+        state.set_copy_notice(CopyNotice::Failed);
+
+        let footer = footer_line(&state, now, 48);
+
+        assert!(footer.starts_with("Copy failed: clipboard unavailable."));
+        assert!(footer.contains("r mask now"));
     }
 
     #[test]
