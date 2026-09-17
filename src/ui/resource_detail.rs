@@ -21,6 +21,7 @@ const MIN_WIDTH: u16 = 48;
 pub(super) enum DetailAction {
     SelectPrevious,
     SelectNext,
+    ToggleExpansion,
     PageUp,
     PageDown,
 }
@@ -30,6 +31,30 @@ pub(super) enum DetailInput {
     Action(DetailAction),
     Back,
     Quit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AttributeGroup {
+    Unchanged,
+    Nested {
+        kind: AttributeChangeKind,
+        path: Vec<AttributePathSegment>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DetailRow {
+    Attribute(usize),
+    Group { group: AttributeGroup, count: usize },
+}
+
+impl DetailRow {
+    const fn group(&self) -> Option<&AttributeGroup> {
+        match self {
+            Self::Attribute(_) => None,
+            Self::Group { group, .. } => Some(group),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +68,7 @@ pub(super) struct ResourceDetailState {
     total: usize,
     selected: usize,
     scroll: u16,
+    expanded_groups: Vec<AttributeGroup>,
 }
 
 impl ResourceDetailState {
@@ -58,6 +84,7 @@ impl ResourceDetailState {
             total: state.visible_count(),
             selected: 0,
             scroll: 0,
+            expanded_groups: Vec::new(),
         })
     }
 
@@ -74,8 +101,23 @@ impl ResourceDetailState {
                 self.ensure_selected_visible(viewport_width, page);
             }
             DetailAction::SelectNext => {
-                if let Some(last) = self.attributes.changed_count.checked_sub(1) {
+                if let Some(last) = detail_rows(self).len().checked_sub(1) {
                     self.selected = (self.selected + 1).min(last);
+                    self.ensure_selected_visible(viewport_width, page);
+                }
+            }
+            DetailAction::ToggleExpansion => {
+                let group = detail_rows(self)
+                    .get(self.selected)
+                    .and_then(DetailRow::group)
+                    .cloned();
+                if let Some(group) = group {
+                    if let Some(index) = self.expanded_groups.iter().position(|item| *item == group)
+                    {
+                        self.expanded_groups.remove(index);
+                    } else {
+                        self.expanded_groups.push(group);
+                    }
                     self.ensure_selected_visible(viewport_width, page);
                 }
             }
@@ -132,6 +174,7 @@ pub(super) fn key_to_input(key: KeyEvent) -> Option<DetailInput> {
     let action = match key.code {
         KeyCode::Up | KeyCode::Char('k') => DetailAction::SelectPrevious,
         KeyCode::Down | KeyCode::Char('j') => DetailAction::SelectNext,
+        KeyCode::Enter => DetailAction::ToggleExpansion,
         KeyCode::PageUp => DetailAction::PageUp,
         KeyCode::PageDown => DetailAction::PageDown,
         _ => return None,
@@ -216,35 +259,136 @@ fn detail_content(state: &ResourceDetailState) -> DetailContent {
     lines.push(Line::default());
     lines.push(Line::from("Diff:"));
 
-    let mut changed_index = 0;
-    for attribute in &state.attributes.attributes {
-        if attribute.kind != AttributeChangeKind::Changed {
-            continue;
-        }
-        if changed_index == state.selected {
-            selected_line = Some(lines.len());
-        }
-        append_attribute(&mut lines, attribute, changed_index == state.selected);
-        changed_index += 1;
-    }
-    if changed_index == 0 {
+    let has_changed_attributes = state
+        .attributes
+        .attributes
+        .iter()
+        .any(|attribute| attribute.kind == AttributeChangeKind::Changed);
+    if !has_changed_attributes {
         lines.push(Line::from("  No changed attributes."));
     }
 
-    append_replacement(&mut lines, &state.attributes);
-    if state.attributes.unchanged_count > 0 {
-        lines.push(Line::default());
-        lines.push(Line::from(format!(
-            "[>] {} unchanged {} hidden",
-            state.attributes.unchanged_count,
-            pluralize(state.attributes.unchanged_count, "attribute", "attributes")
-        )));
+    let rows = detail_rows(state);
+    for (row_index, row) in rows.iter().enumerate() {
+        if row_index == state.selected {
+            selected_line = Some(lines.len());
+        }
+        match row {
+            DetailRow::Attribute(attribute_index) => append_attribute(
+                &mut lines,
+                &state.attributes.attributes[*attribute_index],
+                row_index == state.selected,
+            ),
+            DetailRow::Group { group, count } => append_group(
+                &mut lines,
+                group,
+                *count,
+                state.expanded_groups.contains(group),
+                row_index == state.selected,
+            ),
+        }
     }
+
+    append_replacement(&mut lines, &state.attributes);
 
     DetailContent {
         lines,
         selected_line,
     }
+}
+
+fn detail_rows(state: &ResourceDetailState) -> Vec<DetailRow> {
+    let mut rows = Vec::new();
+    append_attribute_rows(
+        &mut rows,
+        &state.attributes.attributes,
+        AttributeChangeKind::Changed,
+        &[],
+        &state.expanded_groups,
+    );
+
+    let unchanged_count = state
+        .attributes
+        .attributes
+        .iter()
+        .filter(|attribute| attribute.kind == AttributeChangeKind::Unchanged)
+        .count();
+    if unchanged_count > 0 {
+        let group = AttributeGroup::Unchanged;
+        rows.push(DetailRow::Group {
+            group: group.clone(),
+            count: unchanged_count,
+        });
+        if state.expanded_groups.contains(&group) {
+            append_attribute_rows(
+                &mut rows,
+                &state.attributes.attributes,
+                AttributeChangeKind::Unchanged,
+                &[],
+                &state.expanded_groups,
+            );
+        }
+    }
+    rows
+}
+
+fn append_attribute_rows(
+    rows: &mut Vec<DetailRow>,
+    attributes: &[AttributeDiff],
+    kind: AttributeChangeKind,
+    parent: &[AttributePathSegment],
+    expanded_groups: &[AttributeGroup],
+) {
+    let mut items = Vec::new();
+    for (index, attribute) in attributes.iter().enumerate() {
+        if attribute.kind != kind
+            || attribute.path.len() <= parent.len()
+            || !attribute.path.starts_with(parent)
+        {
+            continue;
+        }
+
+        let segment = &attribute.path[parent.len()];
+        let item = if attribute.path.len() == parent.len() + 1 {
+            AttributeItem::Attribute(index)
+        } else {
+            let mut path = parent.to_vec();
+            path.push(segment.clone());
+            AttributeItem::Group(path)
+        };
+        if !items.contains(&item) {
+            items.push(item);
+        }
+    }
+
+    for item in items {
+        match item {
+            AttributeItem::Attribute(index) => rows.push(DetailRow::Attribute(index)),
+            AttributeItem::Group(path) => {
+                let group = AttributeGroup::Nested {
+                    kind,
+                    path: path.clone(),
+                };
+                let count = attributes
+                    .iter()
+                    .filter(|attribute| attribute.kind == kind && attribute.path.starts_with(&path))
+                    .count();
+                rows.push(DetailRow::Group {
+                    group: group.clone(),
+                    count,
+                });
+                if expanded_groups.contains(&group) {
+                    append_attribute_rows(rows, attributes, kind, &path, expanded_groups);
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AttributeItem {
+    Attribute(usize),
+    Group(Vec<AttributePathSegment>),
 }
 
 fn append_attribution(
@@ -314,6 +458,52 @@ fn append_attribute(lines: &mut Vec<Line<'static>>, attribute: &AttributeDiff, s
     ]));
     lines.push(Line::from(format!("    - {}", attribute.before.display())));
     lines.push(Line::from(format!("    + {}", attribute.after.display())));
+}
+
+fn append_group(
+    lines: &mut Vec<Line<'static>>,
+    group: &AttributeGroup,
+    count: usize,
+    expanded: bool,
+    selected: bool,
+) {
+    let marker = if selected { "> " } else { "  " };
+    let toggle = if expanded { "[v]" } else { "[>]" };
+    let action = if expanded { "collapse" } else { "expand" };
+    let hidden = if expanded { "" } else { " hidden" };
+    let label = match group {
+        AttributeGroup::Unchanged => format!(
+            "{count} unchanged {}{hidden}",
+            pluralize(count, "attribute", "attributes")
+        ),
+        AttributeGroup::Nested { kind, path } => format!(
+            "{}: {count} {}{hidden}",
+            attribute_path(path),
+            group_kind_label(*kind, count),
+        ),
+    };
+    lines.push(Line::from(format!(
+        "{marker}{toggle} {label}  [Enter {action}]"
+    )));
+}
+
+const fn group_kind_label(kind: AttributeChangeKind, count: usize) -> &'static str {
+    match kind {
+        AttributeChangeKind::Changed => {
+            if count == 1 {
+                "changed attribute"
+            } else {
+                "changed attributes"
+            }
+        }
+        AttributeChangeKind::Unchanged => {
+            if count == 1 {
+                "unchanged attribute"
+            } else {
+                "unchanged attributes"
+            }
+        }
+    }
 }
 
 fn append_replacement(lines: &mut Vec<Line<'static>>, attributes: &AttributeDiffs) {
@@ -432,7 +622,7 @@ fn separator(width: u16) -> Paragraph<'static> {
 }
 
 const fn footer_line() -> &'static str {
-    "Up/Down/j/k select   PageUp/PageDown scroll   Esc back   q quit"
+    "Up/Down/j/k select   Enter expand/collapse   PageUp/PageDown scroll   Esc back   q quit"
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -613,7 +803,13 @@ mod tests {
     }
 
     fn state_with_changed_lines(changed_lines: &[SourceLineChange]) -> ResourceDetailState {
-        let change = change();
+        state_for_change(change(), changed_lines)
+    }
+
+    fn state_for_change(
+        change: ResourceChange,
+        changed_lines: &[SourceLineChange],
+    ) -> ResourceDetailState {
         let source_files = vec![SourceFileAnalysis::new(
             PathBuf::from("main.tf"),
             SourceSide::After,
@@ -655,6 +851,54 @@ mod tests {
         .with_git("feature/resize".to_owned());
         let list = PlanListState::from_review(&review).expect("review should build a list");
         ResourceDetailState::from_list(&list).expect("selected item should open")
+    }
+
+    fn expansion_change() -> ResourceChange {
+        ResourceChange {
+            address: "aws_instance.api".to_owned(),
+            mode: ResourceMode::Managed,
+            actions: vec![PlanAction::Update],
+            kind: ResourceChangeKind::Update,
+            before: Some(plan_value(json!({
+                "group_a": {
+                    "changed": "old",
+                    "unchanged": "same",
+                    "nested": {"value": "old"}
+                },
+                "group_b": {"secret": "old-secret"},
+                "root_changed": "old",
+                "root_unchanged": "same"
+            }))),
+            after: Some(plan_value(json!({
+                "group_a": {
+                    "changed": "new",
+                    "unchanged": "same",
+                    "nested": {"value": "new"}
+                },
+                "group_b": {"secret": "new-secret"},
+                "root_changed": "new",
+                "root_unchanged": "same"
+            }))),
+            before_sensitive: Some(plan_value(json!({"group_b": {"secret": true}}))),
+            after_sensitive: Some(plan_value(json!({"group_b": {"secret": true}}))),
+            after_unknown: Some(plan_value(json!({}))),
+            replace_paths: None,
+            action_reason: None,
+        }
+    }
+
+    fn select_group(state: &mut ResourceDetailState, target: &AttributeGroup) {
+        for _ in 0..detail_rows(state).len() {
+            if detail_rows(state)
+                .get(state.selected)
+                .and_then(DetailRow::group)
+                == Some(target)
+            {
+                return;
+            }
+            state.apply(DetailAction::SelectNext, 96, 40);
+        }
+        panic!("group should be selectable");
     }
 
     fn render(state: &ResourceDetailState, width: u16, height: u16) -> Buffer {
@@ -699,7 +943,7 @@ mod tests {
         );
         assert!(text.contains("Up/Down/j/k select"), "{text}");
         assert!(text.contains("Esc back"), "{text}");
-        assert!(!text.contains("expand"), "{text}");
+        assert!(text.contains("Enter expand/collapse"), "{text}");
         assert!(!text.contains("reveal"), "{text}");
     }
 
@@ -739,12 +983,114 @@ mod tests {
         state.apply(DetailAction::PageDown, 46, 4);
         let text = buffer_text(&render(&state, 48, 12));
         assert!(!text.contains("synthetic-secret"), "{text}");
-        assert!(text.contains("PageUp/PageDown scroll"), "{text}");
+        assert_eq!(
+            key_to_input(key(KeyCode::PageDown)),
+            Some(DetailInput::Action(DetailAction::PageDown))
+        );
         assert_eq!(key_to_input(key(KeyCode::Esc)), Some(DetailInput::Back));
         assert_eq!(
             key_to_input(key(KeyCode::Char('q'))),
             Some(DetailInput::Quit)
         );
+        assert_eq!(
+            key_to_input(key(KeyCode::Enter)),
+            Some(DetailInput::Action(DetailAction::ToggleExpansion))
+        );
+    }
+
+    #[test]
+    fn expands_unchanged_group_and_keeps_selection_on_group_row() {
+        let mut state = state_for_change(expansion_change(), &[]);
+        let unchanged = AttributeGroup::Unchanged;
+        select_group(&mut state, &unchanged);
+        let group_index = state.selected;
+
+        state.apply(DetailAction::ToggleExpansion, 96, 40);
+
+        assert_eq!(state.selected, group_index);
+        let text = buffer_text(&render(&state, 100, 60));
+        assert!(
+            text.contains("> [v] 2 unchanged attributes  [Enter collapse]"),
+            "{text}"
+        );
+        assert!(text.contains("root_unchanged"), "{text}");
+
+        state.apply(DetailAction::SelectNext, 96, 40);
+        assert!(matches!(
+            detail_rows(&state).get(state.selected),
+            Some(DetailRow::Group {
+                group: AttributeGroup::Nested {
+                    kind: AttributeChangeKind::Unchanged,
+                    ..
+                },
+                ..
+            })
+        ));
+
+        state.apply(DetailAction::SelectPrevious, 96, 40);
+        state.apply(DetailAction::ToggleExpansion, 96, 40);
+        assert_eq!(state.selected, group_index);
+        let text = buffer_text(&render(&state, 100, 60));
+        assert!(
+            text.contains("> [>] 2 unchanged attributes hidden  [Enter expand]"),
+            "{text}"
+        );
+        assert!(!text.contains("root_unchanged"), "{text}");
+    }
+
+    #[test]
+    fn expands_nested_group_and_masks_sensitive_children() {
+        let mut state = state_for_change(expansion_change(), &[]);
+        let group = AttributeGroup::Nested {
+            kind: AttributeChangeKind::Changed,
+            path: vec![AttributePathSegment::Key("group_b".to_owned())],
+        };
+        select_group(&mut state, &group);
+
+        state.apply(DetailAction::ToggleExpansion, 96, 40);
+        let text = buffer_text(&render(&state, 100, 60));
+
+        assert!(
+            text.contains("> [v] group_b: 1 changed attribute  [Enter collapse]"),
+            "{text}"
+        );
+        assert!(text.contains("group_b.secret"), "{text}");
+        assert!(text.contains("<sensitive>"), "{text}");
+        assert!(!text.contains("old-secret"), "{text}");
+        assert!(!text.contains("new-secret"), "{text}");
+    }
+
+    #[test]
+    fn expanding_deep_group_keeps_child_selection_and_scrolls_to_it() {
+        let mut state = state_for_change(expansion_change(), &[]);
+        let group = AttributeGroup::Nested {
+            kind: AttributeChangeKind::Changed,
+            path: vec![AttributePathSegment::Key("group_a".to_owned())],
+        };
+        select_group(&mut state, &group);
+
+        state.apply(DetailAction::ToggleExpansion, 36, 4);
+        state.apply(DetailAction::SelectNext, 36, 4);
+        state.apply(DetailAction::SelectNext, 36, 4);
+        assert!(state.scroll() > 0);
+
+        let nested_group = AttributeGroup::Nested {
+            kind: AttributeChangeKind::Changed,
+            path: vec![
+                AttributePathSegment::Key("group_a".to_owned()),
+                AttributePathSegment::Key("nested".to_owned()),
+            ],
+        };
+        assert_eq!(
+            detail_rows(&state)
+                .get(state.selected)
+                .and_then(DetailRow::group),
+            Some(&nested_group)
+        );
+        state.apply(DetailAction::ToggleExpansion, 36, 4);
+        state.apply(DetailAction::SelectNext, 36, 4);
+        let text = buffer_text(&render(&state, 48, 12));
+        assert!(text.contains("> group_a.nested.value"), "{text}");
     }
 
     #[test]
