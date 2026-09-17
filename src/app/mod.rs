@@ -4,5 +4,6 @@
 )]
 
 pub(crate) mod attribute_diff;
+pub(crate) mod attribution;
 pub(crate) mod plan;
 pub(crate) mod source_location;

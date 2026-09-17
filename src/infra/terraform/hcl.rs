@@ -65,6 +65,11 @@ impl HclParseResult {
     }
 
     #[must_use]
+    pub(crate) fn files(&self) -> &[SourceFileAnalysis] {
+        &self.files
+    }
+
+    #[must_use]
     pub(crate) fn file(&self, path: &Path, side: SourceSide) -> Option<&SourceFileAnalysis> {
         self.files
             .iter()
