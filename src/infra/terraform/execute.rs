@@ -83,6 +83,7 @@ impl Debug for PlanExecution {
 pub(crate) enum TerraformCommand {
     Plan,
     Show,
+    WorkspaceShow,
 }
 
 impl Display for TerraformCommand {
@@ -90,6 +91,7 @@ impl Display for TerraformCommand {
         formatter.write_str(match self {
             Self::Plan => "plan",
             Self::Show => "show",
+            Self::WorkspaceShow => "workspace show",
         })
     }
 }
@@ -129,6 +131,10 @@ impl ProcessOutput {
             stdout: Vec::new(),
             stderr: Vec::new(),
         }
+    }
+
+    pub(crate) const fn new(stdout: Vec<u8>, stderr: Vec<u8>) -> Self {
+        Self { stdout, stderr }
     }
 
     #[must_use]
@@ -184,6 +190,9 @@ pub(crate) enum TerraformExecutionErrorKind {
     },
     InvalidPlan {
         source: PlanParseError,
+    },
+    InvalidWorkspace {
+        message: String,
     },
     Cleanup {
         message: String,
@@ -252,6 +261,12 @@ impl Display for TerraformExecutionError {
                     "terraform show output could not be parsed: {source}"
                 )
             }
+            TerraformExecutionErrorKind::InvalidWorkspace { message } => {
+                write!(
+                    formatter,
+                    "terraform workspace output could not be parsed: {message}"
+                )
+            }
             TerraformExecutionErrorKind::Cleanup { message } => {
                 write!(
                     formatter,
@@ -278,9 +293,59 @@ pub(crate) fn run_plan(
     run_plan_with_events(root, cancellation, &mut ignore_event)
 }
 
+pub(crate) fn read_workspace(
+    root: &Path,
+    cancellation: &CancellationToken,
+) -> Result<String, TerraformExecutionError> {
+    read_workspace_with_runner(root, cancellation, &SystemProcessRunner)
+}
+
+pub(crate) fn read_workspace_with_runner(
+    root: &Path,
+    cancellation: &CancellationToken,
+    runner: &dyn ProcessRunner,
+) -> Result<String, TerraformExecutionError> {
+    let output = run_command(
+        root,
+        TerraformCommand::WorkspaceShow,
+        &[OsString::from("workspace"), OsString::from("show")],
+        cancellation,
+        runner,
+    )?;
+    if output.interrupted {
+        return Err(interrupted_error(TerraformCommand::WorkspaceShow, output));
+    }
+    if !output.status.is_some_and(ProcessStatus::is_success) {
+        return Err(non_zero_error(TerraformCommand::WorkspaceShow, output));
+    }
+    let workspace = String::from_utf8(output.output.stdout).map_err(|error| {
+        TerraformExecutionError::new(TerraformExecutionErrorKind::InvalidWorkspace {
+            message: error.to_string(),
+        })
+    })?;
+    let workspace = workspace.trim();
+    if workspace.is_empty() {
+        return Err(TerraformExecutionError::new(
+            TerraformExecutionErrorKind::InvalidWorkspace {
+                message: "workspace name is empty".to_owned(),
+            },
+        ));
+    }
+    Ok(workspace.to_owned())
+}
+
 pub(crate) fn run_plan_with_events(
     root: &Path,
     cancellation: &CancellationToken,
+    event_sink: &mut dyn FnMut(ExecutionEvent),
+) -> Result<PlanExecution, TerraformExecutionError> {
+    run_plan_with_events_with_runner(root, cancellation, &SystemProcessRunner, event_sink)
+}
+
+pub(crate) fn run_plan_with_events_with_runner(
+    root: &Path,
+    cancellation: &CancellationToken,
+    runner: &dyn ProcessRunner,
     event_sink: &mut dyn FnMut(ExecutionEvent),
 ) -> Result<PlanExecution, TerraformExecutionError> {
     let temporary_plan = TemporaryPlan::create().map_err(|error| {
@@ -288,13 +353,8 @@ pub(crate) fn run_plan_with_events(
             message: error.to_string(),
         })
     })?;
-    let result = execute_plan_with_events(
-        root,
-        &temporary_plan.path,
-        cancellation,
-        &SystemProcessRunner,
-        event_sink,
-    );
+    let result =
+        execute_plan_with_events(root, &temporary_plan.path, cancellation, runner, event_sink);
 
     finish_plan(temporary_plan, result)
 }
@@ -631,16 +691,16 @@ impl ProcessResult {
     }
 }
 
-struct ProcessOutputChunk {
+pub(crate) struct ProcessOutputChunk {
     stream: EventStream,
     bytes: Vec<u8>,
 }
 
-trait ProcessRunner {
+pub(crate) trait ProcessRunner {
     fn start(&self, root: &Path, arguments: &[OsString]) -> io::Result<Box<dyn RunningProcess>>;
 }
 
-trait RunningProcess {
+pub(crate) trait RunningProcess {
     fn poll_output(&mut self) -> io::Result<Vec<ProcessOutputChunk>> {
         Ok(Vec::new())
     }
@@ -651,7 +711,7 @@ trait RunningProcess {
     fn collect_output(self: Box<Self>) -> io::Result<ProcessOutput>;
 }
 
-struct SystemProcessRunner;
+pub(crate) struct SystemProcessRunner;
 
 impl ProcessRunner for SystemProcessRunner {
     fn start(&self, root: &Path, arguments: &[OsString]) -> io::Result<Box<dyn RunningProcess>> {
