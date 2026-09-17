@@ -290,8 +290,14 @@ fn preserves_atomic_transition(input: DiffInput<'_>) -> bool {
             before_kind != after_kind && (before_kind.is_some() || after_kind.is_some())
         }
         (Some(before), None) => {
-            value_container_kind(before).is_none()
-                && metadata_container_kind(input.after_unknown).is_some()
+            match (
+                value_container_kind(before),
+                metadata_container_kind(input.after_unknown),
+            ) {
+                (Some(before_kind), Some(after_kind)) => before_kind != after_kind,
+                (None, Some(_)) => true,
+                _ => false,
+            }
         }
         (None, Some(after)) => {
             value_container_kind(after).is_none()
@@ -564,7 +570,7 @@ fn display_plan_value_with_markers(
     }
 
     match value {
-        PlanValue::Object(values) => {
+        PlanValue::Object(_) => {
             if marker_contains_true(sensitive_marker)
                 && !matches!(sensitive_marker, Some(PlanValue::Object(_)))
             {
@@ -575,15 +581,19 @@ fn display_plan_value_with_markers(
             {
                 return UNKNOWN_DISPLAY.to_owned();
             }
-            let values = values
-                .iter()
-                .map(|(key, value)| {
+            let mut keys = BTreeSet::new();
+            add_object_keys(&mut keys, Some(value));
+            add_object_keys(&mut keys, sensitive_marker);
+            add_object_keys(&mut keys, unknown_marker);
+            let values = keys
+                .into_iter()
+                .map(|key| {
                     let segment = AttributePathSegment::Key(key.clone());
                     format!(
                         "{} = {}",
-                        display_string(key),
-                        display_plan_value_with_markers(
-                            value,
+                        display_string(&key),
+                        display_optional_plan_value_with_markers(
+                            child_value(Some(value), &segment),
                             child_value(sensitive_marker, &segment),
                             child_value(unknown_marker, &segment),
                         )
@@ -592,7 +602,7 @@ fn display_plan_value_with_markers(
                 .collect::<Vec<_>>();
             format!("{{{}}}", values.join(", "))
         }
-        PlanValue::Array(values) => {
+        PlanValue::Array(_) => {
             if marker_contains_true(sensitive_marker)
                 && !matches!(sensitive_marker, Some(PlanValue::Array(_)))
             {
@@ -603,13 +613,16 @@ fn display_plan_value_with_markers(
             {
                 return UNKNOWN_DISPLAY.to_owned();
             }
-            let values = values
-                .iter()
-                .enumerate()
-                .map(|(index, value)| {
+            let length = [Some(value), sensitive_marker, unknown_marker]
+                .into_iter()
+                .filter_map(value_array_length)
+                .max()
+                .unwrap_or(0);
+            let values = (0..length)
+                .map(|index| {
                     let segment = AttributePathSegment::Index(index);
-                    display_plan_value_with_markers(
-                        value,
+                    display_optional_plan_value_with_markers(
+                        child_value(Some(value), &segment),
                         child_value(sensitive_marker, &segment),
                         child_value(unknown_marker, &segment),
                     )
@@ -624,6 +637,83 @@ fn display_plan_value_with_markers(
                 UNKNOWN_DISPLAY.to_owned()
             } else {
                 display_plan_value(value)
+            }
+        }
+    }
+}
+
+fn display_optional_plan_value_with_markers(
+    value: Option<&PlanValue>,
+    sensitive_marker: Option<&PlanValue>,
+    unknown_marker: Option<&PlanValue>,
+) -> String {
+    value.map_or_else(
+        || display_missing_plan_value_with_markers(sensitive_marker, unknown_marker),
+        |value| display_plan_value_with_markers(value, sensitive_marker, unknown_marker),
+    )
+}
+
+fn display_missing_plan_value_with_markers(
+    sensitive_marker: Option<&PlanValue>,
+    unknown_marker: Option<&PlanValue>,
+) -> String {
+    if marker_is_true(sensitive_marker) {
+        return SENSITIVE_DISPLAY.to_owned();
+    }
+    if marker_is_true(unknown_marker) {
+        return UNKNOWN_DISPLAY.to_owned();
+    }
+
+    match (
+        metadata_container_kind(sensitive_marker),
+        metadata_container_kind(unknown_marker),
+    ) {
+        (Some(ContainerKind::Object) | None, Some(ContainerKind::Object))
+        | (Some(ContainerKind::Object), None) => {
+            let mut keys = BTreeSet::new();
+            add_object_keys(&mut keys, sensitive_marker);
+            add_object_keys(&mut keys, unknown_marker);
+            let values = keys
+                .into_iter()
+                .map(|key| {
+                    let segment = AttributePathSegment::Key(key.clone());
+                    format!(
+                        "{} = {}",
+                        display_string(&key),
+                        display_missing_plan_value_with_markers(
+                            child_value(sensitive_marker, &segment),
+                            child_value(unknown_marker, &segment),
+                        )
+                    )
+                })
+                .collect::<Vec<_>>();
+            format!("{{{}}}", values.join(", "))
+        }
+        (Some(ContainerKind::Array) | None, Some(ContainerKind::Array))
+        | (Some(ContainerKind::Array), None) => {
+            let length = [sensitive_marker, unknown_marker]
+                .into_iter()
+                .filter_map(value_array_length)
+                .max()
+                .unwrap_or(0);
+            let values = (0..length)
+                .map(|index| {
+                    let segment = AttributePathSegment::Index(index);
+                    display_missing_plan_value_with_markers(
+                        child_value(sensitive_marker, &segment),
+                        child_value(unknown_marker, &segment),
+                    )
+                })
+                .collect::<Vec<_>>();
+            format!("[{}]", values.join(", "))
+        }
+        (Some(_), Some(_)) | (None, None) => {
+            if marker_contains_true(sensitive_marker) {
+                SENSITIVE_DISPLAY.to_owned()
+            } else if marker_contains_true(unknown_marker) {
+                UNKNOWN_DISPLAY.to_owned()
+            } else {
+                ABSENT_DISPLAY.to_owned()
             }
         }
     }
@@ -863,6 +953,36 @@ mod tests {
     }
 
     #[test]
+    fn keeps_marker_only_children_in_masked_composite_displays() {
+        let change = change(ChangeFixture {
+            before: json!({
+                "credentials": {"user": "alice", "token": "old"},
+                "items": ["old"]
+            }),
+            after: json!({"credentials": {"user": "bob"}, "items": ["new"]}),
+            before_sensitive: json!({"credentials": true, "items": true}),
+            after_sensitive: json!(false),
+            after_unknown: json!({
+                "credentials": {"token": true},
+                "items": [false, true]
+            }),
+        });
+
+        let diffs = diff_resource_attributes(&change);
+        let credentials = attribute(
+            &diffs,
+            &[AttributePathSegment::Key("credentials".to_owned())],
+        );
+        let items = attribute(&diffs, &[AttributePathSegment::Key("items".to_owned())]);
+
+        assert_eq!(
+            credentials.after.display(),
+            "{\"token\" = <unknown>, \"user\" = \"bob\"}"
+        );
+        assert_eq!(items.after.display(), "[\"new\", <unknown>]");
+    }
+
+    #[test]
     fn keeps_one_sided_sensitive_values_masked_only_on_that_side() {
         let change = change(ChangeFixture {
             before: json!({"public": "old"}),
@@ -1024,6 +1144,26 @@ mod tests {
             config.path,
             [AttributePathSegment::Key("config".to_owned())]
         );
+    }
+
+    #[test]
+    fn keeps_omitted_unknown_shape_changes_at_the_parent() {
+        let mut change = change(ChangeFixture {
+            before: json!({"config": {"old": true}}),
+            after: json!(null),
+            before_sensitive: json!(false),
+            after_sensitive: json!(false),
+            after_unknown: json!({"config": [true]}),
+        });
+        change.after = None;
+
+        let diffs = diff_resource_attributes(&change);
+        let config = attribute(&diffs, &[AttributePathSegment::Key("config".to_owned())]);
+
+        assert_eq!(config.before.kind(), AttributeValueKind::Known);
+        assert_eq!(config.after.kind(), AttributeValueKind::Unknown);
+        assert_eq!(config.after.display(), "<unknown>");
+        assert_eq!(diffs.attributes.len(), 1);
     }
 
     #[test]
