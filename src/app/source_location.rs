@@ -92,6 +92,11 @@ impl ResourceSourceLocation {
         &self.address
     }
 
+    #[must_use]
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
     pub(crate) fn set_address(&mut self, address: ResourceAddress) {
         self.address = address;
     }
@@ -188,6 +193,11 @@ impl SourceFileAnalysis {
     #[must_use]
     pub(crate) fn resources(&self) -> &[ResourceSourceLocation] {
         &self.resources
+    }
+
+    #[must_use]
+    pub(crate) fn issues(&self) -> &[SourceIssue] {
+        &self.issues
     }
 
     #[must_use]
