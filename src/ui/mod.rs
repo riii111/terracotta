@@ -9,7 +9,7 @@ use ratatui::DefaultTerminal;
 
 use crate::app::{
     execution::{ExecutionAction, ExecutionStage, ExecutionState},
-    plan_list::PlanListState,
+    plan_list::{PlanListAction, PlanListState},
     review::PlanReviewMessage,
 };
 
@@ -72,19 +72,28 @@ pub(crate) fn run_connected(
                     None => {}
                 }
             } else if let Some(state) = list.as_mut() {
-                match plan_list::key_to_action(key) {
-                    Some(plan_list::ListInput::Quit) => {
-                        return Ok(if failed {
-                            UiOutcome::Failed
-                        } else {
-                            UiOutcome::Reviewed
-                        });
+                if state.searching() {
+                    if plan_list::handle_search_input(state, key) {
+                        return Ok(UiOutcome::Reviewed);
                     }
-                    Some(plan_list::ListInput::Selection(action)) => state.apply(action),
-                    Some(plan_list::ListInput::OpenDetail) => {
-                        detail = resource_detail::ResourceDetailState::from_list(state);
+                } else {
+                    match plan_list::key_to_action(key) {
+                        Some(plan_list::ListInput::Quit) => {
+                            return Ok(if failed {
+                                UiOutcome::Failed
+                            } else {
+                                UiOutcome::Reviewed
+                            });
+                        }
+                        Some(plan_list::ListInput::Selection(action)) => state.apply(action),
+                        Some(plan_list::ListInput::OpenDetail) => {
+                            detail = resource_detail::ResourceDetailState::from_list(state);
+                        }
+                        Some(plan_list::ListInput::StartSearch) => {
+                            state.apply(PlanListAction::BeginSearch);
+                        }
+                        None => {}
                     }
-                    None => {}
                 }
             }
         }

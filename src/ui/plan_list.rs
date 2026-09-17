@@ -53,11 +53,18 @@ fn run_plan_list(terminal: &mut DefaultTerminal, state: &mut PlanListState) -> i
                     }
                     None => {}
                 }
+            } else if state.searching() {
+                if handle_search_input(state, key) {
+                    return Ok(());
+                }
             } else {
                 match key_to_action(key) {
                     Some(ListInput::Quit) => return Ok(()),
                     Some(ListInput::OpenDetail) => {
                         detail = super::resource_detail::ResourceDetailState::from_list(state);
+                    }
+                    Some(ListInput::StartSearch) => {
+                        state.apply(PlanListAction::BeginSearch);
                     }
                     Some(ListInput::Selection(action)) => state.apply(action),
                     None => {}
@@ -67,10 +74,20 @@ fn run_plan_list(terminal: &mut DefaultTerminal, state: &mut PlanListState) -> i
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum ListInput {
     Selection(PlanListAction),
     OpenDetail,
+    StartSearch,
+    Quit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SearchInput {
+    Insert(char),
+    Delete,
+    Confirm,
+    Cancel,
     Quit,
 }
 
@@ -83,6 +100,7 @@ pub(super) fn key_to_action(key: KeyEvent) -> Option<ListInput> {
 
     match key.code {
         KeyCode::Char('f') => Some(ListInput::Selection(PlanListAction::ToggleFilter)),
+        KeyCode::Char('/') => Some(ListInput::StartSearch),
         KeyCode::Up | KeyCode::Char('k') => {
             Some(ListInput::Selection(PlanListAction::SelectPrevious))
         }
@@ -91,6 +109,49 @@ pub(super) fn key_to_action(key: KeyEvent) -> Option<ListInput> {
         }
         KeyCode::Enter => Some(ListInput::OpenDetail),
         _ => None,
+    }
+}
+
+pub(super) fn search_key_to_input(key: KeyEvent) -> Option<SearchInput> {
+    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        return Some(SearchInput::Quit);
+    }
+
+    match key.code {
+        KeyCode::Enter => Some(SearchInput::Confirm),
+        KeyCode::Esc => Some(SearchInput::Cancel),
+        KeyCode::Backspace => Some(SearchInput::Delete),
+        KeyCode::Char(character) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            Some(SearchInput::Insert(character))
+        }
+        _ => None,
+    }
+}
+
+pub(super) fn handle_search_input(state: &mut PlanListState, key: KeyEvent) -> bool {
+    match search_key_to_input(key) {
+        Some(SearchInput::Quit) => true,
+        Some(SearchInput::Confirm) => {
+            state.apply(PlanListAction::ConfirmSearch);
+            false
+        }
+        Some(SearchInput::Cancel) => {
+            state.apply(PlanListAction::CancelSearch);
+            false
+        }
+        Some(SearchInput::Delete) => {
+            let mut search = state.search().to_owned();
+            search.pop();
+            state.apply(PlanListAction::SetSearch(search));
+            false
+        }
+        Some(SearchInput::Insert(character)) => {
+            let mut search = state.search().to_owned();
+            search.push(character);
+            state.apply(PlanListAction::SetSearch(search));
+            false
+        }
+        None => false,
     }
 }
 
@@ -109,6 +170,7 @@ pub(super) fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
 
     let notices = notice_lines(state, content_area.width as usize);
     let summary = summary_lines(state);
+    let search_height = u16::from(state.searching());
     let notice_height = match notices.len() {
         0 => 0,
         1 => 1,
@@ -122,6 +184,7 @@ pub(super) fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
             Constraint::Length(context_height),
             Constraint::Length(1),
             Constraint::Length(2),
+            Constraint::Length(search_height),
             Constraint::Length(separator_height),
             Constraint::Length(notice_height),
             Constraint::Min(1),
@@ -148,14 +211,20 @@ pub(super) fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
         chunks[1],
     );
     frame.render_widget(Paragraph::new(summary), chunks[2]);
-    frame.render_widget(separator(chunks[3].width), chunks[3]);
+    if state.searching() {
+        frame.render_widget(Paragraph::new(format!("/ {}_", state.search())), chunks[3]);
+    }
+    frame.render_widget(separator(chunks[4].width), chunks[4]);
 
     if !notices.is_empty() {
-        frame.render_widget(Paragraph::new(notices), chunks[4]);
+        frame.render_widget(Paragraph::new(notices), chunks[5]);
     }
 
-    render_rows(frame, state, chunks[5]);
-    frame.render_widget(Paragraph::new(footer_line()), chunks[6]);
+    render_rows(frame, state, chunks[6]);
+    frame.render_widget(
+        Paragraph::new(footer_line(state, content_area.width as usize)),
+        chunks[7],
+    );
 }
 
 fn notice_lines(state: &PlanListState, width: usize) -> Vec<Line<'static>> {
@@ -196,6 +265,8 @@ fn render_rows(frame: &mut Frame<'_>, state: &PlanListState, area: Rect) {
     if state.visible_count() == 0 {
         let message = if state.items().is_empty() {
             "No resource changes.".to_owned()
+        } else if !state.search().is_empty() {
+            format!("No matching resources. Search: {}", state.search())
         } else {
             format!(
                 "No items in this filter. Press f to show all {} changes.",
@@ -311,28 +382,59 @@ fn summary_lines(state: &PlanListState) -> Vec<Line<'static>> {
             action_style(ResourceChangeKind::Delete),
         ),
     ]);
-    if state.filter() == PlanListFilter::All {
+    if state.filter() == PlanListFilter::All && state.search().is_empty() {
         return vec![
             action_line,
             Line::from(vec![needs_review, Span::raw("   Filter: All")]),
         ];
     }
 
+    let search = if state.search().is_empty() {
+        String::new()
+    } else {
+        format!("  Search: {}", state.search())
+    };
     vec![
         action_line,
         Line::from(format!(
-            "Review {}/{}  Filter: {}  Showing {}/{}",
-            state.needs_review_count(),
-            state.items().len(),
+            "{}  Filter: {}{}  Showing {}/{}",
+            if state.filter() == PlanListFilter::All {
+                format!(
+                    "Needs review: {} / {}",
+                    state.needs_review_count(),
+                    state.items().len()
+                )
+            } else {
+                format!(
+                    "Review {}/{}",
+                    state.needs_review_count(),
+                    state.items().len()
+                )
+            },
             state.filter().label(),
+            search,
             state.visible_count(),
             state.items().len()
         )),
     ]
 }
 
-fn footer_line() -> Line<'static> {
-    Line::from("j/k/↑↓ select  Enter  f filter  q/Ctrl-C quit")
+fn footer_line(state: &PlanListState, width: usize) -> Line<'static> {
+    if state.searching() {
+        let footer = if width < 55 {
+            "Type to search  Enter  Esc cancel  Ctrl-C"
+        } else {
+            "Type to search  Enter confirm  Esc cancel  Ctrl-C quit"
+        };
+        return Line::from(footer);
+    }
+
+    let footer = if width < 55 {
+        "j/k/↑↓ select  f filter  / search  q/Ctrl-C"
+    } else {
+        "j/k/↑↓ select  Enter  f filter  / search  q/Ctrl-C quit"
+    };
+    Line::from(footer)
 }
 
 fn separator(width: u16) -> Paragraph<'static> {
@@ -578,7 +680,7 @@ mod tests {
         assert!(text.contains("main.tf:42-46"));
         assert!(text.contains("incomplete"));
         assert!(text.contains("no match"));
-        assert!(text.contains("j/k/↑↓ select  Enter  f filter  q/Ctrl-C quit"));
+        assert!(text.contains("j/k/↑↓ select  Enter  f filter  / search  q/Ctrl-C quit"));
         assert!(
             text.contains(
                 "aws_s3_bucket.logs_with_a_very_long_resource_address_that_needs_truncation_for_narrow_terminal",
@@ -615,7 +717,7 @@ mod tests {
         assert!(text.contains("Analysis incomplete"), "{text}");
         assert!(text.contains("(+2 more)"), "{text}");
         assert!(
-            text.contains("j/k/↑↓ select  Enter  f filter  q/Ctrl-C quit"),
+            text.contains("j/k/↑↓ select  f filter  / search  q/Ctrl-C"),
             "{text}"
         );
     }
@@ -633,7 +735,7 @@ mod tests {
         assert!(text.contains("(+2 more)"), "{text}");
         assert!(text.contains("Needs review: 1 / 1"), "{text}");
         assert!(
-            text.contains("j/k/↑↓ select  Enter  f filter  q/Ctrl-C quit"),
+            text.contains("j/k/↑↓ select  f filter  / search  q/Ctrl-C"),
             "{text}"
         );
     }
@@ -723,6 +825,92 @@ mod tests {
             key_to_action(key(KeyCode::Char('f'), KeyModifiers::NONE)),
             Some(ListInput::Selection(PlanListAction::ToggleFilter))
         );
+        assert_eq!(
+            key_to_action(key(KeyCode::Char('/'), KeyModifiers::NONE)),
+            Some(ListInput::StartSearch)
+        );
+    }
+
+    #[test]
+    fn search_input_treats_regular_shortcut_keys_as_search_text() {
+        let key = |code, modifiers| KeyEvent {
+            code,
+            modifiers,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        };
+
+        assert_eq!(
+            search_key_to_input(key(KeyCode::Char('q'), KeyModifiers::NONE)),
+            Some(SearchInput::Insert('q'))
+        );
+        assert_eq!(
+            search_key_to_input(key(KeyCode::Char('f'), KeyModifiers::NONE)),
+            Some(SearchInput::Insert('f'))
+        );
+        assert_eq!(
+            search_key_to_input(key(KeyCode::Char('y'), KeyModifiers::NONE)),
+            Some(SearchInput::Insert('y'))
+        );
+        assert_eq!(
+            search_key_to_input(key(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            Some(SearchInput::Quit)
+        );
+        assert_eq!(
+            search_key_to_input(key(KeyCode::Backspace, KeyModifiers::NONE)),
+            Some(SearchInput::Delete)
+        );
+        assert_eq!(
+            search_key_to_input(key(KeyCode::Enter, KeyModifiers::NONE)),
+            Some(SearchInput::Confirm)
+        );
+        assert_eq!(
+            search_key_to_input(key(KeyCode::Esc, KeyModifiers::NONE)),
+            Some(SearchInput::Cancel)
+        );
+    }
+
+    #[test]
+    fn search_render_shows_query_and_explicitly_reports_no_matches() {
+        let mut state = synthetic_state();
+        state.apply(PlanListAction::BeginSearch);
+        state.apply(PlanListAction::SetSearch("AWS_S3".to_owned()));
+        let text = buffer_text(&render_to_buffer(&state, 100, 16));
+
+        assert!(
+            text.contains("Filter: All  Search: AWS_S3  Showing 1/4"),
+            "{text}"
+        );
+        assert!(text.contains("/ AWS_S3_"), "{text}");
+        assert!(
+            text.contains("Type to search  Enter confirm  Esc cancel  Ctrl-C quit"),
+            "{text}"
+        );
+        assert!(text.contains("aws_s3_bucket"), "{text}");
+        assert!(!text.contains("aws_instance.api"), "{text}");
+
+        state.apply(PlanListAction::SetSearch("missing".to_owned()));
+        let text = buffer_text(&render_to_buffer(&state, 100, 16));
+        assert!(
+            text.contains("No matching resources. Search: missing"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn search_and_filter_scope_detail_to_the_same_visible_resources() {
+        let mut state = synthetic_state();
+        state.apply(PlanListAction::ToggleFilter);
+        state.apply(PlanListAction::BeginSearch);
+        state.apply(PlanListAction::SetSearch("worker".to_owned()));
+        state.apply(PlanListAction::ConfirmSearch);
+
+        let detail = super::super::resource_detail::ResourceDetailState::from_list(&state)
+            .expect("the filtered search result should open details");
+        assert_eq!(detail.item_index(), 0);
+        assert_eq!(detail.total_items(), 1);
+        assert_eq!(state.filter(), PlanListFilter::NeedsReview);
+        assert_eq!(state.search(), "worker");
     }
 
     #[test]
@@ -767,7 +955,7 @@ mod tests {
         assert!(text.contains("Filter: Needs review"), "{text}");
         assert!(text.contains("Showing 1/1"), "{text}");
         assert!(
-            text.contains("j/k/↑↓ select  Enter  f filter  q/Ctrl-C quit"),
+            text.contains("j/k/↑↓ select  f filter  / search  q/Ctrl-C"),
             "{text}"
         );
     }

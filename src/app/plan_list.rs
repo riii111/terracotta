@@ -47,11 +47,15 @@ impl Display for PlanListError {
 
 impl std::error::Error for PlanListError {}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PlanListAction {
     SelectPrevious,
     SelectNext,
     ToggleFilter,
+    BeginSearch,
+    SetSearch(String),
+    ConfirmSearch,
+    CancelSearch,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,7 +84,16 @@ pub(crate) struct PlanListState {
     unsupported: Vec<UnsupportedChangeKind>,
     analysis_issues: Vec<String>,
     filter: PlanListFilter,
+    search: String,
+    search_backup: Option<SearchBackup>,
     selected: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SearchBackup {
+    filter: PlanListFilter,
+    search: String,
+    selected_address: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -173,6 +186,8 @@ impl PlanListState {
                 .collect(),
             analysis_issues: Vec::new(),
             filter: PlanListFilter::All,
+            search: String::new(),
+            search_backup: None,
             selected,
         })
     }
@@ -187,6 +202,8 @@ impl PlanListState {
             unsupported: Vec::new(),
             analysis_issues: Vec::new(),
             filter: PlanListFilter::All,
+            search: String::new(),
+            search_backup: None,
             selected: None,
         }
     }
@@ -205,6 +222,10 @@ impl PlanListState {
                 }
             }
             PlanListAction::ToggleFilter => self.toggle_filter(),
+            PlanListAction::BeginSearch => self.begin_search(),
+            PlanListAction::SetSearch(search) => self.set_search(search),
+            PlanListAction::ConfirmSearch => self.confirm_search(),
+            PlanListAction::CancelSearch => self.cancel_search(),
         }
     }
 
@@ -229,7 +250,10 @@ impl PlanListState {
     }
 
     pub(crate) fn visible_items(&self) -> impl Iterator<Item = &PlanListItem> {
-        self.items.iter().filter(|item| self.includes(item))
+        let search = self.search.to_lowercase();
+        self.items
+            .iter()
+            .filter(move |item| self.includes(item, &search))
     }
 
     #[must_use]
@@ -240,6 +264,16 @@ impl PlanListState {
     #[must_use]
     pub(crate) const fn filter(&self) -> PlanListFilter {
         self.filter
+    }
+
+    #[must_use]
+    pub(crate) fn search(&self) -> &str {
+        &self.search
+    }
+
+    #[must_use]
+    pub(crate) const fn searching(&self) -> bool {
+        self.search_backup.is_some()
     }
 
     #[must_use]
@@ -285,8 +319,9 @@ impl PlanListState {
         &self.analysis_issues
     }
 
-    const fn includes(&self, item: &PlanListItem) -> bool {
-        matches!(self.filter, PlanListFilter::All) || item.needs_review()
+    fn includes(&self, item: &PlanListItem, search: &str) -> bool {
+        (matches!(self.filter, PlanListFilter::All) || item.needs_review())
+            && (search.is_empty() || item.address().to_lowercase().contains(search))
     }
 
     fn toggle_filter(&mut self) {
@@ -295,7 +330,46 @@ impl PlanListState {
             PlanListFilter::All => PlanListFilter::NeedsReview,
             PlanListFilter::NeedsReview => PlanListFilter::All,
         };
-        self.selected = selected_address
+        self.select_visible_address_or_first(selected_address);
+    }
+
+    fn begin_search(&mut self) {
+        if self.searching() {
+            return;
+        }
+
+        self.search_backup = Some(SearchBackup {
+            filter: self.filter,
+            search: self.search.clone(),
+            selected_address: self.selected_item().map(|item| item.address().to_owned()),
+        });
+    }
+
+    fn set_search(&mut self, search: String) {
+        let selected_address = self.selected_item().map(|item| item.address().to_owned());
+        self.search = search;
+        self.select_visible_address_or_first(selected_address);
+    }
+
+    fn confirm_search(&mut self) {
+        self.search_backup = None;
+    }
+
+    fn cancel_search(&mut self) {
+        let Some(backup) = self.search_backup.take() else {
+            return;
+        };
+
+        self.filter = backup.filter;
+        self.search = backup.search;
+        self.selected = backup.selected_address.and_then(|address| {
+            self.visible_items()
+                .position(|item| item.address() == address)
+        });
+    }
+
+    fn select_visible_address_or_first(&mut self, address: Option<String>) {
+        self.selected = address
             .and_then(|address| {
                 self.visible_items()
                     .position(|item| item.address() == address)
@@ -575,6 +649,70 @@ mod tests {
             state.selected_item().map(PlanListItem::address),
             Some("aws_instance.direct")
         );
+    }
+
+    #[test]
+    fn resource_search_matches_case_insensitive_address_fragments() {
+        let mut state = filtered_state();
+
+        state.apply(PlanListAction::BeginSearch);
+        state.apply(PlanListAction::SetSearch(
+            "AWS_INSTANCE.INCOMPLETE".to_owned(),
+        ));
+
+        assert!(state.searching());
+        assert_eq!(state.visible_count(), 1);
+        assert_eq!(state.selected(), Some(0));
+        assert_eq!(
+            state.selected_item().map(PlanListItem::address),
+            Some("aws_instance.incomplete")
+        );
+
+        state.apply(PlanListAction::ConfirmSearch);
+
+        assert!(!state.searching());
+        assert_eq!(state.search(), "AWS_INSTANCE.INCOMPLETE");
+    }
+
+    #[test]
+    fn resource_search_uses_filter_scope_and_cancel_restores_conditions_and_selection() {
+        let mut state = filtered_state();
+        state.apply(PlanListAction::ToggleFilter);
+        state.apply(PlanListAction::SelectNext);
+
+        state.apply(PlanListAction::BeginSearch);
+        state.apply(PlanListAction::SetSearch("direct".to_owned()));
+
+        assert_eq!(state.visible_count(), 0);
+        assert_eq!(state.selected(), None);
+
+        state.apply(PlanListAction::CancelSearch);
+
+        assert_eq!(state.filter(), PlanListFilter::NeedsReview);
+        assert_eq!(state.search(), "");
+        assert_eq!(state.selected(), Some(1));
+        assert_eq!(
+            state.selected_item().map(PlanListItem::address),
+            Some("aws_instance.no_match")
+        );
+    }
+
+    #[test]
+    fn empty_search_confirm_clears_query_and_restores_all_matches() {
+        let mut state = filtered_state();
+
+        state.apply(PlanListAction::BeginSearch);
+        state.apply(PlanListAction::SetSearch("direct".to_owned()));
+        state.apply(PlanListAction::ConfirmSearch);
+        assert_eq!(state.visible_count(), 1);
+
+        state.apply(PlanListAction::BeginSearch);
+        state.apply(PlanListAction::SetSearch(String::new()));
+        state.apply(PlanListAction::ConfirmSearch);
+
+        assert_eq!(state.search(), "");
+        assert_eq!(state.visible_count(), 3);
+        assert_eq!(state.selected(), Some(0));
     }
 
     fn direct_only_state() -> PlanListState {
