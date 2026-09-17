@@ -18,28 +18,12 @@ use crate::app::source_location::{
     ResourceAddress, ResourceSourceLocation, SourceFileAnalysis, SourceRange, SourceSide,
 };
 
-mod execution;
-
 const MIN_HEIGHT: u16 = 11;
 const MIN_WIDTH: u16 = 48;
 
-/// Runs the development-only plan list with synthetic plan and attribution data.
-///
-/// # Errors
-///
-/// Returns an I/O error when terminal drawing or input handling fails.
-pub fn run_synthetic() -> io::Result<()> {
+pub(super) fn run_synthetic() -> io::Result<()> {
     let mut state = synthetic_state();
     ratatui::run(|terminal| run_plan_list(terminal, &mut state))
-}
-
-/// Runs the development-only execution screen with synthetic event data.
-///
-/// # Errors
-///
-/// Returns an I/O error when terminal drawing or input handling fails.
-pub fn run_synthetic_execution() -> io::Result<()> {
-    execution::run_synthetic_execution()
 }
 
 fn run_plan_list(terminal: &mut DefaultTerminal, state: &mut PlanListState) -> io::Result<()> {
