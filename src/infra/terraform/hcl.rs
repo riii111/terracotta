@@ -43,6 +43,21 @@ impl HclSourceFile {
         self.read_error = Some(error.to_string());
         self
     }
+
+    #[must_use]
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    #[must_use]
+    pub(crate) fn source(&self) -> &str {
+        &self.source
+    }
+
+    #[must_use]
+    pub(crate) const fn side(&self) -> SourceSide {
+        self.side
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
