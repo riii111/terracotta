@@ -892,7 +892,9 @@ fn resolve_git_directory_ref(
         return Ok(None);
     }
 
-    Ok(resolve_commit_revision(repository_root, compare_ref, environment).ok())
+    resolve_commit_revision(repository_root, compare_ref, environment)
+        .map(Some)
+        .map_err(|error| CompareRefError::Unavailable(error.message))
 }
 
 fn looks_like_git_directory_ref(compare_ref: &str, content: &[u8]) -> bool {
@@ -2143,6 +2145,42 @@ mod tests {
             result.after()[0].source(),
             "resource \"example\" \"one\" {\n  value = \"tag\"\n}\n"
         );
+    }
+
+    #[test]
+    fn reports_a_failed_root_ref_without_falling_back_to_a_namespace_ref() {
+        let repository = TestRepository::new();
+        write(&repository, "main.tf", "resource \"example\" \"one\" {}\n");
+        repository.commit("root-ref target");
+        write(
+            &repository,
+            "main.tf",
+            "resource \"example\" \"one\" {\n  value = \"tag\"\n}\n",
+        );
+        repository.commit("tag target");
+        git(&repository.path, &["tag", "CUSTOM_HEAD"]);
+        let root_ref_path = git_output(
+            &repository.path,
+            &["rev-parse", "--git-path", "CUSTOM_HEAD"],
+        );
+        let blob_target = git_output(&repository.path, &["rev-parse", "HEAD^:main.tf"]);
+        let root_ref_path = PathBuf::from(root_ref_path);
+        let root_ref_path = if root_ref_path.is_absolute() {
+            root_ref_path
+        } else {
+            repository.path.join(root_ref_path)
+        };
+        fs::write(root_ref_path, format!("{blob_target}\n")).expect("write Git directory root ref");
+
+        let result = collect_diff_against_ref(&repository.path, "CUSTOM_HEAD");
+
+        assert!(matches!(
+            result.status(),
+            GitDiffStatus::CompareRefUnavailable { reference, message }
+                if reference == "CUSTOM_HEAD" && !message.is_empty()
+        ));
+        assert!(result.resolved_commit().is_none());
+        assert!(result.head_commit().is_some());
     }
 
     #[test]
