@@ -332,7 +332,7 @@ fn summary_lines(state: &PlanListState) -> Vec<Line<'static>> {
 }
 
 fn footer_line() -> Line<'static> {
-    Line::from("j/k/↑↓ select   Enter details   f filter   q/Ctrl-C quit")
+    Line::from("j/k/↑↓ select  Enter  f filter  q/Ctrl-C quit")
 }
 
 fn separator(width: u16) -> Paragraph<'static> {
@@ -578,7 +578,7 @@ mod tests {
         assert!(text.contains("main.tf:42-46"));
         assert!(text.contains("incomplete"));
         assert!(text.contains("no match"));
-        assert!(text.contains("j/k/↑↓ select   Enter details   f filter"));
+        assert!(text.contains("j/k/↑↓ select  Enter  f filter  q/Ctrl-C quit"));
         assert!(
             text.contains(
                 "aws_s3_bucket.logs_with_a_very_long_resource_address_that_needs_truncation_for_narrow_terminal",
@@ -614,7 +614,10 @@ mod tests {
         assert!(text.contains("Needs review: 1 / 1"), "{text}");
         assert!(text.contains("Analysis incomplete"), "{text}");
         assert!(text.contains("(+2 more)"), "{text}");
-        assert!(text.contains("j/k/↑↓ select   Enter details"), "{text}");
+        assert!(
+            text.contains("j/k/↑↓ select  Enter  f filter  q/Ctrl-C quit"),
+            "{text}"
+        );
     }
 
     #[test]
@@ -629,7 +632,10 @@ mod tests {
         );
         assert!(text.contains("(+2 more)"), "{text}");
         assert!(text.contains("Needs review: 1 / 1"), "{text}");
-        assert!(text.contains("j/k/↑↓ select   Enter details"), "{text}");
+        assert!(
+            text.contains("j/k/↑↓ select  Enter  f filter  q/Ctrl-C quit"),
+            "{text}"
+        );
     }
 
     #[test]
@@ -760,6 +766,10 @@ mod tests {
 
         assert!(text.contains("Filter: Needs review"), "{text}");
         assert!(text.contains("Showing 1/1"), "{text}");
+        assert!(
+            text.contains("j/k/↑↓ select  Enter  f filter  q/Ctrl-C quit"),
+            "{text}"
+        );
     }
 
     fn direct_only_state() -> PlanListState {

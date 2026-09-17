@@ -12,5 +12,5 @@ expression: "buffer_text(&render_to_buffer(&state, 80, 12))"
 │                                                                              │
 │                                                                              │
 │                                                                              │
-│j/k/↑↓ select   Enter details   f filter   q/Ctrl-C quit                      │
+│j/k/↑↓ select  Enter  f filter  q/Ctrl-C quit                                 │
 └──────────────────────────────────────────────────────────────────────────────┘
