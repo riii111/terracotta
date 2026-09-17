@@ -381,6 +381,7 @@ fn render_resource_detail_at(frame: &mut Frame<'_>, state: &mut ResourceDetailSt
     frame.render_widget(block, area);
 
     let notice_height = u16::from(state.is_revealed_at(now));
+    let copy_notice_height = u16::from(state.copy_notice().is_some());
     let context_height = u16::from(state.context.is_some()) * 2;
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -390,6 +391,7 @@ fn render_resource_detail_at(frame: &mut Frame<'_>, state: &mut ResourceDetailSt
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Min(1),
+            Constraint::Length(copy_notice_height),
             Constraint::Length(1),
         ])
         .split(content_area);
@@ -450,9 +452,12 @@ fn render_resource_detail_at(frame: &mut Frame<'_>, state: &mut ResourceDetailSt
             .wrap(Wrap { trim: false }),
         chunks[4],
     );
+    if let Some(notice) = state.copy_notice() {
+        frame.render_widget(Paragraph::new(notice.message()), chunks[5]);
+    }
     frame.render_widget(
-        Paragraph::new(footer_line(state, now, chunks[5].width)),
-        chunks[5],
+        Paragraph::new(footer_line(state, now, chunks[6].width)),
+        chunks[6],
     );
 }
 
@@ -868,9 +873,6 @@ fn footer_line(state: &ResourceDetailState, now: Instant, width: u16) -> String 
     } else {
         format!("{reveal}   ")
     };
-    let notice = state
-        .copy_notice()
-        .map_or_else(String::new, |notice| format!("{}   ", notice.message()));
     let copy_controls = match (
         state.resource_copy_text.is_some(),
         state.plan_copy_text.is_some(),
@@ -889,7 +891,7 @@ fn footer_line(state: &ResourceDetailState, now: Instant, width: u16) -> String 
             "{copy_controls}Up/Down/j/k select   Enter expand/collapse   PageUp/PageDown scroll   [ / ] prev/next   Esc back   q quit"
         )
     };
-    format!("{notice}{prefix}{controls}")
+    format!("{prefix}{controls}")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1378,17 +1380,20 @@ mod tests {
     }
 
     #[test]
-    fn copy_notice_starts_detail_footer_while_reveal_is_active() {
+    fn copy_notice_gets_its_own_row_while_reveal_is_active() {
         let mut state = sensitive_sibling_state();
         select_attribute(&mut state, "password");
         let now = Instant::now();
         state.apply_at(DetailAction::Reveal, 96, 40, now);
         state.set_copy_notice(CopyNotice::Failed);
 
-        let footer = footer_line(&state, now, 48);
+        let text = buffer_text(&render_at(&mut state, 48, 8, now));
 
-        assert!(footer.starts_with("Copy failed: clipboard unavailable."));
-        assert!(footer.contains("r mask now"));
+        assert!(
+            text.contains("Copy failed: clipboard unavailable."),
+            "{text}"
+        );
+        assert!(text.contains("r mask now"), "{text}");
     }
 
     #[test]
