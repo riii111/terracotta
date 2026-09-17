@@ -1,3 +1,8 @@
+#![allow(
+    clippy::redundant_pub_crate,
+    reason = "HCL parsing is shared only within the crate"
+)]
+
 use std::{
     collections::HashMap,
     fs, io,
@@ -12,16 +17,20 @@ use crate::app::source_location::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HclSourceFile {
-    pub path: PathBuf,
-    pub source: String,
-    pub side: SourceSide,
+pub(crate) struct HclSourceFile {
+    path: PathBuf,
+    source: String,
+    side: SourceSide,
     read_error: Option<String>,
 }
 
 impl HclSourceFile {
     #[must_use]
-    pub fn new(path: impl Into<PathBuf>, source: impl Into<String>, side: SourceSide) -> Self {
+    pub(crate) fn new(
+        path: impl Into<PathBuf>,
+        source: impl Into<String>,
+        side: SourceSide,
+    ) -> Self {
         Self {
             path: path.into(),
             source: source.into(),
@@ -29,43 +38,52 @@ impl HclSourceFile {
             read_error: None,
         }
     }
+
+    fn with_read_error(mut self, error: &io::Error) -> Self {
+        self.read_error = Some(error.to_string());
+        self
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct HclParseResult {
-    pub files: Vec<SourceFileAnalysis>,
+pub(crate) struct HclParseResult {
+    files: Vec<SourceFileAnalysis>,
 }
 
 impl HclParseResult {
+    const fn new(files: Vec<SourceFileAnalysis>) -> Self {
+        Self { files }
+    }
+
     #[must_use]
-    pub fn is_complete(&self) -> bool {
+    pub(crate) fn is_complete(&self) -> bool {
         self.files.iter().all(SourceFileAnalysis::is_complete)
     }
 
-    pub fn resources(&self) -> impl Iterator<Item = &ResourceSourceLocation> {
-        self.files.iter().flat_map(|file| file.resources.iter())
+    pub(crate) fn resources(&self) -> impl Iterator<Item = &ResourceSourceLocation> {
+        self.files.iter().flat_map(|file| file.resources().iter())
     }
 
     #[must_use]
-    pub fn file(&self, path: &Path, side: SourceSide) -> Option<&SourceFileAnalysis> {
+    pub(crate) fn file(&self, path: &Path, side: SourceSide) -> Option<&SourceFileAnalysis> {
         self.files
             .iter()
-            .find(|file| file.path == path && file.side == side)
+            .find(|file| file.path() == path && file.side() == side)
     }
 }
 
 #[must_use]
-pub fn parse_source(input: HclSourceFile) -> SourceFileAnalysis {
+pub(crate) fn parse_source(input: HclSourceFile) -> SourceFileAnalysis {
     if !is_native_hcl_path(&input.path) {
-        return SourceFileAnalysis {
-            path: input.path,
-            side: input.side,
-            resources: Vec::new(),
-            issues: vec![SourceIssue {
-                kind: SourceIssueKind::UnsupportedInput,
-                message: "only native .tf configuration is supported".to_owned(),
-            }],
-        };
+        return SourceFileAnalysis::new(
+            input.path,
+            input.side,
+            Vec::new(),
+            vec![SourceIssue::new(
+                SourceIssueKind::UnsupportedInput,
+                "only native .tf configuration is supported",
+            )],
+        );
     }
 
     let (parsed_addresses, mut issues) = parse_hcl(&input.source);
@@ -73,21 +91,65 @@ pub fn parse_source(input: HclSourceFile) -> SourceFileAnalysis {
     issues.extend(scan_issues);
     if issues
         .iter()
-        .any(|issue| issue.kind == SourceIssueKind::SyntaxError)
+        .any(|issue| issue.kind() == SourceIssueKind::SyntaxError)
     {
         resources.clear();
     } else {
         for (resource, address) in resources.iter_mut().zip(parsed_addresses) {
-            resource.address = address;
+            resource.set_address(address);
         }
     }
 
-    SourceFileAnalysis {
-        path: input.path,
-        side: input.side,
-        resources,
-        issues,
-    }
+    SourceFileAnalysis::new(input.path, input.side, resources, issues)
+}
+
+#[must_use]
+pub(crate) fn parse_files<I>(inputs: I) -> HclParseResult
+where
+    I: IntoIterator<Item = HclSourceFile>,
+{
+    let mut result = HclParseResult::new(inputs.into_iter().map(parse_source).collect());
+    mark_duplicate_resources(&mut result);
+    result
+}
+
+/// Parses native Terraform files directly under `root`.
+///
+/// `.tf.json` files are included in the result as unsupported inputs so that
+/// callers can report an incomplete analysis instead of silently ignoring them.
+///
+/// # Errors
+///
+/// Returns an error when `root` cannot be read as a directory. Errors reading
+/// individual files are retained in the corresponding file analysis.
+pub(crate) fn parse_root(root: &Path, side: SourceSide) -> io::Result<HclParseResult> {
+    let mut paths = fs::read_dir(root)?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| is_native_hcl_path(path) || is_json_hcl_path(path))
+        .collect::<Vec<_>>();
+    paths.sort();
+
+    let mut result = HclParseResult::new(
+        paths
+            .into_iter()
+            .map(|path| match fs::read_to_string(&path) {
+                Ok(source) => HclSourceFile::new(path, source, side),
+                Err(error) => HclSourceFile::new(path, String::new(), side).with_read_error(&error),
+            })
+            .map(|input| match input.read_error {
+                Some(error) => SourceFileAnalysis::new(
+                    input.path,
+                    input.side,
+                    Vec::new(),
+                    vec![SourceIssue::new(SourceIssueKind::ReadError, error)],
+                ),
+                None => parse_source(input),
+            })
+            .collect(),
+    );
+    mark_duplicate_resources(&mut result);
+    Ok(result)
 }
 
 fn parse_hcl(source: &str) -> (Vec<ResourceAddress>, Vec<SourceIssue>) {
@@ -95,12 +157,29 @@ fn parse_hcl(source: &str) -> (Vec<ResourceAddress>, Vec<SourceIssue>) {
         Ok(body) => (parsed_resource_addresses(body), Vec::new()),
         Err(error) => (
             Vec::new(),
-            vec![SourceIssue {
-                kind: SourceIssueKind::SyntaxError,
-                message: format!("HCL parse error: {error}"),
-            }],
+            vec![SourceIssue::new(
+                SourceIssueKind::SyntaxError,
+                format!("HCL parse error: {error}"),
+            )],
         ),
     }
+}
+
+fn parsed_resource_addresses(body: hcl::Body) -> Vec<ResourceAddress> {
+    body.into_inner()
+        .into_iter()
+        .filter_map(|structure| match structure {
+            Structure::Block(block)
+                if block.identifier() == "resource" && block.labels().len() == 2 =>
+            {
+                Some(ResourceAddress::new(
+                    block.labels()[0].as_str(),
+                    block.labels()[1].as_str(),
+                ))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 fn scan_resources(input: &HclSourceFile) -> (Vec<ResourceSourceLocation>, Vec<SourceIssue>) {
@@ -109,10 +188,7 @@ fn scan_resources(input: &HclSourceFile) -> (Vec<ResourceSourceLocation>, Vec<So
     let mut issues = scanned
         .errors
         .into_iter()
-        .map(|message| SourceIssue {
-            kind: SourceIssueKind::SyntaxError,
-            message,
-        })
+        .map(|message| SourceIssue::new(SourceIssueKind::SyntaxError, message))
         .collect::<Vec<_>>();
     let mut braces = Vec::new();
 
@@ -132,176 +208,42 @@ fn scan_resources(input: &HclSourceFile) -> (Vec<ResourceSourceLocation>, Vec<So
             TokenKind::CloseBrace => match braces.pop() {
                 Some(brace) => {
                     if let Some((address, start_line)) = brace.resource {
-                        resources.push(ResourceSourceLocation {
+                        resources.push(ResourceSourceLocation::new(
                             address,
-                            path: input.path.clone(),
-                            side: input.side,
-                            range: SourceRange::new(start_line, token.line),
-                        });
+                            input.path.clone(),
+                            input.side,
+                            SourceRange::new(start_line, token.line),
+                        ));
                     }
                 }
-                None => issues.push(SourceIssue {
-                    kind: SourceIssueKind::SyntaxError,
-                    message: format!("unexpected closing brace on line {}", token.line),
-                }),
+                None => issues.push(SourceIssue::new(
+                    SourceIssueKind::SyntaxError,
+                    format!("unexpected closing brace on line {}", token.line),
+                )),
             },
             TokenKind::Identifier(identifier)
                 if braces.is_empty()
                     && identifier == "resource"
                     && resource_keyword_is_malformed(&scanned.tokens, index) =>
             {
-                issues.push(SourceIssue {
-                    kind: SourceIssueKind::SyntaxError,
-                    message: format!("malformed resource block near line {}", token.line),
-                });
+                issues.push(SourceIssue::new(
+                    SourceIssueKind::SyntaxError,
+                    format!("malformed resource block near line {}", token.line),
+                ));
             }
             _ => {}
         }
     }
 
     for brace in braces {
-        issues.push(SourceIssue {
-            kind: SourceIssueKind::SyntaxError,
-            message: format!("unclosed block starting on line {}", brace.line),
-        });
+        issues.push(SourceIssue::new(
+            SourceIssueKind::SyntaxError,
+            format!("unclosed block starting on line {}", brace.line),
+        ));
     }
 
-    resources.sort_by(|left, right| {
-        left.range
-            .start_line
-            .cmp(&right.range.start_line)
-            .then_with(|| left.range.end_line.cmp(&right.range.end_line))
-    });
+    resources.sort_by_key(|resource| (resource.start_line(), resource.end_line()));
     (resources, issues)
-}
-
-#[must_use]
-pub fn parse_files<I>(inputs: I) -> HclParseResult
-where
-    I: IntoIterator<Item = HclSourceFile>,
-{
-    let mut result = HclParseResult {
-        files: inputs.into_iter().map(parse_source).collect(),
-    };
-    mark_duplicate_resources(&mut result);
-    result
-}
-
-/// Parses native Terraform files directly under `root`.
-///
-/// `.tf.json` files are included in the result as unsupported inputs so that
-/// callers can report an incomplete analysis instead of silently ignoring them.
-///
-/// # Errors
-///
-/// Returns an error when `root` cannot be read as a directory. Errors reading
-/// individual files are retained in the corresponding file analysis.
-pub fn parse_root(root: &Path, side: SourceSide) -> io::Result<HclParseResult> {
-    let mut paths = fs::read_dir(root)?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| is_native_hcl_path(path) || is_json_hcl_path(path))
-        .collect::<Vec<_>>();
-    paths.sort();
-
-    let mut result = HclParseResult {
-        files: paths
-            .into_iter()
-            .map(|path| match fs::read_to_string(&path) {
-                Ok(source) => HclSourceFile::new(path, source, side),
-                Err(error) => HclSourceFile::new(path, String::new(), side).with_read_error(&error),
-            })
-            .map(|input| match input.read_error {
-                Some(error) => SourceFileAnalysis {
-                    path: input.path,
-                    side: input.side,
-                    resources: Vec::new(),
-                    issues: vec![SourceIssue {
-                        kind: SourceIssueKind::ReadError,
-                        message: error,
-                    }],
-                },
-                None => parse_source(input),
-            })
-            .collect(),
-    };
-    mark_duplicate_resources(&mut result);
-    Ok(result)
-}
-
-impl HclSourceFile {
-    fn with_read_error(mut self, error: &io::Error) -> Self {
-        self.read_error = Some(error.to_string());
-        self
-    }
-}
-
-fn mark_duplicate_resources(result: &mut HclParseResult) {
-    let mut occurrences = HashMap::<(SourceSide, ResourceAddress), Vec<(usize, usize)>>::new();
-
-    for (file_index, file) in result.files.iter().enumerate() {
-        for (resource_index, resource) in file.resources.iter().enumerate() {
-            occurrences
-                .entry((resource.side, resource.address.clone()))
-                .or_default()
-                .push((file_index, resource_index));
-        }
-    }
-
-    for ((side, address), locations) in occurrences {
-        if locations.len() < 2 {
-            continue;
-        }
-
-        let files = locations
-            .iter()
-            .map(|(file_index, _)| result.files[*file_index].path.display().to_string())
-            .collect::<Vec<_>>();
-        let message = format!(
-            "resource {}.{} is defined more than once for {:?}: {}",
-            address.resource_type,
-            address.name,
-            side,
-            files.join(", ")
-        );
-        let mut marked_files = Vec::new();
-        for (file_index, _) in locations {
-            if !marked_files.contains(&file_index) {
-                result.files[file_index].issues.push(SourceIssue {
-                    kind: SourceIssueKind::DuplicateResource,
-                    message: message.clone(),
-                });
-                marked_files.push(file_index);
-            }
-        }
-    }
-}
-
-fn is_native_hcl_path(path: &Path) -> bool {
-    path.extension().is_some_and(|extension| extension == "tf")
-}
-
-fn is_json_hcl_path(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.ends_with(".tf.json"))
-}
-
-fn parsed_resource_addresses(body: hcl::Body) -> Vec<ResourceAddress> {
-    body.into_inner()
-        .into_iter()
-        .filter_map(|structure| match structure {
-            Structure::Block(block)
-                if block.identifier() == "resource" && block.labels().len() == 2 =>
-            {
-                Some(ResourceAddress::new(
-                    block.labels()[0].as_str(),
-                    block.labels()[1].as_str(),
-                ))
-            }
-            _ => None,
-        })
-        .collect()
 }
 
 fn resource_header(tokens: &[Token], open_index: usize) -> Option<(ResourceAddress, usize)> {
@@ -342,6 +284,57 @@ fn resource_keyword_is_malformed(tokens: &[Token], index: usize) -> bool {
         tokens.get(index + 3).map(|token| &token.kind),
         Some(TokenKind::OpenBrace)
     )
+}
+
+fn mark_duplicate_resources(result: &mut HclParseResult) {
+    let mut occurrences = HashMap::<(SourceSide, ResourceAddress), Vec<(usize, usize)>>::new();
+
+    for (file_index, file) in result.files.iter().enumerate() {
+        for (resource_index, resource) in file.resources().iter().enumerate() {
+            occurrences
+                .entry((resource.side(), resource.address().clone()))
+                .or_default()
+                .push((file_index, resource_index));
+        }
+    }
+
+    for ((side, address), locations) in occurrences {
+        if locations.len() < 2 {
+            continue;
+        }
+
+        let files = locations
+            .iter()
+            .map(|(file_index, _)| result.files[*file_index].path().display().to_string())
+            .collect::<Vec<_>>();
+        let message = format!(
+            "resource {}.{} is defined more than once for {:?}: {}",
+            address.resource_type(),
+            address.name(),
+            side,
+            files.join(", ")
+        );
+        let mut marked_files = Vec::new();
+        for (file_index, _) in locations {
+            if !marked_files.contains(&file_index) {
+                result.files[file_index].issues_mut().push(SourceIssue::new(
+                    SourceIssueKind::DuplicateResource,
+                    message.clone(),
+                ));
+                marked_files.push(file_index);
+            }
+        }
+    }
+}
+
+fn is_native_hcl_path(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| extension == "tf")
+}
+
+fn is_json_hcl_path(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".tf.json"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -673,15 +666,15 @@ resource "aws_s3_bucket" "logs" {
 
         assert_eq!(resources.len(), 2);
         assert_eq!(
-            resources[0].address,
-            ResourceAddress::new("aws_instance", "api")
+            resources[0].address(),
+            &ResourceAddress::new("aws_instance", "api")
         );
-        assert_eq!(resources[0].range, SourceRange::new(1, 6));
+        assert_eq!(resources[0].range(), SourceRange::new(1, 6));
         assert_eq!(
-            resources[1].address,
-            ResourceAddress::new("aws_s3_bucket", "logs")
+            resources[1].address(),
+            &ResourceAddress::new("aws_s3_bucket", "logs")
         );
-        assert_eq!(resources[1].range, SourceRange::new(8, 10));
+        assert_eq!(resources[1].range(), SourceRange::new(8, 10));
         assert!(result.is_complete());
     }
 
@@ -702,7 +695,7 @@ resource "test_resource" "example" {
         let resources = result.resources().collect::<Vec<_>>();
 
         assert_eq!(resources.len(), 1);
-        assert_eq!(resources[0].range, SourceRange::new(2, 8));
+        assert_eq!(resources[0].range(), SourceRange::new(2, 8));
         assert!(result.is_complete());
     }
 
@@ -717,10 +710,10 @@ resource "test_resource" "example" {
 
         let resource = result.resources().next().expect("resource source block");
         assert_eq!(
-            resource.address,
-            ResourceAddress::new("terraform_data", "main")
+            resource.address(),
+            &ResourceAddress::new("terraform_data", "main")
         );
-        assert_eq!(resource.range, SourceRange::new(1, 3));
+        assert_eq!(resource.range(), SourceRange::new(1, 3));
         assert!(result.is_complete());
     }
 
@@ -739,8 +732,8 @@ resource "terraform_data" "directive" {
 
         let resources = result.resources().collect::<Vec<_>>();
         assert_eq!(resources.len(), 2);
-        assert_eq!(resources[0].range, SourceRange::new(1, 3));
-        assert_eq!(resources[1].range, SourceRange::new(5, 7));
+        assert_eq!(resources[0].range(), SourceRange::new(1, 3));
+        assert_eq!(resources[1].range(), SourceRange::new(5, 7));
         assert!(result.is_complete());
     }
 
@@ -760,7 +753,7 @@ resource "terraform_data" "directive" {
             result
                 .file(Path::new("main.tf"), SourceSide::After)
                 .expect("valid file")
-                .resources
+                .resources()
                 .len(),
             1
         );
@@ -774,7 +767,7 @@ resource "terraform_data" "directive" {
             result
                 .file(Path::new("broken.tf"), SourceSide::After)
                 .expect("broken file")
-                .resources
+                .resources()
                 .is_empty()
         );
     }
@@ -820,7 +813,7 @@ resource "terraform_data" "directive" {
 
         assert!(!result.is_complete());
         assert!(result.files[0].has_issue(SourceIssueKind::UnsupportedInput));
-        assert!(result.files[0].resources.is_empty());
+        assert!(result.files[0].resources().is_empty());
     }
 
     #[test]
@@ -832,10 +825,10 @@ resource "terraform_data" "directive" {
         )]);
 
         let resource = result.resources().next().expect("deleted source block");
-        assert_eq!(resource.side, SourceSide::Before);
+        assert_eq!(resource.side(), SourceSide::Before);
         assert_eq!(
-            resource.address,
-            ResourceAddress::new("aws_instance", "old")
+            resource.address(),
+            &ResourceAddress::new("aws_instance", "old")
         );
     }
 
@@ -850,8 +843,8 @@ resource "terraform_data" "directive" {
 
         let resource = result.resources().next().expect("resource source block");
         assert_eq!(
-            resource.address,
-            ResourceAddress::new("terraform_data", "main")
+            resource.address(),
+            &ResourceAddress::new("terraform_data", "main")
         );
         assert!(result.is_complete());
     }
@@ -866,7 +859,7 @@ resource "terraform_data" "directive" {
 
             assert!(!result.is_complete(), "source: {source}");
             assert!(result.files[0].has_issue(SourceIssueKind::SyntaxError));
-            assert!(result.files[0].resources.is_empty());
+            assert!(result.files[0].resources().is_empty());
         }
     }
 
@@ -875,6 +868,6 @@ resource "terraform_data" "directive" {
         let result = parse_files([after("resource \"aws_instance\" {\n}\n")]);
 
         assert!(result.files[0].has_issue(SourceIssueKind::SyntaxError));
-        assert!(result.files[0].resources.is_empty());
+        assert!(result.files[0].resources().is_empty());
     }
 }
