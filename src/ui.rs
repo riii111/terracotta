@@ -90,7 +90,7 @@ fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
-            Constraint::Length(1),
+            Constraint::Length(2),
             Constraint::Length(1),
             Constraint::Length(unsupported_height),
             Constraint::Min(1),
@@ -102,7 +102,7 @@ fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
         Paragraph::new(Line::from(format!("compare {}", state.comparison()))),
         chunks[0],
     );
-    frame.render_widget(Paragraph::new(summary_line(state)), chunks[1]);
+    frame.render_widget(Paragraph::new(summary_lines(state)), chunks[1]);
     frame.render_widget(separator(chunks[2].width), chunks[2]);
 
     if let Some(summary) = unsupported_summary {
@@ -199,30 +199,31 @@ fn list_item(item: &PlanListItem, width: usize) -> ListItem<'static> {
     ])
 }
 
-fn summary_line(state: &PlanListState) -> Line<'static> {
+fn summary_lines(state: &PlanListState) -> Vec<Line<'static>> {
     let summary = state.summary();
-    Line::from(vec![
-        Span::styled(
-            format!("+{} create", summary.creates),
-            action_style(ResourceChangeKind::Create),
-        ),
-        Span::raw("  "),
-        Span::styled(
-            format!("~{} update", summary.updates),
-            action_style(ResourceChangeKind::Update),
-        ),
-        Span::raw("  "),
-        Span::styled(
-            format!("R{} replace", summary.replaces),
-            action_style(ResourceChangeKind::Replace),
-        ),
-        Span::raw("  "),
-        Span::styled(
-            format!("-{} delete", summary.deletes),
-            action_style(ResourceChangeKind::Delete),
-        ),
-        Span::raw("    "),
-        Span::styled(
+    vec![
+        Line::from(vec![
+            Span::styled(
+                format!("+{} create", summary.creates),
+                action_style(ResourceChangeKind::Create),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                format!("~{} update", summary.updates),
+                action_style(ResourceChangeKind::Update),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                format!("R{} replace", summary.replaces),
+                action_style(ResourceChangeKind::Replace),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                format!("-{} delete", summary.deletes),
+                action_style(ResourceChangeKind::Delete),
+            ),
+        ]),
+        Line::from(Span::styled(
             format!(
                 "Needs review: {} / {}",
                 state.needs_review_count(),
@@ -231,8 +232,8 @@ fn summary_line(state: &PlanListState) -> Line<'static> {
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
-        ),
-    ])
+        )),
+    ]
 }
 
 fn footer_line() -> Line<'static> {
@@ -483,6 +484,18 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("aws_s3_bucket.logs_with_a_very_long_resource_addr..."));
+    }
+
+    #[test]
+    fn minimum_supported_width_keeps_summary_counts_visible() {
+        let state = synthetic_state();
+        let text = buffer_text(&render_to_buffer(&state, MIN_WIDTH, 12));
+
+        assert!(
+            text.contains("+1 create  ~1 update  R1 replace  -1 delete"),
+            "{text}"
+        );
+        assert!(text.contains("Needs review: 2 / 4"), "{text}");
     }
 
     #[test]
