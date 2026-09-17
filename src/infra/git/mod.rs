@@ -4,7 +4,7 @@
 )]
 
 use std::{
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fs, io,
     path::{Path, PathBuf},
     process::{Command, Output},
@@ -731,34 +731,125 @@ fn resolve_compare_ref(
     repository_root: &Path,
     compare_ref: &str,
 ) -> Result<String, CompareRefError> {
+    resolve_compare_ref_with_env(repository_root, compare_ref, &[])
+}
+
+fn resolve_compare_ref_with_env(
+    repository_root: &Path,
+    compare_ref: &str,
+    environment: &[(&str, &str)],
+) -> Result<String, CompareRefError> {
     if compare_ref.is_empty() {
         return Err(CompareRefError::Unavailable(
             "the comparison ref is empty".to_owned(),
         ));
     }
 
-    let revision = format!("{compare_ref}^{{commit}}");
-    let output = run_git(
+    let candidates = comparison_ref_candidates(repository_root, compare_ref, environment)?;
+    if !candidates.is_empty() {
+        if candidates.len() > 1 {
+            return Err(CompareRefError::Ambiguous(format!(
+                "the comparison ref is ambiguous; candidates: {}",
+                candidates.join(", ")
+            )));
+        }
+        return resolve_commit_revision(repository_root, &candidates[0], environment)
+            .map_err(|error| CompareRefError::Unavailable(error.message));
+    }
+
+    resolve_commit_revision(repository_root, compare_ref, environment)
+        .map_err(|error| CompareRefError::Unavailable(error.message))
+}
+
+fn comparison_ref_candidates(
+    repository_root: &Path,
+    compare_ref: &str,
+    environment: &[(&str, &str)],
+) -> Result<Vec<String>, CompareRefError> {
+    let check = run_git_with_env(
+        repository_root,
+        "validate comparison ref",
+        [
+            OsStr::new("check-ref-format"),
+            OsStr::new("--allow-onelevel"),
+            OsStr::new(compare_ref),
+        ],
+        environment,
+    )
+    .map_err(CompareRefError::Failed)?;
+    if !check.status.success() {
+        return Ok(Vec::new());
+    }
+
+    let patterns = [
+        format!("refs/{compare_ref}"),
+        format!("refs/tags/{compare_ref}"),
+        format!("refs/heads/{compare_ref}"),
+        format!("refs/remotes/{compare_ref}"),
+        format!("refs/remotes/{compare_ref}/HEAD"),
+    ];
+    let mut args = vec![
+        OsString::from("for-each-ref"),
+        OsString::from("--format=%(refname)"),
+        OsString::from("--"),
+    ];
+    args.extend(patterns.into_iter().map(OsString::from));
+    let output = run_git_with_env(
+        repository_root,
+        "list comparison ref candidates",
+        args,
+        environment,
+    )
+    .map_err(CompareRefError::Failed)?;
+    if !output.status.success() {
+        return Err(CompareRefError::Failed(GitCommandError::from_output(
+            "list comparison ref candidates",
+            &output,
+        )));
+    }
+
+    String::from_utf8(output.stdout)
+        .map_err(|error| {
+            CompareRefError::Failed(parse_error(
+                "list comparison ref candidates",
+                &error.to_string(),
+            ))
+        })
+        .map(|output| {
+            output
+                .lines()
+                .map(str::trim)
+                .filter(|candidate| !candidate.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+}
+
+fn resolve_commit_revision(
+    repository_root: &Path,
+    revision: &str,
+    environment: &[(&str, &str)],
+) -> Result<String, GitCommandError> {
+    let revision = format!("{revision}^{{commit}}");
+    let output = run_git_with_env(
         repository_root,
         "resolve comparison ref",
         [
             OsStr::new("rev-parse"),
             OsStr::new("--verify"),
+            OsStr::new("--quiet"),
             OsStr::new("--end-of-options"),
             OsStr::new(&revision),
         ],
-    )
-    .map_err(CompareRefError::Failed)?;
+        environment,
+    )?;
     if output.status.success() {
-        if output.stderr.iter().any(|byte| !byte.is_ascii_whitespace()) {
-            return Err(CompareRefError::Ambiguous(
-                String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-            ));
-        }
-        single_commit(&output, "resolve comparison ref").map_err(CompareRefError::Failed)
+        single_commit(&output, "resolve comparison ref")
     } else {
-        let error = GitCommandError::from_output("resolve comparison ref", &output);
-        Err(CompareRefError::Unavailable(error.message))
+        Err(GitCommandError::from_output(
+            "resolve comparison ref",
+            &output,
+        ))
     }
 }
 
@@ -1461,10 +1552,25 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    Command::new("git")
-        .arg("-C")
-        .arg(directory)
-        .args(args)
+    run_git_with_env(directory, operation, args, &[])
+}
+
+fn run_git_with_env<I, S>(
+    directory: &Path,
+    operation: &str,
+    args: I,
+    environment: &[(&str, &str)],
+) -> Result<Output, GitCommandError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let mut command = Command::new("git");
+    command.arg("-C").arg(directory).args(args);
+    for (key, value) in environment {
+        command.env(key, value);
+    }
+    command
         .output()
         .map_err(|error| GitCommandError::from_spawn(operation, &error))
 }
@@ -1749,17 +1855,36 @@ mod tests {
         repository.commit("initial");
         git(&repository.path, &["branch", "compare"]);
         git(&repository.path, &["tag", "compare"]);
+        git(
+            &repository.path,
+            &["config", "core.warnAmbiguousRefs", "false"],
+        );
 
         let result = collect_diff_against_ref(&repository.path, "compare");
 
         assert!(matches!(
             result.status(),
             GitDiffStatus::AmbiguousCompareRef { reference, message }
-                if reference == "compare" && !message.is_empty()
+                if reference == "compare"
+                    && message.contains("refs/heads/compare")
+                    && message.contains("refs/tags/compare")
         ));
         assert_eq!(result.compare_ref(), Some("compare"));
         assert!(result.resolved_commit().is_none());
         assert!(result.head_commit().is_some());
+    }
+
+    #[test]
+    fn resolves_an_unambiguous_ref_when_git_trace_writes_to_stderr() {
+        let repository = TestRepository::new();
+        write(&repository, "main.tf", "resource \"example\" \"one\" {}\n");
+        repository.commit("initial");
+        git(&repository.path, &["branch", "compare"]);
+
+        let result =
+            resolve_compare_ref_with_env(&repository.path, "compare", &[("GIT_TRACE", "1")]);
+
+        assert!(matches!(result, Ok(commit) if commit.len() == 40));
     }
 
     #[test]
