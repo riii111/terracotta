@@ -9,16 +9,23 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, Sender, TryRecvError},
     },
     thread::{self, JoinHandle},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 
-use crate::app::plan::Plan;
+use crate::app::{
+    plan::Plan,
+    progress::{
+        EventStream, ExecutionEvent, ExecutionEventKind, ProcessExitStatus, ProcessTermination,
+    },
+};
 
+use super::events::TerraformEventParser;
 use super::plan::{PlanParseError, parse_plan_json_bytes};
 
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -132,6 +139,13 @@ impl ProcessOutput {
     #[must_use]
     pub(crate) fn stderr(&self) -> &[u8] {
         &self.stderr
+    }
+
+    fn append(&mut self, chunk: &ProcessOutputChunk) {
+        match chunk.stream {
+            EventStream::Stdout => self.stdout.extend_from_slice(&chunk.bytes),
+            EventStream::Stderr => self.stderr.extend_from_slice(&chunk.bytes),
+        }
     }
 }
 
@@ -260,16 +274,26 @@ pub(crate) fn run_plan(
     root: &Path,
     cancellation: &CancellationToken,
 ) -> Result<PlanExecution, TerraformExecutionError> {
+    let mut ignore_event = |_event: ExecutionEvent| {};
+    run_plan_with_events(root, cancellation, &mut ignore_event)
+}
+
+pub(crate) fn run_plan_with_events(
+    root: &Path,
+    cancellation: &CancellationToken,
+    event_sink: &mut dyn FnMut(ExecutionEvent),
+) -> Result<PlanExecution, TerraformExecutionError> {
     let temporary_plan = TemporaryPlan::create().map_err(|error| {
         TerraformExecutionError::new(TerraformExecutionErrorKind::TemporaryPlan {
             message: error.to_string(),
         })
     })?;
-    let result = execute_plan(
+    let result = execute_plan_with_events(
         root,
         &temporary_plan.path,
         cancellation,
         &SystemProcessRunner,
+        event_sink,
     );
 
     finish_plan(temporary_plan, result)
@@ -281,13 +305,25 @@ fn execute_plan(
     cancellation: &CancellationToken,
     runner: &dyn ProcessRunner,
 ) -> Result<PlanExecution, TerraformExecutionError> {
+    let mut ignore_event = |_event: ExecutionEvent| {};
+    execute_plan_with_events(root, plan_path, cancellation, runner, &mut ignore_event)
+}
+
+fn execute_plan_with_events(
+    root: &Path,
+    plan_path: &Path,
+    cancellation: &CancellationToken,
+    runner: &dyn ProcessRunner,
+    event_sink: &mut dyn FnMut(ExecutionEvent),
+) -> Result<PlanExecution, TerraformExecutionError> {
     let plan_arguments = plan_arguments(plan_path);
-    let plan_output = run_command(
+    let plan_output = run_command_with_events(
         root,
         TerraformCommand::Plan,
         &plan_arguments,
         cancellation,
         runner,
+        Some(event_sink),
     )?;
     if plan_output.interrupted {
         return Err(interrupted_error(TerraformCommand::Plan, plan_output));
@@ -372,7 +408,23 @@ fn run_command(
     cancellation: &CancellationToken,
     runner: &dyn ProcessRunner,
 ) -> Result<ProcessResult, TerraformExecutionError> {
+    run_command_with_events(root, command, arguments, cancellation, runner, None)
+}
+
+fn run_command_with_events(
+    root: &Path,
+    command: TerraformCommand,
+    arguments: &[OsString],
+    cancellation: &CancellationToken,
+    runner: &dyn ProcessRunner,
+    mut event_sink: Option<&mut dyn FnMut(ExecutionEvent)>,
+) -> Result<ProcessResult, TerraformExecutionError> {
+    let mut parser = event_sink.is_some().then(TerraformEventParser::new);
+    let mut observed = ObservedOutput::default();
     if cancellation.is_cancelled() {
+        if let Some(event_sink) = event_sink {
+            emit_termination(event_sink, None, true);
+        }
         return Ok(ProcessResult::interrupted(ProcessOutput::empty(), None));
     }
 
@@ -384,6 +436,16 @@ fn run_command(
     })?;
 
     loop {
+        let chunks = process.poll_output().map_err(|error| {
+            TerraformExecutionError::new(TerraformExecutionErrorKind::Process {
+                command,
+                message: error.to_string(),
+            })
+        })?;
+        if let (Some(parser), Some(event_sink)) = (parser.as_mut(), event_sink.as_deref_mut()) {
+            emit_chunks(parser, &mut observed, chunks, event_sink);
+        }
+
         let status = process.try_wait().map_err(|error| {
             TerraformExecutionError::new(TerraformExecutionErrorKind::Process {
                 command,
@@ -397,6 +459,11 @@ fn run_command(
                     message: error.to_string(),
                 })
             })?;
+            if let (Some(parser), Some(event_sink)) = (parser.as_mut(), event_sink.as_deref_mut()) {
+                emit_unobserved_output(parser, &mut observed, &output, event_sink);
+                emit_parser_remainders(parser, event_sink);
+                emit_termination(event_sink, Some(status), false);
+            }
             return Ok(ProcessResult {
                 status: Some(status),
                 output,
@@ -419,6 +486,11 @@ fn run_command(
                     message: error.to_string(),
                 })
             })?;
+            if let (Some(parser), Some(event_sink)) = (parser.as_mut(), event_sink.as_deref_mut()) {
+                emit_unobserved_output(parser, &mut observed, &output, event_sink);
+                emit_parser_remainders(parser, event_sink);
+                emit_termination(event_sink, Some(status), true);
+            }
             return Ok(ProcessResult {
                 status: Some(status),
                 output,
@@ -429,6 +501,100 @@ fn run_command(
 
         thread::sleep(PROCESS_POLL_INTERVAL);
     }
+}
+
+#[derive(Default)]
+struct ObservedOutput {
+    stdout: usize,
+    stderr: usize,
+}
+
+fn emit_chunks(
+    parser: &mut TerraformEventParser,
+    observed: &mut ObservedOutput,
+    chunks: Vec<ProcessOutputChunk>,
+    event_sink: &mut dyn FnMut(ExecutionEvent),
+) {
+    for chunk in chunks {
+        let received_at = Instant::now();
+        let length = chunk.bytes.len();
+        let events = parser.push(chunk.stream, &chunk.bytes, received_at);
+        match chunk.stream {
+            EventStream::Stdout => observed.stdout += length,
+            EventStream::Stderr => observed.stderr += length,
+        }
+        for event in events {
+            event_sink(event);
+        }
+    }
+}
+
+fn emit_unobserved_output(
+    parser: &mut TerraformEventParser,
+    observed: &mut ObservedOutput,
+    output: &ProcessOutput,
+    event_sink: &mut dyn FnMut(ExecutionEvent),
+) {
+    emit_remaining_stream(
+        parser,
+        observed.stdout,
+        EventStream::Stdout,
+        &output.stdout,
+        event_sink,
+    );
+    emit_remaining_stream(
+        parser,
+        observed.stderr,
+        EventStream::Stderr,
+        &output.stderr,
+        event_sink,
+    );
+    observed.stdout = output.stdout.len();
+    observed.stderr = output.stderr.len();
+}
+
+fn emit_remaining_stream(
+    parser: &mut TerraformEventParser,
+    observed: usize,
+    stream: EventStream,
+    output: &[u8],
+    event_sink: &mut dyn FnMut(ExecutionEvent),
+) {
+    if let Some(remaining) = output.get(observed..) {
+        let events = parser.push(stream, remaining, Instant::now());
+        for event in events {
+            event_sink(event);
+        }
+    }
+}
+
+fn emit_parser_remainders(
+    parser: &mut TerraformEventParser,
+    event_sink: &mut dyn FnMut(ExecutionEvent),
+) {
+    for stream in [EventStream::Stdout, EventStream::Stderr] {
+        for event in parser.finish(stream, Instant::now()) {
+            event_sink(event);
+        }
+    }
+}
+
+fn emit_termination(
+    event_sink: &mut dyn FnMut(ExecutionEvent),
+    status: Option<ProcessStatus>,
+    interrupted: bool,
+) {
+    let status = status.map_or(ProcessExitStatus::Signaled, |status| match status {
+        ProcessStatus::Exited(code) => ProcessExitStatus::Exited(code),
+        ProcessStatus::Signaled => ProcessExitStatus::Signaled,
+    });
+    event_sink(ExecutionEvent {
+        received_at: Instant::now(),
+        kind: ExecutionEventKind::Terminated(ProcessTermination {
+            status,
+            interrupted,
+        }),
+    });
 }
 
 fn interrupted_error(command: TerraformCommand, process: ProcessResult) -> TerraformExecutionError {
@@ -465,11 +631,20 @@ impl ProcessResult {
     }
 }
 
+struct ProcessOutputChunk {
+    stream: EventStream,
+    bytes: Vec<u8>,
+}
+
 trait ProcessRunner {
     fn start(&self, root: &Path, arguments: &[OsString]) -> io::Result<Box<dyn RunningProcess>>;
 }
 
 trait RunningProcess {
+    fn poll_output(&mut self) -> io::Result<Vec<ProcessOutputChunk>> {
+        Ok(Vec::new())
+    }
+
     fn try_wait(&mut self) -> io::Result<Option<ProcessStatus>>;
     fn kill(&mut self) -> io::Result<()>;
     fn wait(&mut self) -> io::Result<ProcessStatus>;
@@ -494,23 +669,35 @@ impl ProcessRunner for SystemProcessRunner {
 
 struct SystemRunningProcess {
     child: Child,
-    stdout: Option<JoinHandle<io::Result<Vec<u8>>>>,
-    stderr: Option<JoinHandle<io::Result<Vec<u8>>>>,
+    chunks: Receiver<io::Result<ProcessOutputChunk>>,
+    readers: Vec<JoinHandle<io::Result<()>>>,
+    output: ProcessOutput,
 }
 
 impl SystemRunningProcess {
     fn new(mut child: Child) -> Self {
-        let stdout = child.stdout.take().map(spawn_reader);
-        let stderr = child.stderr.take().map(spawn_reader);
+        let (sender, chunks) = mpsc::channel();
+        let mut readers = Vec::new();
+        if let Some(stdout) = child.stdout.take() {
+            readers.push(spawn_reader(stdout, EventStream::Stdout, sender.clone()));
+        }
+        if let Some(stderr) = child.stderr.take() {
+            readers.push(spawn_reader(stderr, EventStream::Stderr, sender));
+        }
         Self {
             child,
-            stdout,
-            stderr,
+            chunks,
+            readers,
+            output: ProcessOutput::empty(),
         }
     }
 }
 
 impl RunningProcess for SystemRunningProcess {
+    fn poll_output(&mut self) -> io::Result<Vec<ProcessOutputChunk>> {
+        drain_output_chunks(&self.chunks, &mut self.output)
+    }
+
     fn try_wait(&mut self) -> io::Result<Option<ProcessStatus>> {
         self.child
             .try_wait()
@@ -526,10 +713,10 @@ impl RunningProcess for SystemRunningProcess {
     }
 
     fn collect_output(mut self: Box<Self>) -> io::Result<ProcessOutput> {
-        Ok(ProcessOutput {
-            stdout: join_reader(self.stdout.take(), "stdout")?,
-            stderr: join_reader(self.stderr.take(), "stderr")?,
-        })
+        let reader_result = join_readers(&mut self.readers);
+        let chunk_result = drain_output_chunks(&self.chunks, &mut self.output);
+        let output = std::mem::replace(&mut self.output, ProcessOutput::empty());
+        reader_result.and(chunk_result).map(|_| output)
     }
 }
 
@@ -540,12 +727,7 @@ impl Drop for SystemRunningProcess {
             let _ = self.child.kill();
             let _ = self.child.wait();
         }
-        if let Some(reader) = self.stdout.take() {
-            let _ = reader.join();
-        }
-        if let Some(reader) = self.stderr.take() {
-            let _ = reader.join();
-        }
+        let _ = join_readers(&mut self.readers);
     }
 }
 
@@ -559,29 +741,66 @@ fn process_status(status: ExitStatus) -> ProcessStatus {
     }
 }
 
-fn spawn_reader<R>(mut reader: R) -> JoinHandle<io::Result<Vec<u8>>>
+fn spawn_reader<R>(
+    mut reader: R,
+    stream: EventStream,
+    sender: Sender<io::Result<ProcessOutputChunk>>,
+) -> JoinHandle<io::Result<()>>
 where
     R: Read + Send + 'static,
 {
     thread::spawn(move || {
-        let mut output = Vec::new();
-        reader.read_to_end(&mut output)?;
-        Ok(output)
+        let mut buffer = [0_u8; 8 * 1024];
+        loop {
+            let count = match reader.read(&mut buffer) {
+                Ok(count) => count,
+                Err(error) => {
+                    let _ = sender.send(Err(io::Error::new(error.kind(), error.to_string())));
+                    return Err(error);
+                }
+            };
+            if count == 0 {
+                return Ok(());
+            }
+            sender
+                .send(Ok(ProcessOutputChunk {
+                    stream,
+                    bytes: buffer[..count].to_vec(),
+                }))
+                .map_err(|_| io::Error::other("Terraform output receiver was dropped"))?;
+        }
     })
 }
 
-fn join_reader(
-    reader: Option<JoinHandle<io::Result<Vec<u8>>>>,
-    stream: &str,
-) -> io::Result<Vec<u8>> {
-    reader.map_or_else(
-        || Ok(Vec::new()),
-        |reader| {
-            reader
-                .join()
-                .map_err(|_| io::Error::other(format!("terraform {stream} reader panicked")))?
-        },
-    )
+fn drain_output_chunks(
+    receiver: &Receiver<io::Result<ProcessOutputChunk>>,
+    output: &mut ProcessOutput,
+) -> io::Result<Vec<ProcessOutputChunk>> {
+    let mut chunks = Vec::new();
+    loop {
+        match receiver.try_recv() {
+            Ok(Ok(chunk)) => {
+                output.append(&chunk);
+                chunks.push(chunk);
+            }
+            Ok(Err(error)) => return Err(error),
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => return Ok(chunks),
+        }
+    }
+}
+
+fn join_readers(readers: &mut Vec<JoinHandle<io::Result<()>>>) -> io::Result<()> {
+    let mut first_error = None;
+    for reader in readers.drain(..) {
+        match reader.join() {
+            Ok(Err(error)) if first_error.is_none() => first_error = Some(error),
+            Err(_) if first_error.is_none() => {
+                first_error = Some(io::Error::other("Terraform output reader panicked"));
+            }
+            Ok(Ok(()) | Err(_)) | Err(_) => {}
+        }
+    }
+    first_error.map_or(Ok(()), Err)
 }
 
 struct TemporaryPlan {
@@ -637,6 +856,8 @@ mod tests {
 
     use serde_json::json;
 
+    use crate::app::progress::{Diagnostic, DiagnosticSource, ResourceEvent, ResourceEventKind};
+
     use super::*;
 
     const PLAN_JSON: &[u8] = br#"{"format_version":"1.0"}"#;
@@ -657,6 +878,11 @@ mod tests {
         Exit {
             status: ProcessStatus,
             output: ProcessOutput,
+        },
+        Streaming {
+            status: ProcessStatus,
+            output: ProcessOutput,
+            chunks: VecDeque<ProcessOutputChunk>,
         },
         Pending {
             cancellation: CancellationToken,
@@ -713,9 +939,23 @@ mod tests {
     }
 
     impl RunningProcess for FakeProcess {
+        fn poll_output(&mut self) -> io::Result<Vec<ProcessOutputChunk>> {
+            match self.response.as_mut() {
+                Some(FakeResponse::Streaming { chunks, .. }) => Ok(chunks.drain(..).collect()),
+                _ => Ok(Vec::new()),
+            }
+        }
+
         fn try_wait(&mut self) -> io::Result<Option<ProcessStatus>> {
             match self.response.as_mut() {
                 Some(FakeResponse::Exit { status, .. }) => Ok(Some(*status)),
+                Some(FakeResponse::Streaming { status, chunks, .. }) => {
+                    if chunks.is_empty() {
+                        Ok(Some(*status))
+                    } else {
+                        Ok(None)
+                    }
+                }
                 Some(FakeResponse::Pending { cancellation, .. }) => {
                     cancellation.cancel();
                     Ok(None)
@@ -749,9 +989,11 @@ mod tests {
 
         fn collect_output(self: Box<Self>) -> io::Result<ProcessOutput> {
             match self.response {
-                Some(FakeResponse::Exit { output, .. } | FakeResponse::Pending { output, .. }) => {
-                    Ok(output)
-                }
+                Some(
+                    FakeResponse::Exit { output, .. }
+                    | FakeResponse::Streaming { output, .. }
+                    | FakeResponse::Pending { output, .. },
+                ) => Ok(output),
                 Some(FakeResponse::MakePlanPathDirectory) => Ok(ProcessOutput::empty()),
                 Some(FakeResponse::LaunchError(_)) | None => {
                     Err(io::Error::other("fake process output was unavailable"))
@@ -777,6 +1019,35 @@ mod tests {
                 stdout: PLAN_JSON.to_vec(),
                 stderr: Vec::new(),
             },
+        }
+    }
+
+    fn streaming_process(
+        status: ProcessStatus,
+        stdout_chunks: impl IntoIterator<Item = Vec<u8>>,
+        stderr_chunks: impl IntoIterator<Item = Vec<u8>>,
+    ) -> FakeResponse {
+        let stdout_chunks = stdout_chunks.into_iter().map(|bytes| ProcessOutputChunk {
+            stream: EventStream::Stdout,
+            bytes,
+        });
+        let stderr_chunks = stderr_chunks.into_iter().map(|bytes| ProcessOutputChunk {
+            stream: EventStream::Stderr,
+            bytes,
+        });
+        let chunks: VecDeque<_> = stdout_chunks.chain(stderr_chunks).collect();
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        for chunk in &chunks {
+            match chunk.stream {
+                EventStream::Stdout => stdout.extend_from_slice(&chunk.bytes),
+                EventStream::Stderr => stderr.extend_from_slice(&chunk.bytes),
+            }
+        }
+        FakeResponse::Streaming {
+            status,
+            output: ProcessOutput { stdout, stderr },
+            chunks,
         }
     }
 
@@ -861,6 +1132,72 @@ mod tests {
             ]
         );
         assert!(!plan_path.exists(), "temporary plan should be removed");
+        fs::remove_dir(directory).expect("test directory should be empty");
+    }
+
+    #[test]
+    fn delivers_plan_events_before_process_termination_and_keeps_show_silent() {
+        let refresh_start =
+            br#"{"type":"refresh_start","hook":{"resource":{"addr":"aws_vpc.main"}}}
+"#
+            .to_vec();
+        let refresh_complete =
+            br#"{"type":"refresh_complete","hook":{"resource":{"addr":"aws_vpc.main"}}}
+"#
+            .to_vec();
+        let runner = FakeRunner::new([
+            streaming_process(
+                ProcessStatus::Exited(0),
+                [refresh_start, refresh_complete],
+                [b"provider warning".to_vec()],
+            ),
+            show_process(),
+        ]);
+        let cancellation = CancellationToken::new();
+        let (temporary_plan, directory) = temporary_plan_with_space();
+        let mut events = Vec::new();
+
+        let result = execute_plan_with_events(
+            Path::new("/root"),
+            &temporary_plan.path,
+            &cancellation,
+            &runner,
+            &mut |event| events.push(event),
+        );
+        let result = finish_plan(temporary_plan, result).expect("plan should be returned");
+
+        assert!(result.plan().changes.is_empty());
+        assert!(matches!(
+            events.first().map(|event| &event.kind),
+            Some(ExecutionEventKind::Resource(ResourceEvent {
+                address,
+                kind: ResourceEventKind::RefreshStart,
+            })) if address == "aws_vpc.main"
+        ));
+        assert!(matches!(
+            events.get(1).map(|event| &event.kind),
+            Some(ExecutionEventKind::Resource(ResourceEvent {
+                kind: ResourceEventKind::RefreshComplete,
+                ..
+            }))
+        ));
+        assert!(matches!(
+            events.get(2).map(|event| &event.kind),
+            Some(ExecutionEventKind::Diagnostic(Diagnostic {
+                source: DiagnosticSource::NonJson {
+                    stream: EventStream::Stderr
+                },
+                ..
+            }))
+        ));
+        assert!(matches!(
+            events.last().map(|event| &event.kind),
+            Some(ExecutionEventKind::Terminated(ProcessTermination {
+                status: ProcessExitStatus::Exited(0),
+                interrupted: false,
+            }))
+        ));
+        assert_eq!(runner.invocations.borrow().len(), 2);
         fs::remove_dir(directory).expect("test directory should be empty");
     }
 
