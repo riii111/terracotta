@@ -418,7 +418,10 @@ fn files_without_head(
     let paths = parse_nul_paths(&output.stdout, "read files without HEAD")?;
     Ok(paths
         .into_iter()
-        .filter(|path| is_direct_config_path(repository_root, root, path))
+        .filter(|path| {
+            is_direct_config_path(repository_root, root, path)
+                && repository_root.join(path).is_file()
+        })
         .map(|path| ChangedFile {
             path,
             kind: FileChangeKind::Added,
@@ -637,6 +640,8 @@ fn changed_lines(
             OsStr::new("--no-renames"),
             OsStr::new("--unified=0"),
             OsStr::new("--no-color"),
+            OsStr::new("--src-prefix=a/"),
+            OsStr::new("--dst-prefix=b/"),
             OsStr::new("HEAD"),
             OsStr::new("--"),
             root_spec.as_os_str(),
@@ -1065,6 +1070,26 @@ mod tests {
     }
 
     #[test]
+    fn fixes_diff_path_prefixes_despite_git_configuration() {
+        let repository = TestRepository::new();
+        write(&repository, "main.tf", "resource \"example\" \"one\" {}\n");
+        repository.commit("initial");
+        git(&repository.path, &["config", "diff.noPrefix", "true"]);
+        write(
+            &repository,
+            "main.tf",
+            "resource \"example\" \"one\" {\n  value = true\n}\n",
+        );
+
+        let result = collect_diff(&repository.path);
+
+        assert_eq!(result.status(), &GitDiffStatus::Complete);
+        assert_eq!(result.changed_lines().len(), 2);
+        assert_eq!(result.changed_lines()[0].side(), SourceSide::Before);
+        assert_eq!(result.changed_lines()[1].side(), SourceSide::After);
+    }
+
+    #[test]
     fn ignores_changes_that_are_restored_to_head() {
         let repository = TestRepository::new();
         write(&repository, "main.tf", "resource \"example\" \"one\" {}\n");
@@ -1215,6 +1240,37 @@ mod tests {
         ));
         assert_eq!(no_head_result.after().len(), 1);
         assert_eq!(no_head_result.changed_lines().len(), 1);
+    }
+
+    #[test]
+    fn missing_head_uses_only_existing_working_tree_files() {
+        let repository = TestRepository::new();
+        write(
+            &repository,
+            "removed.tf",
+            "resource \"example\" \"removed\" {}\n",
+        );
+        write(
+            &repository,
+            "present.tf",
+            "resource \"example\" \"present\" {}\n",
+        );
+        git(&repository.path, &["add", "removed.tf", "present.tf"]);
+        fs::remove_file(repository.path.join("removed.tf")).expect("remove staged source");
+
+        let result = collect_diff(&repository.path);
+        let root = result.root().to_owned();
+
+        assert!(matches!(
+            result.status(),
+            GitDiffStatus::HeadUnavailable { .. }
+        ));
+        assert_eq!(
+            source_names(result.after()),
+            vec![root.join("present.tf").as_path()]
+        );
+        assert_eq!(result.changed_lines().len(), 1);
+        assert_eq!(result.changed_lines()[0].path(), root.join("present.tf"));
     }
 
     #[test]
