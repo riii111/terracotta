@@ -29,16 +29,6 @@ pub enum ResourceMode {
     Data,
 }
 
-impl ResourceMode {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Managed => "managed",
-            Self::Data => "data",
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanAction {
     Create,
@@ -49,38 +39,12 @@ pub enum PlanAction {
     Unknown(String),
 }
 
-impl PlanAction {
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        match self {
-            Self::Create => "create",
-            Self::Read => "read",
-            Self::Update => "update",
-            Self::Delete => "delete",
-            Self::NoOp => "no-op",
-            Self::Unknown(action) => action,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceChangeKind {
     Create,
     Update,
     Replace,
     Delete,
-}
-
-impl ResourceChangeKind {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Create => "create",
-            Self::Update => "update",
-            Self::Replace => "replace",
-            Self::Delete => "delete",
-        }
-    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -150,19 +114,6 @@ pub enum UnsupportedChangeScope {
     ActionInvocation,
 }
 
-impl UnsupportedChangeScope {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Resource => "resource",
-            Self::Output => "output",
-            Self::ResourceDrift => "resource-drift",
-            Self::DeferredResource => "deferred-resource",
-            Self::ActionInvocation => "action-invocation",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnsupportedChangeKind {
     Output,
@@ -175,24 +126,6 @@ pub enum UnsupportedChangeKind {
     Deferred,
     ActionInvocation,
     DeferredActionInvocation,
-}
-
-impl UnsupportedChangeKind {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Output => "output",
-            Self::Drift => "drift",
-            Self::Read => "read",
-            Self::Move => "move",
-            Self::Import => "import",
-            Self::UnknownAction => "unknown-action",
-            Self::UnsupportedActions => "unsupported-actions",
-            Self::Deferred => "deferred",
-            Self::ActionInvocation => "action-invocation",
-            Self::DeferredActionInvocation => "deferred-action-invocation",
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

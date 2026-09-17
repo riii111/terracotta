@@ -134,6 +134,12 @@ fn parse_format_version(root: &Map<String, Value>) -> Result<(), PlanParseError>
     Ok(())
 }
 
+enum ActionClassification {
+    NoOp,
+    Supported(ResourceChangeKind),
+    Unsupported(UnsupportedChangeKind),
+}
+
 fn parse_resource_change(
     resource: &Value,
     changes: &mut Vec<ResourceChange>,
@@ -233,6 +239,75 @@ fn parse_deferred_changes(
     Ok(())
 }
 
+fn parse_resource_drift(
+    resource_drift: &Value,
+    unsupported_changes: &mut Vec<UnsupportedChange>,
+) -> Result<(), PlanParseError> {
+    if resource_drift.is_null() {
+        return Ok(());
+    }
+
+    let resource_drift = resource_drift
+        .as_array()
+        .ok_or(PlanParseError::InvalidField("resource_drift"))?;
+
+    for resource in resource_drift {
+        let resource = resource
+            .as_object()
+            .ok_or(PlanParseError::InvalidField("resource drift item"))?;
+        let address = required_string(resource, "address")?.to_owned();
+        parse_resource_mode(resource)?;
+        let change = required_object(resource, "change")?;
+        let actions = parse_actions(change, "resource drift actions")?;
+
+        if !matches!(classify_actions(&actions), ActionClassification::NoOp) {
+            unsupported_changes.push(UnsupportedChange {
+                scope: UnsupportedChangeScope::ResourceDrift,
+                address,
+                actions,
+                kind: UnsupportedChangeKind::Drift,
+                reason: None,
+                action_type: None,
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_output_changes(
+    output_changes: &Value,
+    unsupported_changes: &mut Vec<UnsupportedChange>,
+) -> Result<(), PlanParseError> {
+    if output_changes.is_null() {
+        return Ok(());
+    }
+
+    let output_changes = output_changes
+        .as_object()
+        .ok_or(PlanParseError::InvalidField("output_changes"))?;
+
+    for (address, output) in output_changes {
+        let output = output
+            .as_object()
+            .ok_or(PlanParseError::InvalidField("output change"))?;
+        let actions = parse_actions(output, "output change actions")?;
+
+        if !matches!(classify_actions(&actions), ActionClassification::NoOp) {
+            unsupported_changes.push(UnsupportedChange {
+                scope: UnsupportedChangeScope::Output,
+                address: address.clone(),
+                actions,
+                kind: UnsupportedChangeKind::Output,
+                reason: None,
+                action_type: None,
+            });
+        }
+    }
+
+    Ok(())
+}
+
 fn parse_action_invocations(
     action_invocations: &Value,
     unsupported_changes: &mut Vec<UnsupportedChange>,
@@ -304,75 +379,6 @@ fn parse_action_invocation_metadata(
     let action_type = required_string(action_invocation, "type")?.to_owned();
 
     Ok((address, action_type))
-}
-
-fn parse_output_changes(
-    output_changes: &Value,
-    unsupported_changes: &mut Vec<UnsupportedChange>,
-) -> Result<(), PlanParseError> {
-    if output_changes.is_null() {
-        return Ok(());
-    }
-
-    let output_changes = output_changes
-        .as_object()
-        .ok_or(PlanParseError::InvalidField("output_changes"))?;
-
-    for (address, output) in output_changes {
-        let output = output
-            .as_object()
-            .ok_or(PlanParseError::InvalidField("output change"))?;
-        let actions = parse_actions(output, "output change actions")?;
-
-        if !matches!(classify_actions(&actions), ActionClassification::NoOp) {
-            unsupported_changes.push(UnsupportedChange {
-                scope: UnsupportedChangeScope::Output,
-                address: address.clone(),
-                actions,
-                kind: UnsupportedChangeKind::Output,
-                reason: None,
-                action_type: None,
-            });
-        }
-    }
-
-    Ok(())
-}
-
-fn parse_resource_drift(
-    resource_drift: &Value,
-    unsupported_changes: &mut Vec<UnsupportedChange>,
-) -> Result<(), PlanParseError> {
-    if resource_drift.is_null() {
-        return Ok(());
-    }
-
-    let resource_drift = resource_drift
-        .as_array()
-        .ok_or(PlanParseError::InvalidField("resource_drift"))?;
-
-    for resource in resource_drift {
-        let resource = resource
-            .as_object()
-            .ok_or(PlanParseError::InvalidField("resource drift item"))?;
-        let address = required_string(resource, "address")?.to_owned();
-        parse_resource_mode(resource)?;
-        let change = required_object(resource, "change")?;
-        let actions = parse_actions(change, "resource drift actions")?;
-
-        if !matches!(classify_actions(&actions), ActionClassification::NoOp) {
-            unsupported_changes.push(UnsupportedChange {
-                scope: UnsupportedChangeScope::ResourceDrift,
-                address,
-                actions,
-                kind: UnsupportedChangeKind::Drift,
-                reason: None,
-                action_type: None,
-            });
-        }
-    }
-
-    Ok(())
 }
 
 fn parse_resource_mode(resource: &Map<String, Value>) -> Result<ResourceMode, PlanParseError> {
@@ -567,12 +573,6 @@ fn parse_importing(change: &Map<String, Value>) -> Result<bool, PlanParseError> 
         Some(value) if value.is_object() => Ok(true),
         Some(_) => Err(PlanParseError::InvalidField("importing")),
     }
-}
-
-enum ActionClassification {
-    NoOp,
-    Supported(ResourceChangeKind),
-    Unsupported(UnsupportedChangeKind),
 }
 
 #[cfg(test)]
