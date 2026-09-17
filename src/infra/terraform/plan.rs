@@ -12,7 +12,7 @@ use crate::app::plan::{
 const SUPPORTED_FORMAT_MAJOR: u64 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PlanParseError {
+pub(crate) enum PlanParseError {
     InvalidJson,
     RootMustBeObject,
     MissingField(&'static str),
@@ -51,7 +51,7 @@ impl std::error::Error for PlanParseError {}
 ///
 /// Returns an error when the JSON is malformed, does not have the required
 /// plan shape, or uses an unsupported format major version.
-pub fn parse_plan_json(input: &str) -> Result<Plan, PlanParseError> {
+pub(crate) fn parse_plan_json(input: &str) -> Result<Plan, PlanParseError> {
     let document = serde_json::from_str::<Value>(input).map_err(|_| PlanParseError::InvalidJson)?;
     parse_plan_document(&document)
 }
@@ -63,7 +63,7 @@ pub fn parse_plan_json(input: &str) -> Result<Plan, PlanParseError> {
 /// Returns an error when the bytes are not valid JSON, the document does not
 /// have the required plan shape, or it uses an unsupported format major
 /// version.
-pub fn parse_plan_json_bytes(input: &[u8]) -> Result<Plan, PlanParseError> {
+pub(crate) fn parse_plan_json_bytes(input: &[u8]) -> Result<Plan, PlanParseError> {
     let document =
         serde_json::from_slice::<Value>(input).map_err(|_| PlanParseError::InvalidJson)?;
     parse_plan_document(&document)

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt::{Debug, Formatter};
 
 #[derive(Clone, PartialEq, Eq)]
-pub enum PlanValue {
+pub(crate) enum PlanValue {
     Null,
     Bool(bool),
     Number(String),
@@ -18,19 +18,19 @@ impl Debug for PlanValue {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReplacePathSegment {
+pub(crate) enum ReplacePathSegment {
     Attribute(String),
     Index(u64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResourceMode {
+pub(crate) enum ResourceMode {
     Managed,
     Data,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PlanAction {
+pub(crate) enum PlanAction {
     Create,
     Read,
     Update,
@@ -40,7 +40,7 @@ pub enum PlanAction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResourceChangeKind {
+pub(crate) enum ResourceChangeKind {
     Create,
     Update,
     Replace,
@@ -48,18 +48,18 @@ pub enum ResourceChangeKind {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct ResourceChange {
-    pub address: String,
-    pub mode: ResourceMode,
-    pub actions: Vec<PlanAction>,
-    pub kind: ResourceChangeKind,
-    pub before: Option<PlanValue>,
-    pub after: Option<PlanValue>,
-    pub before_sensitive: Option<PlanValue>,
-    pub after_sensitive: Option<PlanValue>,
-    pub after_unknown: Option<PlanValue>,
-    pub replace_paths: Option<Vec<Vec<ReplacePathSegment>>>,
-    pub action_reason: Option<String>,
+pub(crate) struct ResourceChange {
+    pub(crate) address: String,
+    pub(crate) mode: ResourceMode,
+    pub(crate) actions: Vec<PlanAction>,
+    pub(crate) kind: ResourceChangeKind,
+    pub(crate) before: Option<PlanValue>,
+    pub(crate) after: Option<PlanValue>,
+    pub(crate) before_sensitive: Option<PlanValue>,
+    pub(crate) after_sensitive: Option<PlanValue>,
+    pub(crate) after_unknown: Option<PlanValue>,
+    pub(crate) replace_paths: Option<Vec<Vec<ReplacePathSegment>>>,
+    pub(crate) action_reason: Option<String>,
 }
 
 impl Debug for ResourceChange {
@@ -91,22 +91,22 @@ impl Debug for ResourceChange {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct PlanSummary {
-    pub creates: usize,
-    pub updates: usize,
-    pub replaces: usize,
-    pub deletes: usize,
+pub(crate) struct PlanSummary {
+    pub(crate) creates: usize,
+    pub(crate) updates: usize,
+    pub(crate) replaces: usize,
+    pub(crate) deletes: usize,
 }
 
 impl PlanSummary {
     #[must_use]
-    pub const fn total(self) -> usize {
+    pub(crate) const fn total(self) -> usize {
         self.creates + self.updates + self.replaces + self.deletes
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnsupportedChangeScope {
+pub(crate) enum UnsupportedChangeScope {
     Resource,
     Output,
     ResourceDrift,
@@ -115,7 +115,7 @@ pub enum UnsupportedChangeScope {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnsupportedChangeKind {
+pub(crate) enum UnsupportedChangeKind {
     Output,
     Drift,
     Read,
@@ -129,30 +129,30 @@ pub enum UnsupportedChangeKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnsupportedChange {
-    pub scope: UnsupportedChangeScope,
-    pub address: String,
-    pub actions: Vec<PlanAction>,
-    pub kind: UnsupportedChangeKind,
-    pub reason: Option<String>,
-    pub action_type: Option<String>,
+pub(crate) struct UnsupportedChange {
+    pub(crate) scope: UnsupportedChangeScope,
+    pub(crate) address: String,
+    pub(crate) actions: Vec<PlanAction>,
+    pub(crate) kind: UnsupportedChangeKind,
+    pub(crate) reason: Option<String>,
+    pub(crate) action_type: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Plan {
-    pub changes: Vec<ResourceChange>,
-    pub summary: PlanSummary,
-    pub unsupported_changes: Vec<UnsupportedChange>,
+pub(crate) struct Plan {
+    pub(crate) changes: Vec<ResourceChange>,
+    pub(crate) summary: PlanSummary,
+    pub(crate) unsupported_changes: Vec<UnsupportedChange>,
 }
 
 impl Plan {
     #[must_use]
-    pub const fn has_changes(&self) -> bool {
+    pub(crate) const fn has_changes(&self) -> bool {
         !self.changes.is_empty() || !self.unsupported_changes.is_empty()
     }
 
     #[must_use]
-    pub const fn unsupported_change_count(&self) -> usize {
+    pub(crate) const fn unsupported_change_count(&self) -> usize {
         self.unsupported_changes.len()
     }
 }

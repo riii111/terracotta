@@ -1,3 +1,7 @@
-mod plan;
+#![allow(
+    clippy::redundant_pub_crate,
+    reason = "Terraform parsing is shared only within the crate"
+)]
 
-pub use plan::{PlanParseError, parse_plan_json, parse_plan_json_bytes};
+pub(crate) mod hcl;
+mod plan;
