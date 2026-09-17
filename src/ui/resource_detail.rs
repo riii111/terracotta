@@ -732,6 +732,9 @@ mod tests {
         );
         state.apply(DetailAction::SelectNext, 46, 4);
         assert!(state.scroll() > initial_scroll);
+        state.apply(DetailAction::SelectNext, 46, 4);
+        let text = buffer_text(&render(&state, 48, 12));
+        assert!(text.contains("> password"), "{text}");
 
         state.apply(DetailAction::PageDown, 46, 4);
         let text = buffer_text(&render(&state, 48, 12));
