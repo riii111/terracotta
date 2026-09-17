@@ -28,17 +28,40 @@ pub(super) fn run_synthetic() -> io::Result<()> {
 }
 
 fn run_plan_list(terminal: &mut DefaultTerminal, state: &mut PlanListState) -> io::Result<()> {
+    let mut detail = None;
     loop {
-        terminal.draw(|frame| render_plan_list(frame, state))?;
+        if let Some(detail_state) = detail.as_ref() {
+            terminal.draw(|frame| {
+                super::resource_detail::render_resource_detail(frame, detail_state);
+            })?;
+        } else {
+            terminal.draw(|frame| render_plan_list(frame, state))?;
+        }
 
         if event::poll(Duration::from_millis(100))?
             && let Event::Key(key) = event::read()?
             && key.is_press()
         {
-            match key_to_action(key) {
-                Some(ListInput::Quit) => return Ok(()),
-                Some(ListInput::Selection(action)) => state.apply(action),
-                None => {}
+            if let Some(detail_state) = detail.as_mut() {
+                let size = terminal.size()?;
+                let viewport_height = detail_state.viewport_height(size.height);
+                match super::resource_detail::key_to_input(key) {
+                    Some(super::resource_detail::DetailInput::Back) => detail = None,
+                    Some(super::resource_detail::DetailInput::Quit) => return Ok(()),
+                    Some(super::resource_detail::DetailInput::Action(action)) => {
+                        detail_state.apply(action, viewport_height);
+                    }
+                    None => {}
+                }
+            } else {
+                match key_to_action(key) {
+                    Some(ListInput::Quit) => return Ok(()),
+                    Some(ListInput::OpenDetail) => {
+                        detail = super::resource_detail::ResourceDetailState::from_list(state);
+                    }
+                    Some(ListInput::Selection(action)) => state.apply(action),
+                    None => {}
+                }
             }
         }
     }
@@ -47,6 +70,7 @@ fn run_plan_list(terminal: &mut DefaultTerminal, state: &mut PlanListState) -> i
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ListInput {
     Selection(PlanListAction),
+    OpenDetail,
     Quit,
 }
 
@@ -64,6 +88,7 @@ pub(super) fn key_to_action(key: KeyEvent) -> Option<ListInput> {
         KeyCode::Down | KeyCode::Char('j') => {
             Some(ListInput::Selection(PlanListAction::SelectNext))
         }
+        KeyCode::Enter => Some(ListInput::OpenDetail),
         _ => None,
     }
 }
@@ -281,7 +306,7 @@ fn summary_lines(state: &PlanListState) -> Vec<Line<'static>> {
 }
 
 fn footer_line() -> Line<'static> {
-    Line::from("Up/Down/j/k select   q/Ctrl-C quit")
+    Line::from("Up/Down/j/k select   Enter details   q/Ctrl-C quit")
 }
 
 fn separator(width: u16) -> Paragraph<'static> {
@@ -527,7 +552,7 @@ mod tests {
         assert!(text.contains("main.tf:42-46"));
         assert!(text.contains("incomplete"));
         assert!(text.contains("no match"));
-        assert!(text.contains("Up/Down/j/k select   q/Ctrl-C quit"));
+        assert!(text.contains("Up/Down/j/k select   Enter details   q/Ctrl-C quit"));
         assert!(
             text.contains(
                 "aws_s3_bucket.logs_with_a_very_long_resource_address_that_needs_truncation_for_narrow_terminal",
@@ -564,7 +589,7 @@ mod tests {
         assert!(text.contains("Analysis incomplete"), "{text}");
         assert!(text.contains("(+2 more)"), "{text}");
         assert!(
-            text.contains("Up/Down/j/k select   q/Ctrl-C quit"),
+            text.contains("Up/Down/j/k select   Enter details"),
             "{text}"
         );
     }
@@ -582,7 +607,7 @@ mod tests {
         assert!(text.contains("(+2 more)"), "{text}");
         assert!(text.contains("Needs review: 1 / 1"), "{text}");
         assert!(
-            text.contains("Up/Down/j/k select   q/Ctrl-C quit"),
+            text.contains("Up/Down/j/k select   Enter details"),
             "{text}"
         );
     }
@@ -663,6 +688,10 @@ mod tests {
         assert_eq!(
             key_to_action(key(KeyCode::Char('c'), KeyModifiers::CONTROL)),
             Some(ListInput::Quit)
+        );
+        assert_eq!(
+            key_to_action(key(KeyCode::Enter, KeyModifiers::NONE)),
+            Some(ListInput::OpenDetail)
         );
     }
 

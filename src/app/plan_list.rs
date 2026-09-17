@@ -4,9 +4,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use super::attribute_diff::{AttributeDiffs, diff_resource_attributes};
 use super::attribution::{AttributionStatus, ResourceAttribution};
 use super::plan::{Plan, PlanSummary, ResourceChange, ResourceChangeKind, UnsupportedChangeKind};
 use super::review::PlanReview;
+use super::source_location::SourceFileAnalysis;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PlanListError {
@@ -57,6 +59,7 @@ pub(crate) struct PlanListState {
     comparison: String,
     summary: PlanSummary,
     items: Vec<PlanListItem>,
+    source_files: Vec<SourceFileAnalysis>,
     unsupported: Vec<UnsupportedChangeKind>,
     analysis_issues: Vec<String>,
     selected: usize,
@@ -95,6 +98,7 @@ impl PlanListState {
                 state.analysis_issues.push(issue.message().to_owned());
             }
         }
+        state.source_files = review.source_files().to_vec();
         state.context = Some(PlanListContext {
             root: review.root().to_owned(),
             workspace: review.workspace().to_owned(),
@@ -142,6 +146,7 @@ impl PlanListState {
             comparison: comparison.into(),
             summary: plan.summary,
             items,
+            source_files: Vec::new(),
             unsupported: plan
                 .unsupported_changes
                 .into_iter()
@@ -158,6 +163,7 @@ impl PlanListState {
             comparison: comparison.into(),
             summary: PlanSummary::default(),
             items: Vec::new(),
+            source_files: Vec::new(),
             unsupported: Vec::new(),
             analysis_issues: Vec::new(),
             selected: 0,
@@ -195,6 +201,11 @@ impl PlanListState {
     #[must_use]
     pub(crate) fn items(&self) -> &[PlanListItem] {
         &self.items
+    }
+
+    #[must_use]
+    pub(crate) fn source_files(&self) -> &[SourceFileAnalysis] {
+        &self.source_files
     }
 
     #[must_use]
@@ -245,6 +256,16 @@ impl PlanListItem {
     #[must_use]
     pub(crate) const fn needs_review(&self) -> bool {
         self.attribution.needs_review()
+    }
+
+    #[must_use]
+    pub(crate) const fn attribution(&self) -> &ResourceAttribution {
+        &self.attribution
+    }
+
+    #[must_use]
+    pub(crate) fn attribute_diffs(&self) -> AttributeDiffs {
+        diff_resource_attributes(&self.change)
     }
 
     #[must_use]

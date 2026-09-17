@@ -17,6 +17,7 @@ use self::execution::ExecutionInput;
 
 mod execution;
 mod plan_list;
+mod resource_detail;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UiOutcome {
@@ -33,6 +34,7 @@ pub(crate) fn run_connected(
 ) -> io::Result<UiOutcome> {
     let mut execution = Some(state);
     let mut list = None;
+    let mut detail = None;
     let mut failed = false;
 
     loop {
@@ -42,6 +44,8 @@ pub(crate) fn run_connected(
 
         if let Some(state) = execution.as_ref() {
             terminal.draw(|frame| execution::render_execution(frame, state, Instant::now()))?;
+        } else if let Some(state) = detail.as_ref() {
+            terminal.draw(|frame| resource_detail::render_resource_detail(frame, state))?;
         } else if let Some(state) = list.as_ref() {
             terminal.draw(|frame| plan_list::render_plan_list(frame, state))?;
         }
@@ -54,6 +58,19 @@ pub(crate) fn run_connected(
                 if let Some(outcome) = handle_execution_input(terminal, state, key, cancel)? {
                     return Ok(outcome);
                 }
+            } else if let Some(state) = detail.as_mut() {
+                let size = terminal.size()?;
+                let viewport_height = state.viewport_height(size.height);
+                match resource_detail::key_to_input(key) {
+                    Some(resource_detail::DetailInput::Back) => detail = None,
+                    Some(resource_detail::DetailInput::Quit) => {
+                        return Ok(UiOutcome::Reviewed);
+                    }
+                    Some(resource_detail::DetailInput::Action(action)) => {
+                        state.apply(action, viewport_height);
+                    }
+                    None => {}
+                }
             } else if let Some(state) = list.as_mut() {
                 match plan_list::key_to_action(key) {
                     Some(plan_list::ListInput::Quit) => {
@@ -64,6 +81,9 @@ pub(crate) fn run_connected(
                         });
                     }
                     Some(plan_list::ListInput::Selection(action)) => state.apply(action),
+                    Some(plan_list::ListInput::OpenDetail) => {
+                        detail = resource_detail::ResourceDetailState::from_list(state);
+                    }
                     None => {}
                 }
             }
