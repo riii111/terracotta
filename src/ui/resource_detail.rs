@@ -241,12 +241,27 @@ impl ResourceDetailState {
 
     fn selected_reveal_path(&self) -> Option<Vec<AttributePathSegment>> {
         let rows = detail_rows(self);
-        let DetailRow::Attribute(index) = rows.get(self.selected)? else {
-            return None;
-        };
-        let attribute = self.attributes.attributes.get(*index)?;
-        (attribute.before.is_revealable() || attribute.after.is_revealable())
-            .then(|| attribute.path.clone())
+        match rows.get(self.selected)? {
+            DetailRow::Attribute(index) => {
+                let attribute = self.attributes.attributes.get(*index)?;
+                (attribute.before.is_revealable() || attribute.after.is_revealable())
+                    .then(|| attribute.path.clone())
+            }
+            DetailRow::Group {
+                group: AttributeGroup::Nested { kind, path },
+                ..
+            } => self
+                .attributes
+                .attributes
+                .iter()
+                .any(|attribute| {
+                    attribute.kind == *kind
+                        && attribute.path.starts_with(path)
+                        && (attribute.before.is_revealable() || attribute.after.is_revealable())
+                })
+                .then(|| path.clone()),
+            DetailRow::Group { .. } => None,
+        }
     }
 
     fn is_revealed_at(&self, now: Instant) -> bool {
@@ -287,7 +302,7 @@ pub(super) fn key_to_input(key: KeyEvent) -> Option<DetailInput> {
         KeyCode::Down | KeyCode::Char('j') => DetailAction::SelectNext,
         KeyCode::Char('[') => return Some(DetailInput::Navigate(ResourceNavigation::Previous)),
         KeyCode::Char(']') => return Some(DetailInput::Navigate(ResourceNavigation::Next)),
-        KeyCode::Char('r') => DetailAction::Reveal,
+        KeyCode::Char('r') if key.modifiers == KeyModifiers::NONE => DetailAction::Reveal,
         KeyCode::Enter => DetailAction::ToggleExpansion,
         KeyCode::PageUp => DetailAction::PageUp,
         KeyCode::PageDown => DetailAction::PageDown,
@@ -1180,6 +1195,15 @@ mod tests {
         }
     }
 
+    fn key_with_modifiers(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
+    }
+
     #[test]
     fn renders_diff_evidence_masks_special_values_and_omits_future_controls() {
         let state = state();
@@ -1372,6 +1396,17 @@ mod tests {
             Some(DetailInput::Action(DetailAction::Reveal))
         );
         assert_eq!(
+            key_to_input(key_with_modifiers(
+                KeyCode::Char('r'),
+                KeyModifiers::CONTROL,
+            )),
+            None
+        );
+        assert_eq!(
+            key_to_input(key_with_modifiers(KeyCode::Char('r'), KeyModifiers::ALT)),
+            None
+        );
+        assert_eq!(
             key_to_input(key(KeyCode::Char('['))),
             Some(DetailInput::Navigate(ResourceNavigation::Previous))
         );
@@ -1493,6 +1528,26 @@ mod tests {
         assert!(text.contains("<sensitive>"), "{text}");
         assert!(!text.contains("old-secret"), "{text}");
         assert!(!text.contains("new-secret"), "{text}");
+    }
+
+    #[test]
+    fn reveals_sensitive_children_when_nested_group_is_selected() {
+        let mut state = state_for_change(expansion_change(), &[]);
+        let group = AttributeGroup::Nested {
+            kind: AttributeChangeKind::Changed,
+            path: vec![AttributePathSegment::Key("group_b".to_owned())],
+        };
+        select_group(&mut state, &group);
+        state.apply_at(DetailAction::ToggleExpansion, 96, 40, Instant::now());
+        let now = Instant::now();
+
+        assert!(buffer_text(&render_at(&mut state, 100, 60, now)).contains("r reveal"));
+        state.apply_at(DetailAction::Reveal, 96, 40, now);
+        let text = buffer_text(&render_at(&mut state, 100, 60, now));
+
+        assert!(text.contains("old-secret"), "{text}");
+        assert!(text.contains("new-secret"), "{text}");
+        assert!(text.contains("Sensitive value revealed"), "{text}");
     }
 
     #[test]
