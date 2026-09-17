@@ -755,7 +755,9 @@ fn resolve_compare_ref_with_env(
             .map_err(|error| CompareRefError::Unavailable(error.message));
     }
 
-    if let Some(commit) = resolve_git_directory_ref(repository_root, compare_ref, environment)? {
+    if is_git_directory_pseudo_ref(compare_ref)
+        && let Some(commit) = resolve_git_directory_ref(repository_root, compare_ref, environment)?
+    {
         return Ok(commit);
     }
 
@@ -841,6 +843,21 @@ fn is_valid_comparison_ref_name(
     )
     .map_err(CompareRefError::Failed)?;
     Ok(output.status.success())
+}
+
+fn is_git_directory_pseudo_ref(compare_ref: &str) -> bool {
+    matches!(
+        compare_ref,
+        "HEAD"
+            | "FETCH_HEAD"
+            | "ORIG_HEAD"
+            | "MERGE_HEAD"
+            | "CHERRY_PICK_HEAD"
+            | "REVERT_HEAD"
+            | "REBASE_HEAD"
+            | "BISECT_HEAD"
+            | "AUTO_MERGE"
+    )
 }
 
 fn resolve_git_directory_ref(
@@ -1955,6 +1972,25 @@ mod tests {
         assert_eq!(result.compare_ref(), Some("compare"));
         assert!(result.resolved_commit().is_none());
         assert!(result.head_commit().is_some());
+    }
+
+    #[test]
+    fn does_not_treat_an_arbitrary_git_directory_file_as_a_pseudo_ref() {
+        let repository = TestRepository::new();
+        write(&repository, "main.tf", "resource \"example\" \"one\" {}\n");
+        repository.commit("initial");
+        git(&repository.path, &["branch", "config"]);
+        git(&repository.path, &["tag", "config"]);
+
+        let result = collect_diff_against_ref(&repository.path, "config");
+
+        assert!(matches!(
+            result.status(),
+            GitDiffStatus::AmbiguousCompareRef { reference, message }
+                if reference == "config"
+                    && message.contains("refs/heads/config")
+                    && message.contains("refs/tags/config")
+        ));
     }
 
     #[test]
