@@ -233,6 +233,14 @@ impl ConfigurationSnapshot {
         paths
             .into_iter()
             .filter(|path| {
+                if additional_paths.contains(path)
+                    && !before
+                        .iter()
+                        .chain(after)
+                        .any(|source| source.path() == path)
+                {
+                    return true;
+                }
                 let expected = after
                     .iter()
                     .find(|source| source.path() == path)

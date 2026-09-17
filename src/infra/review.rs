@@ -595,6 +595,39 @@ mod tests {
     }
 
     #[test]
+    fn marks_a_native_configuration_deleted_after_git_collection_as_incomplete() {
+        let repository = TestRepository::new();
+        repository.write(
+            "main.tf",
+            "resource \"terraform_data\" \"value\" {\n  input = \"head\"\n}\n",
+        );
+        repository.write(
+            "second.tf",
+            "resource \"terraform_data\" \"second\" {\n  input = \"head\"\n}\n",
+        );
+        repository.commit("initial");
+        repository.write(
+            "main.tf",
+            "resource \"terraform_data\" \"value\" {\n  input = \"intended\"\n}\n",
+        );
+
+        let review = run_fake_review_after_git_diff(
+            &repository.path,
+            plan_output(Some("terraform_data.value")),
+            || {
+                fs::remove_file(repository.path.join("second.tf"))
+                    .expect("late configuration deletion should succeed");
+            },
+        );
+
+        assert!(review.analysis_issues().iter().any(|issue| {
+            issue.kind() == AnalysisIssueKind::ConfigurationChanged
+                && issue.path().is_some_and(|path| path.ends_with("second.tf"))
+        }));
+        assert!(review.attributions()[0].needs_review());
+    }
+
+    #[test]
     fn checks_json_variables_and_lockfile_changes_for_incomplete_analysis() {
         let repository = TestRepository::new();
         repository.write("main.tf", "resource \"terraform_data\" \"value\" {}\n");
