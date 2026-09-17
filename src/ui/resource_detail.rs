@@ -231,7 +231,9 @@ impl ResourceDetailState {
 
     pub(super) fn viewport_height_at(&self, total_height: u16, now: Instant) -> u16 {
         total_height.saturating_sub(
-            5 + u16::from(self.context.is_some()) * 2 + u16::from(self.is_revealed_at(now)),
+            5 + u16::from(self.context.is_some()) * 2
+                + u16::from(self.is_revealed_at(now))
+                + u16::from(self.copy_notice.is_some()),
         )
     }
 
@@ -1394,6 +1396,17 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("r mask now"), "{text}");
+    }
+
+    #[test]
+    fn viewport_height_accounts_for_copy_notice_row() {
+        let mut state = state();
+        let now = Instant::now();
+        let without_notice = state.viewport_height_at(20, now);
+
+        state.set_copy_notice(CopyNotice::Failed);
+
+        assert_eq!(state.viewport_height_at(20, now), without_notice - 1);
     }
 
     #[test]
