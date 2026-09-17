@@ -220,11 +220,13 @@ impl ConfigurationSnapshot {
         &self,
         before: &[HclSourceFile],
         after: &[HclSourceFile],
+        additional_paths: &[PathBuf],
     ) -> Vec<PathBuf> {
         let mut paths = before
             .iter()
             .map(|source| source.path().to_owned())
             .chain(after.iter().map(|source| source.path().to_owned()))
+            .chain(additional_paths.iter().cloned())
             .collect::<Vec<_>>();
         paths.sort();
         paths.dedup();

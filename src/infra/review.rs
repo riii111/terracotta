@@ -47,7 +47,27 @@ pub(crate) fn run_review_with_events_with_runner(
     runner: &dyn terraform::execute::ProcessRunner,
     event_sink: &mut dyn FnMut(ExecutionEvent),
 ) -> Result<PlanReview, TerraformExecutionError> {
+    let mut no_op = || {};
+    run_review_with_events_with_runner_and_hook(
+        root,
+        compare_ref,
+        cancellation,
+        runner,
+        event_sink,
+        &mut no_op,
+    )
+}
+
+fn run_review_with_events_with_runner_and_hook(
+    root: &Path,
+    compare_ref: Option<&str>,
+    cancellation: &CancellationToken,
+    runner: &dyn terraform::execute::ProcessRunner,
+    event_sink: &mut dyn FnMut(ExecutionEvent),
+    after_git_diff: &mut dyn FnMut(),
+) -> Result<PlanReview, TerraformExecutionError> {
     let git_diff = collect_git_diff(root, compare_ref);
+    after_git_diff();
     let execution_root = git_diff.root().to_owned();
     let configuration_before = git::capture_working_tree_configuration(&execution_root);
 
@@ -64,7 +84,17 @@ pub(crate) fn run_review_with_events_with_runner(
     let source_files = parse_git_sources(&git_diff);
     let configuration_comparison = git::compare_configuration(&git_diff, &configuration_before);
     let mut analysis_issues = git_analysis_issues(&git_diff);
-    for path in configuration_before.differing_source_paths(git_diff.before(), git_diff.after()) {
+    let current_native_paths = configuration_comparison
+        .changed_paths()
+        .iter()
+        .filter(|path| is_supported_native_configuration_path(&execution_root, path))
+        .cloned()
+        .collect::<Vec<_>>();
+    for path in configuration_before.differing_source_paths(
+        git_diff.before(),
+        git_diff.after(),
+        &current_native_paths,
+    ) {
         push_unique(
             &mut analysis_issues,
             AnalysisIssue::configuration_changed(&path),
@@ -375,6 +405,28 @@ mod tests {
         .expect("fake Terraform review should succeed")
     }
 
+    fn run_fake_review_after_git_diff(
+        root: &Path,
+        plan: ProcessOutput,
+        mutate_after_git_diff: impl FnOnce(),
+    ) -> PlanReview {
+        let runner = FakeRunner::new(plan, None);
+        let mut mutate_after_git_diff = Some(mutate_after_git_diff);
+        run_review_with_events_with_runner_and_hook(
+            root,
+            None,
+            &CancellationToken::new(),
+            &runner,
+            &mut |_| {},
+            &mut || {
+                mutate_after_git_diff
+                    .take()
+                    .expect("Git diff hook should run once")();
+            },
+        )
+        .expect("fake Terraform review should succeed")
+    }
+
     #[test]
     #[ignore = "requires Terraform CLI"]
     fn reviews_the_basic_scenario_with_four_direct_matches_and_one_no_match() {
@@ -503,6 +555,41 @@ mod tests {
         assert!(review.analysis_issues().iter().any(|issue| {
             issue.kind() == AnalysisIssueKind::ConfigurationChanged
                 && issue.path().is_some_and(|path| path.ends_with("main.tf"))
+        }));
+        assert!(review.attributions()[0].needs_review());
+    }
+
+    #[test]
+    fn marks_a_native_configuration_changed_after_git_collection_as_incomplete() {
+        let repository = TestRepository::new();
+        repository.write(
+            "main.tf",
+            "resource \"terraform_data\" \"value\" {\n  input = \"head\"\n}\n",
+        );
+        repository.write(
+            "second.tf",
+            "resource \"terraform_data\" \"second\" {\n  input = \"head\"\n}\n",
+        );
+        repository.commit("initial");
+        repository.write(
+            "main.tf",
+            "resource \"terraform_data\" \"value\" {\n  input = \"intended\"\n}\n",
+        );
+
+        let review = run_fake_review_after_git_diff(
+            &repository.path,
+            plan_output(Some("terraform_data.value")),
+            || {
+                repository.write(
+                    "second.tf",
+                    "resource \"terraform_data\" \"second\" {\n  input = \"unintended\"\n}\n",
+                );
+            },
+        );
+
+        assert!(review.analysis_issues().iter().any(|issue| {
+            issue.kind() == AnalysisIssueKind::ConfigurationChanged
+                && issue.path().is_some_and(|path| path.ends_with("second.tf"))
         }));
         assert!(review.attributions()[0].needs_review());
     }
