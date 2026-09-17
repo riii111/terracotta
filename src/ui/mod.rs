@@ -166,3 +166,6 @@ pub fn run_synthetic() -> io::Result<()> {
 pub fn run_synthetic_execution() -> io::Result<()> {
     execution::run_synthetic_execution()
 }
+
+#[cfg(test)]
+mod test_support;

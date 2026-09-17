@@ -14,6 +14,9 @@ ratatui = "0.30"
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 hcl = { package = "hcl-rs", version = "0.19.8" }
 
+[dev-dependencies]
+insta = "1"
+
 [lints.rust]
 redundant_imports = "deny"
 unreachable_pub = "deny"
