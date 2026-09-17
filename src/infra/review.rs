@@ -2,7 +2,7 @@ use std::{ffi::OsStr, path::Path};
 
 use crate::app::{
     attribution::{AnalysisIssue, attribute_changes, mark_analysis_incomplete},
-    progress::ExecutionEvent,
+    progress::{ExecutionEvent, ExecutionEventKind, ExecutionPhase},
     review::{PlanReview, ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus},
     source_location::SourceFileAnalysis,
 };
@@ -31,12 +31,30 @@ pub(crate) fn run_review_with_events(
     cancellation: &CancellationToken,
     event_sink: &mut dyn FnMut(ExecutionEvent),
 ) -> Result<PlanReview, TerraformExecutionError> {
-    run_review_with_events_with_runner(
+    let mut ignore_phase = |_| {};
+    run_review_with_events_and_phases(
+        root,
+        compare_ref,
+        cancellation,
+        event_sink,
+        &mut ignore_phase,
+    )
+}
+
+pub(crate) fn run_review_with_events_and_phases(
+    root: &Path,
+    compare_ref: Option<&str>,
+    cancellation: &CancellationToken,
+    event_sink: &mut dyn FnMut(ExecutionEvent),
+    phase_sink: &mut dyn FnMut(ExecutionPhase),
+) -> Result<PlanReview, TerraformExecutionError> {
+    run_review_with_events_with_runner_and_phases(
         root,
         compare_ref,
         cancellation,
         &terraform::execute::SystemProcessRunner,
         event_sink,
+        phase_sink,
     )
 }
 
@@ -47,14 +65,34 @@ pub(crate) fn run_review_with_events_with_runner(
     runner: &dyn terraform::execute::ProcessRunner,
     event_sink: &mut dyn FnMut(ExecutionEvent),
 ) -> Result<PlanReview, TerraformExecutionError> {
+    let mut ignore_phase = |_| {};
+    run_review_with_events_with_runner_and_phases(
+        root,
+        compare_ref,
+        cancellation,
+        runner,
+        event_sink,
+        &mut ignore_phase,
+    )
+}
+
+pub(crate) fn run_review_with_events_with_runner_and_phases(
+    root: &Path,
+    compare_ref: Option<&str>,
+    cancellation: &CancellationToken,
+    runner: &dyn terraform::execute::ProcessRunner,
+    event_sink: &mut dyn FnMut(ExecutionEvent),
+    phase_sink: &mut dyn FnMut(ExecutionPhase),
+) -> Result<PlanReview, TerraformExecutionError> {
     let mut no_op = || {};
-    run_review_with_events_with_runner_and_hook(
+    run_review_with_events_with_runner_and_hook_and_phases(
         root,
         compare_ref,
         cancellation,
         runner,
         event_sink,
         &mut no_op,
+        phase_sink,
     )
 }
 
@@ -66,6 +104,26 @@ fn run_review_with_events_with_runner_and_hook(
     event_sink: &mut dyn FnMut(ExecutionEvent),
     after_git_diff: &mut dyn FnMut(),
 ) -> Result<PlanReview, TerraformExecutionError> {
+    run_review_with_events_with_runner_and_hook_and_phases(
+        root,
+        compare_ref,
+        cancellation,
+        runner,
+        event_sink,
+        after_git_diff,
+        &mut |_| {},
+    )
+}
+
+fn run_review_with_events_with_runner_and_hook_and_phases(
+    root: &Path,
+    compare_ref: Option<&str>,
+    cancellation: &CancellationToken,
+    runner: &dyn terraform::execute::ProcessRunner,
+    event_sink: &mut dyn FnMut(ExecutionEvent),
+    after_git_diff: &mut dyn FnMut(),
+    phase_sink: &mut dyn FnMut(ExecutionPhase),
+) -> Result<PlanReview, TerraformExecutionError> {
     let git_diff = collect_git_diff(root, compare_ref);
     after_git_diff();
     let execution_root = git_diff.root().to_owned();
@@ -73,12 +131,18 @@ fn run_review_with_events_with_runner_and_hook(
 
     let workspace =
         terraform::execute::read_workspace_with_runner(&execution_root, cancellation, runner)?;
-    let execution = terraform::execute::run_plan_with_events_with_runner(
+    event_sink(ExecutionEvent {
+        received_at: std::time::Instant::now(),
+        kind: ExecutionEventKind::Workspace(workspace.clone()),
+    });
+    let execution = terraform::execute::run_plan_with_events_with_runner_and_phase(
         &execution_root,
         cancellation,
         runner,
         event_sink,
+        phase_sink,
     )?;
+    phase_sink(ExecutionPhase::Matching);
     let configuration_after = git::capture_working_tree_configuration(&execution_root);
 
     let source_files = parse_git_sources(&git_diff);

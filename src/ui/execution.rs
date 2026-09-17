@@ -74,13 +74,16 @@ fn run_execution(terminal: &mut DefaultTerminal, state: &mut ExecutionState) -> 
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum ExecutionInput {
+pub(super) enum ExecutionInput {
     Action(ExecutionAction),
     Scroll(ExecutionScroll),
     Quit,
 }
 
-fn execution_key_to_input(key: KeyEvent, stage: ExecutionStage) -> Option<ExecutionInput> {
+pub(super) fn execution_key_to_input(
+    key: KeyEvent,
+    stage: ExecutionStage,
+) -> Option<ExecutionInput> {
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
         return Some(if stage == ExecutionStage::Failed {
             ExecutionInput::Quit
@@ -103,7 +106,7 @@ fn execution_key_to_input(key: KeyEvent, stage: ExecutionStage) -> Option<Execut
     }
 }
 
-fn render_execution(frame: &mut Frame<'_>, state: &ExecutionState, now: Instant) {
+pub(super) fn render_execution(frame: &mut Frame<'_>, state: &ExecutionState, now: Instant) {
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT || !has_execution_space(area, state) {
         render_too_small(frame, area, state.stage());
@@ -144,7 +147,7 @@ fn render_execution(frame: &mut Frame<'_>, state: &ExecutionState, now: Instant)
     );
 }
 
-fn execution_chunks(area: Rect, state: &ExecutionState) -> Vec<Rect> {
+pub(super) fn execution_chunks(area: Rect, state: &ExecutionState) -> Vec<Rect> {
     let content_area = Block::new().borders(Borders::ALL).inner(area);
     let (context_height, footer_height) = execution_fixed_heights(state, content_area.width);
     Layout::default()
@@ -182,7 +185,7 @@ fn has_execution_space(area: Rect, state: &ExecutionState) -> bool {
         <= content_area.height
 }
 
-fn execution_scroll_position(state: &ExecutionState, body: Rect) -> (u16, u16) {
+pub(super) fn execution_scroll_position(state: &ExecutionState, body: Rect) -> (u16, u16) {
     let lines = wrapped_lines(&execution_lines(state), body.width);
     let visible_height = usize::from(body.height);
     let max_scroll = u16::try_from(lines.len().saturating_sub(visible_height)).unwrap_or(u16::MAX);

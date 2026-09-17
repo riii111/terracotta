@@ -1,6 +1,9 @@
 use std::time::{Duration, Instant};
 
-use super::progress::{ExecutionEvent, ExecutionEventKind, ExecutionProgress, ProcessExitStatus};
+use super::progress::{
+    Diagnostic, DiagnosticSource, ExecutionEvent, ExecutionEventKind, ExecutionPhase,
+    ExecutionProgress, ProcessExitStatus,
+};
 
 const PAGE_SCROLL: u16 = 8;
 
@@ -64,6 +67,11 @@ impl ExecutionContext {
             git: ExecutionContextValue::Known(git.into()),
             comparison: ExecutionContextValue::Known(comparison.into()),
         }
+    }
+
+    pub(crate) fn with_workspace(mut self, workspace: impl Into<String>) -> Self {
+        self.workspace = ExecutionContextValue::Known(workspace.into());
+        self
     }
 
     #[must_use]
@@ -180,13 +188,40 @@ impl ExecutionState {
     }
 
     pub(crate) fn record(&mut self, event: ExecutionEvent) {
-        if let ExecutionEventKind::Terminated(termination) = &event.kind
-            && !termination.interrupted
-            && !matches!(termination.status, ProcessExitStatus::Exited(0))
-        {
-            self.stage = ExecutionStage::Failed;
+        match &event.kind {
+            ExecutionEventKind::Phase(ExecutionPhase::Reading) => {
+                self.stage = ExecutionStage::Reading;
+            }
+            ExecutionEventKind::Phase(ExecutionPhase::Matching) => {
+                self.stage = ExecutionStage::Matching;
+            }
+            ExecutionEventKind::Workspace(workspace) => {
+                self.context = self.context.clone().with_workspace(workspace.clone());
+            }
+            ExecutionEventKind::Terminated(termination)
+                if !termination.interrupted
+                    && !matches!(termination.status, ProcessExitStatus::Exited(0)) =>
+            {
+                self.stage = ExecutionStage::Failed;
+            }
+            _ => {}
         }
         self.progress.record(event);
+    }
+
+    pub(crate) fn fail(&mut self, message: String, received_at: Instant) {
+        self.stage = ExecutionStage::Failed;
+        self.record(ExecutionEvent {
+            received_at,
+            kind: ExecutionEventKind::Diagnostic(Diagnostic {
+                severity: super::progress::DiagnosticSeverity::Error,
+                summary: message,
+                detail: None,
+                position: None,
+                source: DiagnosticSource::Terraform,
+                raw: None,
+            }),
+        });
     }
 
     #[must_use]
@@ -233,6 +268,11 @@ impl ExecutionState {
     #[must_use]
     pub(crate) const fn is_cancelling(&self) -> bool {
         self.cancellation_requested && self.progress.termination().is_none()
+    }
+
+    #[must_use]
+    pub(crate) const fn cancellation_requested(&self) -> bool {
+        self.cancellation_requested
     }
 }
 
@@ -326,5 +366,32 @@ mod tests {
             state.progress().events()[0].kind,
             ExecutionEventKind::Terminated(ProcessTermination { .. })
         ));
+    }
+
+    #[test]
+    fn review_events_update_workspace_and_execution_phase() {
+        let started_at = Instant::now();
+        let mut state = ExecutionState::new(started_at);
+
+        state.record(event(
+            started_at,
+            ExecutionEventKind::Workspace("default".to_owned()),
+        ));
+        assert_eq!(
+            state.context().workspace(),
+            &ExecutionContextValue::Known("default".to_owned())
+        );
+
+        state.record(event(
+            started_at,
+            ExecutionEventKind::Phase(ExecutionPhase::Reading),
+        ));
+        assert_eq!(state.stage(), ExecutionStage::Reading);
+
+        state.record(event(
+            started_at,
+            ExecutionEventKind::Phase(ExecutionPhase::Matching),
+        ));
+        assert_eq!(state.stage(), ExecutionStage::Matching);
     }
 }

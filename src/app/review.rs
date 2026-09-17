@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use super::{
     attribution::{AnalysisIssue, ResourceAttribution},
     plan::Plan,
+    progress::ExecutionEvent,
     source_location::SourceFileAnalysis,
 };
 
@@ -92,6 +93,17 @@ impl ReviewComparison {
     pub(crate) const fn status(&self) -> &ReviewComparisonStatus {
         &self.status
     }
+
+    #[must_use]
+    pub(crate) fn label(&self) -> String {
+        match self.basis {
+            ReviewComparisonBasis::WorkingTreeVsHead => "working tree vs HEAD".to_owned(),
+            ReviewComparisonBasis::HeadVsMergeBase => self.compare_ref.as_deref().map_or_else(
+                || "HEAD vs merge-base".to_owned(),
+                |compare_ref| format!("HEAD vs merge-base({compare_ref})"),
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,6 +115,13 @@ pub(crate) struct PlanReview {
     attributions: Vec<ResourceAttribution>,
     comparison: ReviewComparison,
     analysis_issues: Vec<AnalysisIssue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PlanReviewMessage {
+    Event(ExecutionEvent),
+    Completed(PlanReview),
+    Failed { message: String, interrupted: bool },
 }
 
 impl PlanReview {

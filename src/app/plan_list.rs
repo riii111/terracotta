@@ -3,6 +3,7 @@ use std::fmt::{Display, Formatter};
 
 use super::attribution::{AttributionStatus, ResourceAttribution};
 use super::plan::{Plan, PlanSummary, ResourceChange, ResourceChangeKind, UnsupportedChangeKind};
+use super::review::PlanReview;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PlanListError {
@@ -63,6 +64,14 @@ pub(crate) struct PlanListItem {
 }
 
 impl PlanListState {
+    pub(crate) fn from_review(review: &PlanReview) -> Result<Self, PlanListError> {
+        Self::from_plan(
+            review.plan().clone(),
+            review.attributions().to_vec(),
+            review.comparison().label(),
+        )
+    }
+
     pub(crate) fn from_plan(
         plan: Plan,
         attributions: Vec<ResourceAttribution>,

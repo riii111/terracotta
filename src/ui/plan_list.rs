@@ -44,12 +44,12 @@ fn run_plan_list(terminal: &mut DefaultTerminal, state: &mut PlanListState) -> i
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ListInput {
+pub(super) enum ListInput {
     Selection(PlanListAction),
     Quit,
 }
 
-fn key_to_action(key: KeyEvent) -> Option<ListInput> {
+pub(super) fn key_to_action(key: KeyEvent) -> Option<ListInput> {
     if matches!(key.code, KeyCode::Char('q'))
         || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
     {
@@ -67,7 +67,7 @@ fn key_to_action(key: KeyEvent) -> Option<ListInput> {
     }
 }
 
-fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
+pub(super) fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         render_terminal_too_small(frame, area);

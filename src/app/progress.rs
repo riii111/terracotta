@@ -136,11 +136,19 @@ pub(crate) enum ExecutionEventKind {
     Resource(ResourceEvent),
     Summary(ExecutionSummary),
     Diagnostic(Diagnostic),
+    Phase(ExecutionPhase),
+    Workspace(String),
     Informational {
         event_type: String,
         message: Option<String>,
     },
     Terminated(ProcessTermination),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExecutionPhase {
+    Reading,
+    Matching,
 }
 
 impl Debug for ExecutionEventKind {
@@ -152,6 +160,8 @@ impl Debug for ExecutionEventKind {
                 .debug_tuple("Diagnostic")
                 .field(diagnostic)
                 .finish(),
+            Self::Phase(phase) => formatter.debug_tuple("Phase").field(phase).finish(),
+            Self::Workspace(_) => formatter.write_str("Workspace(<redacted>)"),
             Self::Informational { event_type, .. } => formatter
                 .debug_struct("Informational")
                 .field("event_type", event_type)
@@ -210,7 +220,9 @@ impl ExecutionProgress {
             }
             ExecutionEventKind::Summary(summary) => self.summary = Some(summary.clone()),
             ExecutionEventKind::Diagnostic(diagnostic) => self.diagnostics.push(diagnostic.clone()),
-            ExecutionEventKind::Informational { .. } => {}
+            ExecutionEventKind::Phase(_)
+            | ExecutionEventKind::Workspace(_)
+            | ExecutionEventKind::Informational { .. } => {}
             ExecutionEventKind::Terminated(termination) => self.termination = Some(*termination),
         }
         self.events.push(event);

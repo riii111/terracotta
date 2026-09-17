@@ -21,7 +21,8 @@ use std::os::unix::fs::OpenOptionsExt;
 use crate::app::{
     plan::Plan,
     progress::{
-        EventStream, ExecutionEvent, ExecutionEventKind, ProcessExitStatus, ProcessTermination,
+        EventStream, ExecutionEvent, ExecutionEventKind, ExecutionPhase, ProcessExitStatus,
+        ProcessTermination,
     },
 };
 
@@ -348,13 +349,36 @@ pub(crate) fn run_plan_with_events_with_runner(
     runner: &dyn ProcessRunner,
     event_sink: &mut dyn FnMut(ExecutionEvent),
 ) -> Result<PlanExecution, TerraformExecutionError> {
+    let mut ignore_phase = |_| {};
+    run_plan_with_events_with_runner_and_phase(
+        root,
+        cancellation,
+        runner,
+        event_sink,
+        &mut ignore_phase,
+    )
+}
+
+pub(crate) fn run_plan_with_events_with_runner_and_phase(
+    root: &Path,
+    cancellation: &CancellationToken,
+    runner: &dyn ProcessRunner,
+    event_sink: &mut dyn FnMut(ExecutionEvent),
+    phase_sink: &mut dyn FnMut(ExecutionPhase),
+) -> Result<PlanExecution, TerraformExecutionError> {
     let temporary_plan = TemporaryPlan::create().map_err(|error| {
         TerraformExecutionError::new(TerraformExecutionErrorKind::TemporaryPlan {
             message: error.to_string(),
         })
     })?;
-    let result =
-        execute_plan_with_events(root, &temporary_plan.path, cancellation, runner, event_sink);
+    let result = execute_plan_with_events_and_phase(
+        root,
+        &temporary_plan.path,
+        cancellation,
+        runner,
+        event_sink,
+        phase_sink,
+    );
 
     finish_plan(temporary_plan, result)
 }
@@ -375,6 +399,25 @@ fn execute_plan_with_events(
     cancellation: &CancellationToken,
     runner: &dyn ProcessRunner,
     event_sink: &mut dyn FnMut(ExecutionEvent),
+) -> Result<PlanExecution, TerraformExecutionError> {
+    let mut ignore_phase = |_| {};
+    execute_plan_with_events_and_phase(
+        root,
+        plan_path,
+        cancellation,
+        runner,
+        event_sink,
+        &mut ignore_phase,
+    )
+}
+
+fn execute_plan_with_events_and_phase(
+    root: &Path,
+    plan_path: &Path,
+    cancellation: &CancellationToken,
+    runner: &dyn ProcessRunner,
+    event_sink: &mut dyn FnMut(ExecutionEvent),
+    phase_sink: &mut dyn FnMut(ExecutionPhase),
 ) -> Result<PlanExecution, TerraformExecutionError> {
     let plan_arguments = plan_arguments(plan_path);
     let plan_output = run_command_with_events(
@@ -401,6 +444,8 @@ fn execute_plan_with_events(
             },
         ));
     }
+
+    phase_sink(ExecutionPhase::Reading);
 
     let show_arguments = show_arguments(plan_path);
     let show_output = run_command(
