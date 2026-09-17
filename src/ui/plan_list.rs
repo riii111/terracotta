@@ -81,16 +81,17 @@ pub(super) fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
     let content_area = block.inner(area);
     frame.render_widget(block, area);
 
-    let notice = notice_line(state, content_area.width as usize);
-    let notice_height = u16::from(notice.is_some());
+    let notices = notice_lines(state, content_area.width as usize);
+    let notice_height = notices.len() as u16;
     let context_height = u16::from(state.context().is_some()) * 2;
+    let separator_height = u16::from(notice_height < 2);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(context_height),
             Constraint::Length(1),
             Constraint::Length(2),
-            Constraint::Length(1),
+            Constraint::Length(separator_height),
             Constraint::Length(notice_height),
             Constraint::Min(1),
             Constraint::Length(1),
@@ -118,20 +119,17 @@ pub(super) fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
     frame.render_widget(Paragraph::new(summary_lines(state)), chunks[2]);
     frame.render_widget(separator(chunks[3].width), chunks[3]);
 
-    if let Some(notice) = notice {
-        frame.render_widget(Paragraph::new(notice), chunks[4]);
+    if !notices.is_empty() {
+        frame.render_widget(Paragraph::new(notices), chunks[4]);
     }
 
     render_rows(frame, state, chunks[5]);
     frame.render_widget(Paragraph::new(footer_line()), chunks[6]);
 }
 
-fn notice_line(state: &PlanListState, width: usize) -> Option<Line<'static>> {
-    let mut notices = Vec::new();
-    if let Some(summary) = state.unsupported_summary() {
-        notices.push(summary);
-    }
-    if let Some(first) = state.analysis_issues().first() {
+fn notice_lines(state: &PlanListState, width: usize) -> Vec<Line<'static>> {
+    let unsupported = state.unsupported_summary();
+    let analysis = state.analysis_issues().first().map(|first| {
         let suffix = match state.analysis_issues().len() {
             0 | 1 => String::new(),
             count => format!(" (+{} more)", count - 1),
@@ -139,16 +137,22 @@ fn notice_line(state: &PlanListState, width: usize) -> Option<Line<'static>> {
         let issue_width = width
             .saturating_sub(ANALYSIS_PREFIX.len())
             .saturating_sub(suffix.chars().count());
-        notices.push(format!(
+        format!(
             "{ANALYSIS_PREFIX}{}{}",
             truncate_end(first, issue_width),
             suffix
-        ));
+        )
+    });
+
+    match (unsupported, analysis) {
+        (Some(summary), Some(analysis)) => vec![
+            Line::from(truncate_end(&summary, width)),
+            Line::from(analysis),
+        ],
+        (Some(summary), None) => vec![Line::from(truncate_end(&summary, width))],
+        (None, Some(analysis)) => vec![Line::from(analysis)],
+        (None, None) => Vec::new(),
     }
-    (!notices.is_empty()).then(|| {
-        Line::from(truncate_end(&notices.join("   "), width))
-            .style(Style::default().fg(Color::Yellow))
-    })
 }
 
 fn render_terminal_too_small(frame: &mut Frame<'_>, area: Rect) {
@@ -485,7 +489,14 @@ mod tests {
                     updates: 1,
                     ..PlanSummary::default()
                 },
-                unsupported_changes: Vec::new(),
+                unsupported_changes: vec![UnsupportedChange {
+                    scope: UnsupportedChangeScope::Output,
+                    address: "output.value".to_owned(),
+                    actions: vec![PlanAction::Update],
+                    kind: UnsupportedChangeKind::Output,
+                    reason: None,
+                    action_type: None,
+                }],
             },
             Vec::new(),
             vec![attribution],
@@ -555,6 +566,24 @@ mod tests {
         assert!(text.contains("Needs review: 1 / 1"), "{text}");
         assert!(text.contains("Analysis incomplete"), "{text}");
         assert!(text.contains("(+2 more)"), "{text}");
+        assert!(
+            text.contains("Up/Down/j/k select   q/Ctrl-C quit"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn connected_list_keeps_both_notices_at_minimum_width() {
+        let state = connected_state();
+        let text = buffer_text(&render_to_buffer(&state, MIN_WIDTH, MIN_HEIGHT));
+
+        assert!(text.contains("Unshown changes: output (1)"), "{text}");
+        assert!(
+            text.contains("Analysis incomplete: first analys..."),
+            "{text}"
+        );
+        assert!(text.contains("(+2 more)"), "{text}");
+        assert!(text.contains("Needs review: 1 / 1"), "{text}");
         assert!(
             text.contains("Up/Down/j/k select   q/Ctrl-C quit"),
             "{text}"
