@@ -1,5 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
+use ratatui::buffer::CellWidth;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -60,21 +61,31 @@ impl ResourceDetailState {
         })
     }
 
-    pub(super) fn apply(&mut self, action: DetailAction, viewport_height: u16) {
+    pub(super) fn apply(
+        &mut self,
+        action: DetailAction,
+        viewport_width: u16,
+        viewport_height: u16,
+    ) {
         let page = viewport_height.max(1);
         match action {
             DetailAction::SelectPrevious => {
                 self.selected = self.selected.saturating_sub(1);
-                self.ensure_selected_visible(page);
+                self.ensure_selected_visible(viewport_width, page);
             }
             DetailAction::SelectNext => {
                 if let Some(last) = self.attributes.changed_count.checked_sub(1) {
                     self.selected = (self.selected + 1).min(last);
-                    self.ensure_selected_visible(page);
+                    self.ensure_selected_visible(viewport_width, page);
                 }
             }
             DetailAction::PageUp => self.scroll = self.scroll.saturating_sub(page),
-            DetailAction::PageDown => self.scroll = self.scroll.saturating_add(page),
+            DetailAction::PageDown => {
+                self.scroll =
+                    self.scroll
+                        .saturating_add(page)
+                        .min(max_scroll(self, viewport_width, page));
+            }
         }
     }
 
@@ -94,10 +105,12 @@ impl ResourceDetailState {
         total_height.saturating_sub(5 + u16::from(self.context.is_some()) * 2)
     }
 
-    fn ensure_selected_visible(&mut self, viewport_height: u16) {
-        let Some(selected_line) = detail_content(self).selected_line else {
+    fn ensure_selected_visible(&mut self, viewport_width: u16, viewport_height: u16) {
+        let content = detail_content(self);
+        let Some(selected_line) = wrapped_selected_line(&content, viewport_width) else {
             return;
         };
+        let selected_line = u16::try_from(selected_line).unwrap_or(u16::MAX);
         if selected_line < self.scroll {
             self.scroll = selected_line;
         } else if selected_line >= self.scroll.saturating_add(viewport_height) {
@@ -174,9 +187,12 @@ pub(super) fn render_resource_detail(frame: &mut Frame<'_>, state: &ResourceDeta
     frame.render_widget(separator(chunks[2].width), chunks[2]);
 
     let content = detail_content(state);
+    let scroll = state
+        .scroll()
+        .min(max_scroll(state, chunks[3].width, chunks[3].height));
     frame.render_widget(
         Paragraph::new(content.lines)
-            .scroll((state.scroll(), 0))
+            .scroll((scroll, 0))
             .wrap(Wrap { trim: false }),
         chunks[3],
     );
@@ -206,7 +222,7 @@ fn detail_content(state: &ResourceDetailState) -> DetailContent {
             continue;
         }
         if changed_index == state.selected {
-            selected_line = Some(u16::try_from(lines.len()).unwrap_or(u16::MAX));
+            selected_line = Some(lines.len());
         }
         append_attribute(&mut lines, attribute, changed_index == state.selected);
         changed_index += 1;
@@ -422,7 +438,108 @@ const fn footer_line() -> &'static str {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DetailContent {
     lines: Vec<Line<'static>>,
-    selected_line: Option<u16>,
+    selected_line: Option<usize>,
+}
+
+fn max_scroll(state: &ResourceDetailState, viewport_width: u16, viewport_height: u16) -> u16 {
+    let content = detail_content(state);
+    let max_scroll =
+        wrapped_line_count(&content, viewport_width).saturating_sub(usize::from(viewport_height));
+    u16::try_from(max_scroll).unwrap_or(u16::MAX)
+}
+
+fn wrapped_selected_line(content: &DetailContent, viewport_width: u16) -> Option<usize> {
+    let selected_line = content.selected_line?;
+    Some(
+        content.lines[..selected_line]
+            .iter()
+            .map(|line| wrapped_line_count_for_line(line, viewport_width.max(1)))
+            .sum(),
+    )
+}
+
+fn wrapped_line_count(content: &DetailContent, viewport_width: u16) -> usize {
+    content
+        .lines
+        .iter()
+        .map(|line| wrapped_line_count_for_line(line, viewport_width.max(1)))
+        .sum()
+}
+
+fn wrapped_line_count_for_line(line: &Line<'_>, max_width: u16) -> usize {
+    let mut line_width: u16 = 0;
+    let mut word_width: u16 = 0;
+    let mut whitespace_width: u16 = 0;
+    let mut whitespace = std::collections::VecDeque::new();
+    let mut line_has_content = false;
+    let mut word_has_content = false;
+    let mut non_whitespace_previous = false;
+    let mut count = 0;
+
+    for grapheme in line.styled_graphemes(Style::default()) {
+        let is_whitespace = grapheme.is_whitespace();
+        let symbol_width = grapheme.symbol.cell_width();
+        if symbol_width > max_width {
+            continue;
+        }
+
+        let word_found = non_whitespace_previous && is_whitespace;
+        let untrimmed_overflow = !line_has_content
+            && word_width
+                .saturating_add(whitespace_width)
+                .saturating_add(symbol_width)
+                > max_width;
+        if word_found || untrimmed_overflow {
+            if !whitespace.is_empty() {
+                line_has_content = true;
+            }
+            if word_has_content {
+                line_has_content = true;
+            }
+            line_width = line_width
+                .saturating_add(whitespace_width)
+                .saturating_add(word_width);
+            whitespace.clear();
+            whitespace_width = 0;
+            word_width = 0;
+            word_has_content = false;
+        }
+
+        let line_full = line_width >= max_width;
+        let pending_word_overflow = symbol_width > 0
+            && line_width
+                .saturating_add(whitespace_width)
+                .saturating_add(word_width)
+                >= max_width;
+        if line_full || pending_word_overflow {
+            count += 1;
+            let mut remaining_width = max_width.saturating_sub(line_width);
+            while let Some(width) = whitespace.front().copied() {
+                if width > remaining_width {
+                    break;
+                }
+                whitespace.pop_front();
+                whitespace_width = whitespace_width.saturating_sub(width);
+                remaining_width = remaining_width.saturating_sub(width);
+            }
+            line_width = 0;
+            line_has_content = false;
+            if is_whitespace && whitespace.is_empty() {
+                continue;
+            }
+        }
+
+        if is_whitespace {
+            whitespace_width = whitespace_width.saturating_add(symbol_width);
+            whitespace.push_back(symbol_width);
+        } else {
+            word_width = word_width.saturating_add(symbol_width);
+            word_has_content = true;
+        }
+        non_whitespace_previous = !is_whitespace;
+    }
+
+    count + 1
 }
 
 #[cfg(test)]
@@ -613,10 +730,10 @@ mod tests {
             key_to_input(key(KeyCode::Down)),
             Some(DetailInput::Action(DetailAction::SelectNext))
         );
-        state.apply(DetailAction::SelectNext, 4);
+        state.apply(DetailAction::SelectNext, 46, 4);
         assert!(state.scroll() > initial_scroll);
 
-        state.apply(DetailAction::PageDown, 4);
+        state.apply(DetailAction::PageDown, 46, 4);
         let text = buffer_text(&render(&state, 48, 12));
         assert!(!text.contains("synthetic-secret"), "{text}");
         assert!(text.contains("PageUp/PageDown scroll"), "{text}");
@@ -625,6 +742,19 @@ mod tests {
             key_to_input(key(KeyCode::Char('q'))),
             Some(DetailInput::Quit)
         );
+    }
+
+    #[test]
+    fn page_down_stops_at_the_last_wrapped_line() {
+        let mut state = state();
+
+        for _ in 0..100 {
+            state.apply(DetailAction::PageDown, 46, 4);
+        }
+        let last_scroll = state.scroll();
+        state.apply(DetailAction::PageDown, 46, 4);
+
+        assert_eq!(state.scroll(), last_scroll);
     }
 
     #[test]

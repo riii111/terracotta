@@ -67,7 +67,7 @@ pub(crate) fn run_connected(
                         return Ok(UiOutcome::Reviewed);
                     }
                     Some(resource_detail::DetailInput::Action(action)) => {
-                        state.apply(action, viewport_height);
+                        state.apply(action, size.width.saturating_sub(2), viewport_height);
                     }
                     None => {}
                 }

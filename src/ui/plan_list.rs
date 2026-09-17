@@ -49,7 +49,7 @@ fn run_plan_list(terminal: &mut DefaultTerminal, state: &mut PlanListState) -> i
                     Some(super::resource_detail::DetailInput::Back) => detail = None,
                     Some(super::resource_detail::DetailInput::Quit) => return Ok(()),
                     Some(super::resource_detail::DetailInput::Action(action)) => {
-                        detail_state.apply(action, viewport_height);
+                        detail_state.apply(action, size.width.saturating_sub(2), viewport_height);
                     }
                     None => {}
                 }
