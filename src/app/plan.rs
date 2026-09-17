@@ -203,7 +203,7 @@ pub struct Plan {
 impl Plan {
     #[must_use]
     pub const fn has_changes(&self) -> bool {
-        !self.changes.is_empty()
+        !self.changes.is_empty() || !self.unsupported_changes.is_empty()
     }
 
     #[must_use]

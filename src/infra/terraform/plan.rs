@@ -165,7 +165,7 @@ fn parse_resource_change(
                 after_sensitive: optional_plan_value(change, "after_sensitive"),
                 after_unknown: optional_plan_value(change, "after_unknown"),
                 replace_paths: parse_replace_paths(change)?,
-                action_reason: parse_optional_string(change, "action_reason")?,
+                action_reason: parse_optional_string(resource, "action_reason")?,
             });
             Ok(())
         }
@@ -435,18 +435,8 @@ fn parse_optional_string(
 fn parse_importing(change: &Map<String, Value>) -> Result<bool, PlanParseError> {
     match change.get("importing") {
         None => Ok(false),
-        Some(value) => {
-            let importing = value
-                .as_object()
-                .ok_or(PlanParseError::InvalidField("importing"))?;
-            let import_id = importing
-                .get("id")
-                .ok_or(PlanParseError::MissingField("import id"))?;
-            if !import_id.is_string() {
-                return Err(PlanParseError::InvalidField("import id"));
-            }
-            Ok(true)
-        }
+        Some(value) if value.is_object() => Ok(true),
+        Some(_) => Err(PlanParseError::InvalidField("importing")),
     }
 }
 
@@ -575,6 +565,21 @@ mod tests {
     }
 
     #[test]
+    fn reads_action_reason_from_resource_change_metadata() {
+        let mut resource = resource("aws_instance.api", "managed", json!(["delete", "create"]));
+        resource["action_reason"] = json!("replace_because_cannot_update");
+        resource["change"]["action_reason"] = json!("wrong-level");
+
+        let plan =
+            parse_plan_json(&plan_with_resources(json!([resource]))).expect("plan should parse");
+
+        assert_eq!(
+            plan.changes[0].action_reason,
+            Some("replace_because_cannot_update".to_owned())
+        );
+    }
+
+    #[test]
     fn redacts_attribute_values_from_plan_debug_output() {
         let mut resource = resource("aws_instance.api", "managed", json!(["update"]));
         resource["change"]["after"] = json!("synthetic-secret");
@@ -593,19 +598,26 @@ mod tests {
         moved["previous_address"] = json!("aws_instance.old_name");
 
         let mut imported = resource("aws_instance.imported", "managed", json!(["create"]));
-        imported["change"]["importing"] = json!({"id": "synthetic-import-id"});
+        imported["change"]["importing"] = json!({"identity": {"account": "synthetic"}});
 
-        let plan = parse_plan_json(&plan_with_resources(json!([moved, imported])))
+        let mut empty_import = resource("aws_instance.empty_import", "managed", json!(["create"]));
+        empty_import["change"]["importing"] = json!({});
+
+        let plan = parse_plan_json(&plan_with_resources(json!([moved, imported, empty_import])))
             .expect("plan should parse");
 
         assert!(plan.changes.is_empty());
-        assert_eq!(plan.unsupported_change_count(), 2);
+        assert_eq!(plan.unsupported_change_count(), 3);
         assert_eq!(
             plan.unsupported_changes[0].kind,
             UnsupportedChangeKind::Move
         );
         assert_eq!(
             plan.unsupported_changes[1].kind,
+            UnsupportedChangeKind::Import
+        );
+        assert_eq!(
+            plan.unsupported_changes[2].kind,
             UnsupportedChangeKind::Import
         );
     }
@@ -631,6 +643,7 @@ mod tests {
         let plan = parse_plan_json(&document.to_string()).expect("plan should parse");
 
         assert!(plan.changes.is_empty());
+        assert!(plan.has_changes());
         assert_eq!(plan.unsupported_change_count(), 5);
         assert_eq!(
             plan.unsupported_changes[0].kind,
