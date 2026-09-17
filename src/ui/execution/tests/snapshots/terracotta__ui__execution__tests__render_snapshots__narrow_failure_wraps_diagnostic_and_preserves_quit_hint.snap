@@ -1,0 +1,24 @@
+---
+source: src/ui/execution/tests/render_snapshots.rs
+expression: "buffer_text(&render_to_buffer(&state, started_at + Duration::from_secs(2), 60,\n20))"
+---
+┌Terracotta / Failed───────────────────────────────────────┐
+│cwd loading...   workspace loading...                     │
+│git loading...   compare loading...                       │
+│Terraform plan failed.    Follow: On                      │
+│                                                          │
+│Elapsed 2.0s                                              │
+│  No Terraform events yet.                                │
+│                                                          │
+│  Diagnostics (1)                                         │
+│    error: Terraform initialization required              │
+│      Run terraform init to install the providers required│
+│ by this configuration.                                   │
+│      at infra/prod/main.tf:12:3                          │
+│                                                          │
+│  Review result is unavailable.                           │
+│                                                          │
+│                                                          │
+│──────────────────────────────────────────────────────────│
+│Up/Down/PageUp/PageDown scroll   q/Ctrl-C quit            │
+└──────────────────────────────────────────────────────────┘

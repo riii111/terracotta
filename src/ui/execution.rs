@@ -434,12 +434,16 @@ fn footer_line(stage: ExecutionStage) -> &'static str {
 mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    use ratatui::buffer::{Buffer, Cell};
+    use ratatui::buffer::Buffer;
+
+    use crate::ui::test_support::buffer_text;
 
     use super::super::super::app::progress::{
         DiagnosticPoint, DiagnosticPosition, DiagnosticSource,
     };
     use super::*;
+
+    mod render_snapshots;
 
     fn event(received_at: Instant, kind: ExecutionEventKind) -> ExecutionEvent {
         ExecutionEvent { received_at, kind }
@@ -452,19 +456,6 @@ mod tests {
             .draw(|frame| render_execution(frame, state, now))
             .expect("test frame should render");
         terminal.backend().buffer().clone()
-    }
-
-    fn buffer_text(buffer: &Buffer) -> String {
-        let area = buffer.area();
-        let mut lines = Vec::new();
-        for y in area.y..area.bottom() {
-            let line = (area.x..area.right())
-                .filter_map(|x| buffer.cell((x, y)))
-                .map(Cell::symbol)
-                .collect::<String>();
-            lines.push(line.trim_end().to_owned());
-        }
-        lines.join("\n")
     }
 
     fn resource_event(at: Instant, address: &str, kind: ResourceEventKind) -> ExecutionEvent {

@@ -71,8 +71,12 @@ jobs:
           '@ | Set-Content -Path .cargo/config.toml -Encoding utf8
       - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375
         with:
-          tool: nextest
-      - run: cargo nextest run --locked --all-targets --all-features --profile ci
+          tool: nextest,cargo-insta
+      - run: cargo fetch --locked
+      - name: Test and check snapshots
+        env:
+          NEXTEST_PROFILE: ci
+        run: cargo insta test --test-runner nextest --disable-nextest-doctest --unreferenced=reject --all-targets --all-features
       - name: Build release binary
         run: cargo build --locked --release
       - run: cargo run --locked -- --version
