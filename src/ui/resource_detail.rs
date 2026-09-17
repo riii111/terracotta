@@ -90,7 +90,7 @@ impl ResourceDetailState {
         self.total
     }
 
-    pub(super) const fn viewport_height(&self, total_height: u16) -> u16 {
+    pub(super) fn viewport_height(&self, total_height: u16) -> u16 {
         total_height.saturating_sub(5 + u16::from(self.context.is_some()) * 2)
     }
 
