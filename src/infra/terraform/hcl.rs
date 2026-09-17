@@ -475,6 +475,16 @@ fn scan_string(
                     index += 1;
                 }
             }
+            b'$' if source.as_bytes().get(index + 1) == Some(&b'$')
+                && source.as_bytes().get(index + 2) == Some(&b'{') =>
+            {
+                index += 3;
+            }
+            b'%' if source.as_bytes().get(index + 1) == Some(&b'%')
+                && source.as_bytes().get(index + 2) == Some(&b'{') =>
+            {
+                index += 3;
+            }
             b'$' | b'%' if source.as_bytes().get(index + 1) == Some(&b'{') => {
                 match skip_template_expression(source, index + 2, line_starts) {
                     Ok(end) => index = end,
@@ -711,6 +721,26 @@ resource "test_resource" "example" {
             ResourceAddress::new("terraform_data", "main")
         );
         assert_eq!(resource.range, SourceRange::new(1, 3));
+        assert!(result.is_complete());
+    }
+
+    #[test]
+    fn ignores_escaped_template_openers() {
+        let result = parse_files([after(
+            r#"resource "terraform_data" "escaped" {
+  input = "$${literal"
+}
+
+resource "terraform_data" "directive" {
+  input = "%%{literal"
+}
+"#,
+        )]);
+
+        let resources = result.resources().collect::<Vec<_>>();
+        assert_eq!(resources.len(), 2);
+        assert_eq!(resources[0].range, SourceRange::new(1, 3));
+        assert_eq!(resources[1].range, SourceRange::new(5, 7));
         assert!(result.is_complete());
     }
 
