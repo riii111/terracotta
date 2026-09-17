@@ -36,8 +36,10 @@ jobs:
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - uses: taiki-e/install-action@c3ec0de9ae7f1019cea21aa96aa0a895b9552063
         with:
-          tool: actionlint,cargo-machete
-      - run: actionlint
+          tool: cargo-machete
+      - uses: docker://rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+        with:
+          args: -color
       - run: cargo machete
 
   test:
