@@ -56,13 +56,26 @@ jobs:
       - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
         with:
           toolchain: '1.98.1'
-          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Limit crate debug information
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Avoid Windows PDB cost; limited debug is enough for CI backtraces.
+          New-Item -ItemType Directory -Path .cargo -Force | Out-Null
+          @'
+          [profile.dev.package.terracotta]
+          debug = 1
+          [profile.test.package.terracotta]
+          debug = 1
+          '@ | Set-Content -Path .cargo/config.toml -Encoding utf8
       - uses: taiki-e/install-action@c3ec0de9ae7f1019cea21aa96aa0a895b9552063
         with:
           tool: nextest
       - run: cargo nextest run --locked --all-targets --all-features --profile ci
-      - run: cargo build --locked --release
+      - name: Build release binary
+        if: runner.os == 'Linux'
+        run: cargo build --locked --release
       - run: cargo run --locked -- --version
 
   audit:
