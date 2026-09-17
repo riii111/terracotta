@@ -750,6 +750,15 @@ fn resolve_compare_ref_with_env(
             .map_err(|error| CompareRefError::Unavailable(error.message));
     }
 
+    if !is_valid_comparison_ref_name(repository_root, compare_ref, environment)? {
+        return resolve_commit_revision(repository_root, compare_ref, environment)
+            .map_err(|error| CompareRefError::Unavailable(error.message));
+    }
+
+    if let Some(commit) = resolve_git_directory_ref(repository_root, compare_ref, environment)? {
+        return Ok(commit);
+    }
+
     let candidates = comparison_ref_candidates(repository_root, compare_ref, environment)?;
     if !candidates.is_empty() {
         if candidates.len() > 1 {
@@ -771,21 +780,6 @@ fn comparison_ref_candidates(
     compare_ref: &str,
     environment: &[(&str, &str)],
 ) -> Result<Vec<String>, CompareRefError> {
-    let check = run_git_with_env(
-        repository_root,
-        "validate comparison ref",
-        [
-            OsStr::new("check-ref-format"),
-            OsStr::new("--allow-onelevel"),
-            OsStr::new(compare_ref),
-        ],
-        environment,
-    )
-    .map_err(CompareRefError::Failed)?;
-    if !check.status.success() {
-        return Ok(Vec::new());
-    }
-
     let patterns = [
         format!("refs/{compare_ref}"),
         format!("refs/tags/{compare_ref}"),
@@ -828,6 +822,72 @@ fn comparison_ref_candidates(
                 .map(str::to_owned)
                 .collect()
         })
+}
+
+fn is_valid_comparison_ref_name(
+    repository_root: &Path,
+    compare_ref: &str,
+    environment: &[(&str, &str)],
+) -> Result<bool, CompareRefError> {
+    let output = run_git_with_env(
+        repository_root,
+        "validate comparison ref",
+        [
+            OsStr::new("check-ref-format"),
+            OsStr::new("--allow-onelevel"),
+            OsStr::new(compare_ref),
+        ],
+        environment,
+    )
+    .map_err(CompareRefError::Failed)?;
+    Ok(output.status.success())
+}
+
+fn resolve_git_directory_ref(
+    repository_root: &Path,
+    compare_ref: &str,
+    environment: &[(&str, &str)],
+) -> Result<Option<String>, CompareRefError> {
+    let output = run_git_with_env(
+        repository_root,
+        "resolve Git directory ref path",
+        [
+            OsStr::new("rev-parse"),
+            OsStr::new("--git-path"),
+            OsStr::new(compare_ref),
+        ],
+        environment,
+    )
+    .map_err(CompareRefError::Failed)?;
+    if !output.status.success() {
+        return Err(CompareRefError::Failed(GitCommandError::from_output(
+            "resolve Git directory ref path",
+            &output,
+        )));
+    }
+
+    let path = String::from_utf8(output.stdout)
+        .map_err(|error| {
+            CompareRefError::Failed(parse_error(
+                "resolve Git directory ref path",
+                &error.to_string(),
+            ))
+        })?
+        .trim()
+        .to_owned();
+    let path = PathBuf::from(path);
+    let path = if path.is_absolute() {
+        path
+    } else {
+        repository_root.join(path)
+    };
+    if !path.is_file() {
+        return Ok(None);
+    }
+
+    resolve_commit_revision(repository_root, compare_ref, environment)
+        .map(Some)
+        .map_err(|error| CompareRefError::Unavailable(error.message))
 }
 
 fn resolve_commit_revision(
@@ -1733,6 +1793,24 @@ mod tests {
         );
     }
 
+    fn git_output(repository: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repository)
+            .args(args)
+            .output()
+            .expect("run git in test repository");
+        assert!(
+            output.status.success(),
+            "git failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout)
+            .expect("git output is UTF-8")
+            .trim()
+            .to_owned()
+    }
+
     fn write(repository: &TestRepository, relative: &str, source: &str) {
         let path = repository.path.join(relative);
         if let Some(parent) = path.parent() {
@@ -1916,6 +1994,53 @@ mod tests {
         assert_eq!(
             result.before()[0].source(),
             "resource \"example\" \"one\" {\n  value = \"branch\"\n}\n"
+        );
+        assert_eq!(
+            result.after()[0].source(),
+            "resource \"example\" \"one\" {\n  value = \"tag\"\n}\n"
+        );
+    }
+
+    #[test]
+    fn resolves_a_git_directory_pseudo_ref_before_namespace_expansion() {
+        let repository = TestRepository::new();
+        write(
+            &repository,
+            "main.tf",
+            "resource \"example\" \"one\" {\n  value = \"pseudo-ref\"\n}\n",
+        );
+        repository.commit("pseudo-ref target");
+        write(
+            &repository,
+            "main.tf",
+            "resource \"example\" \"one\" {\n  value = \"tag\"\n}\n",
+        );
+        repository.commit("tag target");
+        git(&repository.path, &["tag", "ORIG_HEAD"]);
+        let orig_head_path =
+            git_output(&repository.path, &["rev-parse", "--git-path", "ORIG_HEAD"]);
+        let pseudo_ref_target = git_output(&repository.path, &["rev-parse", "HEAD^"]);
+        let orig_head_path = PathBuf::from(orig_head_path);
+        let orig_head_path = if orig_head_path.is_absolute() {
+            orig_head_path
+        } else {
+            repository.path.join(orig_head_path)
+        };
+        assert!(
+            Path::new(&orig_head_path)
+                .parent()
+                .is_some_and(Path::is_dir),
+            "{orig_head_path:?}"
+        );
+        fs::write(orig_head_path, format!("{pseudo_ref_target}\n"))
+            .expect("write Git directory pseudo-ref");
+
+        let result = collect_diff_against_ref(&repository.path, "ORIG_HEAD");
+
+        assert_eq!(result.status(), &GitDiffStatus::Complete);
+        assert_eq!(
+            result.before()[0].source(),
+            "resource \"example\" \"one\" {\n  value = \"pseudo-ref\"\n}\n"
         );
         assert_eq!(
             result.after()[0].source(),
