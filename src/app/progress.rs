@@ -27,7 +27,6 @@ pub(crate) enum ResourceEventKind {
     EphemeralComplete,
     EphemeralErrored,
     ResourceDrift,
-    PlannedActionInvocation,
     PlannedChange,
 }
 
@@ -54,12 +53,12 @@ pub(crate) struct ResourceEvent {
     pub(crate) kind: ResourceEventKind,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ExecutionSummary {
-    pub(crate) creates: Option<usize>,
-    pub(crate) updates: Option<usize>,
-    pub(crate) replaces: Option<usize>,
-    pub(crate) deletes: Option<usize>,
+    pub(crate) adds: Option<usize>,
+    pub(crate) changes: Option<usize>,
+    pub(crate) removes: Option<usize>,
+    pub(crate) operation: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +89,10 @@ pub(crate) enum DiagnosticSource {
     UnknownEvent {
         stream: EventStream,
         event_type: Option<String>,
+    },
+    UnsupportedSchema {
+        stream: EventStream,
+        major: Option<u64>,
     },
     NonJson {
         stream: EventStream,
@@ -209,7 +212,7 @@ impl ExecutionProgress {
                     self.completed_resources += 1;
                 }
             }
-            ExecutionEventKind::Summary(summary) => self.summary = Some(*summary),
+            ExecutionEventKind::Summary(summary) => self.summary = Some(summary.clone()),
             ExecutionEventKind::Diagnostic(diagnostic) => self.diagnostics.push(diagnostic.clone()),
             ExecutionEventKind::Informational { .. } => {}
             ExecutionEventKind::Terminated(termination) => self.termination = Some(*termination),
@@ -228,8 +231,8 @@ impl ExecutionProgress {
     }
 
     #[must_use]
-    pub(crate) const fn summary(&self) -> Option<ExecutionSummary> {
-        self.summary
+    pub(crate) const fn summary(&self) -> Option<&ExecutionSummary> {
+        self.summary.as_ref()
     }
 
     #[must_use]
@@ -306,10 +309,10 @@ mod tests {
     fn retains_summary_diagnostics_and_termination_in_event_order() {
         let mut progress = ExecutionProgress::default();
         progress.record(event(ExecutionEventKind::Summary(ExecutionSummary {
-            creates: Some(1),
-            updates: Some(2),
-            replaces: None,
-            deletes: Some(3),
+            adds: Some(1),
+            changes: Some(2),
+            removes: Some(3),
+            operation: Some("plan".to_owned()),
         })));
         progress.record(event(ExecutionEventKind::Diagnostic(Diagnostic {
             severity: DiagnosticSeverity::Error,
@@ -326,10 +329,7 @@ mod tests {
 
         assert_eq!(progress.events().len(), 3);
         assert_eq!(
-            progress
-                .summary()
-                .expect("summary should be retained")
-                .creates,
+            progress.summary().expect("summary should be retained").adds,
             Some(1)
         );
         assert_eq!(progress.diagnostics().len(), 1);
