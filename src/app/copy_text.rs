@@ -92,7 +92,11 @@ pub(crate) fn plan_text(review: &PlanReview) -> String {
     } else {
         line(&mut text, format_args!("Resources:"));
         for (index, change) in review.plan().changes.iter().enumerate() {
-            if let Some(attribution) = review.attributions().get(index) {
+            if let Some(attribution) = review
+                .attributions()
+                .get(index)
+                .filter(|attribution| attribution.address() == change.address)
+            {
                 append_indented(
                     &mut text,
                     &resource_text(change, attribution, review.comparison()),
@@ -227,7 +231,10 @@ fn append_attribution(text: &mut String, attribution: &ResourceAttribution) {
     if !attribution.analysis().is_complete() {
         line(text, format_args!("  analysis: incomplete"));
         for issue in attribution.analysis().issues() {
-            line(text, format_args!("  reason: {}", issue.message()));
+            line(
+                text,
+                format_args!("  reason: {}", format_analysis_issue(issue)),
+            );
         }
     }
 }
@@ -301,14 +308,21 @@ fn append_analysis_issues(text: &mut String, review: &PlanReview) {
         issues.push(message.to_owned());
     }
     for issue in review.analysis_issues() {
-        if !issues.iter().any(|known| known == issue.message()) {
-            issues.push(issue.message().to_owned());
+        let formatted = format_analysis_issue(issue);
+        if !issues.iter().any(|known| known == &formatted) {
+            issues.push(formatted);
         }
     }
     for file in review.source_files() {
         for issue in file.issues() {
-            if !issues.iter().any(|known| known == issue.message()) {
-                issues.push(issue.message().to_owned());
+            let formatted = format!(
+                "{} {}: {}",
+                source_side(file.side()),
+                file.path().display(),
+                issue.message()
+            );
+            if !issues.iter().any(|known| known == &formatted) {
+                issues.push(formatted);
             }
         }
     }
@@ -352,14 +366,7 @@ fn format_attribute_path(path: &[AttributePathSegment]) -> String {
     let mut formatted = String::new();
     for segment in path {
         match segment {
-            AttributePathSegment::Key(key) => {
-                if formatted.is_empty() {
-                    formatted.push_str(key);
-                } else {
-                    formatted.push('.');
-                }
-                formatted.push_str(key);
-            }
+            AttributePathSegment::Key(key) => append_key_path(&mut formatted, key),
             AttributePathSegment::Index(index) => {
                 formatted.push('[');
                 formatted.push_str(&index.to_string());
@@ -378,10 +385,7 @@ fn format_replace_paths(paths: &[Vec<ReplacePathSegment>]) -> String {
             for segment in path {
                 match segment {
                     ReplacePathSegment::Attribute(attribute) => {
-                        if !formatted.is_empty() {
-                            formatted.push('.');
-                        }
-                        formatted.push_str(attribute);
+                        append_key_path(&mut formatted, attribute);
                     }
                     ReplacePathSegment::Index(index) => {
                         formatted.push('[');
@@ -394,6 +398,27 @@ fn format_replace_paths(paths: &[Vec<ReplacePathSegment>]) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn append_key_path(formatted: &mut String, key: &str) {
+    if is_simple_path_key(key) {
+        if !formatted.is_empty() {
+            formatted.push('.');
+        }
+        formatted.push_str(key);
+        return;
+    }
+
+    formatted.push('[');
+    write!(formatted, "{key:?}").expect("writing attribute path should not fail");
+    formatted.push(']');
+}
+
+fn is_simple_path_key(key: &str) -> bool {
+    !key.is_empty()
+        && key
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
 fn format_source_location(
@@ -409,6 +434,20 @@ fn format_source_location(
             range.start_line(),
             range.end_line()
         )
+    }
+}
+
+fn format_analysis_issue(issue: &super::attribution::AnalysisIssue) -> String {
+    match (issue.side(), issue.path()) {
+        (Some(side), Some(path)) => format!(
+            "{} {}: {}",
+            source_side(side),
+            path.display(),
+            issue.message()
+        ),
+        (None, Some(path)) => format!("{}: {}", path.display(), issue.message()),
+        (Some(side), None) => format!("{}: {}", source_side(side), issue.message()),
+        (None, None) => issue.message().to_owned(),
     }
 }
 
@@ -617,6 +656,35 @@ mod tests {
     }
 
     #[test]
+    fn resource_text_keeps_special_attribute_keys_unambiguous() {
+        let api_change = change(
+            "aws_instance.api",
+            ResourceChangeKind::Update,
+            serde_json::json!({
+                "tags": {
+                    "service.name": "old",
+                    "service": {"name": "nested-old"}
+                }
+            }),
+            serde_json::json!({
+                "tags": {
+                    "service.name": "new",
+                    "service": {"name": "nested-new"}
+                }
+            }),
+        );
+
+        let output = resource_text(
+            &api_change,
+            &attribution(&api_change),
+            &comparison(ReviewComparisonStatus::Complete),
+        );
+
+        assert!(output.contains("tags[\"service.name\"]"));
+        assert!(output.contains("tags.service.name"));
+    }
+
+    #[test]
     fn resource_text_keeps_no_match_and_incomplete_reasons_distinct() {
         let change = change(
             "aws_instance.api",
@@ -680,6 +748,45 @@ mod tests {
         assert!(output.contains("Unsupported changes:"));
         assert!(output.contains("output module.app.output [update]"));
         assert!(output.contains("syntax error in broken.tf"));
+        assert!(output.contains("after broken.tf: syntax error in broken.tf"));
+    }
+
+    #[test]
+    fn plan_text_does_not_pair_mismatched_attribution_with_a_resource() {
+        let api_change = change(
+            "aws_instance.api",
+            ResourceChangeKind::Update,
+            serde_json::json!({"name": "old"}),
+            serde_json::json!({"name": "new"}),
+        );
+        let wrong_change = change(
+            "aws_instance.other",
+            ResourceChangeKind::Update,
+            serde_json::json!({"name": "wrong-old"}),
+            serde_json::json!({"name": "wrong-new"}),
+        );
+        let review = PlanReview::new(
+            PathBuf::from("infra/prod"),
+            "default".to_owned(),
+            Plan {
+                changes: vec![api_change],
+                summary: PlanSummary {
+                    updates: 1,
+                    ..PlanSummary::default()
+                },
+                unsupported_changes: Vec::new(),
+            },
+            Vec::new(),
+            vec![attribution(&wrong_change)],
+            comparison(ReviewComparisonStatus::Complete),
+            Vec::new(),
+        );
+
+        let output = plan_text(&review);
+
+        assert!(output.contains("Resource ~ aws_instance.api"));
+        assert!(output.contains("attribution unavailable"));
+        assert!(!output.contains("wrong-old"));
     }
 
     #[test]
