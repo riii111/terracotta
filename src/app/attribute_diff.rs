@@ -1,5 +1,5 @@
 use std::collections::BTreeSet;
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Formatter, Write};
 
 use super::plan::{PlanValue, ReplacePathSegment, ResourceChange};
 
@@ -176,6 +176,17 @@ fn collect_diffs(
     let before_is_sensitive = inherited_before_sensitive || marker_is_true(input.before_sensitive);
     let after_is_sensitive = inherited_after_sensitive || marker_is_true(input.after_sensitive);
 
+    if marker_is_true(input.before_sensitive) || marker_is_true(input.after_sensitive) {
+        push_diff(
+            attributes,
+            path,
+            input,
+            before_is_sensitive,
+            after_is_sensitive,
+        );
+        return;
+    }
+
     if marker_is_true(input.after_unknown) {
         push_diff(
             attributes,
@@ -184,6 +195,28 @@ fn collect_diffs(
             before_is_sensitive,
             after_is_sensitive,
         );
+        return;
+    }
+
+    if preserves_atomic_transition(input) {
+        push_diff(
+            attributes,
+            path.clone(),
+            input,
+            before_is_sensitive,
+            after_is_sensitive,
+        );
+
+        if let Some(container_kind) = unknown_metadata_container_kind(input) {
+            collect_children(
+                attributes,
+                &path,
+                input,
+                container_kind,
+                before_is_sensitive,
+                after_is_sensitive,
+            );
+        }
         return;
     }
 
@@ -198,8 +231,7 @@ fn collect_diffs(
         return;
     };
 
-    let children = child_segments(container_kind, input);
-    if children.is_empty() {
+    if child_segments(container_kind, input).is_empty() {
         push_diff(
             attributes,
             path,
@@ -210,8 +242,26 @@ fn collect_diffs(
         return;
     }
 
-    for segment in children {
-        let mut child_path = path.clone();
+    collect_children(
+        attributes,
+        &path,
+        input,
+        container_kind,
+        before_is_sensitive,
+        after_is_sensitive,
+    );
+}
+
+fn collect_children(
+    attributes: &mut Vec<AttributeDiff>,
+    path: &[AttributePathSegment],
+    input: DiffInput<'_>,
+    container_kind: ContainerKind,
+    before_is_sensitive: bool,
+    after_is_sensitive: bool,
+) {
+    for segment in child_segments(container_kind, input) {
+        let mut child_path = path.to_vec();
         child_path.push(segment.clone());
         collect_diffs(
             attributes,
@@ -220,6 +270,37 @@ fn collect_diffs(
             before_is_sensitive,
             after_is_sensitive,
         );
+    }
+}
+
+fn preserves_atomic_transition(input: DiffInput<'_>) -> bool {
+    match (input.before, input.after) {
+        (Some(before), Some(after)) => {
+            let before_kind = value_container_kind(before);
+            let after_kind = value_container_kind(after);
+            before_kind != after_kind && (before_kind.is_some() || after_kind.is_some())
+        }
+        (Some(before), None) => {
+            value_container_kind(before).is_none()
+                && metadata_container_kind(input.after_unknown).is_some()
+        }
+        (None, Some(after)) => {
+            value_container_kind(after).is_none()
+                && metadata_container_kind(input.after_unknown).is_some()
+        }
+        (None, None) => false,
+    }
+}
+
+fn unknown_metadata_container_kind(input: DiffInput<'_>) -> Option<ContainerKind> {
+    match (input.before, input.after) {
+        (Some(before), None) if value_container_kind(before).is_none() => {
+            metadata_container_kind(input.after_unknown)
+        }
+        (None, Some(after)) if value_container_kind(after).is_none() => {
+            metadata_container_kind(input.after_unknown)
+        }
+        _ => None,
     }
 }
 
@@ -398,7 +479,8 @@ fn display_plan_value(value: &PlanValue) -> String {
     match value {
         PlanValue::Null => "null".to_owned(),
         PlanValue::Bool(value) => value.to_string(),
-        PlanValue::Number(value) | PlanValue::String(value) => value.clone(),
+        PlanValue::Number(value) => value.clone(),
+        PlanValue::String(value) => display_string(value),
         PlanValue::Array(values) => {
             let values = values.iter().map(display_plan_value).collect::<Vec<_>>();
             format!("[{}]", values.join(", "))
@@ -406,11 +488,35 @@ fn display_plan_value(value: &PlanValue) -> String {
         PlanValue::Object(values) => {
             let values = values
                 .iter()
-                .map(|(key, value)| format!("{key} = {}", display_plan_value(value)))
+                .map(|(key, value)| {
+                    format!("{} = {}", display_string(key), display_plan_value(value))
+                })
                 .collect::<Vec<_>>();
             format!("{{{}}}", values.join(", "))
         }
     }
+}
+
+fn display_string(value: &str) -> String {
+    let mut displayed = String::with_capacity(value.len() + 2);
+    displayed.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => displayed.push_str("\\\""),
+            '\\' => displayed.push_str("\\\\"),
+            '\u{08}' => displayed.push_str("\\b"),
+            '\u{0c}' => displayed.push_str("\\f"),
+            '\n' => displayed.push_str("\\n"),
+            '\r' => displayed.push_str("\\r"),
+            '\t' => displayed.push_str("\\t"),
+            character if character.is_control() => {
+                let _ = write!(displayed, "\\u{:04x}", character as u32);
+            }
+            character => displayed.push(character),
+        }
+    }
+    displayed.push('"');
+    displayed
 }
 
 #[cfg(test)]
@@ -436,23 +542,25 @@ mod tests {
         }
     }
 
-    fn change(
+    struct ChangeFixture {
         before: Value,
         after: Value,
         before_sensitive: Value,
         after_sensitive: Value,
         after_unknown: Value,
-    ) -> ResourceChange {
+    }
+
+    fn change(fixture: ChangeFixture) -> ResourceChange {
         ResourceChange {
             address: "aws_instance.example".to_owned(),
             mode: ResourceMode::Managed,
             actions: vec![PlanAction::Update],
             kind: ResourceChangeKind::Update,
-            before: Some(plan_value(before)),
-            after: Some(plan_value(after)),
-            before_sensitive: Some(plan_value(before_sensitive)),
-            after_sensitive: Some(plan_value(after_sensitive)),
-            after_unknown: Some(plan_value(after_unknown)),
+            before: Some(plan_value(fixture.before)),
+            after: Some(plan_value(fixture.after)),
+            before_sensitive: Some(plan_value(fixture.before_sensitive)),
+            after_sensitive: Some(plan_value(fixture.after_sensitive)),
+            after_unknown: Some(plan_value(fixture.after_unknown)),
             replace_paths: Some(vec![vec![ReplacePathSegment::Attribute("name".to_owned())]]),
             action_reason: Some("replace_because_cannot_update".to_owned()),
         }
@@ -475,23 +583,23 @@ mod tests {
 
     #[test]
     fn compares_nested_objects_and_arrays_by_key_and_index() {
-        let change = change(
-            json!({
+        let change = change(ChangeFixture {
+            before: json!({
                 "name": "old",
                 "tags": {"keep": "same", "remove": "gone"},
                 "ports": [80, 443],
                 "removed_ports": [8080, 8443]
             }),
-            json!({
+            after: json!({
                 "name": "new",
                 "tags": {"add": "new", "keep": "same"},
                 "ports": [80, 8443, 9443],
                 "removed_ports": [8080]
             }),
-            json!(false),
-            json!(false),
-            json!(false),
-        );
+            before_sensitive: json!(false),
+            after_sensitive: json!(false),
+            after_unknown: json!(false),
+        });
 
         let diffs = diff_resource_attributes(&change);
 
@@ -570,13 +678,13 @@ mod tests {
 
     #[test]
     fn distinguishes_null_from_absent() {
-        let change = change(
-            json!({"null_value": null}),
-            json!({"null_value": null, "new_value": null}),
-            json!(false),
-            json!(false),
-            json!(false),
-        );
+        let change = change(ChangeFixture {
+            before: json!({"null_value": null}),
+            after: json!({"null_value": null, "new_value": null}),
+            before_sensitive: json!(false),
+            after_sensitive: json!(false),
+            after_unknown: json!(false),
+        });
 
         let diffs = diff_resource_attributes(&change);
         let null_value = attribute(
@@ -596,67 +704,55 @@ mod tests {
 
     #[test]
     fn applies_sensitive_markers_to_each_side_and_inherits_parent_masks() {
-        let change = change(
-            json!({"credentials": {"user": "alice", "token": "old"}}),
-            json!({"credentials": {"user": "bob", "token": "new"}}),
-            json!({"credentials": true}),
-            json!({"credentials": {"token": true}}),
-            json!(false),
-        );
+        let change = change(ChangeFixture {
+            before: json!({"credentials": {"user": "alice", "token": "old"}}),
+            after: json!({"credentials": {"user": "bob", "token": "new"}}),
+            before_sensitive: json!({"credentials": true}),
+            after_sensitive: json!({"credentials": {"token": true}}),
+            after_unknown: json!(false),
+        });
 
         let diffs = diff_resource_attributes(&change);
 
-        assert_eq!(diffs.attributes.len(), 2);
-        let user = attribute(
+        assert_eq!(diffs.attributes.len(), 1);
+        let credentials = attribute(
             &diffs,
-            &[
-                AttributePathSegment::Key("credentials".to_owned()),
-                AttributePathSegment::Key("user".to_owned()),
-            ],
-        );
-        let token = attribute(
-            &diffs,
-            &[
-                AttributePathSegment::Key("credentials".to_owned()),
-                AttributePathSegment::Key("token".to_owned()),
-            ],
+            &[AttributePathSegment::Key("credentials".to_owned())],
         );
 
-        assert!(user.before.is_sensitive());
-        assert!(!user.after.is_sensitive());
-        assert_eq!(user.before.display(), "<sensitive>");
-        assert_eq!(user.after.display(), "bob");
-        assert!(token.before.is_sensitive() && token.after.is_sensitive());
-        assert_eq!(token.before.display(), "<sensitive>");
-        assert_eq!(token.after.display(), "<sensitive>");
+        assert_eq!(credentials.before.kind(), AttributeValueKind::Known);
+        assert_eq!(credentials.after.kind(), AttributeValueKind::Known);
+        assert!(credentials.before.is_sensitive() && credentials.after.is_sensitive());
+        assert_eq!(credentials.before.display(), "<sensitive>");
+        assert_eq!(credentials.after.display(), "<sensitive>");
     }
 
     #[test]
     fn keeps_one_sided_sensitive_values_masked_only_on_that_side() {
-        let change = change(
-            json!({"public": "old"}),
-            json!({"public": "new"}),
-            json!(false),
-            json!({"public": true}),
-            json!(false),
-        );
+        let change = change(ChangeFixture {
+            before: json!({"public": "old"}),
+            after: json!({"public": "new"}),
+            before_sensitive: json!(false),
+            after_sensitive: json!({"public": true}),
+            after_unknown: json!(false),
+        });
 
         let attribute = &diff_resource_attributes(&change).attributes[0];
 
-        assert_eq!(attribute.before.display(), "old");
+        assert_eq!(attribute.before.display(), "\"old\"");
         assert_eq!(attribute.after.display(), "<sensitive>");
         assert_eq!(attribute.after.revealed(), Some(&plan_value(json!("new"))));
     }
 
     #[test]
     fn represents_unknown_values_and_unknown_missing_attributes() {
-        let change = change(
-            json!({"known": "old", "null_value": null}),
-            json!({"known": "new", "null_value": null}),
-            json!(false),
-            json!({"known": true}),
-            json!({"future": true}),
-        );
+        let change = change(ChangeFixture {
+            before: json!({"known": "old", "null_value": null}),
+            after: json!({"known": "new", "null_value": null}),
+            before_sensitive: json!(false),
+            after_sensitive: json!({"known": true}),
+            after_unknown: json!({"future": true}),
+        });
 
         let diffs = diff_resource_attributes(&change);
         let known = attribute(&diffs, &[AttributePathSegment::Key("known".to_owned())]);
@@ -673,13 +769,13 @@ mod tests {
 
     #[test]
     fn masks_unknown_values_without_losing_internal_value_or_state() {
-        let change = change(
-            json!({"token": "old"}),
-            json!({"token": "planned"}),
-            json!(false),
-            json!({"token": true}),
-            json!({"token": true}),
-        );
+        let change = change(ChangeFixture {
+            before: json!({"token": "old"}),
+            after: json!({"token": "planned"}),
+            before_sensitive: json!(false),
+            after_sensitive: json!({"token": true}),
+            after_unknown: json!({"token": true}),
+        });
 
         let attribute = &diff_resource_attributes(&change).attributes[0];
 
@@ -694,13 +790,13 @@ mod tests {
 
     #[test]
     fn retains_replacement_metadata_and_attribute_counts() {
-        let change = change(
-            json!({"name": "old", "region": "same"}),
-            json!({"name": "new", "region": "same"}),
-            json!(false),
-            json!(false),
-            json!(false),
-        );
+        let change = change(ChangeFixture {
+            before: json!({"name": "old", "region": "same"}),
+            after: json!({"name": "new", "region": "same"}),
+            before_sensitive: json!(false),
+            after_sensitive: json!(false),
+            after_unknown: json!(false),
+        });
 
         let diffs = diff_resource_attributes(&change);
 
@@ -712,14 +808,87 @@ mod tests {
     }
 
     #[test]
-    fn debug_output_does_not_include_original_attribute_values() {
-        let change = change(
-            json!({"token": "synthetic-secret"}),
-            json!({"token": "synthetic-secret-after"}),
-            json!(false),
-            json!({"token": true}),
-            json!(false),
+    fn keeps_scalar_and_null_values_at_the_parent_when_shape_changes() {
+        let change = change(ChangeFixture {
+            before: json!({"settings": null, "name": "old"}),
+            after: json!({"settings": {"enabled": true}, "name": "new"}),
+            before_sensitive: json!(false),
+            after_sensitive: json!(false),
+            after_unknown: json!(false),
+        });
+
+        let diffs = diff_resource_attributes(&change);
+        let settings = attribute(&diffs, &[AttributePathSegment::Key("settings".to_owned())]);
+
+        assert_eq!(settings.before.kind(), AttributeValueKind::Null);
+        assert_eq!(settings.after.kind(), AttributeValueKind::Known);
+        assert_eq!(settings.before.display(), "null");
+        assert_eq!(settings.after.display(), "{\"enabled\" = true}");
+        assert!(!diffs.attributes.iter().any(|attribute| {
+            attribute.path
+                == [
+                    AttributePathSegment::Key("settings".to_owned()),
+                    AttributePathSegment::Key("enabled".to_owned()),
+                ]
+        }));
+    }
+
+    #[test]
+    fn keeps_unknown_children_when_after_omits_a_complex_value() {
+        let mut change = change(ChangeFixture {
+            before: json!({"config": null}),
+            after: json!(null),
+            before_sensitive: json!(false),
+            after_sensitive: json!(false),
+            after_unknown: json!({"config": {"token": true}}),
+        });
+        change.after = None;
+
+        let diffs = diff_resource_attributes(&change);
+        let config = attribute(&diffs, &[AttributePathSegment::Key("config".to_owned())]);
+        let token = attribute(
+            &diffs,
+            &[
+                AttributePathSegment::Key("config".to_owned()),
+                AttributePathSegment::Key("token".to_owned()),
+            ],
         );
+
+        assert_eq!(config.before.kind(), AttributeValueKind::Null);
+        assert_eq!(config.after.kind(), AttributeValueKind::Absent);
+        assert_eq!(token.before.kind(), AttributeValueKind::Absent);
+        assert_eq!(token.after.kind(), AttributeValueKind::Unknown);
+        assert_eq!(token.after.display(), "<unknown>");
+    }
+
+    #[test]
+    fn quotes_and_escapes_known_strings_and_object_keys() {
+        let change = change(ChangeFixture {
+            before: json!({"settings": null}),
+            after: json!({"settings": {"line\nkey": "<unknown>\n\"", "null": "null"}}),
+            before_sensitive: json!(false),
+            after_sensitive: json!(false),
+            after_unknown: json!(false),
+        });
+
+        let diffs = diff_resource_attributes(&change);
+        let settings = attribute(&diffs, &[AttributePathSegment::Key("settings".to_owned())]);
+
+        assert_eq!(
+            settings.after.display(),
+            "{\"line\\nkey\" = \"<unknown>\\n\\\"\", \"null\" = \"null\"}"
+        );
+    }
+
+    #[test]
+    fn debug_output_does_not_include_original_attribute_values() {
+        let change = change(ChangeFixture {
+            before: json!({"token": "synthetic-secret"}),
+            after: json!({"token": "synthetic-secret-after"}),
+            before_sensitive: json!(false),
+            after_sensitive: json!({"token": true}),
+            after_unknown: json!(false),
+        });
 
         let debug = format!("{:?}", diff_resource_attributes(&change));
 
@@ -730,13 +899,13 @@ mod tests {
 
     #[test]
     fn handles_empty_containers_as_single_attributes() {
-        let change = change(
-            json!({"object": {}, "array": []}),
-            json!({"object": {}, "array": []}),
-            json!(false),
-            json!(false),
-            json!(false),
-        );
+        let change = change(ChangeFixture {
+            before: json!({"object": {}, "array": []}),
+            after: json!({"object": {}, "array": []}),
+            before_sensitive: json!(false),
+            after_sensitive: json!(false),
+            after_unknown: json!(false),
+        });
 
         let diffs = diff_resource_attributes(&change);
 
