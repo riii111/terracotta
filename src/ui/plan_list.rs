@@ -20,6 +20,7 @@ use crate::app::source_location::{
 
 const MIN_HEIGHT: u16 = 11;
 const MIN_WIDTH: u16 = 48;
+const ANALYSIS_PREFIX: &str = "Analysis incomplete: ";
 
 pub(super) fn run_synthetic() -> io::Result<()> {
     let mut state = synthetic_state();
@@ -82,6 +83,7 @@ pub(super) fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
 
     let unsupported_summary = state.unsupported_summary();
     let unsupported_height = u16::from(unsupported_summary.is_some());
+    let analysis_issue_height = u16::try_from(state.analysis_issues().len()).unwrap_or(u16::MAX);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -89,6 +91,7 @@ pub(super) fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
             Constraint::Length(2),
             Constraint::Length(1),
             Constraint::Length(unsupported_height),
+            Constraint::Length(analysis_issue_height),
             Constraint::Min(1),
             Constraint::Length(1),
         ])
@@ -107,8 +110,23 @@ pub(super) fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
         frame.render_widget(Paragraph::new(""), chunks[3]);
     }
 
-    render_rows(frame, state, chunks[4]);
-    frame.render_widget(Paragraph::new(footer_line()), chunks[5]);
+    render_analysis_issues(frame, state, chunks[4]);
+    render_rows(frame, state, chunks[5]);
+    frame.render_widget(Paragraph::new(footer_line()), chunks[6]);
+}
+
+fn render_analysis_issues(frame: &mut Frame<'_>, state: &PlanListState, area: Rect) {
+    let issue_width = (area.width as usize).saturating_sub(ANALYSIS_PREFIX.len());
+    let lines = state
+        .analysis_issues()
+        .iter()
+        .map(|issue| format!("{ANALYSIS_PREFIX}{}", truncate_end(issue, issue_width)))
+        .map(Line::from)
+        .collect::<Vec<_>>();
+    frame.render_widget(
+        Paragraph::new(lines).style(Style::default().fg(Color::Yellow)),
+        area,
+    );
 }
 
 fn render_terminal_too_small(frame: &mut Frame<'_>, area: Rect) {

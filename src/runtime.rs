@@ -88,6 +88,9 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
             &mut || cancellation.cancel(),
         )
     });
+    if ui_result.is_err() {
+        cancellation.cancel();
+    }
     let worker_panicked = worker.join();
 
     match (ui_result, worker_panicked) {
