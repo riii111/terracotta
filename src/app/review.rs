@@ -46,7 +46,7 @@ pub(crate) struct ReviewComparison {
 
 impl ReviewComparison {
     #[must_use]
-    pub(crate) fn new(
+    pub(crate) const fn new(
         basis: ReviewComparisonBasis,
         compare_ref: Option<String>,
         resolved_commit: Option<String>,
@@ -127,7 +127,7 @@ pub(crate) enum PlanReviewMessage {
 
 impl PlanReview {
     #[must_use]
-    pub(crate) const fn new(
+    pub(crate) fn new(
         root: PathBuf,
         workspace: String,
         plan: Plan,
