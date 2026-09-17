@@ -3,6 +3,6 @@
     reason = "Terraform parsing is shared only within the crate"
 )]
 
-mod execute;
+pub(crate) mod execute;
 pub(crate) mod hcl;
 mod plan;
