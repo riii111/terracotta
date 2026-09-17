@@ -4,12 +4,103 @@ use super::progress::{ExecutionEvent, ExecutionEventKind, ExecutionProgress, Pro
 
 const PAGE_SCROLL: u16 = 8;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ExecutionContextValue {
+    Loading,
+    Unavailable,
+    Known(String),
+}
+
+impl ExecutionContextValue {
+    #[must_use]
+    pub(crate) fn as_str(&self) -> &str {
+        match self {
+            Self::Loading => "loading...",
+            Self::Unavailable => "unavailable",
+            Self::Known(value) => value,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExecutionContext {
+    cwd: ExecutionContextValue,
+    workspace: ExecutionContextValue,
+    git: ExecutionContextValue,
+    comparison: ExecutionContextValue,
+}
+
+impl ExecutionContext {
+    #[must_use]
+    pub(crate) const fn loading() -> Self {
+        Self {
+            cwd: ExecutionContextValue::Loading,
+            workspace: ExecutionContextValue::Loading,
+            git: ExecutionContextValue::Loading,
+            comparison: ExecutionContextValue::Loading,
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn unavailable() -> Self {
+        Self {
+            cwd: ExecutionContextValue::Unavailable,
+            workspace: ExecutionContextValue::Unavailable,
+            git: ExecutionContextValue::Unavailable,
+            comparison: ExecutionContextValue::Unavailable,
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn known(
+        cwd: impl Into<String>,
+        workspace: impl Into<String>,
+        git: impl Into<String>,
+        comparison: impl Into<String>,
+    ) -> Self {
+        Self {
+            cwd: ExecutionContextValue::Known(cwd.into()),
+            workspace: ExecutionContextValue::Known(workspace.into()),
+            git: ExecutionContextValue::Known(git.into()),
+            comparison: ExecutionContextValue::Known(comparison.into()),
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn cwd(&self) -> &ExecutionContextValue {
+        &self.cwd
+    }
+
+    #[must_use]
+    pub(crate) const fn workspace(&self) -> &ExecutionContextValue {
+        &self.workspace
+    }
+
+    #[must_use]
+    pub(crate) const fn git(&self) -> &ExecutionContextValue {
+        &self.git
+    }
+
+    #[must_use]
+    pub(crate) const fn comparison(&self) -> &ExecutionContextValue {
+        &self.comparison
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ExecutionStage {
     Planning,
     Reading,
     Matching,
     Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExecutionScroll {
+    Up,
+    Down,
+    PageUp,
+    PageDown,
 }
 
 impl ExecutionStage {
@@ -27,10 +118,6 @@ impl ExecutionStage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ExecutionAction {
     SetStage(ExecutionStage),
-    ScrollUp,
-    ScrollDown,
-    PageUp,
-    PageDown,
     End,
     RequestCancellation,
 }
@@ -38,6 +125,7 @@ pub(crate) enum ExecutionAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ExecutionState {
     stage: ExecutionStage,
+    context: ExecutionContext,
     started_at: Instant,
     progress: ExecutionProgress,
     scroll: u16,
@@ -48,8 +136,14 @@ pub(crate) struct ExecutionState {
 impl ExecutionState {
     #[must_use]
     pub(crate) fn new(started_at: Instant) -> Self {
+        Self::with_context(started_at, ExecutionContext::loading())
+    }
+
+    #[must_use]
+    pub(crate) fn with_context(started_at: Instant, context: ExecutionContext) -> Self {
         Self {
             stage: ExecutionStage::Planning,
+            context,
             started_at,
             progress: ExecutionProgress::default(),
             scroll: 0,
@@ -61,28 +155,28 @@ impl ExecutionState {
     pub(crate) const fn apply(&mut self, action: ExecutionAction) {
         match action {
             ExecutionAction::SetStage(stage) => self.stage = stage,
-            ExecutionAction::ScrollUp => {
-                self.follow = false;
-                self.scroll = self.scroll.saturating_sub(1);
-            }
-            ExecutionAction::ScrollDown => {
-                self.follow = false;
-                self.scroll = self.scroll.saturating_add(1);
-            }
-            ExecutionAction::PageUp => {
-                self.follow = false;
-                self.scroll = self.scroll.saturating_sub(PAGE_SCROLL);
-            }
-            ExecutionAction::PageDown => {
-                self.follow = false;
-                self.scroll = self.scroll.saturating_add(PAGE_SCROLL);
-            }
             ExecutionAction::End => {
                 self.follow = true;
                 self.scroll = 0;
             }
             ExecutionAction::RequestCancellation => self.cancellation_requested = true,
         }
+    }
+
+    pub(crate) fn apply_scroll(
+        &mut self,
+        action: ExecutionScroll,
+        current_offset: u16,
+        max_offset: u16,
+    ) {
+        let offset = match action {
+            ExecutionScroll::Up => current_offset.saturating_sub(1),
+            ExecutionScroll::Down => current_offset.saturating_add(1).min(max_offset),
+            ExecutionScroll::PageUp => current_offset.saturating_sub(PAGE_SCROLL),
+            ExecutionScroll::PageDown => current_offset.saturating_add(PAGE_SCROLL).min(max_offset),
+        };
+        self.follow = false;
+        self.scroll = offset;
     }
 
     pub(crate) fn record(&mut self, event: ExecutionEvent) {
@@ -103,6 +197,11 @@ impl ExecutionState {
     #[must_use]
     pub(crate) const fn started_at(&self) -> Instant {
         self.started_at
+    }
+
+    #[must_use]
+    pub(crate) const fn context(&self) -> &ExecutionContext {
+        &self.context
     }
 
     #[must_use]
@@ -180,7 +279,7 @@ mod tests {
         let started_at = Instant::now();
         let mut state = ExecutionState::new(started_at);
 
-        state.apply(ExecutionAction::ScrollDown);
+        state.apply_scroll(ExecutionScroll::Down, 0, 10);
         assert!(!state.follows_latest());
         assert_eq!(state.scroll(), 1);
 

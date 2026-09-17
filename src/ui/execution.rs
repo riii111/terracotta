@@ -8,7 +8,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 
-use crate::app::execution::{ExecutionAction, ExecutionStage, ExecutionState};
+use crate::app::execution::{
+    ExecutionAction, ExecutionContext, ExecutionScroll, ExecutionStage, ExecutionState,
+};
 use crate::app::progress::{
     Diagnostic, DiagnosticSeverity, ExecutionEvent, ExecutionEventKind, ResourceEvent,
     ResourceEventKind,
@@ -19,7 +21,15 @@ const MIN_WIDTH: u16 = 48;
 
 pub(super) fn run_synthetic_execution() -> io::Result<()> {
     let started_at = Instant::now();
-    let mut state = ExecutionState::new(started_at);
+    let mut state = ExecutionState::with_context(
+        started_at,
+        ExecutionContext::known(
+            "infra/prod",
+            "default",
+            "feature/execution-ui",
+            "working tree vs HEAD",
+        ),
+    );
     state.record(ExecutionEvent {
         received_at: started_at,
         kind: ExecutionEventKind::Resource(ResourceEvent {
@@ -48,6 +58,13 @@ fn run_execution(terminal: &mut DefaultTerminal, state: &mut ExecutionState) -> 
             match execution_key_to_input(key, state.stage()) {
                 Some(ExecutionInput::Quit) => return Ok(()),
                 Some(ExecutionInput::Action(action)) => state.apply(action),
+                Some(ExecutionInput::Scroll(action)) => {
+                    let size = terminal.size()?;
+                    let area = Rect::new(0, 0, size.width, size.height);
+                    let body = execution_chunks(area, state)[2];
+                    let (current_offset, max_offset) = execution_scroll_position(state, body);
+                    state.apply_scroll(action, current_offset, max_offset);
+                }
                 None => {}
             }
         }
@@ -57,6 +74,7 @@ fn run_execution(terminal: &mut DefaultTerminal, state: &mut ExecutionState) -> 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ExecutionInput {
     Action(ExecutionAction),
+    Scroll(ExecutionScroll),
     Quit,
 }
 
@@ -73,15 +91,14 @@ fn execution_key_to_input(key: KeyEvent, stage: ExecutionStage) -> Option<Execut
         return Some(ExecutionInput::Quit);
     }
 
-    let action = match key.code {
-        KeyCode::Up | KeyCode::Char('k') => ExecutionAction::ScrollUp,
-        KeyCode::Down | KeyCode::Char('j') => ExecutionAction::ScrollDown,
-        KeyCode::PageUp => ExecutionAction::PageUp,
-        KeyCode::PageDown => ExecutionAction::PageDown,
-        KeyCode::End => ExecutionAction::End,
-        _ => return None,
-    };
-    Some(ExecutionInput::Action(action))
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => Some(ExecutionInput::Scroll(ExecutionScroll::Up)),
+        KeyCode::Down | KeyCode::Char('j') => Some(ExecutionInput::Scroll(ExecutionScroll::Down)),
+        KeyCode::PageUp => Some(ExecutionInput::Scroll(ExecutionScroll::PageUp)),
+        KeyCode::PageDown => Some(ExecutionInput::Scroll(ExecutionScroll::PageDown)),
+        KeyCode::End => Some(ExecutionInput::Action(ExecutionAction::End)),
+        _ => None,
+    }
 }
 
 fn render_execution(frame: &mut Frame<'_>, state: &ExecutionState, now: Instant) {
@@ -94,24 +111,19 @@ fn render_execution(frame: &mut Frame<'_>, state: &ExecutionState, now: Instant)
     let block = Block::new()
         .borders(Borders::ALL)
         .title(format!("Terracotta / {}", state.stage().title()));
-    let content_area = block.inner(area);
     frame.render_widget(block, area);
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ])
-        .split(content_area);
+    let chunks = execution_chunks(area, state);
 
-    frame.render_widget(Paragraph::new(status_lines(state, now)), chunks[0]);
+    frame.render_widget(
+        Paragraph::new(wrapped_lines(&context_lines(state), chunks[0].width)),
+        chunks[0],
+    );
+    frame.render_widget(Paragraph::new(status_lines(state, now)), chunks[1]);
 
-    let lines = wrapped_lines(&execution_lines(state), chunks[1].width);
+    let lines = wrapped_lines(&execution_lines(state), chunks[2].width);
     let paragraph = Paragraph::new(lines.clone());
-    let visible_height = usize::from(chunks[1].height);
+    let visible_height = usize::from(chunks[2].height);
     let max_scroll = lines.len().saturating_sub(visible_height);
     let max_scroll = u16::try_from(max_scroll).unwrap_or(u16::MAX);
     let scroll = if state.follows_latest() {
@@ -119,9 +131,42 @@ fn render_execution(frame: &mut Frame<'_>, state: &ExecutionState, now: Instant)
     } else {
         state.scroll().min(max_scroll)
     };
-    frame.render_widget(paragraph.scroll((scroll, 0)), chunks[1]);
-    frame.render_widget(separator(chunks[2].width), chunks[2]);
-    frame.render_widget(Paragraph::new(footer_line(state.stage())), chunks[3]);
+    frame.render_widget(paragraph.scroll((scroll, 0)), chunks[2]);
+    frame.render_widget(separator(chunks[3].width), chunks[3]);
+    frame.render_widget(Paragraph::new(footer_line(state.stage())), chunks[4]);
+}
+
+fn execution_chunks(area: Rect, state: &ExecutionState) -> Vec<Rect> {
+    let content_area = Block::new().borders(Borders::ALL).inner(area);
+    let context_height = u16::try_from(
+        wrapped_lines(&context_lines(state), content_area.width)
+            .len()
+            .max(1),
+    )
+    .unwrap_or(u16::MAX);
+    Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(context_height),
+            Constraint::Length(3),
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(content_area)
+        .to_vec()
+}
+
+fn execution_scroll_position(state: &ExecutionState, body: Rect) -> (u16, u16) {
+    let lines = wrapped_lines(&execution_lines(state), body.width);
+    let visible_height = usize::from(body.height);
+    let max_scroll = u16::try_from(lines.len().saturating_sub(visible_height)).unwrap_or(u16::MAX);
+    let current_scroll = if state.follows_latest() {
+        max_scroll
+    } else {
+        state.scroll().min(max_scroll)
+    };
+    (current_scroll, max_scroll)
 }
 
 fn render_too_small(frame: &mut Frame<'_>, area: Rect, stage: ExecutionStage) {
@@ -174,6 +219,18 @@ fn status_lines(state: &ExecutionState, now: Instant) -> Vec<Line<'static>> {
         ]),
         Line::from(waiting),
         Line::from(format!("Elapsed {}", format_elapsed(state.elapsed_at(now)))),
+    ]
+}
+
+fn context_lines(state: &ExecutionState) -> Vec<String> {
+    vec![
+        format!(
+            "cwd {}   workspace {}   git {}",
+            state.context().cwd().as_str(),
+            state.context().workspace().as_str(),
+            state.context().git().as_str(),
+        ),
+        format!("compare {}", state.context().comparison().as_str()),
     ]
 }
 
@@ -254,11 +311,26 @@ fn wrapped_lines(lines: &[String], width: u16) -> Vec<Line<'static>> {
             if line.is_empty() {
                 return vec![Line::from("")];
             }
-            let chars = line.chars().collect::<Vec<_>>();
-            chars
-                .chunks(width)
-                .map(|chunk| Line::from(chunk.iter().collect::<String>()))
-                .collect::<Vec<_>>()
+            let source = Line::from(line.as_str());
+            let mut wrapped = Vec::new();
+            let mut current = String::new();
+            let mut current_width = 0;
+            for grapheme in source.styled_graphemes(Style::default()) {
+                let grapheme_width = Line::from(grapheme.symbol).width();
+                if grapheme_width > 0 && current_width > 0 && current_width + grapheme_width > width
+                {
+                    wrapped.push(Line::from(std::mem::take(&mut current)));
+                    current_width = 0;
+                }
+                current.push_str(grapheme.symbol);
+                current_width += grapheme_width;
+            }
+            if current.is_empty() {
+                wrapped.push(Line::from(""));
+            } else {
+                wrapped.push(Line::from(current));
+            }
+            wrapped
         })
         .collect()
 }
@@ -414,6 +486,37 @@ mod tests {
     }
 
     #[test]
+    fn renders_execution_context_for_known_and_unavailable_values() {
+        let started_at = Instant::now();
+        let state = ExecutionState::with_context(
+            started_at,
+            ExecutionContext::known(
+                "infra/prod",
+                "default",
+                "feature/plan-ui",
+                "working tree vs HEAD",
+            ),
+        );
+        let text = buffer_text(&render_to_buffer(&state, started_at, 80, 16));
+
+        assert!(text.contains("cwd infra/prod"), "{text}");
+        assert!(text.contains("workspace default"), "{text}");
+        assert!(text.contains("git feature/plan-ui"), "{text}");
+        assert!(text.contains("compare working tree vs HEAD"), "{text}");
+
+        let unavailable = ExecutionState::with_context(started_at, ExecutionContext::unavailable());
+        let unavailable_text = buffer_text(&render_to_buffer(&unavailable, started_at, 80, 16));
+        assert!(
+            unavailable_text.contains("cwd unavailable"),
+            "{unavailable_text}"
+        );
+        assert!(
+            unavailable_text.contains("compare unavailable"),
+            "{unavailable_text}"
+        );
+    }
+
+    #[test]
     fn renders_no_event_state_and_keeps_copy_out_of_running_footer() {
         let started_at = Instant::now();
         let state = ExecutionState::new(started_at);
@@ -439,7 +542,7 @@ mod tests {
             ExecutionEventKind::Diagnostic(Diagnostic {
                 severity: DiagnosticSeverity::Error,
                 summary: "Terraform initialization required".to_owned(),
-                detail: Some("detail ".repeat(40)),
+                detail: Some("日本語の診断文と絵文字🙂を含む長い内容。".repeat(8)),
                 position: Some(DiagnosticPosition {
                     filename: "infra/prod/main.tf".to_owned(),
                     start: DiagnosticPoint {
@@ -461,12 +564,15 @@ mod tests {
             &state,
             started_at + Duration::from_secs(2),
             60,
-            16,
+            30,
         ));
 
         assert!(text.contains("Terracotta / Failed"), "{text}");
         assert!(text.contains("Terraform plan failed."), "{text}");
         assert!(text.contains("Terraform initialization required"), "{text}");
+        let compact = text.replace(' ', "");
+        assert!(compact.contains("日本語の診断文"), "{text}");
+        assert!(compact.contains("絵文字🙂"), "{text}");
         assert!(text.contains("at infra/prod/main.tf:12:3"), "{text}");
         assert!(text.contains("q/Ctrl-C quit"), "{text}");
     }
@@ -499,13 +605,53 @@ mod tests {
             ResourceEventKind::RefreshComplete,
         ));
 
-        state.apply(ExecutionAction::ScrollDown);
+        state.apply_scroll(ExecutionScroll::Down, 0, 1);
         let stopped = buffer_text(&render_to_buffer(&state, started_at, 80, 16));
         assert!(stopped.contains("Follow: Off"), "{stopped}");
 
         state.apply(ExecutionAction::End);
         let resumed = buffer_text(&render_to_buffer(&state, started_at, 80, 16));
         assert!(resumed.contains("Follow: On"), "{resumed}");
+    }
+
+    #[test]
+    fn scrolling_from_latest_uses_the_rendered_bottom_and_stays_put_on_new_events() {
+        let started_at = Instant::now();
+        let mut state = ExecutionState::new(started_at);
+        for index in 0..30 {
+            state.record(resource_event(
+                started_at,
+                &format!("aws_instance.item[{index}]"),
+                ResourceEventKind::RefreshStart,
+            ));
+        }
+
+        let area = Rect::new(0, 0, 80, 16);
+        let body = execution_chunks(area, &state)[2];
+        let (current_offset, max_offset) = execution_scroll_position(&state, body);
+        assert!(current_offset > 0);
+        assert_eq!(current_offset, max_offset);
+
+        state.apply_scroll(ExecutionScroll::Up, current_offset, max_offset);
+        assert!(!state.follows_latest());
+        let stopped_offset = state.scroll();
+        assert_eq!(stopped_offset, current_offset - 1);
+
+        state.record(resource_event(
+            started_at,
+            "aws_instance.new",
+            ResourceEventKind::RefreshStart,
+        ));
+        let body = execution_chunks(area, &state)[2];
+        let (new_offset, new_max_offset) = execution_scroll_position(&state, body);
+        assert_eq!(new_offset, stopped_offset);
+        assert!(new_max_offset > max_offset);
+
+        state.apply(ExecutionAction::End);
+        let body = execution_chunks(area, &state)[2];
+        let (follow_offset, follow_max_offset) = execution_scroll_position(&state, body);
+        assert!(state.follows_latest());
+        assert_eq!(follow_offset, follow_max_offset);
     }
 
     #[test]
