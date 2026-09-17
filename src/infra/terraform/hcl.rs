@@ -4,6 +4,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use hcl::Structure;
+
 use crate::app::source_location::{
     ResourceAddress, ResourceSourceLocation, SourceFileAnalysis, SourceIssue, SourceIssueKind,
     SourceRange, SourceSide,
@@ -66,6 +68,42 @@ pub fn parse_source(input: HclSourceFile) -> SourceFileAnalysis {
         };
     }
 
+    let (parsed_addresses, mut issues) = parse_hcl(&input.source);
+    let (mut resources, scan_issues) = scan_resources(&input);
+    issues.extend(scan_issues);
+    if issues
+        .iter()
+        .any(|issue| issue.kind == SourceIssueKind::SyntaxError)
+    {
+        resources.clear();
+    } else {
+        for (resource, address) in resources.iter_mut().zip(parsed_addresses) {
+            resource.address = address;
+        }
+    }
+
+    SourceFileAnalysis {
+        path: input.path,
+        side: input.side,
+        resources,
+        issues,
+    }
+}
+
+fn parse_hcl(source: &str) -> (Vec<ResourceAddress>, Vec<SourceIssue>) {
+    match hcl::parse(source) {
+        Ok(body) => (parsed_resource_addresses(body), Vec::new()),
+        Err(error) => (
+            Vec::new(),
+            vec![SourceIssue {
+                kind: SourceIssueKind::SyntaxError,
+                message: format!("HCL parse error: {error}"),
+            }],
+        ),
+    }
+}
+
+fn scan_resources(input: &HclSourceFile) -> (Vec<ResourceSourceLocation>, Vec<SourceIssue>) {
     let scanned = scan(&input.source);
     let mut resources = Vec::new();
     let mut issues = scanned
@@ -134,13 +172,7 @@ pub fn parse_source(input: HclSourceFile) -> SourceFileAnalysis {
             .cmp(&right.range.start_line)
             .then_with(|| left.range.end_line.cmp(&right.range.end_line))
     });
-
-    SourceFileAnalysis {
-        path: input.path,
-        side: input.side,
-        resources,
-        issues,
-    }
+    (resources, issues)
 }
 
 #[must_use]
@@ -253,6 +285,23 @@ fn is_json_hcl_path(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.ends_with(".tf.json"))
+}
+
+fn parsed_resource_addresses(body: hcl::Body) -> Vec<ResourceAddress> {
+    body.into_inner()
+        .into_iter()
+        .filter_map(|structure| match structure {
+            Structure::Block(block)
+                if block.identifier() == "resource" && block.labels().len() == 2 =>
+            {
+                Some(ResourceAddress::new(
+                    block.labels()[0].as_str(),
+                    block.labels()[1].as_str(),
+                ))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 fn resource_header(tokens: &[Token], open_index: usize) -> Option<(ResourceAddress, usize)> {
@@ -594,7 +643,7 @@ resource "test_resource" "example" {
         let result = parse_files([
             HclSourceFile::new(
                 "broken.tf",
-                "resource \"bad\" \"resource\" {\n  value = 1\n",
+                "resource \"bad\" \"resource\" {}\n\nlocals {\n",
                 SourceSide::After,
             ),
             after("resource \"aws_vpc\" \"main\" {}\n"),
@@ -614,6 +663,13 @@ resource "test_resource" "example" {
                 .file(Path::new("broken.tf"), SourceSide::After)
                 .expect("broken file")
                 .has_issue(SourceIssueKind::SyntaxError)
+        );
+        assert!(
+            result
+                .file(Path::new("broken.tf"), SourceSide::After)
+                .expect("broken file")
+                .resources
+                .is_empty()
         );
     }
 
@@ -675,6 +731,37 @@ resource "test_resource" "example" {
             resource.address,
             ResourceAddress::new("aws_instance", "old")
         );
+    }
+
+    #[test]
+    fn decodes_escaped_resource_labels() {
+        let result = parse_files([after(
+            r#"resource "terraform_\u0064ata" "\u006dain" {
+  input = "ok"
+}
+"#,
+        )]);
+
+        let resource = result.resources().next().expect("resource source block");
+        assert_eq!(
+            resource.address,
+            ResourceAddress::new("terraform_data", "main")
+        );
+        assert!(result.is_complete());
+    }
+
+    #[test]
+    fn rejects_invalid_hcl_with_balanced_braces() {
+        for source in [
+            "resource \"aws_vpc\" \"main\" {\n  cidr_block =\n}\n",
+            "value = resource \"aws_vpc\" \"main\" {}\n",
+        ] {
+            let result = parse_files([after(source)]);
+
+            assert!(!result.is_complete(), "source: {source}");
+            assert!(result.files[0].has_issue(SourceIssueKind::SyntaxError));
+            assert!(result.files[0].resources.is_empty());
+        }
     }
 
     #[test]
