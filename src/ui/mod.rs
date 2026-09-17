@@ -46,7 +46,7 @@ pub(crate) fn run_connected(
 
         if let Some(state) = execution.as_ref() {
             terminal.draw(|frame| execution::render_execution(frame, state, Instant::now()))?;
-        } else if let Some(state) = detail.as_ref() {
+        } else if let Some(state) = detail.as_mut() {
             terminal.draw(|frame| resource_detail::render_resource_detail(frame, state))?;
         } else if let Some(state) = list.as_ref() {
             terminal.draw(|frame| {
@@ -64,7 +64,8 @@ pub(crate) fn run_connected(
                 }
             } else if let Some(state) = detail.as_mut() {
                 let size = terminal.size()?;
-                let viewport_height = state.viewport_height(size.height);
+                let now = Instant::now();
+                let viewport_height = state.viewport_height_at(size.height, now);
                 match resource_detail::key_to_input(key) {
                     Some(resource_detail::DetailInput::Back) => {
                         if let Some(list_state) = list.as_mut() {
@@ -81,7 +82,7 @@ pub(crate) fn run_connected(
                         }
                     }
                     Some(resource_detail::DetailInput::Action(action)) => {
-                        state.apply(action, size.width.saturating_sub(2), viewport_height);
+                        state.apply_at(action, size.width.saturating_sub(2), viewport_height, now);
                     }
                     None => {}
                 }

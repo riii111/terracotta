@@ -1,5 +1,5 @@
 use std::io;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -32,7 +32,7 @@ fn run_plan_list(terminal: &mut DefaultTerminal, state: &mut PlanListState) -> i
     let mut list_view = ListState::default();
     let mut detail = None;
     loop {
-        if let Some(detail_state) = detail.as_ref() {
+        if let Some(detail_state) = detail.as_mut() {
             terminal.draw(|frame| {
                 super::resource_detail::render_resource_detail(frame, detail_state);
             })?;
@@ -46,7 +46,8 @@ fn run_plan_list(terminal: &mut DefaultTerminal, state: &mut PlanListState) -> i
         {
             if let Some(detail_state) = detail.as_mut() {
                 let size = terminal.size()?;
-                let viewport_height = detail_state.viewport_height(size.height);
+                let now = Instant::now();
+                let viewport_height = detail_state.viewport_height_at(size.height, now);
                 match super::resource_detail::key_to_input(key) {
                     Some(super::resource_detail::DetailInput::Back) => {
                         state.apply(PlanListAction::SelectResource(detail_state.item_index()));
@@ -57,7 +58,12 @@ fn run_plan_list(terminal: &mut DefaultTerminal, state: &mut PlanListState) -> i
                         detail_state.navigate(navigation, state);
                     }
                     Some(super::resource_detail::DetailInput::Action(action)) => {
-                        detail_state.apply(action, size.width.saturating_sub(2), viewport_height);
+                        detail_state.apply_at(
+                            action,
+                            size.width.saturating_sub(2),
+                            viewport_height,
+                            now,
+                        );
                     }
                     None => {}
                 }

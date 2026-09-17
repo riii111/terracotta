@@ -68,6 +68,24 @@ impl AttributeValue {
     }
 
     #[must_use]
+    pub(crate) const fn is_revealable(&self) -> bool {
+        self.sensitive
+            && self.unknown_marker.is_none()
+            && matches!(
+                self.kind,
+                AttributeValueKind::Known | AttributeValueKind::Null
+            )
+    }
+
+    #[must_use]
+    pub(crate) fn revealed_display(&self) -> Option<String> {
+        if !self.is_revealable() {
+            return None;
+        }
+        self.original.as_ref().map(display_plan_value)
+    }
+
+    #[must_use]
     pub(crate) const fn revealed(&self) -> Option<&PlanValue> {
         self.original.as_ref()
     }

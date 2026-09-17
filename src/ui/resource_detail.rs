@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::buffer::CellWidth;
@@ -7,7 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use crate::app::attribute_diff::{
-    AttributeChangeKind, AttributeDiff, AttributeDiffs, AttributePathSegment,
+    AttributeChangeKind, AttributeDiff, AttributeDiffs, AttributePathSegment, AttributeValue,
 };
 use crate::app::attribution::{AttributionStatus, ResourceAttribution};
 use crate::app::plan::{ReplacePathSegment, ResourceChangeKind};
@@ -16,6 +18,7 @@ use crate::app::source_location::{SourceFileAnalysis, SourceSide};
 
 const MIN_HEIGHT: u16 = 8;
 const MIN_WIDTH: u16 = 48;
+const REVEAL_DURATION: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DetailAction {
@@ -24,6 +27,7 @@ pub(super) enum DetailAction {
     ToggleExpansion,
     PageUp,
     PageDown,
+    Reveal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +59,12 @@ enum DetailRow {
     Group { group: AttributeGroup, count: usize },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SensitiveReveal {
+    path: Vec<AttributePathSegment>,
+    expires_at: Instant,
+}
+
 impl DetailRow {
     const fn group(&self) -> Option<&AttributeGroup> {
         match self {
@@ -76,6 +86,7 @@ pub(super) struct ResourceDetailState {
     selected: usize,
     scroll: u16,
     expanded_groups: Vec<AttributeGroup>,
+    reveal: Option<SensitiveReveal>,
 }
 
 impl ResourceDetailState {
@@ -92,6 +103,7 @@ impl ResourceDetailState {
             selected: 0,
             scroll: 0,
             expanded_groups: Vec::new(),
+            reveal: None,
         })
     }
 
@@ -113,22 +125,28 @@ impl ResourceDetailState {
         }
     }
 
-    pub(super) fn apply(
+    pub(super) fn apply_at(
         &mut self,
         action: DetailAction,
         viewport_width: u16,
         viewport_height: u16,
+        now: Instant,
     ) {
+        self.clear_expired_reveal(now);
         let page = viewport_height.max(1);
         match action {
             DetailAction::SelectPrevious => {
+                let previous = self.selected;
                 self.selected = self.selected.saturating_sub(1);
-                self.ensure_selected_visible(viewport_width, page);
+                self.clear_reveal_on_selection_change(previous);
+                self.ensure_selected_visible(viewport_width, page, now);
             }
             DetailAction::SelectNext => {
+                let previous = self.selected;
                 if let Some(last) = detail_rows(self).len().checked_sub(1) {
                     self.selected = (self.selected + 1).min(last);
-                    self.ensure_selected_visible(viewport_width, page);
+                    self.clear_reveal_on_selection_change(previous);
+                    self.ensure_selected_visible(viewport_width, page, now);
                 }
             }
             DetailAction::ToggleExpansion => {
@@ -143,16 +161,19 @@ impl ResourceDetailState {
                     } else {
                         self.expanded_groups.push(group);
                     }
-                    self.ensure_selected_visible(viewport_width, page);
+                    self.ensure_selected_visible(viewport_width, page, now);
                 }
             }
             DetailAction::PageUp => self.scroll = self.scroll.saturating_sub(page),
             DetailAction::PageDown => {
-                self.scroll =
-                    self.scroll
-                        .saturating_add(page)
-                        .min(max_scroll(self, viewport_width, page));
+                self.scroll = self.scroll.saturating_add(page).min(max_scroll(
+                    self,
+                    viewport_width,
+                    page,
+                    now,
+                ));
             }
+            DetailAction::Reveal => self.toggle_reveal(now),
         }
     }
 
@@ -168,12 +189,14 @@ impl ResourceDetailState {
         self.total
     }
 
-    pub(super) fn viewport_height(&self, total_height: u16) -> u16 {
-        total_height.saturating_sub(5 + u16::from(self.context.is_some()) * 2)
+    pub(super) fn viewport_height_at(&self, total_height: u16, now: Instant) -> u16 {
+        total_height.saturating_sub(
+            5 + u16::from(self.context.is_some()) * 2 + u16::from(self.is_revealed_at(now)),
+        )
     }
 
-    fn ensure_selected_visible(&mut self, viewport_width: u16, viewport_height: u16) {
-        let content = detail_content(self);
+    fn ensure_selected_visible(&mut self, viewport_width: u16, viewport_height: u16, now: Instant) {
+        let content = detail_content(self, now);
         let Some(selected_line) = wrapped_selected_line(&content, viewport_width) else {
             return;
         };
@@ -183,6 +206,69 @@ impl ResourceDetailState {
         } else if selected_line >= self.scroll.saturating_add(viewport_height) {
             self.scroll = selected_line.saturating_sub(viewport_height.saturating_sub(1));
         }
+    }
+
+    fn clear_reveal_on_selection_change(&mut self, previous: usize) {
+        if self.selected != previous {
+            self.reveal = None;
+        }
+    }
+
+    fn clear_expired_reveal(&mut self, now: Instant) {
+        if self
+            .reveal
+            .as_ref()
+            .is_some_and(|reveal| now >= reveal.expires_at)
+        {
+            self.reveal = None;
+        }
+    }
+
+    fn toggle_reveal(&mut self, now: Instant) {
+        if self.reveal.is_some() {
+            self.reveal = None;
+            return;
+        }
+
+        let Some(path) = self.selected_reveal_path() else {
+            return;
+        };
+        self.reveal = Some(SensitiveReveal {
+            path,
+            expires_at: now + REVEAL_DURATION,
+        });
+    }
+
+    fn selected_reveal_path(&self) -> Option<Vec<AttributePathSegment>> {
+        let rows = detail_rows(self);
+        let DetailRow::Attribute(index) = rows.get(self.selected)? else {
+            return None;
+        };
+        let attribute = self.attributes.attributes.get(*index)?;
+        (attribute.before.is_revealable() || attribute.after.is_revealable())
+            .then(|| attribute.path.clone())
+    }
+
+    fn is_revealed_at(&self, now: Instant) -> bool {
+        self.reveal
+            .as_ref()
+            .is_some_and(|reveal| now < reveal.expires_at)
+    }
+
+    fn reveals_attribute(&self, attribute: &AttributeDiff, now: Instant) -> bool {
+        self.reveal.as_ref().is_some_and(|reveal| {
+            now < reveal.expires_at
+                && attribute.path.starts_with(&reveal.path)
+                && (attribute.before.is_revealable() || attribute.after.is_revealable())
+        })
+    }
+
+    fn can_reveal_selected(&self) -> bool {
+        self.selected_reveal_path().is_some()
+    }
+
+    fn mask_reveal(&mut self) {
+        self.reveal = None;
     }
 }
 
@@ -201,6 +287,7 @@ pub(super) fn key_to_input(key: KeyEvent) -> Option<DetailInput> {
         KeyCode::Down | KeyCode::Char('j') => DetailAction::SelectNext,
         KeyCode::Char('[') => return Some(DetailInput::Navigate(ResourceNavigation::Previous)),
         KeyCode::Char(']') => return Some(DetailInput::Navigate(ResourceNavigation::Next)),
+        KeyCode::Char('r') => DetailAction::Reveal,
         KeyCode::Enter => DetailAction::ToggleExpansion,
         KeyCode::PageUp => DetailAction::PageUp,
         KeyCode::PageDown => DetailAction::PageDown,
@@ -209,9 +296,15 @@ pub(super) fn key_to_input(key: KeyEvent) -> Option<DetailInput> {
     Some(DetailInput::Action(action))
 }
 
-pub(super) fn render_resource_detail(frame: &mut Frame<'_>, state: &ResourceDetailState) {
+pub(super) fn render_resource_detail(frame: &mut Frame<'_>, state: &mut ResourceDetailState) {
+    render_resource_detail_at(frame, state, Instant::now());
+}
+
+fn render_resource_detail_at(frame: &mut Frame<'_>, state: &mut ResourceDetailState, now: Instant) {
+    state.clear_expired_reveal(now);
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
+        state.mask_reveal();
         render_terminal_too_small(frame, area);
         return;
     }
@@ -225,10 +318,12 @@ pub(super) fn render_resource_detail(frame: &mut Frame<'_>, state: &ResourceDeta
     let content_area = block.inner(area);
     frame.render_widget(block, area);
 
+    let notice_height = u16::from(state.is_revealed_at(now));
     let context_height = u16::from(state.context.is_some()) * 2;
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(notice_height),
             Constraint::Length(context_height),
             Constraint::Length(1),
             Constraint::Length(1),
@@ -237,6 +332,33 @@ pub(super) fn render_resource_detail(frame: &mut Frame<'_>, state: &ResourceDeta
         ])
         .split(content_area);
 
+    if chunks[4].height == 0 {
+        state.mask_reveal();
+        render_terminal_too_small(frame, area);
+        return;
+    }
+
+    if state.is_revealed_at(now) {
+        let remaining = state
+            .reveal
+            .as_ref()
+            .expect("active reveal should have state")
+            .expires_at
+            .saturating_duration_since(now)
+            .as_secs()
+            .max(1);
+        frame.render_widget(
+            Paragraph::new(format!(
+                "! Sensitive value revealed                    {remaining}s remaining"
+            ))
+            .style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            chunks[0],
+        );
+    }
     if let Some(context) = &state.context {
         frame.render_widget(
             Paragraph::new(vec![
@@ -247,29 +369,29 @@ pub(super) fn render_resource_detail(frame: &mut Frame<'_>, state: &ResourceDeta
                     context.git()
                 )),
             ]),
-            chunks[0],
+            chunks[1],
         );
     }
     frame.render_widget(
         Paragraph::new(format!("compare {}", state.comparison)),
-        chunks[1],
+        chunks[2],
     );
-    frame.render_widget(separator(chunks[2].width), chunks[2]);
+    frame.render_widget(separator(chunks[3].width), chunks[3]);
 
-    let content = detail_content(state);
+    let content = detail_content(state, now);
     let scroll = state
         .scroll()
-        .min(max_scroll(state, chunks[3].width, chunks[3].height));
+        .min(max_scroll(state, chunks[4].width, chunks[4].height, now));
     frame.render_widget(
         Paragraph::new(content.lines)
             .scroll((scroll, 0))
             .wrap(Wrap { trim: false }),
-        chunks[3],
+        chunks[4],
     );
-    frame.render_widget(Paragraph::new(footer_line()), chunks[4]);
+    frame.render_widget(Paragraph::new(footer_line(state, now)), chunks[5]);
 }
 
-fn detail_content(state: &ResourceDetailState) -> DetailContent {
+fn detail_content(state: &ResourceDetailState, now: Instant) -> DetailContent {
     let mut lines = Vec::new();
     let mut selected_line = None;
 
@@ -305,6 +427,7 @@ fn detail_content(state: &ResourceDetailState) -> DetailContent {
                 &mut lines,
                 &state.attributes.attributes[*attribute_index],
                 row_index == state.selected,
+                state.reveals_attribute(&state.attributes.attributes[*attribute_index], now),
             ),
             DetailRow::Group { group, count } => append_group(
                 &mut lines,
@@ -477,14 +600,33 @@ fn append_attribution(
     }
 }
 
-fn append_attribute(lines: &mut Vec<Line<'static>>, attribute: &AttributeDiff, selected: bool) {
+fn append_attribute(
+    lines: &mut Vec<Line<'static>>,
+    attribute: &AttributeDiff,
+    selected: bool,
+    reveal: bool,
+) {
     let marker = if selected { "> " } else { "  " };
     lines.push(Line::from(vec![
         Span::raw(marker),
         Span::raw(attribute_path(&attribute.path)),
     ]));
-    lines.push(Line::from(format!("    - {}", attribute.before.display())));
-    lines.push(Line::from(format!("    + {}", attribute.after.display())));
+    lines.push(Line::from(format!(
+        "    - {}",
+        display_attribute_value(&attribute.before, reveal)
+    )));
+    lines.push(Line::from(format!(
+        "    + {}",
+        display_attribute_value(&attribute.after, reveal)
+    )));
+}
+
+fn display_attribute_value(value: &AttributeValue, reveal: bool) -> String {
+    if reveal {
+        value.revealed_display().unwrap_or_else(|| value.display())
+    } else {
+        value.display()
+    }
 }
 
 fn append_group(
@@ -648,8 +790,22 @@ fn separator(width: u16) -> Paragraph<'static> {
     Paragraph::new("─".repeat(width as usize)).style(Style::default().fg(Color::DarkGray))
 }
 
-const fn footer_line() -> &'static str {
-    "Up/Down/j/k select   Enter expand/collapse   PageUp/PageDown scroll   [ / ] prev/next   Esc back   q quit"
+fn footer_line(state: &ResourceDetailState, now: Instant) -> String {
+    let reveal = if state.is_revealed_at(now) {
+        "r mask now"
+    } else if state.can_reveal_selected() {
+        "r reveal sensitive value for 10s"
+    } else {
+        ""
+    };
+    let prefix = if reveal.is_empty() {
+        String::new()
+    } else {
+        format!("{reveal}   ")
+    };
+    format!(
+        "{prefix}Up/Down/j/k select   Enter expand/collapse   PageUp/PageDown scroll   [ / ] prev/next   Esc back   q quit"
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -658,8 +814,13 @@ struct DetailContent {
     selected_line: Option<usize>,
 }
 
-fn max_scroll(state: &ResourceDetailState, viewport_width: u16, viewport_height: u16) -> u16 {
-    let content = detail_content(state);
+fn max_scroll(
+    state: &ResourceDetailState,
+    viewport_width: u16,
+    viewport_height: u16,
+    now: Instant,
+) -> u16 {
+    let content = detail_content(state, now);
     let max_scroll =
         wrapped_line_count(&content, viewport_width).saturating_sub(usize::from(viewport_height));
     u16::try_from(max_scroll).unwrap_or(u16::MAX)
@@ -945,14 +1106,68 @@ mod tests {
             {
                 return;
             }
-            state.apply(DetailAction::SelectNext, 96, 40);
+            state.apply_at(DetailAction::SelectNext, 96, 40, Instant::now());
         }
         panic!("group should be selectable");
     }
 
+    fn select_attribute(state: &mut ResourceDetailState, target: &str) {
+        for _ in 0..detail_rows(state).len() {
+            if let Some(DetailRow::Attribute(index)) = detail_rows(state).get(state.selected)
+                && attribute_path(&state.attributes.attributes[*index].path) == target
+            {
+                return;
+            }
+            state.apply_at(DetailAction::SelectNext, 96, 40, Instant::now());
+        }
+        panic!("attribute {target} should be selectable");
+    }
+
+    fn sensitive_sibling_state() -> ResourceDetailState {
+        let mut change = change();
+        change.before = Some(plan_value(json!({
+            "password": "old-secret",
+            "api_token": "old-token",
+            "public": "old-public"
+        })));
+        change.after = Some(plan_value(json!({
+            "password": "new-secret",
+            "api_token": "new-token",
+            "public": "new-public"
+        })));
+        change.before_sensitive = Some(plan_value(json!({
+            "password": true,
+            "api_token": true
+        })));
+        change.after_sensitive = Some(plan_value(json!({
+            "password": true,
+            "api_token": true
+        })));
+        state_for_change(change, &[])
+    }
+
+    fn unknown_sensitive_state() -> ResourceDetailState {
+        let mut change = change();
+        change.kind = ResourceChangeKind::Create;
+        change.actions = vec![PlanAction::Create];
+        change.before = Some(PlanValue::Null);
+        change.after = Some(plan_value(json!({"future_secret": "not-known-yet"})));
+        change.before_sensitive = Some(plan_value(json!(false)));
+        change.after_sensitive = Some(plan_value(json!({"future_secret": true})));
+        change.after_unknown = Some(plan_value(json!({"future_secret": true})));
+        state_for_change(change, &[])
+    }
+
     fn render(state: &ResourceDetailState, width: u16, height: u16) -> Buffer {
+        let mut state = state.clone();
         render_to_buffer((width, height), |frame| {
-            render_resource_detail(frame, state);
+            render_resource_detail(frame, &mut state);
+        })
+    }
+
+    fn render_at(state: &mut ResourceDetailState, width: u16, height: u16, now: Instant) -> Buffer {
+        render_to_buffer((width, height), |frame| {
+            render_resource_detail_at(frame, state, now);
         })
     }
 
@@ -998,6 +1213,112 @@ mod tests {
     }
 
     #[test]
+    fn reveals_only_selected_known_sensitive_attribute_with_warning_and_expiry() {
+        let mut state = sensitive_sibling_state();
+        select_attribute(&mut state, "password");
+        let now = Instant::now();
+
+        let before_reveal = buffer_text(&render(&state, 100, 40));
+        assert!(before_reveal.contains("r reveal sensitive value for 10s"));
+        assert!(!before_reveal.contains("old-secret"));
+
+        state.apply_at(DetailAction::Reveal, 96, 40, now);
+        let revealed = buffer_text(&render_at(
+            &mut state,
+            100,
+            40,
+            now + Duration::from_secs(2),
+        ));
+        assert!(revealed.contains("old-secret"), "{revealed}");
+        assert!(revealed.contains("new-secret"), "{revealed}");
+        assert!(revealed.contains("<sensitive>"), "{revealed}");
+        assert!(!revealed.contains("old-token"), "{revealed}");
+        assert!(!revealed.contains("new-token"), "{revealed}");
+        assert!(revealed.contains("Sensitive value revealed"), "{revealed}");
+        assert!(revealed.contains("8s remaining"), "{revealed}");
+        assert!(revealed.contains("r mask now"), "{revealed}");
+
+        let expired = buffer_text(&render_at(&mut state, 100, 40, now + REVEAL_DURATION));
+        assert!(expired.contains("<sensitive>"), "{expired}");
+        assert!(!expired.contains("old-secret"), "{expired}");
+        assert!(!expired.contains("Sensitive value revealed"), "{expired}");
+        assert!(state.reveal.is_none());
+    }
+
+    #[test]
+    fn pressing_reveal_again_masks_immediately_and_selection_masks_previous_value() {
+        let mut state = sensitive_sibling_state();
+        select_attribute(&mut state, "password");
+        let now = Instant::now();
+        state.apply_at(DetailAction::Reveal, 96, 40, now);
+        assert!(buffer_text(&render_at(&mut state, 100, 40, now)).contains("old-secret"));
+
+        state.apply_at(DetailAction::Reveal, 96, 40, now + Duration::from_secs(1));
+        let remasked = buffer_text(&render_at(
+            &mut state,
+            100,
+            40,
+            now + Duration::from_secs(1),
+        ));
+        assert!(!remasked.contains("old-secret"), "{remasked}");
+        assert!(state.reveal.is_none());
+
+        state.apply_at(DetailAction::Reveal, 96, 40, now + Duration::from_secs(2));
+        state.apply_at(
+            DetailAction::SelectNext,
+            96,
+            40,
+            now + Duration::from_secs(3),
+        );
+        assert!(state.reveal.is_none());
+        let changed_selection = buffer_text(&render_at(
+            &mut state,
+            100,
+            40,
+            now + Duration::from_secs(3),
+        ));
+        assert!(
+            !changed_selection.contains("old-secret"),
+            "{changed_selection}"
+        );
+    }
+
+    #[test]
+    fn unknown_sensitive_attribute_cannot_start_reveal() {
+        let mut state = unknown_sensitive_state();
+        select_attribute(&mut state, "future_secret");
+        let now = Instant::now();
+
+        state.apply_at(DetailAction::Reveal, 96, 40, now);
+        let text = buffer_text(&render_at(&mut state, 100, 40, now));
+        assert!(text.contains("<sensitive>"), "{text}");
+        assert!(!text.contains("not-known-yet"), "{text}");
+        assert!(!text.contains("Sensitive value revealed"), "{text}");
+        assert!(state.reveal.is_none());
+    }
+
+    #[test]
+    fn small_terminal_masks_active_reveal_before_normal_rendering_resumes() {
+        let mut state = state();
+        select_attribute(&mut state, "password");
+        let now = Instant::now();
+        state.apply_at(DetailAction::Reveal, 96, 40, now);
+
+        let small = buffer_text(&render_at(&mut state, 47, 7, now + Duration::from_secs(1)));
+        assert!(small.contains("Terminal too small"), "{small}");
+        assert!(state.reveal.is_none());
+
+        let normal = buffer_text(&render_at(
+            &mut state,
+            100,
+            40,
+            now + Duration::from_secs(2),
+        ));
+        assert!(!normal.contains("old-secret"), "{normal}");
+        assert!(normal.contains("<sensitive>"), "{normal}");
+    }
+
+    #[test]
     fn renders_direct_evidence_with_its_source_side_and_range() {
         let state = state_with_changed_lines(&[SourceLineChange::new(
             "main.tf",
@@ -1024,13 +1345,13 @@ mod tests {
             key_to_input(key(KeyCode::Down)),
             Some(DetailInput::Action(DetailAction::SelectNext))
         );
-        state.apply(DetailAction::SelectNext, 46, 4);
+        state.apply_at(DetailAction::SelectNext, 46, 4, Instant::now());
         assert!(state.scroll() > initial_scroll);
-        state.apply(DetailAction::SelectNext, 46, 4);
+        state.apply_at(DetailAction::SelectNext, 46, 4, Instant::now());
         let text = buffer_text(&render(&state, 48, 12));
         assert!(text.contains("> password"), "{text}");
 
-        state.apply(DetailAction::PageDown, 46, 4);
+        state.apply_at(DetailAction::PageDown, 46, 4, Instant::now());
         let text = buffer_text(&render(&state, 48, 12));
         assert!(!text.contains("synthetic-secret"), "{text}");
         assert_eq!(
@@ -1045,6 +1366,10 @@ mod tests {
         assert_eq!(
             key_to_input(key(KeyCode::Enter)),
             Some(DetailInput::Action(DetailAction::ToggleExpansion))
+        );
+        assert_eq!(
+            key_to_input(key(KeyCode::Char('r'))),
+            Some(DetailInput::Action(DetailAction::Reveal))
         );
         assert_eq!(
             key_to_input(key(KeyCode::Char('['))),
@@ -1064,6 +1389,9 @@ mod tests {
         list.apply(PlanListAction::ConfirmSearch);
 
         let mut detail = ResourceDetailState::from_list(&list).expect("resource should open");
+        select_attribute(&mut detail, "password");
+        detail.apply_at(DetailAction::Reveal, 96, 40, Instant::now());
+        assert!(detail.reveal.is_some());
         detail.selected = 1;
         detail.scroll = 3;
         detail.expanded_groups.push(AttributeGroup::Unchanged);
@@ -1076,6 +1404,7 @@ mod tests {
         assert_eq!(detail.selected, 0);
         assert_eq!(detail.scroll(), 0);
         assert!(detail.expanded_groups.is_empty());
+        assert!(detail.reveal.is_none());
         assert_eq!(list.selected(), Some(1));
 
         detail.navigate(ResourceNavigation::Next, &mut list);
@@ -1111,7 +1440,7 @@ mod tests {
         select_group(&mut state, &unchanged);
         let group_index = state.selected;
 
-        state.apply(DetailAction::ToggleExpansion, 96, 40);
+        state.apply_at(DetailAction::ToggleExpansion, 96, 40, Instant::now());
 
         assert_eq!(state.selected, group_index);
         let text = buffer_text(&render(&state, 100, 60));
@@ -1121,7 +1450,7 @@ mod tests {
         );
         assert!(text.contains("root_unchanged"), "{text}");
 
-        state.apply(DetailAction::SelectNext, 96, 40);
+        state.apply_at(DetailAction::SelectNext, 96, 40, Instant::now());
         assert!(matches!(
             detail_rows(&state).get(state.selected),
             Some(DetailRow::Group {
@@ -1133,8 +1462,8 @@ mod tests {
             })
         ));
 
-        state.apply(DetailAction::SelectPrevious, 96, 40);
-        state.apply(DetailAction::ToggleExpansion, 96, 40);
+        state.apply_at(DetailAction::SelectPrevious, 96, 40, Instant::now());
+        state.apply_at(DetailAction::ToggleExpansion, 96, 40, Instant::now());
         assert_eq!(state.selected, group_index);
         let text = buffer_text(&render(&state, 100, 60));
         assert!(
@@ -1153,7 +1482,7 @@ mod tests {
         };
         select_group(&mut state, &group);
 
-        state.apply(DetailAction::ToggleExpansion, 96, 40);
+        state.apply_at(DetailAction::ToggleExpansion, 96, 40, Instant::now());
         let text = buffer_text(&render(&state, 100, 60));
 
         assert!(
@@ -1175,9 +1504,9 @@ mod tests {
         };
         select_group(&mut state, &group);
 
-        state.apply(DetailAction::ToggleExpansion, 36, 4);
-        state.apply(DetailAction::SelectNext, 36, 4);
-        state.apply(DetailAction::SelectNext, 36, 4);
+        state.apply_at(DetailAction::ToggleExpansion, 36, 4, Instant::now());
+        state.apply_at(DetailAction::SelectNext, 36, 4, Instant::now());
+        state.apply_at(DetailAction::SelectNext, 36, 4, Instant::now());
         assert!(state.scroll() > 0);
 
         let nested_group = AttributeGroup::Nested {
@@ -1193,8 +1522,8 @@ mod tests {
                 .and_then(DetailRow::group),
             Some(&nested_group)
         );
-        state.apply(DetailAction::ToggleExpansion, 36, 4);
-        state.apply(DetailAction::SelectNext, 36, 4);
+        state.apply_at(DetailAction::ToggleExpansion, 36, 4, Instant::now());
+        state.apply_at(DetailAction::SelectNext, 36, 4, Instant::now());
         let text = buffer_text(&render(&state, 48, 12));
         assert!(text.contains("> group_a.nested.value"), "{text}");
     }
@@ -1204,10 +1533,10 @@ mod tests {
         let mut state = state();
 
         for _ in 0..100 {
-            state.apply(DetailAction::PageDown, 46, 4);
+            state.apply_at(DetailAction::PageDown, 46, 4, Instant::now());
         }
         let last_scroll = state.scroll();
-        state.apply(DetailAction::PageDown, 46, 4);
+        state.apply_at(DetailAction::PageDown, 46, 4, Instant::now());
 
         assert_eq!(state.scroll(), last_scroll);
     }
