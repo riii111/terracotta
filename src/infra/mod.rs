@@ -3,4 +3,5 @@
     reason = "Terraform infrastructure is shared only within the crate"
 )]
 
+pub(crate) mod git;
 pub(crate) mod terraform;
