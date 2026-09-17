@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::fmt::{Debug, Formatter, Write};
 
-use super::plan::{PlanValue, ReplacePathSegment, ResourceChange};
+use super::plan::{PlanValue, ReplacePathSegment, ResourceChange, ResourceChangeKind};
 
 const ABSENT_DISPLAY: &str = "<absent>";
 const SENSITIVE_DISPLAY: &str = "<sensitive>";
@@ -26,6 +26,7 @@ pub(crate) struct AttributeValue {
     kind: AttributeValueKind,
     original: Option<PlanValue>,
     sensitive: bool,
+    display: String,
 }
 
 impl Debug for AttributeValue {
@@ -35,6 +36,7 @@ impl Debug for AttributeValue {
             .field("kind", &self.kind)
             .field("sensitive", &self.sensitive)
             .field("original", &self.original.as_ref().map(|_| "<redacted>"))
+            .field("display", &"<redacted>")
             .finish()
     }
 }
@@ -57,19 +59,7 @@ impl AttributeValue {
 
     #[must_use]
     pub(crate) fn display(&self) -> String {
-        if self.sensitive && !matches!(self.kind, AttributeValueKind::Absent) {
-            return SENSITIVE_DISPLAY.to_owned();
-        }
-
-        match self.kind {
-            AttributeValueKind::Absent => ABSENT_DISPLAY.to_owned(),
-            AttributeValueKind::Null => "null".to_owned(),
-            AttributeValueKind::Unknown => UNKNOWN_DISPLAY.to_owned(),
-            AttributeValueKind::Known => self
-                .original
-                .as_ref()
-                .map_or_else(|| ABSENT_DISPLAY.to_owned(), display_plan_value),
-        }
+        self.display.clone()
     }
 
     #[must_use]
@@ -114,8 +104,8 @@ pub(crate) fn diff_resource_attributes(change: &ResourceChange) -> AttributeDiff
         &mut attributes,
         Vec::new(),
         DiffInput {
-            before: change.before.as_ref(),
-            after: change.after.as_ref(),
+            before: root_value(change, AttributeSide::Before),
+            after: root_value(change, AttributeSide::After),
             before_sensitive: change.before_sensitive.as_ref(),
             after_sensitive: change.after_sensitive.as_ref(),
             after_unknown: change.after_unknown.as_ref(),
@@ -136,6 +126,25 @@ pub(crate) fn diff_resource_attributes(change: &ResourceChange) -> AttributeDiff
         unchanged_count,
         replace_paths: change.replace_paths.clone(),
         action_reason: change.action_reason.clone(),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum AttributeSide {
+    Before,
+    After,
+}
+
+const fn root_value(change: &ResourceChange, side: AttributeSide) -> Option<&PlanValue> {
+    let value = match side {
+        AttributeSide::Before => change.before.as_ref(),
+        AttributeSide::After => change.after.as_ref(),
+    };
+
+    match (change.kind, side, value) {
+        (ResourceChangeKind::Create, AttributeSide::Before, Some(PlanValue::Null))
+        | (ResourceChangeKind::Delete, AttributeSide::After, Some(PlanValue::Null)) => None,
+        _ => value,
     }
 }
 
@@ -198,25 +207,25 @@ fn collect_diffs(
         return;
     }
 
-    if preserves_atomic_transition(input) {
+    if omitted_complex_unknown(input) {
         push_diff(
             attributes,
-            path.clone(),
+            path,
             input,
             before_is_sensitive,
             after_is_sensitive,
         );
+        return;
+    }
 
-        if let Some(container_kind) = unknown_metadata_container_kind(input) {
-            collect_children(
-                attributes,
-                &path,
-                input,
-                container_kind,
-                before_is_sensitive,
-                after_is_sensitive,
-            );
-        }
+    if preserves_atomic_transition(input) {
+        push_diff(
+            attributes,
+            path,
+            input,
+            before_is_sensitive,
+            after_is_sensitive,
+        );
         return;
     }
 
@@ -292,16 +301,13 @@ fn preserves_atomic_transition(input: DiffInput<'_>) -> bool {
     }
 }
 
-fn unknown_metadata_container_kind(input: DiffInput<'_>) -> Option<ContainerKind> {
-    match (input.before, input.after) {
-        (Some(before), None) if value_container_kind(before).is_none() => {
-            metadata_container_kind(input.after_unknown)
-        }
-        (None, Some(after)) if value_container_kind(after).is_none() => {
-            metadata_container_kind(input.after_unknown)
-        }
-        _ => None,
-    }
+fn omitted_complex_unknown(input: DiffInput<'_>) -> bool {
+    input.after.is_none()
+        && input
+            .before
+            .is_none_or(|before| value_container_kind(before).is_none())
+        && metadata_container_kind(input.after_unknown).is_some()
+        && marker_contains_true(input.after_unknown)
 }
 
 fn push_diff(
@@ -339,13 +345,16 @@ fn push_diff(
 
 fn attribute_value(
     value: Option<&PlanValue>,
-    sensitive: Option<&PlanValue>,
-    unknown: Option<&PlanValue>,
+    sensitive_marker: Option<&PlanValue>,
+    unknown_marker: Option<&PlanValue>,
     inherited_sensitive: bool,
 ) -> AttributeValue {
-    let unknown = marker_is_true(unknown);
-    let sensitive = inherited_sensitive || marker_contains_true(sensitive);
-    let kind = if unknown {
+    let is_unknown = marker_is_true(unknown_marker)
+        || (value.is_none()
+            && metadata_container_kind(unknown_marker).is_some()
+            && marker_contains_true(unknown_marker));
+    let is_sensitive = inherited_sensitive || marker_contains_true(sensitive_marker);
+    let kind = if is_unknown {
         AttributeValueKind::Unknown
     } else {
         match value {
@@ -354,11 +363,56 @@ fn attribute_value(
             Some(_) => AttributeValueKind::Known,
         }
     };
+    let display = display_attribute_value(
+        kind,
+        value,
+        sensitive_marker,
+        unknown_marker,
+        inherited_sensitive,
+    );
 
     AttributeValue {
         kind,
         original: value.cloned(),
-        sensitive,
+        sensitive: is_sensitive,
+        display,
+    }
+}
+
+fn display_attribute_value(
+    kind: AttributeValueKind,
+    value: Option<&PlanValue>,
+    sensitive_marker: Option<&PlanValue>,
+    unknown_marker: Option<&PlanValue>,
+    inherited_sensitive: bool,
+) -> String {
+    let sensitive_here = inherited_sensitive || marker_is_true(sensitive_marker);
+    let sensitive = sensitive_here || marker_contains_true(sensitive_marker);
+
+    if sensitive_here && !matches!(kind, AttributeValueKind::Absent) {
+        return SENSITIVE_DISPLAY.to_owned();
+    }
+
+    match kind {
+        AttributeValueKind::Absent => ABSENT_DISPLAY.to_owned(),
+        AttributeValueKind::Null => {
+            if sensitive {
+                SENSITIVE_DISPLAY.to_owned()
+            } else {
+                "null".to_owned()
+            }
+        }
+        AttributeValueKind::Unknown => {
+            if sensitive {
+                SENSITIVE_DISPLAY.to_owned()
+            } else {
+                UNKNOWN_DISPLAY.to_owned()
+            }
+        }
+        AttributeValueKind::Known => value.map_or_else(
+            || ABSENT_DISPLAY.to_owned(),
+            |value| display_plan_value_with_markers(value, sensitive_marker, unknown_marker),
+        ),
     }
 }
 
@@ -497,6 +551,84 @@ fn display_plan_value(value: &PlanValue) -> String {
     }
 }
 
+fn display_plan_value_with_markers(
+    value: &PlanValue,
+    sensitive_marker: Option<&PlanValue>,
+    unknown_marker: Option<&PlanValue>,
+) -> String {
+    if marker_is_true(sensitive_marker) {
+        return SENSITIVE_DISPLAY.to_owned();
+    }
+    if marker_is_true(unknown_marker) {
+        return UNKNOWN_DISPLAY.to_owned();
+    }
+
+    match value {
+        PlanValue::Object(values) => {
+            if marker_contains_true(sensitive_marker)
+                && !matches!(sensitive_marker, Some(PlanValue::Object(_)))
+            {
+                return SENSITIVE_DISPLAY.to_owned();
+            }
+            if marker_contains_true(unknown_marker)
+                && !matches!(unknown_marker, Some(PlanValue::Object(_)))
+            {
+                return UNKNOWN_DISPLAY.to_owned();
+            }
+            let values = values
+                .iter()
+                .map(|(key, value)| {
+                    let segment = AttributePathSegment::Key(key.clone());
+                    format!(
+                        "{} = {}",
+                        display_string(key),
+                        display_plan_value_with_markers(
+                            value,
+                            child_value(sensitive_marker, &segment),
+                            child_value(unknown_marker, &segment),
+                        )
+                    )
+                })
+                .collect::<Vec<_>>();
+            format!("{{{}}}", values.join(", "))
+        }
+        PlanValue::Array(values) => {
+            if marker_contains_true(sensitive_marker)
+                && !matches!(sensitive_marker, Some(PlanValue::Array(_)))
+            {
+                return SENSITIVE_DISPLAY.to_owned();
+            }
+            if marker_contains_true(unknown_marker)
+                && !matches!(unknown_marker, Some(PlanValue::Array(_)))
+            {
+                return UNKNOWN_DISPLAY.to_owned();
+            }
+            let values = values
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    let segment = AttributePathSegment::Index(index);
+                    display_plan_value_with_markers(
+                        value,
+                        child_value(sensitive_marker, &segment),
+                        child_value(unknown_marker, &segment),
+                    )
+                })
+                .collect::<Vec<_>>();
+            format!("[{}]", values.join(", "))
+        }
+        PlanValue::Null | PlanValue::Bool(_) | PlanValue::Number(_) | PlanValue::String(_) => {
+            if marker_contains_true(sensitive_marker) {
+                SENSITIVE_DISPLAY.to_owned()
+            } else if marker_contains_true(unknown_marker) {
+                UNKNOWN_DISPLAY.to_owned()
+            } else {
+                display_plan_value(value)
+            }
+        }
+    }
+}
+
 fn display_string(value: &str) -> String {
     let mut displayed = String::with_capacity(value.len() + 2);
     displayed.push('"');
@@ -524,7 +656,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
-    use crate::app::plan::{PlanAction, ResourceChangeKind, ResourceMode};
+    use crate::app::plan::{PlanAction, ResourceMode};
 
     fn plan_value(value: Value) -> PlanValue {
         match value {
@@ -724,7 +856,10 @@ mod tests {
         assert_eq!(credentials.after.kind(), AttributeValueKind::Known);
         assert!(credentials.before.is_sensitive() && credentials.after.is_sensitive());
         assert_eq!(credentials.before.display(), "<sensitive>");
-        assert_eq!(credentials.after.display(), "<sensitive>");
+        assert_eq!(
+            credentials.after.display(),
+            "{\"token\" = <sensitive>, \"user\" = \"bob\"}"
+        );
     }
 
     #[test]
@@ -808,6 +943,39 @@ mod tests {
     }
 
     #[test]
+    fn treats_resource_root_null_as_absent_only_for_create_and_delete() {
+        let mut create = change(ChangeFixture {
+            before: json!(null),
+            after: json!({"id": "created", "name": "example"}),
+            before_sensitive: json!(false),
+            after_sensitive: json!(false),
+            after_unknown: json!(false),
+        });
+        create.kind = ResourceChangeKind::Create;
+
+        let create_diffs = diff_resource_attributes(&create);
+        let created_id = attribute(&create_diffs, &[AttributePathSegment::Key("id".to_owned())]);
+        assert_eq!(created_id.before.kind(), AttributeValueKind::Absent);
+        assert_eq!(created_id.after.kind(), AttributeValueKind::Known);
+        assert_eq!(create_diffs.attributes.len(), 2);
+
+        let mut delete = change(ChangeFixture {
+            before: json!({"id": "deleted", "name": "example"}),
+            after: json!(null),
+            before_sensitive: json!(false),
+            after_sensitive: json!(false),
+            after_unknown: json!(false),
+        });
+        delete.kind = ResourceChangeKind::Delete;
+
+        let delete_diffs = diff_resource_attributes(&delete);
+        let deleted_id = attribute(&delete_diffs, &[AttributePathSegment::Key("id".to_owned())]);
+        assert_eq!(deleted_id.before.kind(), AttributeValueKind::Known);
+        assert_eq!(deleted_id.after.kind(), AttributeValueKind::Absent);
+        assert_eq!(delete_diffs.attributes.len(), 2);
+    }
+
+    #[test]
     fn keeps_scalar_and_null_values_at_the_parent_when_shape_changes() {
         let change = change(ChangeFixture {
             before: json!({"settings": null, "name": "old"}),
@@ -834,7 +1002,7 @@ mod tests {
     }
 
     #[test]
-    fn keeps_unknown_children_when_after_omits_a_complex_value() {
+    fn represents_omitted_complex_unknown_as_a_parent_value() {
         let mut change = change(ChangeFixture {
             before: json!({"config": null}),
             after: json!(null),
@@ -846,19 +1014,16 @@ mod tests {
 
         let diffs = diff_resource_attributes(&change);
         let config = attribute(&diffs, &[AttributePathSegment::Key("config".to_owned())]);
-        let token = attribute(
-            &diffs,
-            &[
-                AttributePathSegment::Key("config".to_owned()),
-                AttributePathSegment::Key("token".to_owned()),
-            ],
-        );
 
         assert_eq!(config.before.kind(), AttributeValueKind::Null);
-        assert_eq!(config.after.kind(), AttributeValueKind::Absent);
-        assert_eq!(token.before.kind(), AttributeValueKind::Absent);
-        assert_eq!(token.after.kind(), AttributeValueKind::Unknown);
-        assert_eq!(token.after.display(), "<unknown>");
+        assert_eq!(config.after.kind(), AttributeValueKind::Unknown);
+        assert_eq!(config.after.display(), "<unknown>");
+        assert_eq!(diffs.changed_count, 1);
+        assert_eq!(diffs.attributes.len(), 1);
+        assert_eq!(
+            config.path,
+            [AttributePathSegment::Key("config".to_owned())]
+        );
     }
 
     #[test]
