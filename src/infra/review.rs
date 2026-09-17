@@ -9,11 +9,7 @@ use crate::app::{
 
 use super::{
     git::{self, ComparisonBasis, ConfigurationComparison, ConfigurationSnapshot, GitDiff},
-    terraform::{
-        self,
-        execute::{CancellationToken, TerraformExecutionError},
-        hcl,
-    },
+    terraform::{self, CancellationToken, TerraformExecutionError, hcl},
 };
 
 pub(crate) fn run_review(
@@ -52,7 +48,7 @@ pub(crate) fn run_review_with_events_and_phases(
         root,
         compare_ref,
         cancellation,
-        &terraform::execute::SystemProcessRunner,
+        &terraform::SystemProcessRunner,
         event_sink,
         phase_sink,
     )
@@ -62,7 +58,7 @@ pub(crate) fn run_review_with_events_with_runner(
     root: &Path,
     compare_ref: Option<&str>,
     cancellation: &CancellationToken,
-    runner: &dyn terraform::execute::ProcessRunner,
+    runner: &dyn terraform::ProcessRunner,
     event_sink: &mut dyn FnMut(ExecutionEvent),
 ) -> Result<PlanReview, TerraformExecutionError> {
     let mut ignore_phase = |_| {};
@@ -80,7 +76,7 @@ pub(crate) fn run_review_with_events_with_runner_and_phases(
     root: &Path,
     compare_ref: Option<&str>,
     cancellation: &CancellationToken,
-    runner: &dyn terraform::execute::ProcessRunner,
+    runner: &dyn terraform::ProcessRunner,
     event_sink: &mut dyn FnMut(ExecutionEvent),
     phase_sink: &mut dyn FnMut(ExecutionPhase),
 ) -> Result<PlanReview, TerraformExecutionError> {
@@ -100,7 +96,7 @@ fn run_review_with_events_with_runner_and_hook(
     root: &Path,
     compare_ref: Option<&str>,
     cancellation: &CancellationToken,
-    runner: &dyn terraform::execute::ProcessRunner,
+    runner: &dyn terraform::ProcessRunner,
     event_sink: &mut dyn FnMut(ExecutionEvent),
     after_git_diff: &mut dyn FnMut(),
 ) -> Result<PlanReview, TerraformExecutionError> {
@@ -119,7 +115,7 @@ fn run_review_with_events_with_runner_and_hook_and_phases(
     root: &Path,
     compare_ref: Option<&str>,
     cancellation: &CancellationToken,
-    runner: &dyn terraform::execute::ProcessRunner,
+    runner: &dyn terraform::ProcessRunner,
     event_sink: &mut dyn FnMut(ExecutionEvent),
     after_git_diff: &mut dyn FnMut(),
     phase_sink: &mut dyn FnMut(ExecutionPhase),
@@ -134,13 +130,12 @@ fn run_review_with_events_with_runner_and_hook_and_phases(
         kind: ExecutionEventKind::Git(git_branch.clone()),
     });
 
-    let workspace =
-        terraform::execute::read_workspace_with_runner(&execution_root, cancellation, runner)?;
+    let workspace = terraform::read_workspace_with_runner(&execution_root, cancellation, runner)?;
     event_sink(ExecutionEvent {
         received_at: std::time::Instant::now(),
         kind: ExecutionEventKind::Workspace(workspace.clone()),
     });
-    let execution = terraform::execute::run_plan_with_events_with_runner_and_phase(
+    let execution = terraform::run_plan_with_events_with_runner_and_phase(
         &execution_root,
         cancellation,
         runner,
@@ -319,7 +314,7 @@ mod tests {
 
     use crate::{
         app::attribution::{AnalysisIssueKind, AttributionStatus},
-        infra::terraform::execute::ProcessOutput,
+        infra::terraform::ProcessOutput,
     };
     use serde_json::json;
 
@@ -397,32 +392,32 @@ mod tests {
         output: Option<ProcessOutput>,
     }
 
-    impl terraform::execute::RunningProcess for FakeProcess {
-        fn try_wait(&mut self) -> io::Result<Option<terraform::execute::ProcessStatus>> {
-            Ok(Some(terraform::execute::ProcessStatus::Exited(0)))
+    impl terraform::RunningProcess for FakeProcess {
+        fn try_wait(&mut self) -> io::Result<Option<terraform::ProcessStatus>> {
+            Ok(Some(terraform::ProcessStatus::Exited(0)))
         }
 
         fn kill(&mut self) -> io::Result<()> {
             Ok(())
         }
 
-        fn wait(&mut self) -> io::Result<terraform::execute::ProcessStatus> {
-            Ok(terraform::execute::ProcessStatus::Exited(0))
+        fn wait(&mut self) -> io::Result<terraform::ProcessStatus> {
+            Ok(terraform::ProcessStatus::Exited(0))
         }
 
-        fn collect_output(mut self: Box<Self>) -> io::Result<terraform::execute::ProcessOutput> {
+        fn collect_output(mut self: Box<Self>) -> io::Result<terraform::ProcessOutput> {
             self.output
                 .take()
                 .ok_or_else(|| io::Error::other("fake process output was already collected"))
         }
     }
 
-    impl terraform::execute::ProcessRunner for FakeRunner {
+    impl terraform::ProcessRunner for FakeRunner {
         fn start(
             &self,
             _root: &Path,
             arguments: &[std::ffi::OsString],
-        ) -> io::Result<Box<dyn terraform::execute::RunningProcess>> {
+        ) -> io::Result<Box<dyn terraform::RunningProcess>> {
             if arguments.first().is_some_and(|argument| argument == "plan")
                 && let Some((path, source)) = &self.mutate_on_plan
             {

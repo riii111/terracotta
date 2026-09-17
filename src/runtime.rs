@@ -15,7 +15,7 @@ use crate::{
     },
     infra::{
         review,
-        terraform::execute::{CancellationToken, TerraformExecutionErrorKind},
+        terraform::{CancellationToken, TerraformExecutionErrorKind},
     },
     ui::{self, UiOutcome},
 };

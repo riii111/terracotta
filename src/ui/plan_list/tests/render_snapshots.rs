@@ -1,10 +1,15 @@
 use super::*;
+use crate::ui::test_support::REPRESENTATIVE_TERMINAL_SIZE;
 
 #[test]
 fn plan_list_shows_actions_selection_and_git_evidence() {
     let state = synthetic_state();
 
-    insta::assert_snapshot!(buffer_text(&render_to_buffer(&state, 120, 20)));
+    insta::assert_snapshot!(buffer_text(&render_to_buffer(
+        &state,
+        REPRESENTATIVE_TERMINAL_SIZE.0,
+        REPRESENTATIVE_TERMINAL_SIZE.1,
+    )));
 }
 
 #[test]
