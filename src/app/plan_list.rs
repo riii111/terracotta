@@ -51,6 +51,7 @@ impl std::error::Error for PlanListError {}
 pub(crate) enum PlanListAction {
     SelectPrevious,
     SelectNext,
+    SelectResource(usize),
     ToggleFilter,
     BeginSearch,
     SetSearch(String),
@@ -219,6 +220,11 @@ impl PlanListState {
                         Some(self.selected.map_or(0, |selected| (selected + 1).min(last)));
                 } else {
                     self.selected = None;
+                }
+            }
+            PlanListAction::SelectResource(index) => {
+                if index < self.visible_count() {
+                    self.selected = Some(index);
                 }
             }
             PlanListAction::ToggleFilter => self.toggle_filter(),
