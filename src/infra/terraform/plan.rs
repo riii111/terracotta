@@ -74,7 +74,7 @@ fn parse_plan_document(document: &Value) -> Result<Plan, PlanParseError> {
         .as_object()
         .ok_or(PlanParseError::RootMustBeObject)?;
     parse_format_version(root)?;
-    let resources = required_array(root, "resource_changes")?;
+    let resources = optional_array(root, "resource_changes")?;
 
     let mut changes = Vec::new();
     let mut unsupported_changes = Vec::new();
@@ -197,8 +197,7 @@ fn parse_output_changes(
         let output = output
             .as_object()
             .ok_or(PlanParseError::InvalidField("output change"))?;
-        let change = required_object(output, "change")?;
-        let actions = parse_actions(change, "output change actions")?;
+        let actions = parse_actions(output, "output change actions")?;
 
         if !matches!(classify_actions(&actions), ActionClassification::NoOp) {
             unsupported_changes.push(UnsupportedChange {
@@ -365,15 +364,16 @@ fn summarize(changes: &[ResourceChange]) -> PlanSummary {
     summary
 }
 
-fn required_array<'a>(
+fn optional_array<'a>(
     object: &'a Map<String, Value>,
     field: &'static str,
-) -> Result<&'a Vec<Value>, PlanParseError> {
-    object
-        .get(field)
-        .ok_or(PlanParseError::MissingField(field))?
-        .as_array()
-        .ok_or(PlanParseError::InvalidField(field))
+) -> Result<&'a [Value], PlanParseError> {
+    object.get(field).map_or(Ok(&[]), |value| {
+        value
+            .as_array()
+            .map(Vec::as_slice)
+            .ok_or(PlanParseError::InvalidField(field))
+    })
 }
 
 fn required_object<'a>(
@@ -633,9 +633,7 @@ mod tests {
                 resource("aws_instance.unknown", "managed", json!(["future-action"]))
             ],
             "output_changes": {
-                "public_ip": {
-                    "change": {"actions": ["update"], "before": null, "after": "synthetic"}
-                }
+                "public_ip": {"actions": ["update"], "before": null, "after": "synthetic"}
             }
         });
         document["extra_future_field"] = json!({"accepted": true});
@@ -666,6 +664,26 @@ mod tests {
             UnsupportedChangeScope::Output
         );
         assert_eq!(plan.unsupported_changes[4].address, "public_ip");
+    }
+
+    #[test]
+    fn accepts_omitted_resource_changes_for_an_output_only_plan() {
+        let input = json!({
+            "format_version": "1.2",
+            "output_changes": {
+                "public_ip": {"actions": ["update"], "before": null, "after": "synthetic"}
+            }
+        });
+
+        let plan = parse_plan_json(&input.to_string()).expect("output-only plan should parse");
+
+        assert!(plan.changes.is_empty());
+        assert!(plan.has_changes());
+        assert_eq!(plan.unsupported_change_count(), 1);
+        assert_eq!(
+            plan.unsupported_changes[0].scope,
+            UnsupportedChangeScope::Output
+        );
     }
 
     #[test]
@@ -712,6 +730,52 @@ mod tests {
                 ReplacePathSegment::Attribute("size".to_owned()),
             ]])
         );
+    }
+
+    #[test]
+    fn preserves_arbitrary_precision_json_numbers() {
+        let json_number = |source: &str| {
+            serde_json::from_str::<Value>(source).expect("arbitrary precision number should parse")
+        };
+        let mut large_integer =
+            resource("terraform_data.large_integer", "managed", json!(["update"]));
+        large_integer["change"]["after"] = json_number("123456789012345678901234567891");
+
+        let mut precise_decimal = resource(
+            "terraform_data.precise_decimal",
+            "managed",
+            json!(["update"]),
+        );
+        precise_decimal["change"]["after"] = json_number("0.123456789012345678901234567890");
+
+        let mut large_exponent = resource(
+            "terraform_data.large_exponent",
+            "managed",
+            json!(["update"]),
+        );
+        large_exponent["change"]["after"] = json_number("1e400");
+
+        let plan = parse_plan_json(&plan_with_resources(json!([
+            large_integer,
+            precise_decimal,
+            large_exponent
+        ])))
+        .expect("plan should parse");
+
+        let Some(PlanValue::Number(large_integer)) = &plan.changes[0].after else {
+            panic!("large integer should remain a number");
+        };
+        assert_eq!(large_integer, "123456789012345678901234567891");
+
+        let Some(PlanValue::Number(precise_decimal)) = &plan.changes[1].after else {
+            panic!("precise decimal should remain a number");
+        };
+        assert_eq!(precise_decimal, "0.123456789012345678901234567890");
+
+        let Some(PlanValue::Number(large_exponent)) = &plan.changes[2].after else {
+            panic!("large exponent should remain a number");
+        };
+        assert_eq!(large_exponent, "1e+400");
     }
 
     #[test]
@@ -776,9 +840,12 @@ mod tests {
             parse_plan_json("not json"),
             Err(PlanParseError::InvalidJson)
         );
+        let empty = parse_plan_json(r#"{"format_version":"1.0"}"#)
+            .expect("resource_changes may be omitted for an empty plan");
+        assert!(!empty.has_changes());
         assert_eq!(
-            parse_plan_json(r#"{"format_version":"1.0"}"#),
-            Err(PlanParseError::MissingField("resource_changes"))
+            parse_plan_json(r#"{"resource_changes":[]}"#),
+            Err(PlanParseError::MissingField("format_version"))
         );
     }
 }
