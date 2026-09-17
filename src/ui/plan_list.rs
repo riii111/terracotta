@@ -13,7 +13,7 @@ use crate::app::plan::{
     Plan, PlanAction, PlanSummary, PlanValue, ResourceChange, ResourceChangeKind, ResourceMode,
     UnsupportedChange, UnsupportedChangeKind, UnsupportedChangeScope,
 };
-use crate::app::plan_list::{PlanListAction, PlanListItem, PlanListState};
+use crate::app::plan_list::{PlanListAction, PlanListFilter, PlanListItem, PlanListState};
 use crate::app::source_location::{
     ResourceAddress, ResourceSourceLocation, SourceFileAnalysis, SourceRange, SourceSide,
 };
@@ -82,6 +82,7 @@ pub(super) fn key_to_action(key: KeyEvent) -> Option<ListInput> {
     }
 
     match key.code {
+        KeyCode::Char('f') => Some(ListInput::Selection(PlanListAction::ToggleFilter)),
         KeyCode::Up | KeyCode::Char('k') => {
             Some(ListInput::Selection(PlanListAction::SelectPrevious))
         }
@@ -107,6 +108,7 @@ pub(super) fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
     frame.render_widget(block, area);
 
     let notices = notice_lines(state, content_area.width as usize);
+    let summary = summary_lines(state);
     let notice_height = match notices.len() {
         0 => 0,
         1 => 1,
@@ -119,7 +121,7 @@ pub(super) fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
         .constraints([
             Constraint::Length(context_height),
             Constraint::Length(1),
-            Constraint::Length(2),
+            Constraint::Length(summary.len() as u16),
             Constraint::Length(separator_height),
             Constraint::Length(notice_height),
             Constraint::Min(1),
@@ -145,7 +147,7 @@ pub(super) fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
         Paragraph::new(Line::from(format!("compare {}", state.comparison()))),
         chunks[1],
     );
-    frame.render_widget(Paragraph::new(summary_lines(state)), chunks[2]);
+    frame.render_widget(Paragraph::new(summary), chunks[2]);
     frame.render_widget(separator(chunks[3].width), chunks[3]);
 
     if !notices.is_empty() {
@@ -191,8 +193,16 @@ fn render_terminal_too_small(frame: &mut Frame<'_>, area: Rect) {
 }
 
 fn render_rows(frame: &mut Frame<'_>, state: &PlanListState, area: Rect) {
-    if state.items().is_empty() {
-        frame.render_widget(Paragraph::new("No resource changes."), area);
+    if state.visible_count() == 0 {
+        let message = if state.items().is_empty() {
+            "No resource changes.".to_owned()
+        } else {
+            format!(
+                "No items in this filter. Press f to show all {} changes.",
+                state.items().len()
+            )
+        };
+        frame.render_widget(Paragraph::new(message), area);
         return;
     }
 
@@ -202,8 +212,7 @@ fn render_rows(frame: &mut Frame<'_>, state: &PlanListState, area: Rect) {
         Span::raw("  GIT"),
     ]);
     let items = state
-        .items()
-        .iter()
+        .visible_items()
         .map(|item| list_item(item, area.width.saturating_sub(2) as usize))
         .collect::<Vec<_>>();
     let list = List::new(items)
@@ -214,7 +223,7 @@ fn render_rows(frame: &mut Frame<'_>, state: &PlanListState, area: Rect) {
                 .bg(Color::DarkGray)
                 .add_modifier(Modifier::UNDERLINED),
         );
-    let mut list_state = ListState::default().with_selected(Some(state.selected()));
+    let mut list_state = ListState::default().with_selected(state.selected());
     frame.render_stateful_widget(list, area, &mut list_state);
 }
 
@@ -270,43 +279,59 @@ fn list_item(item: &PlanListItem, width: usize) -> ListItem<'static> {
 
 fn summary_lines(state: &PlanListState) -> Vec<Line<'static>> {
     let summary = state.summary();
+    let needs_review = Span::styled(
+        format!(
+            "Needs review: {} / {}",
+            state.needs_review_count(),
+            state.items().len()
+        ),
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    );
+
+    let action_line = Line::from(vec![
+        Span::styled(
+            format!("+{} create", summary.creates),
+            action_style(ResourceChangeKind::Create),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            format!("~{} update", summary.updates),
+            action_style(ResourceChangeKind::Update),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            format!("R{} replace", summary.replaces),
+            action_style(ResourceChangeKind::Replace),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            format!("-{} delete", summary.deletes),
+            action_style(ResourceChangeKind::Delete),
+        ),
+    ]);
+    if state.filter() == PlanListFilter::All {
+        return vec![
+            action_line,
+            Line::from(vec![needs_review, Span::raw("   Filter: All")]),
+        ];
+    }
+
     vec![
-        Line::from(vec![
-            Span::styled(
-                format!("+{} create", summary.creates),
-                action_style(ResourceChangeKind::Create),
-            ),
-            Span::raw("  "),
-            Span::styled(
-                format!("~{} update", summary.updates),
-                action_style(ResourceChangeKind::Update),
-            ),
-            Span::raw("  "),
-            Span::styled(
-                format!("R{} replace", summary.replaces),
-                action_style(ResourceChangeKind::Replace),
-            ),
-            Span::raw("  "),
-            Span::styled(
-                format!("-{} delete", summary.deletes),
-                action_style(ResourceChangeKind::Delete),
-            ),
-        ]),
-        Line::from(Span::styled(
-            format!(
-                "Needs review: {} / {}",
-                state.needs_review_count(),
-                state.items().len()
-            ),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
+        action_line,
+        Line::from(needs_review),
+        Line::from(format!(
+            "Filter: {}   Showing {} / {}",
+            state.filter().label(),
+            state.visible_count(),
+            state.items().len()
         )),
     ]
 }
 
 fn footer_line() -> Line<'static> {
-    Line::from("Up/Down/j/k select   Enter details   q/Ctrl-C quit")
+    Line::from("Up/Down/j/k select   Enter details   f filter   q/Ctrl-C quit")
 }
 
 fn separator(width: u16) -> Paragraph<'static> {
@@ -552,7 +577,7 @@ mod tests {
         assert!(text.contains("main.tf:42-46"));
         assert!(text.contains("incomplete"));
         assert!(text.contains("no match"));
-        assert!(text.contains("Up/Down/j/k select   Enter details   q/Ctrl-C quit"));
+        assert!(text.contains("Up/Down/j/k select   Enter details   f filter"));
         assert!(
             text.contains(
                 "aws_s3_bucket.logs_with_a_very_long_resource_address_that_needs_truncation_for_narrow_terminal",
@@ -674,13 +699,13 @@ mod tests {
             Some(ListInput::Selection(PlanListAction::SelectNext))
         );
         state.apply(PlanListAction::SelectNext);
-        assert_eq!(state.selected(), 1);
+        assert_eq!(state.selected(), Some(1));
         assert_eq!(
             key_to_action(key(KeyCode::Up, KeyModifiers::NONE)),
             Some(ListInput::Selection(PlanListAction::SelectPrevious))
         );
         state.apply(PlanListAction::SelectPrevious);
-        assert_eq!(state.selected(), 0);
+        assert_eq!(state.selected(), Some(0));
         assert_eq!(
             key_to_action(key(KeyCode::Char('q'), KeyModifiers::NONE)),
             Some(ListInput::Quit)
@@ -693,6 +718,30 @@ mod tests {
             key_to_action(key(KeyCode::Enter, KeyModifiers::NONE)),
             Some(ListInput::OpenDetail)
         );
+        assert_eq!(
+            key_to_action(key(KeyCode::Char('f'), KeyModifiers::NONE)),
+            Some(ListInput::Selection(PlanListAction::ToggleFilter))
+        );
+    }
+
+    #[test]
+    fn filter_shows_only_review_items_and_keeps_plan_counts() {
+        let mut state = synthetic_state();
+
+        state.apply(PlanListAction::ToggleFilter);
+        let text = buffer_text(&render_to_buffer(&state, 100, 16));
+
+        assert!(text.contains("Needs review: 2 / 4"), "{text}");
+        assert!(text.contains("Filter: Needs review"), "{text}");
+        assert!(text.contains("Showing 2 / 4"), "{text}");
+        assert!(!text.contains("aws_instance.api"), "{text}");
+        assert!(text.contains("aws_instance.worker"), "{text}");
+
+        let detail = super::super::resource_detail::ResourceDetailState::from_list(&state)
+            .expect("filtered selection should open details");
+        assert_eq!(detail.item_index(), 0);
+        assert_eq!(detail.total_items(), 2);
+        assert_eq!(state.filter(), PlanListFilter::NeedsReview);
     }
 
     #[test]

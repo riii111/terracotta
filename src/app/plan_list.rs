@@ -51,6 +51,23 @@ impl std::error::Error for PlanListError {}
 pub(crate) enum PlanListAction {
     SelectPrevious,
     SelectNext,
+    ToggleFilter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlanListFilter {
+    All,
+    NeedsReview,
+}
+
+impl PlanListFilter {
+    #[must_use]
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::NeedsReview => "Needs review",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,7 +79,8 @@ pub(crate) struct PlanListState {
     source_files: Vec<SourceFileAnalysis>,
     unsupported: Vec<UnsupportedChangeKind>,
     analysis_issues: Vec<String>,
-    selected: usize,
+    filter: PlanListFilter,
+    selected: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,6 +159,7 @@ impl PlanListState {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
+        let selected = (!items.is_empty()).then_some(0);
         Ok(Self {
             context: None,
             comparison: comparison.into(),
@@ -153,7 +172,8 @@ impl PlanListState {
                 .map(|change| change.kind)
                 .collect(),
             analysis_issues: Vec::new(),
-            selected: 0,
+            filter: PlanListFilter::All,
+            selected,
         })
     }
 
@@ -166,20 +186,25 @@ impl PlanListState {
             source_files: Vec::new(),
             unsupported: Vec::new(),
             analysis_issues: Vec::new(),
-            selected: 0,
+            filter: PlanListFilter::All,
+            selected: None,
         }
     }
 
     pub(crate) fn apply(&mut self, action: PlanListAction) {
         match action {
             PlanListAction::SelectPrevious => {
-                self.selected = self.selected.saturating_sub(1);
+                self.selected = self.selected.map(|selected| selected.saturating_sub(1));
             }
             PlanListAction::SelectNext => {
-                if let Some(last) = self.items.len().checked_sub(1) {
-                    self.selected = (self.selected + 1).min(last);
+                if let Some(last) = self.visible_count().checked_sub(1) {
+                    self.selected =
+                        Some(self.selected.map_or(0, |selected| (selected + 1).min(last)));
+                } else {
+                    self.selected = None;
                 }
             }
+            PlanListAction::ToggleFilter => self.toggle_filter(),
         }
     }
 
@@ -203,14 +228,33 @@ impl PlanListState {
         &self.items
     }
 
+    pub(crate) fn visible_items(&self) -> impl Iterator<Item = &PlanListItem> {
+        self.items.iter().filter(|item| self.includes(item))
+    }
+
+    #[must_use]
+    pub(crate) fn visible_count(&self) -> usize {
+        self.visible_items().count()
+    }
+
+    #[must_use]
+    pub(crate) const fn filter(&self) -> PlanListFilter {
+        self.filter
+    }
+
     #[must_use]
     pub(crate) fn source_files(&self) -> &[SourceFileAnalysis] {
         &self.source_files
     }
 
     #[must_use]
-    pub(crate) const fn selected(&self) -> usize {
+    pub(crate) const fn selected(&self) -> Option<usize> {
         self.selected
+    }
+
+    #[must_use]
+    pub(crate) fn selected_item(&self) -> Option<&PlanListItem> {
+        self.visible_items().nth(self.selected?)
     }
 
     #[must_use]
@@ -239,6 +283,24 @@ impl PlanListState {
     #[must_use]
     pub(crate) fn analysis_issues(&self) -> &[String] {
         &self.analysis_issues
+    }
+
+    const fn includes(&self, item: &PlanListItem) -> bool {
+        matches!(self.filter, PlanListFilter::All) || item.needs_review()
+    }
+
+    fn toggle_filter(&mut self) {
+        let selected_address = self.selected_item().map(|item| item.address().to_owned());
+        self.filter = match self.filter {
+            PlanListFilter::All => PlanListFilter::NeedsReview,
+            PlanListFilter::NeedsReview => PlanListFilter::All,
+        };
+        self.selected = selected_address
+            .and_then(|address| {
+                self.visible_items()
+                    .position(|item| item.address() == address)
+            })
+            .or_else(|| (self.visible_count() > 0).then_some(0));
     }
 }
 
@@ -338,8 +400,13 @@ impl UnsupportedChangeKind {
 
 #[cfg(test)]
 mod tests {
-    use super::super::attribution::AnalysisIssue;
+    use super::super::attribution::{
+        AnalysisIssue, SourceLineChange, attribute_changes, mark_analysis_incomplete,
+    };
     use super::super::review::{ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus};
+    use super::super::source_location::{
+        ResourceAddress, ResourceSourceLocation, SourceRange, SourceSide,
+    };
     use super::*;
 
     fn state() -> PlanListState {
@@ -380,10 +447,130 @@ mod tests {
         let mut state = state();
 
         state.apply(PlanListAction::SelectPrevious);
-        assert_eq!(state.selected(), 0);
+        assert_eq!(state.selected(), Some(0));
 
         state.apply(PlanListAction::SelectNext);
-        assert_eq!(state.selected(), 0);
+        assert_eq!(state.selected(), Some(0));
+    }
+
+    fn filtered_state() -> PlanListState {
+        let changes = [
+            change("aws_instance.direct"),
+            change("aws_instance.incomplete"),
+            change("aws_instance.no_match"),
+        ]
+        .into_iter()
+        .collect::<Vec<_>>();
+        let source_files = vec![SourceFileAnalysis::new(
+            "main.tf".into(),
+            SourceSide::After,
+            vec![
+                ResourceSourceLocation::new(
+                    ResourceAddress::new("aws_instance", "direct"),
+                    "main.tf".into(),
+                    SourceSide::After,
+                    SourceRange::new(1, 4),
+                ),
+                ResourceSourceLocation::new(
+                    ResourceAddress::new("aws_instance", "incomplete"),
+                    "main.tf".into(),
+                    SourceSide::After,
+                    SourceRange::new(6, 9),
+                ),
+            ],
+            Vec::new(),
+        )];
+        let changed_lines = vec![
+            SourceLineChange::new("main.tf", SourceSide::After, SourceRange::new(2, 2)),
+            SourceLineChange::new("main.tf", SourceSide::After, SourceRange::new(7, 7)),
+        ];
+        let mut attributions = attribute_changes(&changes, &source_files, &changed_lines);
+        mark_analysis_incomplete(
+            &mut attributions[1..2],
+            &[AnalysisIssue::git("partial source")],
+        );
+
+        PlanListState::from_plan(
+            Plan {
+                changes,
+                summary: PlanSummary {
+                    updates: 3,
+                    ..PlanSummary::default()
+                },
+                unsupported_changes: Vec::new(),
+            },
+            attributions,
+            "working tree vs HEAD",
+        )
+        .expect("filter fixture should build a list")
+    }
+
+    fn change(address: &str) -> ResourceChange {
+        ResourceChange {
+            address: address.to_owned(),
+            mode: super::super::plan::ResourceMode::Managed,
+            actions: vec![super::super::plan::PlanAction::Update],
+            kind: ResourceChangeKind::Update,
+            before: None,
+            after: None,
+            before_sensitive: None,
+            after_sensitive: None,
+            after_unknown: None,
+            replace_paths: None,
+            action_reason: None,
+        }
+    }
+
+    #[test]
+    fn needs_review_filter_keeps_full_counts_and_direct_incomplete_item() {
+        let mut state = filtered_state();
+        state.apply(PlanListAction::SelectNext);
+
+        state.apply(PlanListAction::ToggleFilter);
+
+        assert_eq!(state.filter(), PlanListFilter::NeedsReview);
+        assert_eq!(state.visible_count(), 2);
+        assert_eq!(state.needs_review_count(), 2);
+        assert_eq!(state.selected(), Some(0));
+        assert_eq!(
+            state.selected_item().map(PlanListItem::address),
+            Some("aws_instance.incomplete")
+        );
+
+        state.apply(PlanListAction::ToggleFilter);
+
+        assert_eq!(state.filter(), PlanListFilter::All);
+        assert_eq!(state.visible_count(), 3);
+        assert_eq!(state.selected(), Some(1));
+    }
+
+    #[test]
+    fn needs_review_filter_moves_disappearing_selection_to_first_item() {
+        let mut state = filtered_state();
+
+        state.apply(PlanListAction::ToggleFilter);
+
+        assert_eq!(state.selected(), Some(0));
+        assert_eq!(
+            state.selected_item().map(PlanListItem::address),
+            Some("aws_instance.incomplete")
+        );
+    }
+
+    #[test]
+    fn empty_needs_review_filter_has_no_selection_and_restores_first_item() {
+        let mut state = PlanListState::empty("working tree vs HEAD");
+
+        state.apply(PlanListAction::ToggleFilter);
+
+        assert_eq!(state.filter(), PlanListFilter::NeedsReview);
+        assert_eq!(state.selected(), None);
+        assert_eq!(state.selected_item(), None);
+
+        state.apply(PlanListAction::ToggleFilter);
+
+        assert_eq!(state.filter(), PlanListFilter::All);
+        assert_eq!(state.selected(), None);
     }
 
     #[test]

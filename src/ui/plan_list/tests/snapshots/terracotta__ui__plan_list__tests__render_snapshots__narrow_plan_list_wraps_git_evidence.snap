@@ -5,7 +5,7 @@ expression: "buffer_text(&render_to_buffer(&state, 60, 16))"
 ┌Terracotta / Plan─────────────────────────────────────────┐
 │compare working tree vs HEAD                              │
 │+1 create  ~1 update  R1 replace  -1 delete               │
-│Needs review: 2 / 4                                       │
+│Needs review: 2 / 4   Filter: All                         │
 │──────────────────────────────────────────────────────────│
 │Unshown changes: output (1)                               │
 │ACTION  RESOURCE  GIT                                     │
@@ -16,5 +16,5 @@ expression: "buffer_text(&render_to_buffer(&state, 60, 16))"
 │  ! - aws_security_group.old  no match                    │
 │                                                          │
 │                                                          │
-│Up/Down/j/k select   Enter details   q/Ctrl-C quit        │
+│Up/Down/j/k select   Enter details   f filter   q/Ctrl-C q│
 └──────────────────────────────────────────────────────────┘

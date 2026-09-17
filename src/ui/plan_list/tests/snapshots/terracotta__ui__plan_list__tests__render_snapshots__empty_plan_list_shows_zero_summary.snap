@@ -5,12 +5,12 @@ expression: "buffer_text(&render_to_buffer(&state, 80, 12))"
 ┌Terracotta / Plan─────────────────────────────────────────────────────────────┐
 │compare working tree vs HEAD                                                  │
 │+0 create  ~0 update  R0 replace  -0 delete                                   │
-│Needs review: 0 / 0                                                           │
+│Needs review: 0 / 0   Filter: All                                             │
 │──────────────────────────────────────────────────────────────────────────────│
 │No resource changes.                                                          │
 │                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │
-│Up/Down/j/k select   Enter details   q/Ctrl-C quit                            │
+│Up/Down/j/k select   Enter details   f filter   q/Ctrl-C quit                 │
 └──────────────────────────────────────────────────────────────────────────────┘
