@@ -25,6 +25,7 @@ pub(crate) enum AttributeValueKind {
 pub(crate) struct AttributeValue {
     kind: AttributeValueKind,
     original: Option<PlanValue>,
+    unknown_marker: Option<PlanValue>,
     sensitive: bool,
     display: String,
 }
@@ -36,6 +37,10 @@ impl Debug for AttributeValue {
             .field("kind", &self.kind)
             .field("sensitive", &self.sensitive)
             .field("original", &self.original.as_ref().map(|_| "<redacted>"))
+            .field(
+                "unknown_marker",
+                &self.unknown_marker.as_ref().map(|_| "<redacted>"),
+            )
             .field("display", &"<redacted>")
             .finish()
     }
@@ -380,6 +385,8 @@ fn attribute_value(
     AttributeValue {
         kind,
         original: value.cloned(),
+        unknown_marker: unknown_marker
+            .and_then(|marker| marker_contains_true(Some(marker)).then(|| marker.clone())),
         sensitive: is_sensitive,
         display,
     }
@@ -423,7 +430,9 @@ fn display_attribute_value(
 }
 
 fn same_attribute_value(before: &AttributeValue, after: &AttributeValue) -> bool {
-    before.kind == after.kind && before.original == after.original
+    before.kind == after.kind
+        && before.original == after.original
+        && before.unknown_marker == after.unknown_marker
 }
 
 fn container_kind(input: DiffInput<'_>) -> Option<ContainerKind> {
@@ -980,6 +989,24 @@ mod tests {
             "{\"token\" = <unknown>, \"user\" = \"bob\"}"
         );
         assert_eq!(items.after.display(), "[\"new\", <unknown>]");
+    }
+
+    #[test]
+    fn counts_unknown_nested_values_in_parent_sensitive_changes() {
+        let change = change(ChangeFixture {
+            before: json!({"secrets": [null]}),
+            after: json!({"secrets": [null]}),
+            before_sensitive: json!({"secrets": true}),
+            after_sensitive: json!({"secrets": true}),
+            after_unknown: json!({"secrets": [true]}),
+        });
+
+        let diffs = diff_resource_attributes(&change);
+        let secrets = attribute(&diffs, &[AttributePathSegment::Key("secrets".to_owned())]);
+
+        assert_eq!(secrets.kind, AttributeChangeKind::Changed);
+        assert_eq!(diffs.changed_count, 1);
+        assert_eq!(diffs.unchanged_count, 0);
     }
 
     #[test]
