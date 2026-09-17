@@ -294,52 +294,36 @@ def read_available():
         pass
 
 
-def wait_new(marker, name, timeout=20):
+def wait_screen(predicate, name, description, timeout=20):
     before = screen.text()
     deadline = time.time() + timeout
     while time.time() < deadline:
         current = screen.text()
-        if current != before and marker in current:
+        if current != before and predicate(current):
             observed.append(name)
             return
         read_available()
+        current = screen.text()
+        if current != before and predicate(current):
+            observed.append(name)
+            return
         if child_status() is not None:
             break
     raise RuntimeError(
-        f"missing {name}: {marker!r}; head={bytes(output)[:4000]!r}; tail={bytes(output)[-1200:]!r}"
+        f"missing {name}: {description!r}; head={bytes(output)[:4000]!r}; tail={bytes(output)[-1200:]!r}"
     )
+
+
+def wait_new(marker, name, timeout=20):
+    wait_screen(lambda current: marker in current, name, marker, timeout)
 
 
 def wait_parts(markers, name, timeout=20):
-    before = screen.text()
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        current = screen.text()
-        if current != before and all(marker in current for marker in markers):
-            observed.append(name)
-            return
-        read_available()
-        if child_status() is not None:
-            break
-    raise RuntimeError(
-        f"missing {name}; head={bytes(output)[:4000]!r}; tail={bytes(output)[-1200:]!r}"
-    )
+    wait_screen(lambda current: all(marker in current for marker in markers), name, markers, timeout)
 
 
 def wait_any(markers, name, timeout=20):
-    before = screen.text()
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        current = screen.text()
-        if current != before and any(marker in current for marker in markers):
-            observed.append(name)
-            return
-        read_available()
-        if child_status() is not None:
-            break
-    raise RuntimeError(
-        f"missing {name}; head={bytes(output)[:4000]!r}; tail={bytes(output)[-1200:]!r}"
-    )
+    wait_screen(lambda current: any(marker in current for marker in markers), name, markers, timeout)
 
 
 def wait_file(path, name, timeout=20):
