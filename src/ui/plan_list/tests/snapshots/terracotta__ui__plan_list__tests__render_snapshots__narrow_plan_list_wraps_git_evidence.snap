@@ -16,5 +16,5 @@ expression: "buffer_text(&render_to_buffer(&state, 60, 16))"
 │  ! - aws_security_group.old  no match                    │
 │                                                          │
 │                                                          │
-│j/k/↑↓ select  Enter  f filter  q/Ctrl-C quit             │
+│j/k/↑↓ select  Enter  f filter  / search  q/Ctrl-C quit   │
 └──────────────────────────────────────────────────────────┘
