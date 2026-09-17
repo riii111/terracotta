@@ -19,6 +19,7 @@ use crate::app::source_location::{
 };
 
 const MIN_HEIGHT: u16 = 11;
+const MIN_CONTENT_HEIGHT: u16 = MIN_HEIGHT - 2;
 const MIN_WIDTH: u16 = 48;
 const ANALYSIS_PREFIX: &str = "Analysis incomplete: ";
 
@@ -168,9 +169,10 @@ pub(super) fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
     let content_area = block.inner(area);
     frame.render_widget(block, area);
 
-    let notices = notice_lines(state, content_area.width as usize);
-    let summary = summary_lines(state);
     let has_search = state.searching() || !state.search().is_empty();
+    let compact_layout = has_search && content_area.height <= MIN_CONTENT_HEIGHT;
+    let notices = notice_lines(state, content_area.width as usize, compact_layout);
+    let summary = summary_lines(state);
     let search_height = u16::from(has_search);
     let notice_height = match notices.len() {
         0 => 0,
@@ -178,7 +180,7 @@ pub(super) fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
         _ => 2,
     };
     let context_height = u16::from(state.context().is_some()) * 2;
-    let separator_height = u16::from(notice_height < 2);
+    let separator_height = u16::from(!compact_layout && notice_height < 2);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -233,7 +235,7 @@ pub(super) fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
     );
 }
 
-fn notice_lines(state: &PlanListState, width: usize) -> Vec<Line<'static>> {
+fn notice_lines(state: &PlanListState, width: usize, compact: bool) -> Vec<Line<'static>> {
     let unsupported = state.unsupported_summary();
     let analysis = state.analysis_issues().first().map(|first| {
         let suffix = match state.analysis_issues().len() {
@@ -249,6 +251,19 @@ fn notice_lines(state: &PlanListState, width: usize) -> Vec<Line<'static>> {
             suffix
         )
     });
+
+    if compact {
+        let message = match (unsupported.as_deref(), analysis.as_deref()) {
+            (Some(summary), Some(_)) => format!(
+                "Unshown: {}  Analysis incomplete",
+                summary.strip_prefix("Unshown changes: ").unwrap_or(summary)
+            ),
+            (Some(summary), None) => summary.to_owned(),
+            (None, Some(analysis)) => analysis.to_owned(),
+            (None, None) => return Vec::new(),
+        };
+        return vec![Line::from(truncate_end(&message, width))];
+    }
 
     match (unsupported, analysis) {
         (Some(summary), Some(analysis)) => vec![
@@ -913,6 +928,23 @@ mod tests {
         assert!(text.contains("Needs review: 2 / 4"), "{text}");
         assert!(text.contains("Showing 1/4"), "{text}");
         assert!(text.contains("/ security_"), "{text}");
+    }
+
+    #[test]
+    fn connected_search_at_minimum_size_keeps_notices_counts_and_no_match_message() {
+        let mut state = connected_state();
+        state.apply(PlanListAction::BeginSearch);
+        state.apply(PlanListAction::SetSearch("missing".to_owned()));
+        let text = buffer_text(&render_to_buffer(&state, MIN_WIDTH, MIN_HEIGHT));
+
+        assert!(text.contains("Unshown: output (1)"), "{text}");
+        assert!(text.contains("Analysis incomplete"), "{text}");
+        assert!(text.contains("Needs review: 1 / 1"), "{text}");
+        assert!(text.contains("Showing 0/1"), "{text}");
+        assert!(
+            text.contains("No matching resources. Search: missing"),
+            "{text}"
+        );
     }
 
     #[test]
