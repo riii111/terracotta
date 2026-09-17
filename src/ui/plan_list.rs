@@ -121,7 +121,7 @@ pub(super) fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
         .constraints([
             Constraint::Length(context_height),
             Constraint::Length(1),
-            Constraint::Length(summary.len() as u16),
+            Constraint::Length(u16::try_from(summary.len()).unwrap_or(u16::MAX)),
             Constraint::Length(separator_height),
             Constraint::Length(notice_height),
             Constraint::Min(1),
