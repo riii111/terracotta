@@ -95,17 +95,7 @@ Diff:
     → t3.medium
 ```
 
-直接変えていないリソースでも、辿れるなら経路だけ出す。
-
-```text
-locals.common_tags
-  ↓
-module.ecs
-  ↓
-aws_ecs_service.app
-```
-
-変更原因の断定ではない。Terraform設定上の対応関係。
+MVPではroot直下のmanaged resourceとネイティブHCLのGit変更をdirectに照合する。間接的な影響経路の推定は行わない。
 
 ### 確認したplanを持ち出す
 

@@ -113,10 +113,15 @@ import os
 import pty
 import select
 import signal
+import fcntl
+import struct
 import sys
+import termios
 import time
 
-_, binary, root, columns, rows, scenario = sys.argv[:6]
+_, binary, root, columns_arg, rows_arg, scenario = sys.argv[:6]
+columns = int(columns_arg)
+rows = int(rows_arg)
 command = sys.argv[6:]
 pid, fd = pty.fork()
 if pid == 0:
@@ -128,8 +133,8 @@ if pid == 0:
             "-c",
             'stty rows "$1" cols "$2"; cd "$3"; shift 3; exec "$@"',
             "sh",
-            rows,
-            columns,
+            rows_arg,
+            columns_arg,
             root,
             binary,
             *command,
@@ -137,8 +142,137 @@ if pid == 0:
     )
 
 output = bytearray()
-cursor = 0
 observed = []
+
+
+class Screen:
+    def __init__(self, columns, rows):
+        self.columns = columns
+        self.rows = rows
+        self.cells = [[" "] * columns for _ in range(rows)]
+        self.row = 0
+        self.column = 0
+        self.saved = (0, 0)
+        self.pending = bytearray()
+
+    def resize(self, columns, rows):
+        cells = [[" "] * columns for _ in range(rows)]
+        for row in range(min(self.rows, rows)):
+            for column in range(min(self.columns, columns)):
+                cells[row][column] = self.cells[row][column]
+        self.columns = columns
+        self.rows = rows
+        self.cells = cells
+        self.row = min(self.row, rows - 1)
+        self.column = min(self.column, columns - 1)
+
+    def feed(self, data):
+        self.pending.extend(data)
+        while self.pending:
+            if self.pending[0] == 0x1b:
+                if len(self.pending) < 2:
+                    return
+                if self.pending[1] == ord("["):
+                    final = next(
+                        (index for index, value in enumerate(self.pending[2:], 2)
+                         if 0x40 <= value <= 0x7e),
+                        None,
+                    )
+                    if final is None:
+                        return
+                    sequence = bytes(self.pending[2:final])
+                    command = chr(self.pending[final])
+                    del self.pending[:final + 1]
+                    self.csi(sequence.decode("ascii", "ignore"), command)
+                    continue
+                del self.pending[:2]
+                continue
+
+            value = self.pending[0]
+            if value == 0x0d:
+                del self.pending[:1]
+                self.column = 0
+                continue
+            if value == 0x0a:
+                del self.pending[:1]
+                self.row = min(self.row + 1, self.rows - 1)
+                continue
+            if value == 0x08:
+                del self.pending[:1]
+                self.column = max(self.column - 1, 0)
+                continue
+            if value < 0x20 or value == 0x7f:
+                del self.pending[:1]
+                continue
+
+            character = None
+            for length in range(1, min(4, len(self.pending)) + 1):
+                try:
+                    character = bytes(self.pending[:length]).decode("utf-8")
+                    break
+                except UnicodeDecodeError as error:
+                    if error.reason == "unexpected end of data" and length == len(self.pending):
+                        return
+            if character is None:
+                character = "�"
+                length = 1
+            del self.pending[:length]
+            self.put(character)
+
+    def put(self, character):
+        if self.row >= self.rows:
+            return
+        if self.column >= self.columns:
+            self.column = 0
+            self.row = min(self.row + 1, self.rows - 1)
+        self.cells[self.row][self.column] = character
+        self.column = min(self.column + 1, self.columns)
+
+    def csi(self, parameters, command):
+        private = parameters.startswith("?")
+        if private:
+            parameters = parameters[1:]
+        values = []
+        for value in parameters.split(";") if parameters else []:
+            try:
+                values.append(int(value) if value else 1)
+            except ValueError:
+                values.append(1)
+
+        if command in ("H", "f"):
+            self.row = max((values[0] if values else 1) - 1, 0)
+            self.column = max((values[1] if len(values) > 1 else 1) - 1, 0)
+        elif command == "G":
+            self.column = max((values[0] if values else 1) - 1, 0)
+        elif command == "d":
+            self.row = max((values[0] if values else 1) - 1, 0)
+        elif command == "A":
+            self.row = max(self.row - (values[0] if values else 1), 0)
+        elif command == "B":
+            self.row = min(self.row + (values[0] if values else 1), self.rows - 1)
+        elif command == "C":
+            self.column = min(self.column + (values[0] if values else 1), self.columns)
+        elif command == "D":
+            self.column = max(self.column - (values[0] if values else 1), 0)
+        elif command == "J":
+            if not values or values[0] == 2:
+                self.cells = [[" "] * self.columns for _ in range(self.rows)]
+        elif command == "K":
+            mode = values[0] if values else 0
+            start = 0 if mode == 2 else self.column if mode == 0 else 0
+            end = self.columns if mode in (0, 2) else self.column + 1
+            for column in range(start, min(end, self.columns)):
+                self.cells[self.row][column] = " "
+        elif command == "s":
+            self.saved = (self.row, self.column)
+        elif command == "u":
+            self.row, self.column = self.saved
+
+    def text(self):
+        return "\n".join("".join(row) for row in self.cells)
+
+
+screen = Screen(columns, rows)
 
 
 def child_status():
@@ -153,19 +287,20 @@ def read_available():
     if not ready:
         return
     try:
-        output.extend(os.read(fd, 8192))
+        chunk = os.read(fd, 8192)
+        output.extend(chunk)
+        screen.feed(chunk)
     except OSError:
         pass
 
 
 def wait_new(marker, name, timeout=20):
-    global cursor
-    start = cursor
+    before = screen.text()
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if marker in bytes(output[start:]).decode("utf-8", "replace"):
+        current = screen.text()
+        if current != before and marker in current:
             observed.append(name)
-            cursor = len(output)
             return
         read_available()
         if child_status() is not None:
@@ -176,14 +311,12 @@ def wait_new(marker, name, timeout=20):
 
 
 def wait_parts(markers, name, timeout=20):
-    global cursor
-    start = cursor
+    before = screen.text()
     deadline = time.time() + timeout
     while time.time() < deadline:
-        text = bytes(output[start:]).decode("utf-8", "replace")
-        if all(marker in text for marker in markers):
+        current = screen.text()
+        if current != before and all(marker in current for marker in markers):
             observed.append(name)
-            cursor = len(output)
             return
         read_available()
         if child_status() is not None:
@@ -194,14 +327,12 @@ def wait_parts(markers, name, timeout=20):
 
 
 def wait_any(markers, name, timeout=20):
-    global cursor
-    start = cursor
+    before = screen.text()
     deadline = time.time() + timeout
     while time.time() < deadline:
-        text = bytes(output[start:]).decode("utf-8", "replace")
-        if any(marker in text for marker in markers):
+        current = screen.text()
+        if current != before and any(marker in current for marker in markers):
             observed.append(name)
-            cursor = len(output)
             return
         read_available()
         if child_status() is not None:
@@ -226,18 +357,7 @@ def wait_exit(timeout=20):
     while time.time() < deadline:
         status = child_status()
         if status is not None:
-            while True:
-                ready, _, _ = select.select([fd], [], [], 0.1)
-                if not ready:
-                    break
-                try:
-                    chunk = os.read(fd, 8192)
-                except OSError:
-                    return status
-                if not chunk:
-                    return status
-                output.extend(chunk)
-            return status
+            return drain_after_exit(status)
         read_available()
     raise RuntimeError(
         f"child did not exit; head={bytes(output)[:4000]!r}; tail={bytes(output)[-1200:]!r}"
@@ -249,18 +369,28 @@ def send_key(key):
     time.sleep(0.1)
 
 
-def send_until_exit(key):
-    deadline = time.time() + 10
-    while time.time() < deadline:
-        status = child_status()
-        if status is not None:
+def drain_after_exit(status):
+    while True:
+        ready, _, _ = select.select([fd], [], [], 0.2)
+        if not ready:
             return status
-        os.write(fd, key)
-        read_available()
-        time.sleep(0.1)
-    raise RuntimeError(
-        f"child did not exit after repeated input; head={bytes(output)[:4000]!r}; tail={bytes(output)[-1200:]!r}"
-    )
+        try:
+            chunk = os.read(fd, 8192)
+        except OSError:
+            return status
+        if not chunk:
+            return status
+        output.extend(chunk)
+        screen.feed(chunk)
+
+
+def resize(columns, rows):
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
+    screen.resize(columns, rows)
+    try:
+        os.killpg(pid, signal.SIGWINCH)
+    except OSError:
+        os.kill(pid, signal.SIGWINCH)
 
 
 def kill_child():
@@ -284,6 +414,15 @@ try:
         wait_parts(["Showing", "0/1"], "filter_empty")
         send_key(b"f")
         wait_new("Filter: All", "filter_all")
+        send_key(b"/")
+        send_key(b"/")
+        wait_new("Type to search", "search_input")
+        send_key(b"z")
+        wait_new("No matching resources", "search_empty")
+        send_key(b"\x7f")
+        send_key(b"\x7f")
+        send_key(b"\r")
+        wait_new("terraform_data.api", "search_cleared")
         send_key(b"\r")
         wait_new("Resource 1/1", "detail")
         send_key(b"j")
@@ -312,7 +451,10 @@ try:
         exit_code = wait_exit()
     elif scenario == "narrow":
         wait_new("Terminal too small", "narrow")
-        exit_code = send_until_exit(b"q")
+        resize(100, 24)
+        wait_new("Needs review: 0 / 1", "resized")
+        send_key(b"q")
+        exit_code = wait_exit()
     elif scenario == "empty":
         wait_parts(["Needs review: 0 / 0", "No res"], "empty")
         send_key(b"y")
@@ -320,8 +462,7 @@ try:
         send_key(b"q")
         exit_code = wait_exit()
     elif scenario == "compare_ref":
-        wait_new("merge-base(main)", "compare_ref")
-        wait_new("Needs review: 1 / 1", "compare_ref_list")
+        wait_parts(["merge-base(main)", "Needs review: 1 / 1"], "compare_ref")
         send_key(b"q")
         exit_code = wait_exit()
     elif scenario == "panic":
@@ -346,6 +487,7 @@ except BaseException as error:
         plan_path_record: PathBuf,
         pid_record: PathBuf,
         show_json: PathBuf,
+        clipboard_path: PathBuf,
     }
 
     impl Fixture {
@@ -366,6 +508,7 @@ except BaseException as error:
             let plan_path_record = directory.join("plan-path");
             let pid_record = directory.join("terraform-pid");
             let show_json = directory.join("show.json");
+            let clipboard_path = directory.join("clipboard");
             fs::write(&show_json, PLAN_JSON).expect("fake show JSON should be written");
             let terraform = bin.join("terraform");
             fs::write(&terraform, FAKE_TERRAFORM).expect("fake Terraform should be written");
@@ -402,6 +545,7 @@ except BaseException as error:
                 plan_path_record,
                 pid_record,
                 show_json,
+                clipboard_path,
             }
         }
 
@@ -432,6 +576,14 @@ except BaseException as error:
                 .env("TERRACOTTA_FAKE_PLAN_PATH", &self.plan_path_record)
                 .env("TERRACOTTA_FAKE_PID_PATH", &self.pid_record)
                 .env("TERRACOTTA_FAKE_SHOW_JSON", &self.show_json)
+                .env(
+                    "TERRACOTTA_TEST_CLIPBOARD",
+                    if scenario == "failure" {
+                        std::ffi::OsString::from("unavailable")
+                    } else {
+                        self.clipboard_path.clone().into_os_string()
+                    },
+                )
                 .env("GIT_CONFIG_NOSYSTEM", "1")
                 .env("GIT_CONFIG_GLOBAL", "/dev/null")
                 .env("GIT_TERMINAL_PROMPT", "0")
@@ -439,7 +591,7 @@ except BaseException as error:
                 .env("TF_CLI_CONFIG_FILE", "/dev/null")
                 .env("CHECKPOINT_DISABLE", "1");
             if scenario == "panic" {
-                process.env("TERRACOTTA_PTY_PANIC_CHILD", "1");
+                process.env("TERRACOTTA_TEST_PANIC_AFTER_DRAW", "1");
             }
             let output = process.output().expect("PTY driver should start");
             assert!(
@@ -463,6 +615,12 @@ except BaseException as error:
                 "temporary plan remains: {}",
                 path.trim()
             );
+        }
+
+        fn assert_clipboard_recorded(&self) {
+            let copied = fs::read_to_string(&self.clipboard_path)
+                .expect("fake clipboard should record copied text");
+            assert!(copied.contains("Resource ~ terraform_data.api"));
         }
     }
 
@@ -510,14 +668,6 @@ except BaseException as error:
             );
         }
 
-        fn assert_alternate_screen_restored(&self) {
-            assert!(
-                self.restored,
-                "alternate screen was not restored (exit={}, observed={})",
-                self.exit_code, self.observed
-            );
-        }
-
         fn observed(&self, event: &str) {
             assert!(
                 self.observed.split(',').any(|observed| observed == event),
@@ -558,6 +708,7 @@ except BaseException as error:
             result.observed(event);
         }
         fixture.assert_temporary_plan_removed();
+        fixture.assert_clipboard_recorded();
     }
 
     #[test]
@@ -690,20 +841,15 @@ except BaseException as error:
         }
 
         let fixture = Fixture::new(true);
-        let binary = env::current_exe().expect("integration test binary path should exist");
         let result = fixture.run(
             "panic",
             100,
             24,
-            &binary,
-            &[
-                "--exact",
-                "pty_tests::pty_panic_restores_terminal_before_the_test_process_continues",
-                "--nocapture",
-            ],
+            Path::new(env!("CARGO_BIN_EXE_terracotta")),
+            &["plan"],
         );
 
-        assert_eq!(result.exit_code, 0);
-        result.assert_alternate_screen_restored();
+        assert_ne!(result.exit_code, 0);
+        result.assert_restored();
     }
 }
