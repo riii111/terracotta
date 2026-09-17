@@ -1,6 +1,6 @@
 ---
 source: src/ui/execution/tests/render_snapshots.rs
-expression: "buffer_text(&render_to_buffer(&state, started_at + Duration::from_secs(2), 60,\n20))"
+expression: "buffer_text(&render_to_buffer(&state, started_at + Duration::from_secs(2), 60,\n20,))"
 ---
 ┌Terracotta / Failed───────────────────────────────────────┐
 │cwd loading...   workspace loading...                     │
@@ -18,7 +18,7 @@ expression: "buffer_text(&render_to_buffer(&state, started_at + Duration::from_s
 │                                                          │
 │  Review result is unavailable.                           │
 │                                                          │
-│                                                          │
 │──────────────────────────────────────────────────────────│
-│Up/Down/PageUp/PageDown scroll   q/Ctrl-C quit            │
+│y diagnostic   Y result   Up/Down/PageUp/PageDown scroll  │
+│ q/Ctrl-C quit                                            │
 └──────────────────────────────────────────────────────────┘

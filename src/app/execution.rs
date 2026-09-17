@@ -4,6 +4,7 @@ use super::progress::{
     Diagnostic, DiagnosticSource, ExecutionEvent, ExecutionEventKind, ExecutionPhase,
     ExecutionProgress, ProcessExitStatus,
 };
+use super::{copy, copy_text};
 
 const PAGE_SCROLL: u16 = 8;
 
@@ -147,6 +148,8 @@ pub(crate) struct ExecutionState {
     scroll: u16,
     follow: bool,
     cancellation_requested: bool,
+    failure_message: Option<String>,
+    copy_notice: Option<copy::CopyNotice>,
 }
 
 impl ExecutionState {
@@ -165,6 +168,8 @@ impl ExecutionState {
             scroll: 0,
             follow: true,
             cancellation_requested: false,
+            failure_message: None,
+            copy_notice: None,
         }
     }
 
@@ -222,6 +227,7 @@ impl ExecutionState {
 
     pub(crate) fn fail(&mut self, message: String, received_at: Instant) {
         self.stage = ExecutionStage::Failed;
+        self.failure_message = Some(message.clone());
         self.record(ExecutionEvent {
             received_at,
             kind: ExecutionEventKind::Diagnostic(Diagnostic {
@@ -233,6 +239,32 @@ impl ExecutionState {
                 raw: None,
             }),
         });
+    }
+
+    #[must_use]
+    pub(crate) fn copy_effect(&self, target: copy::CopyTarget) -> Option<copy::CopyEffect> {
+        let text = match target {
+            copy::CopyTarget::Diagnostic => copy_text::failed_diagnostic_text(
+                self.failure_message.as_deref(),
+                self.progress.diagnostics(),
+            ),
+            copy::CopyTarget::Result => copy_text::failed_text(
+                self.context(),
+                self.failure_message.as_deref(),
+                self.progress.diagnostics(),
+            ),
+            copy::CopyTarget::Resource | copy::CopyTarget::Plan => return None,
+        };
+        Some(copy::CopyEffect::new(target, 0, text))
+    }
+
+    #[must_use]
+    pub(crate) const fn copy_notice(&self) -> Option<copy::CopyNotice> {
+        self.copy_notice
+    }
+
+    pub(crate) const fn set_copy_notice(&mut self, notice: copy::CopyNotice) {
+        self.copy_notice = Some(notice);
     }
 
     #[must_use]
@@ -356,6 +388,25 @@ mod tests {
         ));
         assert!(!state.is_cancelling());
         assert_eq!(state.stage(), ExecutionStage::Planning);
+    }
+
+    #[test]
+    fn failed_copy_effects_separate_diagnostic_from_full_result() {
+        let started_at = Instant::now();
+        let mut state = ExecutionState::new(started_at);
+        state.fail("Terraform failed".to_owned(), started_at);
+
+        let diagnostic = state
+            .copy_effect(copy::CopyTarget::Diagnostic)
+            .expect("diagnostic copy should be available");
+        let result = state
+            .copy_effect(copy::CopyTarget::Result)
+            .expect("result copy should be available");
+
+        assert_eq!(diagnostic.target(), copy::CopyTarget::Diagnostic);
+        assert!(diagnostic.text().contains("Terraform failed"));
+        assert_eq!(result.target(), copy::CopyTarget::Result);
+        assert!(result.text().contains("Review result is unavailable."));
     }
 
     #[test]

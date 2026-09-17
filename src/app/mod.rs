@@ -5,6 +5,7 @@
 
 pub(crate) mod attribute_diff;
 pub(crate) mod attribution;
+pub(crate) mod copy;
 pub(crate) mod copy_text;
 pub(crate) mod execution;
 pub(crate) mod plan;

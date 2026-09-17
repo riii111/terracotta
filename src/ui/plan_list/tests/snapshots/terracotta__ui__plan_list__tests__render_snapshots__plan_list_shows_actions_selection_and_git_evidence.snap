@@ -1,6 +1,6 @@
 ---
 source: src/ui/plan_list/tests/render_snapshots.rs
-expression: "buffer_text(&render_to_buffer(REPRESENTATIVE_TERMINAL_SIZE, |frame|\nrender_plan_list(frame, &state),))"
+expression: "buffer_text(&render_to_buffer(&state, REPRESENTATIVE_TERMINAL_SIZE.0,\nREPRESENTATIVE_TERMINAL_SIZE.1,))"
 ---
 ┌Terracotta / Plan──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │compare working tree vs HEAD                                                                                                                                       │

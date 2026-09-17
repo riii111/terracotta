@@ -9,6 +9,7 @@ use ratatui::DefaultTerminal;
 use ratatui::widgets::ListState;
 
 use crate::app::{
+    copy::{CopyEffect, CopyNotice, CopyResult},
     execution::{ExecutionAction, ExecutionStage, ExecutionState},
     plan_list::{PlanListAction, PlanListState},
     review::PlanReviewMessage,
@@ -32,6 +33,7 @@ pub(crate) fn run_connected(
     state: ExecutionState,
     messages: &Receiver<PlanReviewMessage>,
     cancel: &mut dyn FnMut(),
+    execute_effect: &mut dyn FnMut(CopyEffect) -> CopyResult,
 ) -> io::Result<UiOutcome> {
     let mut execution = Some(state);
     let mut list = None;
@@ -59,7 +61,9 @@ pub(crate) fn run_connected(
             && key.is_press()
         {
             if let Some(state) = execution.as_mut() {
-                if let Some(outcome) = handle_execution_input(terminal, state, key, cancel)? {
+                if let Some(outcome) =
+                    handle_execution_input(terminal, state, key, cancel, execute_effect)?
+                {
                     return Ok(outcome);
                 }
             } else if let Some(state) = detail.as_mut() {
@@ -79,6 +83,13 @@ pub(crate) fn run_connected(
                     Some(resource_detail::DetailInput::Navigate(navigation)) => {
                         if let Some(list_state) = list.as_mut() {
                             state.navigate(navigation, list_state);
+                        }
+                    }
+                    Some(resource_detail::DetailInput::Copy(target)) => {
+                        if let Some(notice) =
+                            perform_copy(state.copy_effect(target), execute_effect)
+                        {
+                            state.set_copy_notice(notice);
                         }
                     }
                     Some(resource_detail::DetailInput::Action(action)) => {
@@ -101,6 +112,13 @@ pub(crate) fn run_connected(
                             });
                         }
                         Some(plan_list::ListInput::Selection(action)) => state.apply(action),
+                        Some(plan_list::ListInput::Copy(target)) => {
+                            if let Some(notice) =
+                                perform_copy(state.copy_effect(target), execute_effect)
+                            {
+                                state.set_copy_notice(notice);
+                            }
+                        }
                         Some(plan_list::ListInput::OpenDetail) => {
                             detail = resource_detail::ResourceDetailState::from_list(state);
                         }
@@ -170,6 +188,7 @@ fn handle_execution_input(
     state: &mut ExecutionState,
     key: crossterm::event::KeyEvent,
     cancel: &mut dyn FnMut(),
+    execute_effect: &mut dyn FnMut(CopyEffect) -> CopyResult,
 ) -> io::Result<Option<UiOutcome>> {
     match execution::execution_key_to_input(key, state.stage()) {
         Some(ExecutionInput::Quit) => {
@@ -188,9 +207,26 @@ fn handle_execution_input(
             let (current_offset, max_offset) = execution::execution_scroll_position(state, body);
             state.apply_scroll(action, current_offset, max_offset);
         }
+        Some(ExecutionInput::Copy(target)) => {
+            if let Some(notice) = perform_copy(state.copy_effect(target), execute_effect) {
+                state.set_copy_notice(notice);
+            }
+        }
         None => {}
     }
     Ok(None)
+}
+
+fn perform_copy(
+    effect: Option<CopyEffect>,
+    execute_effect: &mut dyn FnMut(CopyEffect) -> CopyResult,
+) -> Option<CopyNotice> {
+    let effect = effect?;
+    let success_notice = effect.success_notice();
+    Some(match execute_effect(effect) {
+        CopyResult::Written => success_notice,
+        CopyResult::Failed => CopyNotice::Failed,
+    })
 }
 
 /// Runs the development-only plan list with synthetic plan and attribution data.
@@ -213,3 +249,46 @@ pub fn run_synthetic_execution() -> io::Result<()> {
 
 #[cfg(test)]
 mod test_support;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::copy::CopyTarget;
+
+    #[test]
+    fn successful_copy_passes_redacted_text_and_reports_its_range() {
+        let mut copied = None;
+        let effect = CopyEffect::new(CopyTarget::Plan, 2, "Resources:\n  <sensitive>".to_owned());
+
+        let notice = perform_copy(Some(effect), &mut |effect| {
+            copied = Some((effect.target(), effect.text().to_owned()));
+            CopyResult::Written
+        });
+
+        assert_eq!(
+            copied,
+            Some((CopyTarget::Plan, "Resources:\n  <sensitive>".to_owned()))
+        );
+        assert_eq!(
+            notice,
+            Some(CopyNotice::Copied {
+                target: CopyTarget::Plan,
+                resource_count: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn failed_copy_reports_failure_without_changing_the_effect_text() {
+        let mut copied = None;
+        let effect = CopyEffect::new(CopyTarget::Resource, 1, "<sensitive>".to_owned());
+
+        let notice = perform_copy(Some(effect), &mut |effect| {
+            copied = Some(effect.text().to_owned());
+            CopyResult::Failed
+        });
+
+        assert_eq!(copied.as_deref(), Some("<sensitive>"));
+        assert_eq!(notice, Some(CopyNotice::Failed));
+    }
+}

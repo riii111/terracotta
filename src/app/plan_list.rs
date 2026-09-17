@@ -6,6 +6,8 @@ use std::{
 
 use super::attribute_diff::{AttributeDiffs, diff_resource_attributes};
 use super::attribution::{AttributionStatus, ResourceAttribution};
+use super::copy::{CopyEffect, CopyNotice, CopyTarget};
+use super::copy_text;
 use super::plan::{Plan, PlanSummary, ResourceChange, ResourceChangeKind, UnsupportedChangeKind};
 use super::review::PlanReview;
 use super::source_location::SourceFileAnalysis;
@@ -88,6 +90,8 @@ pub(crate) struct PlanListState {
     search: String,
     search_backup: Option<SearchBackup>,
     selected: Option<usize>,
+    plan_copy_text: Option<String>,
+    copy_notice: Option<CopyNotice>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,6 +112,7 @@ pub(crate) struct PlanListContext {
 pub(crate) struct PlanListItem {
     change: ResourceChange,
     attribution: ResourceAttribution,
+    resource_copy_text: Option<String>,
 }
 
 impl PlanListState {
@@ -131,6 +136,14 @@ impl PlanListState {
             }
         }
         state.source_files = review.source_files().to_vec();
+        for item in &mut state.items {
+            item.resource_copy_text = Some(copy_text::resource_text(
+                &item.change,
+                &item.attribution,
+                review.comparison(),
+            ));
+        }
+        state.plan_copy_text = Some(copy_text::plan_text(review));
         state.context = Some(PlanListContext {
             root: review.root().to_owned(),
             workspace: review.workspace().to_owned(),
@@ -169,6 +182,7 @@ impl PlanListState {
                 Ok(PlanListItem {
                     change,
                     attribution,
+                    resource_copy_text: None,
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -190,6 +204,8 @@ impl PlanListState {
             search: String::new(),
             search_backup: None,
             selected,
+            plan_copy_text: None,
+            copy_notice: None,
         })
     }
 
@@ -206,6 +222,8 @@ impl PlanListState {
             search: String::new(),
             search_backup: None,
             selected: None,
+            plan_copy_text: None,
+            copy_notice: None,
         }
     }
 
@@ -295,6 +313,28 @@ impl PlanListState {
     #[must_use]
     pub(crate) fn selected_item(&self) -> Option<&PlanListItem> {
         self.visible_items().nth(self.selected?)
+    }
+
+    #[must_use]
+    pub(crate) fn copy_effect(&self, target: CopyTarget) -> Option<CopyEffect> {
+        match target {
+            CopyTarget::Resource => self.selected_item()?.copy_effect(target, self.items.len()),
+            CopyTarget::Plan => Some(CopyEffect::new(
+                target,
+                self.items.len(),
+                self.plan_copy_text.clone()?,
+            )),
+            CopyTarget::Diagnostic | CopyTarget::Result => None,
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn copy_notice(&self) -> Option<CopyNotice> {
+        self.copy_notice
+    }
+
+    pub(crate) const fn set_copy_notice(&mut self, notice: CopyNotice) {
+        self.copy_notice = Some(notice);
     }
 
     #[must_use]
@@ -408,6 +448,15 @@ impl PlanListItem {
     #[must_use]
     pub(crate) fn attribute_diffs(&self) -> AttributeDiffs {
         diff_resource_attributes(&self.change)
+    }
+
+    #[must_use]
+    fn copy_effect(&self, target: CopyTarget, resource_count: usize) -> Option<CopyEffect> {
+        Some(CopyEffect::new(
+            target,
+            resource_count,
+            self.resource_copy_text.clone()?,
+        ))
     }
 
     #[must_use]

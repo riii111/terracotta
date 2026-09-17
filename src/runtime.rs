@@ -14,6 +14,7 @@ use crate::{
         review::PlanReviewMessage,
     },
     infra::{
+        clipboard::SystemClipboard,
         review,
         terraform::{CancellationToken, TerraformExecutionErrorKind},
     },
@@ -79,6 +80,7 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
         cancellation: cancellation.clone(),
         handle: Some(worker),
     };
+    let mut clipboard = SystemClipboard::new();
     let context = initial_execution_context(root, compare_ref);
     let ui_result = ratatui::run(|terminal| {
         ui::run_connected(
@@ -86,6 +88,7 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
             ExecutionState::with_context(Instant::now(), context),
             &receiver,
             &mut || cancellation.cancel(),
+            &mut |effect| clipboard.execute(&effect),
         )
     });
     if ui_result.is_err() {

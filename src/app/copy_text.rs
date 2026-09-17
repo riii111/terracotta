@@ -148,6 +148,35 @@ pub(crate) fn diagnostic_text(diagnostic: &Diagnostic) -> String {
     text
 }
 
+pub(crate) fn failed_diagnostic_text(message: Option<&str>, diagnostics: &[Diagnostic]) -> String {
+    let mut text = String::new();
+    if diagnostics.is_empty() {
+        if let Some(message) = message {
+            line(&mut text, format_args!("Diagnostic:"));
+            append_indented(&mut text, message, "  ");
+        } else {
+            line(&mut text, format_args!("Diagnostic unavailable."));
+        }
+    } else {
+        line(
+            &mut text,
+            format_args!("Diagnostics ({}):", diagnostics.len()),
+        );
+        for diagnostic in diagnostics {
+            append_indented(&mut text, &diagnostic_text(diagnostic), "  ");
+        }
+        if let Some(message) = message
+            && !diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.summary == message)
+        {
+            line(&mut text, format_args!("Additional failure:"));
+            append_indented(&mut text, message, "  ");
+        }
+    }
+    text
+}
+
 pub(crate) fn failed_text(
     context: &ExecutionContext,
     message: Option<&str>,

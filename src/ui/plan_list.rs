@@ -9,6 +9,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::{DefaultTerminal, Frame};
 
 use crate::app::attribution::{SourceLineChange as AttributionSourceLineChange, attribute_changes};
+use crate::app::copy::CopyTarget;
 use crate::app::plan::{
     Plan, PlanAction, PlanSummary, PlanValue, ResourceChange, ResourceChangeKind, ResourceMode,
     UnsupportedChange, UnsupportedChangeKind, UnsupportedChangeScope,
@@ -57,6 +58,7 @@ fn run_plan_list(terminal: &mut DefaultTerminal, state: &mut PlanListState) -> i
                     Some(super::resource_detail::DetailInput::Navigate(navigation)) => {
                         detail_state.navigate(navigation, state);
                     }
+                    Some(super::resource_detail::DetailInput::Copy(_)) | None => {}
                     Some(super::resource_detail::DetailInput::Action(action)) => {
                         detail_state.apply_at(
                             action,
@@ -65,7 +67,6 @@ fn run_plan_list(terminal: &mut DefaultTerminal, state: &mut PlanListState) -> i
                             now,
                         );
                     }
-                    None => {}
                 }
             } else if state.searching() {
                 if handle_search_input(state, key) {
@@ -81,7 +82,7 @@ fn run_plan_list(terminal: &mut DefaultTerminal, state: &mut PlanListState) -> i
                         state.apply(PlanListAction::BeginSearch);
                     }
                     Some(ListInput::Selection(action)) => state.apply(action),
-                    None => {}
+                    Some(ListInput::Copy(_)) | None => {}
                 }
             }
         }
@@ -91,6 +92,7 @@ fn run_plan_list(terminal: &mut DefaultTerminal, state: &mut PlanListState) -> i
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum ListInput {
     Selection(PlanListAction),
+    Copy(CopyTarget),
     OpenDetail,
     StartSearch,
     Quit,
@@ -110,6 +112,13 @@ pub(super) fn key_to_action(key: KeyEvent) -> Option<ListInput> {
         || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
     {
         return Some(ListInput::Quit);
+    }
+    if key.modifiers == KeyModifiers::NONE {
+        match key.code {
+            KeyCode::Char('y') => return Some(ListInput::Copy(CopyTarget::Resource)),
+            KeyCode::Char('Y') => return Some(ListInput::Copy(CopyTarget::Plan)),
+            _ => {}
+        }
     }
 
     match key.code {
@@ -473,12 +482,24 @@ fn footer_line(state: &PlanListState, width: usize) -> Line<'static> {
         return Line::from(footer);
     }
 
-    let footer = if width < 55 {
-        "j/k/↑↓ select  f filter  / search  q/Ctrl-C"
-    } else {
-        "j/k/↑↓ select  Enter  f filter  / search  q/Ctrl-C quit"
+    let copy_controls = match (
+        state.copy_effect(CopyTarget::Resource).is_some(),
+        state.copy_effect(CopyTarget::Plan).is_some(),
+    ) {
+        (true, true) => "y resource / Y plan  ",
+        (false, true) => "Y plan  ",
+        (true, false) => "y resource  ",
+        (false, false) => "",
     };
-    Line::from(footer)
+    let footer = if width < 55 {
+        format!("{copy_controls}j/k/↑↓  f filter  /  q/Ctrl-C")
+    } else {
+        format!("{copy_controls}j/k/↑↓ select  Enter  f filter  / search  q/Ctrl-C quit")
+    };
+    let notice = state
+        .copy_notice()
+        .map_or_else(String::new, |notice| format!("{}   ", notice.message()));
+    Line::from(format!("{notice}{footer}"))
 }
 
 fn separator(width: u16) -> Paragraph<'static> {
@@ -772,10 +793,7 @@ mod tests {
         assert!(text.contains("Needs review: 1 / 1"), "{text}");
         assert!(text.contains("Analysis incomplete"), "{text}");
         assert!(text.contains("(+2 more)"), "{text}");
-        assert!(
-            text.contains("j/k/↑↓ select  f filter  / search  q/Ctrl-C"),
-            "{text}"
-        );
+        assert!(text.contains("y resource / Y plan"), "{text}");
     }
 
     #[test]
@@ -790,10 +808,7 @@ mod tests {
         );
         assert!(text.contains("(+2 more)"), "{text}");
         assert!(text.contains("Needs review: 1 / 1"), "{text}");
-        assert!(
-            text.contains("j/k/↑↓ select  f filter  / search  q/Ctrl-C"),
-            "{text}"
-        );
+        assert!(text.contains("y resource / Y plan"), "{text}");
     }
 
     #[test]
@@ -885,6 +900,40 @@ mod tests {
             key_to_action(key(KeyCode::Char('/'), KeyModifiers::NONE)),
             Some(ListInput::StartSearch)
         );
+        assert_eq!(
+            key_to_action(key(KeyCode::Char('y'), KeyModifiers::NONE)),
+            Some(ListInput::Copy(CopyTarget::Resource))
+        );
+        assert_eq!(
+            key_to_action(key(KeyCode::Char('Y'), KeyModifiers::NONE)),
+            Some(ListInput::Copy(CopyTarget::Plan))
+        );
+    }
+
+    #[test]
+    fn empty_plan_disables_resource_copy_effect() {
+        let state = PlanListState::empty("working tree vs HEAD");
+
+        assert!(state.copy_effect(CopyTarget::Resource).is_none());
+    }
+
+    #[test]
+    fn plan_copy_ignores_filter_and_search_scope() {
+        let mut state = connected_state();
+        let full_text = state
+            .copy_effect(CopyTarget::Plan)
+            .expect("plan copy should be available")
+            .text()
+            .to_owned();
+
+        state.apply(PlanListAction::ToggleFilter);
+        state.apply(PlanListAction::BeginSearch);
+        state.apply(PlanListAction::SetSearch("not-present".to_owned()));
+
+        let filtered_effect = state
+            .copy_effect(CopyTarget::Plan)
+            .expect("plan copy should ignore visible scope");
+        assert_eq!(filtered_effect.text(), full_text);
     }
 
     #[test]
@@ -1059,10 +1108,7 @@ mod tests {
 
         assert!(text.contains("Filter: Needs review"), "{text}");
         assert!(text.contains("Showing 1/1"), "{text}");
-        assert!(
-            text.contains("j/k/↑↓ select  f filter  / search  q/Ctrl-C"),
-            "{text}"
-        );
+        assert!(text.contains("y resource / Y plan"), "{text}");
     }
 
     fn direct_only_state() -> PlanListState {

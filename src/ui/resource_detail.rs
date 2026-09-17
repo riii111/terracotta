@@ -12,6 +12,7 @@ use crate::app::attribute_diff::{
     AttributeChangeKind, AttributeDiff, AttributeDiffs, AttributePathSegment, AttributeValue,
 };
 use crate::app::attribution::{AttributionStatus, ResourceAttribution};
+use crate::app::copy::{CopyEffect, CopyNotice, CopyTarget};
 use crate::app::plan::{ReplacePathSegment, ResourceChangeKind};
 use crate::app::plan_list::{PlanListAction, PlanListContext, PlanListItem, PlanListState};
 use crate::app::source_location::{SourceFileAnalysis, SourceSide};
@@ -40,6 +41,7 @@ pub(super) enum ResourceNavigation {
 pub(super) enum DetailInput {
     Action(DetailAction),
     Navigate(ResourceNavigation),
+    Copy(CopyTarget),
     Back,
     Quit,
 }
@@ -87,11 +89,20 @@ pub(super) struct ResourceDetailState {
     scroll: u16,
     expanded_groups: Vec<AttributeGroup>,
     reveal: Option<SensitiveReveal>,
+    resource_copy_text: Option<String>,
+    plan_copy_text: Option<String>,
+    copy_notice: Option<CopyNotice>,
 }
 
 impl ResourceDetailState {
     pub(super) fn from_list(state: &PlanListState) -> Option<Self> {
         let item = state.selected_item()?.clone();
+        let resource_copy_text = state
+            .copy_effect(CopyTarget::Resource)
+            .map(|effect| effect.text().to_owned());
+        let plan_copy_text = state
+            .copy_effect(CopyTarget::Plan)
+            .map(|effect| effect.text().to_owned());
         Some(Self {
             context: state.context().cloned(),
             comparison: state.comparison().to_owned(),
@@ -104,6 +115,9 @@ impl ResourceDetailState {
             scroll: 0,
             expanded_groups: Vec::new(),
             reveal: None,
+            resource_copy_text,
+            plan_copy_text,
+            copy_notice: None,
         })
     }
 
@@ -187,6 +201,25 @@ impl ResourceDetailState {
 
     pub(super) const fn total_items(&self) -> usize {
         self.total
+    }
+
+    #[must_use]
+    pub(super) fn copy_effect(&self, target: CopyTarget) -> Option<CopyEffect> {
+        let text = match target {
+            CopyTarget::Resource => self.resource_copy_text.clone()?,
+            CopyTarget::Plan => self.plan_copy_text.clone()?,
+            CopyTarget::Diagnostic | CopyTarget::Result => return None,
+        };
+        Some(CopyEffect::new(target, self.total, text))
+    }
+
+    #[must_use]
+    pub(super) const fn copy_notice(&self) -> Option<CopyNotice> {
+        self.copy_notice
+    }
+
+    pub(super) const fn set_copy_notice(&mut self, notice: CopyNotice) {
+        self.copy_notice = Some(notice);
     }
 
     pub(super) fn viewport_height_at(&self, total_height: u16, now: Instant) -> u16 {
@@ -296,6 +329,13 @@ pub(super) fn key_to_input(key: KeyEvent) -> Option<DetailInput> {
     {
         return Some(DetailInput::Quit);
     }
+    if key.modifiers == KeyModifiers::NONE {
+        match key.code {
+            KeyCode::Char('y') => return Some(DetailInput::Copy(CopyTarget::Resource)),
+            KeyCode::Char('Y') => return Some(DetailInput::Copy(CopyTarget::Plan)),
+            _ => {}
+        }
+    }
 
     let action = match key.code {
         KeyCode::Up | KeyCode::Char('k') => DetailAction::SelectPrevious,
@@ -403,7 +443,10 @@ fn render_resource_detail_at(frame: &mut Frame<'_>, state: &mut ResourceDetailSt
             .wrap(Wrap { trim: false }),
         chunks[4],
     );
-    frame.render_widget(Paragraph::new(footer_line(state, now)), chunks[5]);
+    frame.render_widget(
+        Paragraph::new(footer_line(state, now, chunks[5].width)),
+        chunks[5],
+    );
 }
 
 fn detail_content(state: &ResourceDetailState, now: Instant) -> DetailContent {
@@ -805,7 +848,7 @@ fn separator(width: u16) -> Paragraph<'static> {
     Paragraph::new("─".repeat(width as usize)).style(Style::default().fg(Color::DarkGray))
 }
 
-fn footer_line(state: &ResourceDetailState, now: Instant) -> String {
+fn footer_line(state: &ResourceDetailState, now: Instant, width: u16) -> String {
     let reveal = if state.is_revealed_at(now) {
         "r mask now"
     } else if state.can_reveal_selected() {
@@ -818,9 +861,28 @@ fn footer_line(state: &ResourceDetailState, now: Instant) -> String {
     } else {
         format!("{reveal}   ")
     };
-    format!(
-        "{prefix}Up/Down/j/k select   Enter expand/collapse   PageUp/PageDown scroll   [ / ] prev/next   Esc back   q quit"
-    )
+    let notice = state
+        .copy_notice()
+        .map_or_else(String::new, |notice| format!("{}   ", notice.message()));
+    let copy_controls = match (
+        state.resource_copy_text.is_some(),
+        state.plan_copy_text.is_some(),
+    ) {
+        (true, true) => "y resource / Y plan | ",
+        (false, true) => "Y plan | ",
+        (true, false) => "y resource | ",
+        (false, false) => "",
+    };
+    let controls = if width < 110 {
+        format!(
+            "{copy_controls}Up/Down/j/k select | Enter expand | [ / ] prev/next | Esc back | q quit"
+        )
+    } else {
+        format!(
+            "{copy_controls}Up/Down/j/k select   Enter expand/collapse   PageUp/PageDown scroll   [ / ] prev/next   Esc back   q quit"
+        )
+    };
+    format!("{prefix}{notice}{controls}")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1231,9 +1293,28 @@ mod tests {
         );
         assert!(text.contains("Up/Down/j/k select"), "{text}");
         assert!(text.contains("Esc back"), "{text}");
-        assert!(text.contains("Enter expand/collapse"), "{text}");
+        assert!(text.contains("Enter expand"), "{text}");
         assert!(text.contains("[ / ] prev/next"), "{text}");
         assert!(!text.contains("reveal"), "{text}");
+    }
+
+    #[test]
+    fn copying_revealed_resource_keeps_sensitive_values_masked() {
+        let mut state = sensitive_sibling_state();
+        select_attribute(&mut state, "password");
+        let now = Instant::now();
+        state.apply_at(DetailAction::Reveal, 96, 40, now);
+
+        let effect = state
+            .copy_effect(CopyTarget::Resource)
+            .expect("resource copy should be available");
+        let copied_text = effect.text().to_owned();
+
+        assert_eq!(effect.target(), CopyTarget::Resource);
+        assert!(copied_text.contains("Resource ~ aws_instance.api"));
+        assert!(copied_text.contains("<sensitive>"));
+        assert!(!copied_text.contains("old-secret"));
+        assert!(!copied_text.contains("new-secret"));
     }
 
     #[test]
@@ -1386,6 +1467,14 @@ mod tests {
         assert_eq!(
             key_to_input(key(KeyCode::Char('q'))),
             Some(DetailInput::Quit)
+        );
+        assert_eq!(
+            key_to_input(key(KeyCode::Char('y'))),
+            Some(DetailInput::Copy(CopyTarget::Resource))
+        );
+        assert_eq!(
+            key_to_input(key(KeyCode::Char('Y'))),
+            Some(DetailInput::Copy(CopyTarget::Plan))
         );
         assert_eq!(
             key_to_input(key(KeyCode::Enter)),
