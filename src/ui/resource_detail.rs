@@ -73,15 +73,15 @@ pub(super) struct ResourceDetailState {
 
 impl ResourceDetailState {
     pub(super) fn from_list(state: &PlanListState) -> Option<Self> {
-        let item = state.items().get(state.selected())?.clone();
+        let item = state.selected_item()?.clone();
         Some(Self {
             context: state.context().cloned(),
             comparison: state.comparison().to_owned(),
             attributes: item.attribute_diffs(),
             source_files: state.source_files().to_vec(),
             item,
-            index: state.selected(),
-            total: state.items().len(),
+            index: state.selected()?,
+            total: state.visible_count(),
             selected: 0,
             scroll: 0,
             expanded_groups: Vec::new(),
