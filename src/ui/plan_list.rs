@@ -121,7 +121,7 @@ pub(super) fn render_plan_list(frame: &mut Frame<'_>, state: &PlanListState) {
         .constraints([
             Constraint::Length(context_height),
             Constraint::Length(1),
-            Constraint::Length(u16::try_from(summary.len()).unwrap_or(u16::MAX)),
+            Constraint::Length(2),
             Constraint::Length(separator_height),
             Constraint::Length(notice_height),
             Constraint::Min(1),
@@ -320,9 +320,10 @@ fn summary_lines(state: &PlanListState) -> Vec<Line<'static>> {
 
     vec![
         action_line,
-        Line::from(needs_review),
         Line::from(format!(
-            "Filter: {}   Showing {} / {}",
+            "Review {}/{}  Filter: {}  Showing {}/{}",
+            state.needs_review_count(),
+            state.items().len(),
             state.filter().label(),
             state.visible_count(),
             state.items().len()
@@ -331,7 +332,7 @@ fn summary_lines(state: &PlanListState) -> Vec<Line<'static>> {
 }
 
 fn footer_line() -> Line<'static> {
-    Line::from("Up/Down/j/k select   Enter details   f filter   q/Ctrl-C quit")
+    Line::from("j/k/↑↓ select   Enter details   f filter   q/Ctrl-C quit")
 }
 
 fn separator(width: u16) -> Paragraph<'static> {
@@ -577,7 +578,7 @@ mod tests {
         assert!(text.contains("main.tf:42-46"));
         assert!(text.contains("incomplete"));
         assert!(text.contains("no match"));
-        assert!(text.contains("Up/Down/j/k select   Enter details   f filter"));
+        assert!(text.contains("j/k/↑↓ select   Enter details   f filter"));
         assert!(
             text.contains(
                 "aws_s3_bucket.logs_with_a_very_long_resource_address_that_needs_truncation_for_narrow_terminal",
@@ -613,10 +614,7 @@ mod tests {
         assert!(text.contains("Needs review: 1 / 1"), "{text}");
         assert!(text.contains("Analysis incomplete"), "{text}");
         assert!(text.contains("(+2 more)"), "{text}");
-        assert!(
-            text.contains("Up/Down/j/k select   Enter details"),
-            "{text}"
-        );
+        assert!(text.contains("j/k/↑↓ select   Enter details"), "{text}");
     }
 
     #[test]
@@ -631,10 +629,7 @@ mod tests {
         );
         assert!(text.contains("(+2 more)"), "{text}");
         assert!(text.contains("Needs review: 1 / 1"), "{text}");
-        assert!(
-            text.contains("Up/Down/j/k select   Enter details"),
-            "{text}"
-        );
+        assert!(text.contains("j/k/↑↓ select   Enter details"), "{text}");
     }
 
     #[test]
@@ -731,9 +726,9 @@ mod tests {
         state.apply(PlanListAction::ToggleFilter);
         let text = buffer_text(&render_to_buffer(&state, 100, 16));
 
-        assert!(text.contains("Needs review: 2 / 4"), "{text}");
+        assert!(text.contains("Review 2/4"), "{text}");
         assert!(text.contains("Filter: Needs review"), "{text}");
-        assert!(text.contains("Showing 2 / 4"), "{text}");
+        assert!(text.contains("Showing 2/4"), "{text}");
         assert!(!text.contains("aws_instance.api"), "{text}");
         assert!(text.contains("aws_instance.worker"), "{text}");
 
@@ -742,6 +737,70 @@ mod tests {
         assert_eq!(detail.item_index(), 0);
         assert_eq!(detail.total_items(), 2);
         assert_eq!(state.filter(), PlanListFilter::NeedsReview);
+    }
+
+    #[test]
+    fn empty_filter_explains_how_to_restore_nonempty_plan() {
+        let mut state = direct_only_state();
+        state.apply(PlanListAction::ToggleFilter);
+        let text = buffer_text(&render_to_buffer(&state, 80, 12));
+
+        assert!(
+            text.contains("No items in this filter. Press f to show all 1 changes."),
+            "{text}"
+        );
+        assert!(text.contains("Showing 0/1"), "{text}");
+    }
+
+    #[test]
+    fn filtered_context_keeps_filter_summary_at_minimum_size() {
+        let mut state = connected_state();
+        state.apply(PlanListAction::ToggleFilter);
+        let text = buffer_text(&render_to_buffer(&state, MIN_WIDTH, MIN_HEIGHT));
+
+        assert!(text.contains("Filter: Needs review"), "{text}");
+        assert!(text.contains("Showing 1/1"), "{text}");
+    }
+
+    fn direct_only_state() -> PlanListState {
+        let change = synthetic_change(
+            "aws_instance.direct",
+            ResourceChangeKind::Update,
+            PlanAction::Update,
+        );
+        let source_files = vec![SourceFileAnalysis::new(
+            "main.tf".into(),
+            SourceSide::After,
+            vec![ResourceSourceLocation::new(
+                ResourceAddress::new("aws_instance", "direct"),
+                "main.tf".into(),
+                SourceSide::After,
+                SourceRange::new(1, 4),
+            )],
+            Vec::new(),
+        )];
+        let attributions = attribute_changes(
+            std::slice::from_ref(&change),
+            &source_files,
+            &[AttributionSourceLineChange::new(
+                "main.tf",
+                SourceSide::After,
+                SourceRange::new(2, 2),
+            )],
+        );
+        PlanListState::from_plan(
+            Plan {
+                changes: vec![change],
+                summary: PlanSummary {
+                    updates: 1,
+                    ..PlanSummary::default()
+                },
+                unsupported_changes: Vec::new(),
+            },
+            attributions,
+            "working tree vs HEAD",
+        )
+        .expect("direct-only fixture should build a list")
     }
 
     #[test]

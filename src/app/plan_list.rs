@@ -559,7 +559,7 @@ mod tests {
 
     #[test]
     fn empty_needs_review_filter_has_no_selection_and_restores_first_item() {
-        let mut state = PlanListState::empty("working tree vs HEAD");
+        let mut state = direct_only_state();
 
         state.apply(PlanListAction::ToggleFilter);
 
@@ -570,7 +570,49 @@ mod tests {
         state.apply(PlanListAction::ToggleFilter);
 
         assert_eq!(state.filter(), PlanListFilter::All);
-        assert_eq!(state.selected(), None);
+        assert_eq!(state.selected(), Some(0));
+        assert_eq!(
+            state.selected_item().map(PlanListItem::address),
+            Some("aws_instance.direct")
+        );
+    }
+
+    fn direct_only_state() -> PlanListState {
+        let change = change("aws_instance.direct");
+        let source_files = vec![SourceFileAnalysis::new(
+            "main.tf".into(),
+            SourceSide::After,
+            vec![ResourceSourceLocation::new(
+                ResourceAddress::new("aws_instance", "direct"),
+                "main.tf".into(),
+                SourceSide::After,
+                SourceRange::new(1, 4),
+            )],
+            Vec::new(),
+        )];
+        let attributions = attribute_changes(
+            std::slice::from_ref(&change),
+            &source_files,
+            &[SourceLineChange::new(
+                "main.tf",
+                SourceSide::After,
+                SourceRange::new(2, 2),
+            )],
+        );
+
+        PlanListState::from_plan(
+            Plan {
+                changes: vec![change],
+                summary: PlanSummary {
+                    updates: 1,
+                    ..PlanSummary::default()
+                },
+                unsupported_changes: Vec::new(),
+            },
+            attributions,
+            "working tree vs HEAD",
+        )
+        .expect("direct-only fixture should build a list")
     }
 
     #[test]
