@@ -17,7 +17,7 @@ use crate::app::source_location::{
     ResourceAddress, ResourceSourceLocation, SourceFileAnalysis, SourceRange, SourceSide,
 };
 
-const MIN_HEIGHT: u16 = 9;
+const MIN_HEIGHT: u16 = 10;
 const MIN_WIDTH: u16 = 48;
 
 /// Runs the development-only plan list with synthetic plan and attribution data.
@@ -496,6 +496,19 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("Needs review: 2 / 4"), "{text}");
+    }
+
+    #[test]
+    fn minimum_supported_size_keeps_selected_wrapped_item_visible() {
+        let mut state = synthetic_state();
+        state.apply(PlanListAction::SelectNext);
+        let text = buffer_text(&render_to_buffer(&state, MIN_WIDTH, MIN_HEIGHT));
+
+        assert!(
+            text.contains("aws_s3_bucket.logs_with_a_very_long_r..."),
+            "{text}"
+        );
+        assert!(text.contains("direct: storage.tf:8-10"), "{text}");
     }
 
     #[test]
