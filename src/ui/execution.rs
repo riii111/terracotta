@@ -18,6 +18,8 @@ use crate::app::progress::{
 
 const MIN_HEIGHT: u16 = 11;
 const MIN_WIDTH: u16 = 48;
+const STATUS_HEIGHT: u16 = 3;
+const SEPARATOR_HEIGHT: u16 = 1;
 
 pub(super) fn run_synthetic_execution() -> io::Result<()> {
     let started_at = Instant::now();
@@ -103,7 +105,7 @@ fn execution_key_to_input(key: KeyEvent, stage: ExecutionStage) -> Option<Execut
 
 fn render_execution(frame: &mut Frame<'_>, state: &ExecutionState, now: Instant) {
     let area = frame.area();
-    if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
+    if area.width < MIN_WIDTH || area.height < MIN_HEIGHT || !has_execution_space(area, state) {
         render_too_small(frame, area, state.stage());
         return;
     }
@@ -133,28 +135,51 @@ fn render_execution(frame: &mut Frame<'_>, state: &ExecutionState, now: Instant)
     };
     frame.render_widget(paragraph.scroll((scroll, 0)), chunks[2]);
     frame.render_widget(separator(chunks[3].width), chunks[3]);
-    frame.render_widget(Paragraph::new(footer_line(state.stage())), chunks[4]);
+    frame.render_widget(
+        Paragraph::new(wrapped_lines(
+            &[footer_line(state.stage()).to_owned()],
+            chunks[4].width,
+        )),
+        chunks[4],
+    );
 }
 
 fn execution_chunks(area: Rect, state: &ExecutionState) -> Vec<Rect> {
     let content_area = Block::new().borders(Borders::ALL).inner(area);
-    let context_height = u16::try_from(
-        wrapped_lines(&context_lines(state), content_area.width)
-            .len()
-            .max(1),
-    )
-    .unwrap_or(u16::MAX);
+    let (context_height, footer_height) = execution_fixed_heights(state, content_area.width);
     Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(context_height),
-            Constraint::Length(3),
+            Constraint::Length(STATUS_HEIGHT),
             Constraint::Min(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
+            Constraint::Length(SEPARATOR_HEIGHT),
+            Constraint::Length(footer_height),
         ])
         .split(content_area)
         .to_vec()
+}
+
+fn execution_fixed_heights(state: &ExecutionState, width: u16) -> (u16, u16) {
+    let context_height = u16::try_from(wrapped_lines(&context_lines(state), width).len())
+        .unwrap_or(u16::MAX)
+        .max(1);
+    let footer_height =
+        u16::try_from(wrapped_lines(&[footer_line(state.stage()).to_owned()], width).len())
+            .unwrap_or(u16::MAX)
+            .max(1);
+    (context_height, footer_height)
+}
+
+fn has_execution_space(area: Rect, state: &ExecutionState) -> bool {
+    let content_area = Block::new().borders(Borders::ALL).inner(area);
+    let (context_height, footer_height) = execution_fixed_heights(state, content_area.width);
+    context_height
+        .saturating_add(STATUS_HEIGHT)
+        .saturating_add(1)
+        .saturating_add(SEPARATOR_HEIGHT)
+        .saturating_add(footer_height)
+        <= content_area.height
 }
 
 fn execution_scroll_position(state: &ExecutionState, body: Rect) -> (u16, u16) {
@@ -225,12 +250,15 @@ fn status_lines(state: &ExecutionState, now: Instant) -> Vec<Line<'static>> {
 fn context_lines(state: &ExecutionState) -> Vec<String> {
     vec![
         format!(
-            "cwd {}   workspace {}   git {}",
+            "cwd {}   workspace {}",
             state.context().cwd().as_str(),
             state.context().workspace().as_str(),
-            state.context().git().as_str(),
         ),
-        format!("compare {}", state.context().comparison().as_str()),
+        format!(
+            "git {}   compare {}",
+            state.context().git().as_str(),
+            state.context().comparison().as_str(),
+        ),
     ]
 }
 
@@ -504,6 +532,45 @@ mod tests {
         assert!(text.contains("git feature/plan-ui"), "{text}");
         assert!(text.contains("compare working tree vs HEAD"), "{text}");
 
+        let long_context = ExecutionState::with_context(
+            started_at,
+            ExecutionContext::known(
+                "/Users/example/terraform/infrastructure/production/networking",
+                "workspace-with-a-long-name",
+                "feature/long-running-execution-screen",
+                "release/2026-09-17 vs working tree",
+            ),
+        );
+        let long_context_text = buffer_text(&render_to_buffer(&long_context, started_at, 80, 30));
+        assert!(
+            long_context_text.contains("cwd /Users/example/terraform"),
+            "{long_context_text}"
+        );
+        assert!(
+            long_context_text.contains("workspace-with-a-long-name"),
+            "{long_context_text}"
+        );
+        assert!(
+            long_context_text.contains("feature/long-running-execution-screen"),
+            "{long_context_text}"
+        );
+        assert!(
+            long_context_text.contains("compare release/2026-09-17 vs work"),
+            "{long_context_text}"
+        );
+        assert!(
+            long_context_text.contains("ing tree"),
+            "{long_context_text}"
+        );
+        assert!(
+            long_context_text.contains("Elapsed 0.0s"),
+            "{long_context_text}"
+        );
+        assert!(
+            long_context_text.contains("Ctrl-C cancel"),
+            "{long_context_text}"
+        );
+
         let unavailable = ExecutionState::with_context(started_at, ExecutionContext::unavailable());
         let unavailable_text = buffer_text(&render_to_buffer(&unavailable, started_at, 80, 16));
         assert!(
@@ -658,6 +725,9 @@ mod tests {
     fn narrow_running_and_failed_screens_show_their_allowed_exit_guidance() {
         let started_at = Instant::now();
         let state = ExecutionState::new(started_at);
+        let minimum = buffer_text(&render_to_buffer(&state, started_at, MIN_WIDTH, MIN_HEIGHT));
+        assert!(minimum.contains("Ctrl-C cancel"), "{minimum}");
+
         let running = buffer_text(&render_to_buffer(
             &state,
             started_at,
