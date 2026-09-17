@@ -1,8 +1,3 @@
-#![allow(
-    clippy::redundant_pub_crate,
-    reason = "attribution types are shared only within the crate"
-)]
-
 use std::path::{Path, PathBuf};
 
 use super::plan::{ResourceChange, ResourceChangeKind, ResourceMode};

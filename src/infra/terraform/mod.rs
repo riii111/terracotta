@@ -1,8 +1,3 @@
-#![allow(
-    clippy::redundant_pub_crate,
-    reason = "Terraform integration is shared only within the crate"
-)]
-
 mod command;
 mod events;
 pub(crate) mod hcl;

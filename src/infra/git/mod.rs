@@ -1,8 +1,3 @@
-#![allow(
-    clippy::redundant_pub_crate,
-    reason = "Git comparison types are shared only within the crate"
-)]
-
 mod branch;
 mod command;
 mod configuration;
