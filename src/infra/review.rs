@@ -128,6 +128,11 @@ fn run_review_with_events_with_runner_and_hook_and_phases(
     after_git_diff();
     let execution_root = git_diff.root().to_owned();
     let configuration_before = git::capture_working_tree_configuration(&execution_root);
+    let git_branch = git::current_branch(&execution_root);
+    event_sink(ExecutionEvent {
+        received_at: std::time::Instant::now(),
+        kind: ExecutionEventKind::Git(git_branch.clone()),
+    });
 
     let workspace =
         terraform::execute::read_workspace_with_runner(&execution_root, cancellation, runner)?;
@@ -200,7 +205,8 @@ fn run_review_with_events_with_runner_and_hook_and_phases(
         attributions,
         review_comparison(&git_diff),
         analysis_issues,
-    ))
+    )
+    .with_git(git_branch.unwrap_or_else(|| "unavailable".to_owned())))
 }
 
 fn collect_git_diff(root: &Path, compare_ref: Option<&str>) -> GitDiff {

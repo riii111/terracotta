@@ -46,7 +46,7 @@ pub(crate) struct ReviewComparison {
 
 impl ReviewComparison {
     #[must_use]
-    pub(crate) const fn new(
+    pub(crate) fn new(
         basis: ReviewComparisonBasis,
         compare_ref: Option<String>,
         resolved_commit: Option<String>,
@@ -110,6 +110,7 @@ impl ReviewComparison {
 pub(crate) struct PlanReview {
     root: PathBuf,
     workspace: String,
+    git: String,
     plan: Plan,
     source_files: Vec<SourceFileAnalysis>,
     attributions: Vec<ResourceAttribution>,
@@ -138,12 +139,18 @@ impl PlanReview {
         Self {
             root,
             workspace,
+            git: "unavailable".to_owned(),
             plan,
             source_files,
             attributions,
             comparison,
             analysis_issues,
         }
+    }
+
+    pub(crate) fn with_git(mut self, git: String) -> Self {
+        self.git = git;
+        self
     }
 
     #[must_use]
@@ -154,6 +161,11 @@ impl PlanReview {
     #[must_use]
     pub(crate) fn workspace(&self) -> &str {
         &self.workspace
+    }
+
+    #[must_use]
+    pub(crate) fn git(&self) -> &str {
+        &self.git
     }
 
     #[must_use]

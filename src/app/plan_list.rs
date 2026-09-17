@@ -1,5 +1,8 @@
-use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use super::attribution::{AttributionStatus, ResourceAttribution};
 use super::plan::{Plan, PlanSummary, ResourceChange, ResourceChangeKind, UnsupportedChangeKind};
@@ -50,12 +53,20 @@ pub(crate) enum PlanListAction {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PlanListState {
+    context: Option<PlanListContext>,
     comparison: String,
     summary: PlanSummary,
     items: Vec<PlanListItem>,
     unsupported: Vec<UnsupportedChangeKind>,
     analysis_issues: Vec<String>,
     selected: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PlanListContext {
+    root: PathBuf,
+    workspace: String,
+    git: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +95,11 @@ impl PlanListState {
                 state.analysis_issues.push(issue.message().to_owned());
             }
         }
+        state.context = Some(PlanListContext {
+            root: review.root().to_owned(),
+            workspace: review.workspace().to_owned(),
+            git: review.git().to_owned(),
+        });
 
         Ok(state)
     }
@@ -122,6 +138,7 @@ impl PlanListState {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(Self {
+            context: None,
             comparison: comparison.into(),
             summary: plan.summary,
             items,
@@ -137,6 +154,7 @@ impl PlanListState {
 
     pub(crate) fn empty(comparison: impl Into<String>) -> Self {
         Self {
+            context: None,
             comparison: comparison.into(),
             summary: PlanSummary::default(),
             items: Vec::new(),
@@ -162,6 +180,11 @@ impl PlanListState {
     #[must_use]
     pub(crate) fn comparison(&self) -> &str {
         &self.comparison
+    }
+
+    #[must_use]
+    pub(crate) const fn context(&self) -> Option<&PlanListContext> {
+        self.context.as_ref()
     }
 
     #[must_use]
@@ -258,6 +281,23 @@ impl PlanListItem {
     }
 }
 
+impl PlanListContext {
+    #[must_use]
+    pub(crate) fn root(&self) -> &Path {
+        &self.root
+    }
+
+    #[must_use]
+    pub(crate) fn workspace(&self) -> &str {
+        &self.workspace
+    }
+
+    #[must_use]
+    pub(crate) fn git(&self) -> &str {
+        &self.git
+    }
+}
+
 impl UnsupportedChangeKind {
     const fn label(self) -> &'static str {
         match self {
@@ -277,8 +317,6 @@ impl UnsupportedChangeKind {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::super::attribution::AnalysisIssue;
     use super::super::review::{ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus};
     use super::*;
@@ -392,7 +430,8 @@ mod tests {
                 ReviewComparisonStatus::Incomplete("comparison unavailable".to_owned()),
             ),
             vec![AnalysisIssue::git("analysis unavailable")],
-        );
+        )
+        .with_git("feature/review".to_owned());
 
         let list = PlanListState::from_review(&review).expect("review data should build a list");
 

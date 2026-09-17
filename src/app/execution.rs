@@ -74,6 +74,14 @@ impl ExecutionContext {
         self
     }
 
+    pub(crate) fn with_git(mut self, git: Option<String>) -> Self {
+        self.git = git.map_or(
+            ExecutionContextValue::Unavailable,
+            ExecutionContextValue::Known,
+        );
+        self
+    }
+
     #[must_use]
     pub(crate) const fn cwd(&self) -> &ExecutionContextValue {
         &self.cwd
@@ -197,6 +205,9 @@ impl ExecutionState {
             }
             ExecutionEventKind::Workspace(workspace) => {
                 self.context = self.context.clone().with_workspace(workspace.clone());
+            }
+            ExecutionEventKind::Git(git) => {
+                self.context = self.context.clone().with_git(git.clone());
             }
             ExecutionEventKind::Terminated(termination)
                 if !termination.interrupted

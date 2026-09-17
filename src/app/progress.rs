@@ -138,6 +138,7 @@ pub(crate) enum ExecutionEventKind {
     Diagnostic(Diagnostic),
     Phase(ExecutionPhase),
     Workspace(String),
+    Git(Option<String>),
     Informational {
         event_type: String,
         message: Option<String>,
@@ -162,6 +163,7 @@ impl Debug for ExecutionEventKind {
                 .finish(),
             Self::Phase(phase) => formatter.debug_tuple("Phase").field(phase).finish(),
             Self::Workspace(_) => formatter.write_str("Workspace(<redacted>)"),
+            Self::Git(_) => formatter.write_str("Git(<redacted>)"),
             Self::Informational { event_type, .. } => formatter
                 .debug_struct("Informational")
                 .field("event_type", event_type)
@@ -222,6 +224,7 @@ impl ExecutionProgress {
             ExecutionEventKind::Diagnostic(diagnostic) => self.diagnostics.push(diagnostic.clone()),
             ExecutionEventKind::Phase(_)
             | ExecutionEventKind::Workspace(_)
+            | ExecutionEventKind::Git(_)
             | ExecutionEventKind::Informational { .. } => {}
             ExecutionEventKind::Terminated(termination) => self.termination = Some(*termination),
         }
