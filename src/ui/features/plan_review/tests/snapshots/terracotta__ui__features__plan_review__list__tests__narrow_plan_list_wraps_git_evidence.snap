@@ -1,6 +1,5 @@
 ---
 source: src/ui/features/plan_review/tests/render_snapshots.rs
-assertion_line: 18
 expression: "buffer_text(&render_to_buffer(&state, 60, 16))"
 ---
 ┌Terracotta / Plan─────────────────────────────────────────┐
@@ -16,6 +15,6 @@ expression: "buffer_text(&render_to_buffer(&state, 60, 16))"
 │  ! R aws_instance.worker  incomplete                     │
 │  ! - aws_security_group.old  no match                    │
 │                                                          │
-│                                                          │
-│j/k/↑↓ select  Enter  f filter  / search  q/Ctrl-C quit   │
+│q quit | j/k/↑↓ select | Enter details | f filter         │
+│/ search                                                  │
 └──────────────────────────────────────────────────────────┘

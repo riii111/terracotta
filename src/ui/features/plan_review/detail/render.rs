@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
@@ -14,6 +14,52 @@ use super::{MIN_HEIGHT, MIN_WIDTH, ResourceDetailState};
 
 pub(crate) fn render_resource_detail(frame: &mut Frame<'_>, state: &mut ResourceDetailState) {
     render_resource_detail_at(frame, state, Instant::now());
+}
+
+pub(crate) struct ResourceDetailLayout {
+    chunks: Vec<Rect>,
+    footer_lines: Vec<Line<'static>>,
+}
+
+impl ResourceDetailLayout {
+    pub(crate) fn body(&self) -> Rect {
+        self.chunks[4]
+    }
+}
+
+pub(crate) fn resource_detail_layout(
+    area: Rect,
+    state: &ResourceDetailState,
+    now: Instant,
+) -> ResourceDetailLayout {
+    let block = Block::new().borders(Borders::ALL);
+    let content_area = block.inner(area);
+    let mut footer_lines = footer_lines(state, now, content_area.width);
+    let required_height = usize::from(u16::from(state.is_revealed_at(now)))
+        + usize::from(u16::from(state.context.is_some()) * 2)
+        + 1
+        + 1
+        + usize::from(u16::from(state.copy_notice().is_some()));
+    if required_height + footer_lines.len() > usize::from(content_area.height) {
+        footer_lines = required_footer_lines(state, now, content_area.width);
+    }
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(u16::from(state.is_revealed_at(now))),
+            Constraint::Length(u16::from(state.context.is_some()) * 2),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(u16::from(state.copy_notice().is_some())),
+            Constraint::Length(u16::try_from(footer_lines.len()).unwrap_or(u16::MAX).max(1)),
+        ])
+        .split(content_area)
+        .to_vec();
+    ResourceDetailLayout {
+        chunks,
+        footer_lines,
+    }
 }
 
 pub(super) fn render_resource_detail_at(
@@ -39,24 +85,10 @@ pub(super) fn render_resource_detail_at(
         state.total_items()
     );
     let block = Block::new().borders(Borders::ALL).title(title);
-    let content_area = block.inner(area);
     frame.render_widget(block, area);
 
-    let notice_height = u16::from(state.is_revealed_at(now));
-    let copy_notice_height = u16::from(state.copy_notice().is_some());
-    let context_height = u16::from(state.context.is_some()) * 2;
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(notice_height),
-            Constraint::Length(context_height),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Min(1),
-            Constraint::Length(copy_notice_height),
-            Constraint::Length(1),
-        ])
-        .split(content_area);
+    let layout = resource_detail_layout(area, state, now);
+    let chunks = &layout.chunks;
 
     if chunks[4].height == 0 {
         state.mask_reveal();
@@ -79,7 +111,7 @@ pub(super) fn render_resource_detail_at(
             .max(1);
         frame.render_widget(
             Paragraph::new(format!(
-                "! Sensitive value revealed                    {remaining}s remaining"
+                "! Sensitive value revealed ({remaining}s remaining)"
             ))
             .style(theme::warning_style()),
             chunks[0],
@@ -120,42 +152,53 @@ pub(super) fn render_resource_detail_at(
     if let Some(notice) = state.copy_notice() {
         frame.render_widget(Paragraph::new(notice.message()), chunks[5]);
     }
-    footer::render(
-        frame,
-        chunks[6],
-        vec![Line::from(footer_line(state, now, chunks[6].width))],
-    );
+    footer::render(frame, chunks[6], layout.footer_lines);
 }
 
-fn footer_line(state: &ResourceDetailState, now: Instant, width: u16) -> String {
-    let reveal = if state.is_revealed_at(now) {
-        "r mask now"
+fn footer_lines(state: &ResourceDetailState, now: Instant, width: u16) -> Vec<Line<'static>> {
+    let mut items = vec![
+        Line::from("q quit"),
+        Line::from("Esc back"),
+        Line::from("PgUp/PgDn scroll"),
+    ];
+    if state.is_revealed_at(now) {
+        items.push(Line::from("r mask now"));
     } else if state.can_reveal_selected() {
-        "r reveal sensitive value for 10s"
-    } else {
-        ""
-    };
-    let prefix = if reveal.is_empty() {
-        String::new()
-    } else {
-        format!("{reveal}   ")
-    };
-    let copy_controls = match (state.can_copy_resource, state.can_copy_plan) {
-        (true, true) => "y resource / Y plan | ",
-        (false, true) => "Y plan | ",
-        (true, false) => "y resource | ",
-        (false, false) => "",
-    };
-    let controls = if width < 110 {
-        format!(
-            "{copy_controls}Up/Down/j/k select | Enter expand | [ / ] prev/next | Esc back | q quit"
-        )
-    } else {
-        format!(
-            "{copy_controls}Up/Down/j/k select   Enter expand/collapse   PageUp/PageDown scroll   [ / ] prev/next   Esc back   q quit"
-        )
-    };
-    format!("{prefix}{controls}")
+        items.push(Line::from("r reveal 10s"));
+    }
+    match (state.can_copy_resource, state.can_copy_plan) {
+        (true, true) => {
+            items.push(Line::from("y resource"));
+            items.push(Line::from("Y plan"));
+        }
+        (true, false) => items.push(Line::from("y resource")),
+        (false, true) => items.push(Line::from("Y plan")),
+        (false, false) => {}
+    }
+    items.extend([
+        Line::from("↑/↓ select"),
+        Line::from("Enter expand"),
+        Line::from("[/] prev/next"),
+    ]);
+    footer::layout(items, width)
+}
+
+fn required_footer_lines(
+    state: &ResourceDetailState,
+    now: Instant,
+    width: u16,
+) -> Vec<Line<'static>> {
+    let mut items = vec![
+        Line::from("q quit"),
+        Line::from("Esc back"),
+        Line::from("PgUp/PgDn scroll"),
+    ];
+    if state.is_revealed_at(now) {
+        items.push(Line::from("r mask now"));
+    } else if state.can_reveal_selected() {
+        items.push(Line::from("r reveal 10s"));
+    }
+    footer::layout(items, width)
 }
 
 #[cfg(test)]
@@ -193,10 +236,10 @@ mod tests {
             text.contains("Replacement reason: replace_because_cannot_update"),
             "{text}"
         );
-        assert!(text.contains("Up/Down/j/k select"), "{text}");
+        assert!(text.contains("↑/↓ select"), "{text}");
         assert!(text.contains("Esc back"), "{text}");
         assert!(text.contains("Enter expand"), "{text}");
-        assert!(text.contains("[ / ] prev/next"), "{text}");
+        assert!(text.contains("[/] prev/next"), "{text}");
         assert!(!text.contains("reveal"), "{text}");
     }
 
@@ -229,7 +272,7 @@ mod tests {
         state.apply_at(DetailAction::Reveal, 96, 40, now);
         state.set_copy_notice(CopyNotice::Failed);
 
-        let text = buffer_text(&render_at(&mut state, 48, 8, now));
+        let text = buffer_text(&render_at(&mut state, 48, 11, now));
 
         assert!(
             text.contains("Copy failed: clipboard unavailable."),
@@ -239,13 +282,54 @@ mod tests {
     }
 
     #[test]
+    fn renders_success_and_failure_copy_notices_above_the_footer() {
+        let cases = [
+            (
+                "success",
+                CopyNotice::Copied {
+                    target: CopyTarget::Resource,
+                    resource_count: 1,
+                },
+                "Copied selected resource (redacted).",
+            ),
+            (
+                "failure",
+                CopyNotice::Failed,
+                "Copy failed: clipboard unavailable.",
+            ),
+        ];
+
+        for (name, notice, expected) in cases {
+            let mut state = state();
+            state.set_copy_notice(notice);
+            let text = buffer_text(&render_at(&mut state, 80, 20, Instant::now()));
+
+            assert!(text.contains(expected), "case: {name}\n{text}");
+            assert!(text.contains("q quit"), "case: {name}\n{text}");
+            assert!(text.contains("Esc back"), "case: {name}\n{text}");
+        }
+    }
+
+    #[test]
+    fn detail_widths_keep_exit_back_and_page_scroll_hints() {
+        for width in [48, 60, 80, 120] {
+            let state = state();
+            let text = buffer_text(&render(&state, width, 20));
+
+            assert!(text.contains("q quit"), "width: {width}\n{text}");
+            assert!(text.contains("Esc back"), "width: {width}\n{text}");
+            assert!(text.contains("PgUp/PgDn scroll"), "width: {width}\n{text}");
+        }
+    }
+
+    #[test]
     fn reveals_only_selected_known_sensitive_attribute_with_warning_and_expiry() {
         let mut state = sensitive_sibling_state();
         select_attribute(&mut state, "password");
         let now = Instant::now();
 
         let before_reveal = buffer_text(&render(&state, 100, 40));
-        assert!(before_reveal.contains("r reveal sensitive value for 10s"));
+        assert!(before_reveal.contains("r reveal 10s"));
         assert!(!before_reveal.contains("old-secret"));
 
         state.apply_at(DetailAction::Reveal, 96, 40, now);

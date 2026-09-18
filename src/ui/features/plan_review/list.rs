@@ -70,19 +70,25 @@ pub(crate) fn render_plan_list_with_state(
     };
     let context_height = u16::from(state.context().is_some()) * 2;
     let separator_height = u16::from(!compact_layout && notice_height < 2);
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(context_height),
-            Constraint::Length(1),
-            Constraint::Length(2),
-            Constraint::Length(search_height),
-            Constraint::Length(separator_height),
-            Constraint::Length(notice_height),
-            Constraint::Min(1),
-            Constraint::Length(1),
-        ])
-        .split(content_area);
+    let copy_notice_height = u16::from(state.copy_notice().is_some());
+    let (chunks, footer_lines) = list_layout(
+        content_area,
+        state,
+        context_height,
+        search_height,
+        separator_height,
+        notice_height,
+        copy_notice_height,
+    );
+
+    if chunks[7].height == 0 {
+        terminal_notice::render(
+            frame,
+            area,
+            "Terminal too small. Resize or press q to quit.",
+        );
+        return;
+    }
 
     if let Some(context) = state.context() {
         header::render(
@@ -118,12 +124,57 @@ pub(crate) fn render_plan_list_with_state(
         frame.render_widget(Paragraph::new(notices), chunks[5]);
     }
 
-    render_rows(frame, state, chunks[6], list_state);
-    footer::render(
-        frame,
-        chunks[7],
-        vec![footer_line(state, content_area.width as usize)],
-    );
+    if let Some(notice) = state.copy_notice() {
+        frame.render_widget(Paragraph::new(notice.message()), chunks[6]);
+    }
+    render_rows(frame, state, chunks[7], list_state);
+    footer::render(frame, chunks[8], footer_lines);
+}
+
+fn list_layout(
+    content_area: Rect,
+    state: &PlanListState,
+    context_height: u16,
+    search_height: u16,
+    separator_height: u16,
+    notice_height: u16,
+    copy_notice_height: u16,
+) -> (Vec<Rect>, Vec<Line<'static>>) {
+    let mut footer_lines = footer_lines(state, content_area.width);
+    let required_height = usize::from(context_height)
+        + 1
+        + 2
+        + usize::from(search_height)
+        + usize::from(separator_height)
+        + usize::from(notice_height)
+        + usize::from(copy_notice_height)
+        + 3;
+    if required_height + footer_lines.len() > usize::from(content_area.height) {
+        footer_lines = required_footer_lines(state, content_area.width);
+    }
+
+    let split = |footer_height: usize| {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(context_height),
+                Constraint::Length(1),
+                Constraint::Length(2),
+                Constraint::Length(search_height),
+                Constraint::Length(separator_height),
+                Constraint::Length(notice_height),
+                Constraint::Length(copy_notice_height),
+                Constraint::Min(1),
+                Constraint::Length(u16::try_from(footer_height).unwrap_or(u16::MAX).max(1)),
+            ])
+            .split(content_area)
+    };
+    let mut chunks = split(footer_lines.len());
+    if chunks[7].height == 0 {
+        footer_lines = required_footer_lines(state, content_area.width);
+        chunks = split(footer_lines.len());
+    }
+    (chunks.to_vec(), footer_lines)
 }
 
 fn notice_lines(state: &PlanListState, width: usize, compact: bool) -> Vec<Line<'static>> {
@@ -325,34 +376,52 @@ fn has_search(state: &PlanListState) -> bool {
     state.searching() || !state.search().is_empty()
 }
 
-fn footer_line(state: &PlanListState, width: usize) -> Line<'static> {
+fn footer_lines(state: &PlanListState, width: u16) -> Vec<Line<'static>> {
     if state.searching() {
-        let footer = if width < 55 {
-            "Type to search  Enter  Esc cancel  Ctrl-C"
-        } else {
-            "Type to search  Enter confirm  Esc cancel  Ctrl-C quit"
-        };
-        return Line::from(footer);
+        return footer::layout(
+            vec![
+                Line::from("Enter confirm"),
+                Line::from("Esc cancel"),
+                Line::from("Ctrl-C quit"),
+                Line::from("Type to search"),
+            ],
+            width,
+        );
     }
 
-    let copy_controls = match (
+    let mut items = vec![Line::from("q quit")];
+    match (
         state.can_copy(CopyTarget::Resource),
         state.can_copy(CopyTarget::Plan),
     ) {
-        (true, true) => "y resource / Y plan  ",
-        (false, true) => "Y plan  ",
-        (true, false) => "y resource  ",
-        (false, false) => "",
-    };
-    let footer = if width < 55 {
-        format!("{copy_controls}j/k/↑↓  f filter  /  q/Ctrl-C")
+        (true, true) => {
+            items.push(Line::from("y resource"));
+            items.push(Line::from("Y plan"));
+        }
+        (true, false) => items.push(Line::from("y resource")),
+        (false, true) => items.push(Line::from("Y plan")),
+        (false, false) => {}
+    }
+    items.extend([
+        Line::from("j/k/↑↓ select"),
+        Line::from("Enter details"),
+        Line::from("f filter"),
+        Line::from("/ search"),
+    ]);
+    footer::layout(items, width)
+}
+
+fn required_footer_lines(state: &PlanListState, width: u16) -> Vec<Line<'static>> {
+    let items = if state.searching() {
+        vec![
+            Line::from("Enter confirm"),
+            Line::from("Esc cancel"),
+            Line::from("Ctrl-C quit"),
+        ]
     } else {
-        format!("{copy_controls}j/k/↑↓ select  Enter  f filter  / search  q/Ctrl-C quit")
+        vec![Line::from("q quit")]
     };
-    let notice = state
-        .copy_notice()
-        .map_or_else(String::new, |notice| format!("{}   ", notice.message()));
-    Line::from(format!("{notice}{footer}"))
+    footer::layout(items, width)
 }
 
 fn truncate_end(value: &str, max_chars: usize) -> String {
@@ -579,7 +648,9 @@ mod tests {
         assert!(text.contains("main.tf:42-46"));
         assert!(text.contains("incomplete"));
         assert!(text.contains("no match"));
-        assert!(text.contains("j/k/↑↓ select  Enter  f filter  / search  q/Ctrl-C quit"));
+        assert!(text.contains("q quit"), "{text}");
+        assert!(text.contains("j/k/↑↓ select"), "{text}");
+        assert!(text.contains("/ search"), "{text}");
         assert!(
             text.contains(
                 "aws_s3_bucket.logs_with_a_very_long_resource_address_that_needs_truncation_for_narrow_terminal",
@@ -615,7 +686,7 @@ mod tests {
         assert!(text.contains("Needs review: 1 / 1"), "{text}");
         assert!(text.contains("Analysis incomplete"), "{text}");
         assert!(text.contains("(+2 more)"), "{text}");
-        assert!(text.contains("y resource / Y plan"), "{text}");
+        assert!(text.contains("q quit"), "{text}");
     }
 
     #[test]
@@ -630,7 +701,7 @@ mod tests {
         );
         assert!(text.contains("(+2 more)"), "{text}");
         assert!(text.contains("Needs review: 1 / 1"), "{text}");
-        assert!(text.contains("y resource / Y plan"), "{text}");
+        assert!(text.contains("q quit"), "{text}");
     }
 
     #[test]
@@ -658,7 +729,7 @@ mod tests {
     #[test]
     fn minimum_supported_width_keeps_summary_counts_visible() {
         let state = synthetic_state();
-        let text = buffer_text(&render_to_buffer(&state, MIN_WIDTH, 12));
+        let text = buffer_text(&render_to_buffer(&state, MIN_WIDTH, MIN_HEIGHT));
 
         assert!(
             text.contains("+1 create  ~1 update  R1 replace  -1 delete"),
@@ -738,7 +809,7 @@ mod tests {
         assert!(text.contains("Filter: All  Showing 1/4"), "{text}");
         assert!(text.contains("/ AWS_S3_"), "{text}");
         assert!(
-            text.contains("Type to search  Enter confirm  Esc cancel  Ctrl-C quit"),
+            text.contains("Enter confirm | Esc cancel | Ctrl-C quit | Type to search"),
             "{text}"
         );
         assert!(text.contains("aws_s3_bucket"), "{text}");
@@ -842,7 +913,7 @@ mod tests {
 
         assert!(text.contains("Filter: Needs review"), "{text}");
         assert!(text.contains("Showing 1/1"), "{text}");
-        assert!(text.contains("y resource / Y plan"), "{text}");
+        assert!(text.contains("q quit"), "{text}");
     }
 
     fn direct_only_state() -> PlanListState {

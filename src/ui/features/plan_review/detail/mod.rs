@@ -18,7 +18,7 @@ mod rows;
 mod viewport;
 
 pub(crate) use input::{DetailInput, key_to_input};
-pub(crate) use render::render_resource_detail;
+pub(crate) use render::{render_resource_detail, resource_detail_layout};
 use rows::{detail_content, detail_rows};
 use viewport::{max_scroll, wrapped_selected_line};
 
@@ -178,15 +178,6 @@ impl ResourceDetailState {
         self.copy_notice = Some(notice);
     }
 
-    #[cfg(test)]
-    pub(super) fn viewport_height_at(&self, total_height: u16, now: Instant) -> u16 {
-        total_height.saturating_sub(
-            5 + u16::from(self.context.is_some()) * 2
-                + u16::from(self.is_revealed_at(now))
-                + u16::from(self.copy_notice.is_some()),
-        )
-    }
-
     fn ensure_selected_visible(&mut self, viewport_width: u16, viewport_height: u16, now: Instant) {
         let content = detail_content(self, now);
         let Some(selected_line) = wrapped_selected_line(&content, viewport_width) else {
@@ -299,17 +290,6 @@ mod tests {
         list.apply(PlanListAction::ConfirmSearch);
 
         assert!(list.can_copy(CopyTarget::Plan));
-    }
-
-    #[test]
-    fn viewport_height_accounts_for_copy_notice_row() {
-        let mut state = state();
-        let now = Instant::now();
-        let without_notice = state.viewport_height_at(20, now);
-
-        state.set_copy_notice(CopyNotice::Failed);
-
-        assert_eq!(state.viewport_height_at(20, now), without_notice - 1);
     }
 
     #[test]

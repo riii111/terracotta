@@ -32,7 +32,8 @@ pub(crate) fn render_execution_with_view(
     now: Instant,
 ) {
     let area = frame.area();
-    if area.width < MIN_WIDTH || area.height < MIN_HEIGHT || !has_execution_space(area, state) {
+    let layout = execution_layout(area, state);
+    if area.width < MIN_WIDTH || area.height < MIN_HEIGHT || layout.body().height == 0 {
         let message = if state.stage() == ExecutionStage::Failed {
             "Terminal too small. Resize or press q to quit."
         } else {
@@ -47,7 +48,7 @@ pub(crate) fn render_execution_with_view(
         .title(format!("Terracotta / {}", state.stage().title()));
     frame.render_widget(block, area);
 
-    let chunks = execution_chunks(area, state);
+    let chunks = &layout.chunks;
 
     header::render(
         frame,
@@ -71,48 +72,66 @@ pub(crate) fn render_execution_with_view(
     };
     frame.render_widget(paragraph.scroll((scroll, 0)), chunks[2]);
     frame.render_widget(separator::render(chunks[3].width), chunks[3]);
-    footer::render(
-        frame,
-        chunks[4],
-        wrapped_lines(&[footer_line(state)], chunks[4].width),
-    );
+    if let Some(notice) = state.copy_notice() {
+        frame.render_widget(Paragraph::new(notice.message()), chunks[4]);
+    }
+    footer::render(frame, chunks[5], layout.footer_lines);
+}
+
+pub(crate) struct ExecutionLayout {
+    chunks: Vec<Rect>,
+    footer_lines: Vec<Line<'static>>,
+}
+
+impl ExecutionLayout {
+    pub(crate) fn body(&self) -> Rect {
+        self.chunks[2]
+    }
+}
+
+pub(crate) fn execution_layout(area: Rect, state: &ExecutionState) -> ExecutionLayout {
+    let content_area = Block::new().borders(Borders::ALL).inner(area);
+    let mut footer_lines = footer_lines(state, content_area.width);
+    let context_height =
+        u16::try_from(wrapped_lines(&context_lines(state), content_area.width).len())
+            .unwrap_or(u16::MAX)
+            .max(1);
+    let copy_notice_height = u16::from(state.copy_notice().is_some());
+    let required_height = usize::from(context_height)
+        + usize::from(STATUS_HEIGHT)
+        + 1
+        + usize::from(SEPARATOR_HEIGHT)
+        + usize::from(copy_notice_height);
+    if required_height + footer_lines.len() > usize::from(content_area.height) {
+        footer_lines = required_footer_lines(state, content_area.width);
+    }
+    let split = |footer_height: usize| {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(context_height),
+                Constraint::Length(STATUS_HEIGHT),
+                Constraint::Min(1),
+                Constraint::Length(SEPARATOR_HEIGHT),
+                Constraint::Length(copy_notice_height),
+                Constraint::Length(u16::try_from(footer_height).unwrap_or(u16::MAX).max(1)),
+            ])
+            .split(content_area)
+            .to_vec()
+    };
+    let mut chunks = split(footer_lines.len());
+    if chunks[2].height == 0 {
+        footer_lines = required_footer_lines(state, content_area.width);
+        chunks = split(footer_lines.len());
+    }
+    ExecutionLayout {
+        chunks,
+        footer_lines,
+    }
 }
 
 pub(crate) fn execution_chunks(area: Rect, state: &ExecutionState) -> Vec<Rect> {
-    let content_area = Block::new().borders(Borders::ALL).inner(area);
-    let (context_height, footer_height) = execution_fixed_heights(state, content_area.width);
-    Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(context_height),
-            Constraint::Length(STATUS_HEIGHT),
-            Constraint::Min(1),
-            Constraint::Length(SEPARATOR_HEIGHT),
-            Constraint::Length(footer_height),
-        ])
-        .split(content_area)
-        .to_vec()
-}
-
-fn execution_fixed_heights(state: &ExecutionState, width: u16) -> (u16, u16) {
-    let context_height = u16::try_from(wrapped_lines(&context_lines(state), width).len())
-        .unwrap_or(u16::MAX)
-        .max(1);
-    let footer_height = u16::try_from(wrapped_lines(&[footer_line(state)], width).len())
-        .unwrap_or(u16::MAX)
-        .max(1);
-    (context_height, footer_height)
-}
-
-fn has_execution_space(area: Rect, state: &ExecutionState) -> bool {
-    let content_area = Block::new().borders(Borders::ALL).inner(area);
-    let (context_height, footer_height) = execution_fixed_heights(state, content_area.width);
-    context_height
-        .saturating_add(STATUS_HEIGHT)
-        .saturating_add(1)
-        .saturating_add(SEPARATOR_HEIGHT)
-        .saturating_add(footer_height)
-        <= content_area.height
+    execution_layout(area, state).chunks
 }
 
 pub(crate) fn execution_scroll_position_with_view(
@@ -330,16 +349,34 @@ fn format_elapsed(elapsed: Duration) -> String {
     )
 }
 
-fn footer_line(state: &ExecutionState) -> String {
-    let notice = state
-        .copy_notice()
-        .map_or_else(String::new, |notice| format!("{}   ", notice.message()));
-    let footer = if state.stage() == ExecutionStage::Failed {
-        "y diagnostic   Y result   Up/Down/PageUp/PageDown scroll   q/Ctrl-C quit"
+fn footer_lines(state: &ExecutionState, width: u16) -> Vec<Line<'static>> {
+    let items = if state.stage() == ExecutionStage::Failed {
+        vec![
+            Line::from("q quit"),
+            Line::from("↑/↓ PgUp/PgDn scroll"),
+            Line::from("y diagnostic"),
+            Line::from("Y result"),
+        ]
     } else {
-        "Up/Down/PageUp/PageDown scroll   End follow latest   Ctrl-C cancel"
+        vec![
+            Line::from("Ctrl-C cancel"),
+            Line::from("↑/↓ PgUp/PgDn scroll"),
+            Line::from("End follow latest"),
+        ]
     };
-    format!("{notice}{footer}")
+    footer::layout(items, width)
+}
+
+fn required_footer_lines(state: &ExecutionState, width: u16) -> Vec<Line<'static>> {
+    let items = if state.stage() == ExecutionStage::Failed {
+        vec![Line::from("q quit"), Line::from("↑/↓ PgUp/PgDn scroll")]
+    } else {
+        vec![
+            Line::from("Ctrl-C cancel"),
+            Line::from("↑/↓ PgUp/PgDn scroll"),
+        ]
+    };
+    footer::layout(items, width)
 }
 
 #[cfg(test)]
@@ -348,6 +385,7 @@ mod tests {
     use crate::ui::test_support::render_to_buffer as render_test_buffer;
     use ratatui::buffer::Buffer;
 
+    use crate::app::copy::{CopyNotice, CopyTarget};
     use crate::app::execution::{
         ExecutionAction, ExecutionContext, ExecutionEvent, ExecutionEventKind, ResourceEvent,
     };
@@ -514,6 +552,54 @@ mod tests {
     }
 
     #[test]
+    fn renders_copy_notices_on_their_own_row_before_running_footer() {
+        let cases = [
+            (
+                "success",
+                CopyNotice::Copied {
+                    target: CopyTarget::Result,
+                    resource_count: 1,
+                },
+                "Copied result (redacted).",
+            ),
+            (
+                "failure",
+                CopyNotice::Failed,
+                "Copy failed: clipboard unavailable.",
+            ),
+        ];
+
+        for (name, notice, expected) in cases {
+            let started_at = Instant::now();
+            let mut state = ExecutionState::new(started_at);
+            state.set_copy_notice(notice);
+            let text = buffer_text(&render_to_buffer(&state, started_at, 48, 12));
+
+            assert!(text.contains(expected), "case: {name}\n{text}");
+            assert!(text.contains("Ctrl-C cancel"), "case: {name}\n{text}");
+            assert!(
+                text.contains("↑/↓ PgUp/PgDn scroll"),
+                "case: {name}\n{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn execution_widths_keep_active_exit_and_page_scroll_hints() {
+        for width in [48, 60, 80, 120] {
+            let started_at = Instant::now();
+            let state = ExecutionState::new(started_at);
+            let text = buffer_text(&render_to_buffer(&state, started_at, width, 20));
+
+            assert!(text.contains("Ctrl-C cancel"), "width: {width}\n{text}");
+            assert!(
+                text.contains("↑/↓ PgUp/PgDn scroll"),
+                "width: {width}\n{text}"
+            );
+        }
+    }
+
+    #[test]
     fn renders_failed_stage_with_long_diagnostic_and_quit_footer() {
         let started_at = Instant::now();
         let mut state = ExecutionState::new(started_at);
@@ -571,7 +657,7 @@ mod tests {
         assert!(compact.contains("日本語の診断文"), "{text}");
         assert!(compact.contains("絵文字🙂"), "{text}");
         assert!(text.contains("at infra/prod/main.tf:12:3"), "{text}");
-        assert!(text.contains("q/Ctrl-C quit"), "{text}");
+        assert!(text.contains("q quit"), "{text}");
     }
 
     #[test]
