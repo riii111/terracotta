@@ -1,5 +1,6 @@
 ---
-source: src/ui/execution/tests/render_snapshots.rs
+source: src/ui/features/execution/tests/render_snapshots.rs
+assertion_line: 80
 expression: "buffer_text(&render_to_buffer(&state, started_at + Duration::from_secs(2), 60,\n20,))"
 ---
 ┌Terracotta / Failed───────────────────────────────────────┐

@@ -1,4 +1,3 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -8,6 +7,10 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use crate::app::copy::CopyTarget;
 use crate::app::plan::ResourceChangeKind;
 use crate::app::review::{PlanListAction, PlanListFilter, PlanListItem, PlanListState};
+use crate::ui::primitives::atoms::separator;
+use crate::ui::primitives::molecules::terminal_notice;
+use crate::ui::shell::{footer, header};
+use crate::ui::theme;
 
 #[cfg(test)]
 use crate::app::attribution::{
@@ -34,81 +37,6 @@ pub(crate) enum ListInput {
     Quit,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SearchInput {
-    Insert(char),
-    Delete,
-    Confirm,
-    Cancel,
-    Quit,
-}
-
-pub(crate) fn key_to_action(key: KeyEvent) -> Option<ListInput> {
-    let key = super::input::normalize_key(key);
-
-    if matches!(key.code, KeyCode::Char('q'))
-        || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
-    {
-        return Some(ListInput::Quit);
-    }
-    if key.modifiers == KeyModifiers::NONE {
-        match key.code {
-            KeyCode::Char('y') => return Some(ListInput::Copy(CopyTarget::Resource)),
-            KeyCode::Char('Y') => return Some(ListInput::Copy(CopyTarget::Plan)),
-            _ => {}
-        }
-    }
-
-    match key.code {
-        KeyCode::Char('f') => Some(ListInput::Selection(PlanListAction::ToggleFilter)),
-        KeyCode::Char('/') => Some(ListInput::StartSearch),
-        KeyCode::Up | KeyCode::Char('k') => {
-            Some(ListInput::Selection(PlanListAction::SelectPrevious))
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            Some(ListInput::Selection(PlanListAction::SelectNext))
-        }
-        KeyCode::Enter => Some(ListInput::OpenDetail),
-        _ => None,
-    }
-}
-
-pub(crate) fn search_key_to_input(key: KeyEvent) -> Option<SearchInput> {
-    let key = super::input::normalize_key(key);
-
-    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-        return Some(SearchInput::Quit);
-    }
-
-    match key.code {
-        KeyCode::Enter => Some(SearchInput::Confirm),
-        KeyCode::Esc => Some(SearchInput::Cancel),
-        KeyCode::Backspace => Some(SearchInput::Delete),
-        KeyCode::Char(character) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            Some(SearchInput::Insert(character))
-        }
-        _ => None,
-    }
-}
-
-pub(crate) fn search_key_to_action(state: &PlanListState, key: KeyEvent) -> Option<PlanListAction> {
-    match search_key_to_input(key) {
-        Some(SearchInput::Confirm) => Some(PlanListAction::ConfirmSearch),
-        Some(SearchInput::Cancel) => Some(PlanListAction::CancelSearch),
-        Some(SearchInput::Delete) => {
-            let mut search = state.search().to_owned();
-            search.pop();
-            Some(PlanListAction::SetSearch(search))
-        }
-        Some(SearchInput::Insert(character)) => {
-            let mut search = state.search().to_owned();
-            search.push(character);
-            Some(PlanListAction::SetSearch(search))
-        }
-        Some(SearchInput::Quit) | None => None,
-    }
-}
-
 pub(crate) fn render_plan_list_with_state(
     frame: &mut Frame<'_>,
     state: &PlanListState,
@@ -116,7 +44,11 @@ pub(crate) fn render_plan_list_with_state(
 ) {
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
-        render_terminal_too_small(frame, area);
+        terminal_notice::render(
+            frame,
+            area,
+            "Terminal too small. Resize or press q to quit.",
+        );
         return;
     }
 
@@ -153,16 +85,17 @@ pub(crate) fn render_plan_list_with_state(
         .split(content_area);
 
     if let Some(context) = state.context() {
-        frame.render_widget(
-            Paragraph::new(vec![
+        header::render(
+            frame,
+            chunks[0],
+            vec![
                 Line::from(format!("cwd {}", context.root().display())),
                 Line::from(format!(
                     "workspace {}   git {}",
                     context.workspace(),
                     context.git()
                 )),
-            ]),
-            chunks[0],
+            ],
         );
     }
 
@@ -179,16 +112,17 @@ pub(crate) fn render_plan_list_with_state(
         };
         frame.render_widget(Paragraph::new(search_line), chunks[3]);
     }
-    frame.render_widget(separator(chunks[4].width), chunks[4]);
+    frame.render_widget(separator::render(chunks[4].width), chunks[4]);
 
     if !notices.is_empty() {
         frame.render_widget(Paragraph::new(notices), chunks[5]);
     }
 
     render_rows(frame, state, chunks[6], list_state);
-    frame.render_widget(
-        Paragraph::new(footer_line(state, content_area.width as usize)),
+    footer::render(
+        frame,
         chunks[7],
+        vec![footer_line(state, content_area.width as usize)],
     );
 }
 
@@ -231,12 +165,6 @@ fn notice_lines(state: &PlanListState, width: usize, compact: bool) -> Vec<Line<
         (None, Some(analysis)) => vec![Line::from(analysis)],
         (None, None) => Vec::new(),
     }
-}
-
-fn render_terminal_too_small(frame: &mut Frame<'_>, area: Rect) {
-    let message = Paragraph::new("Terminal too small. Resize or press q to quit.")
-        .style(Style::default().add_modifier(Modifier::BOLD));
-    frame.render_widget(message, area);
 }
 
 fn render_rows(
@@ -285,7 +213,7 @@ fn render_rows(
 
 fn list_item(item: &PlanListItem, width: usize) -> ListItem<'static> {
     let marker = if item.needs_review() { "!" } else { " " };
-    let prefix = format!("{marker} {} ", action_symbol(item.kind()));
+    let prefix = format!("{marker} {} ", theme::action_symbol(item.kind()));
     let git = item.git_label();
     let inline_separator = "  ";
     let address_width = width
@@ -293,21 +221,15 @@ fn list_item(item: &PlanListItem, width: usize) -> ListItem<'static> {
         .saturating_sub(inline_separator.chars().count())
         .saturating_sub(git.chars().count());
 
-    let action_style = action_style(item.kind());
-    let review_style = if item.needs_review() {
-        Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default()
-    };
-    let git_style = git_style(item);
+    let action_style = theme::action_style(item.kind());
+    let review_style = theme::review_style(item.needs_review());
+    let git_style = theme::git_style(item.needs_review());
 
     if address_width >= 12 && item.address().chars().count() <= address_width {
         return ListItem::new(Line::from(vec![
             Span::styled(marker.to_owned(), review_style),
             Span::raw(" "),
-            Span::styled(action_symbol(item.kind()), action_style),
+            Span::styled(theme::action_symbol(item.kind()), action_style),
             Span::raw(" "),
             Span::raw(truncate_end(item.address(), address_width)),
             Span::raw(inline_separator),
@@ -322,7 +244,7 @@ fn list_item(item: &PlanListItem, width: usize) -> ListItem<'static> {
         Line::from(vec![
             Span::styled(marker.to_owned(), review_style),
             Span::raw(" "),
-            Span::styled(action_symbol(item.kind()), action_style),
+            Span::styled(theme::action_symbol(item.kind()), action_style),
             Span::raw(" "),
             Span::raw(address),
         ]),
@@ -349,22 +271,22 @@ fn summary_lines(state: &PlanListState) -> Vec<Line<'static>> {
     let action_line = Line::from(vec![
         Span::styled(
             format!("+{} create", summary.creates),
-            action_style(ResourceChangeKind::Create),
+            theme::action_style(ResourceChangeKind::Create),
         ),
         Span::raw("  "),
         Span::styled(
             format!("~{} update", summary.updates),
-            action_style(ResourceChangeKind::Update),
+            theme::action_style(ResourceChangeKind::Update),
         ),
         Span::raw("  "),
         Span::styled(
             format!("R{} replace", summary.replaces),
-            action_style(ResourceChangeKind::Replace),
+            theme::action_style(ResourceChangeKind::Replace),
         ),
         Span::raw("  "),
         Span::styled(
             format!("-{} delete", summary.deletes),
-            action_style(ResourceChangeKind::Delete),
+            theme::action_style(ResourceChangeKind::Delete),
         ),
     ]);
     if state.filter() == PlanListFilter::All && !has_search(state) {
@@ -431,37 +353,6 @@ fn footer_line(state: &PlanListState, width: usize) -> Line<'static> {
         .copy_notice()
         .map_or_else(String::new, |notice| format!("{}   ", notice.message()));
     Line::from(format!("{notice}{footer}"))
-}
-
-fn separator(width: u16) -> Paragraph<'static> {
-    Paragraph::new("─".repeat(width as usize)).style(Style::default().fg(Color::DarkGray))
-}
-
-const fn action_symbol(kind: ResourceChangeKind) -> &'static str {
-    match kind {
-        ResourceChangeKind::Create => "+",
-        ResourceChangeKind::Update => "~",
-        ResourceChangeKind::Replace => "R",
-        ResourceChangeKind::Delete => "-",
-    }
-}
-
-fn action_style(kind: ResourceChangeKind) -> Style {
-    let color = match kind {
-        ResourceChangeKind::Create => Color::Green,
-        ResourceChangeKind::Update => Color::Yellow,
-        ResourceChangeKind::Replace => Color::Magenta,
-        ResourceChangeKind::Delete => Color::Red,
-    };
-    Style::default().fg(color)
-}
-
-fn git_style(item: &PlanListItem) -> Style {
-    if item.needs_review() {
-        return Style::default();
-    }
-
-    Style::default().fg(Color::Cyan)
 }
 
 fn truncate_end(value: &str, max_chars: usize) -> String {
@@ -602,19 +493,16 @@ fn synthetic_change(address: &str, kind: ResourceChangeKind, action: PlanAction)
 mod tests {
     use std::path::PathBuf;
 
-    use crossterm::event::{KeyEventKind, KeyEventState};
     use ratatui::buffer::Buffer;
-    use rstest::rstest;
 
+    use super::*;
     use crate::app::attribution::AnalysisIssue;
     use crate::app::review::{
         PlanReview, ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus,
     };
     use crate::ui::test_support::{buffer_text, render_to_buffer as render_test_buffer};
 
-    use super::*;
-
-    mod render_snapshots;
+    include!("tests/render_snapshots.rs");
 
     fn render_to_buffer(state: &PlanListState, width: u16, height: u16) -> Buffer {
         let mut list_state = ListState::default();
@@ -630,15 +518,6 @@ mod tests {
         render_test_buffer((width, height), |frame| {
             render_plan_list_with_state(frame, state, list_state);
         })
-    }
-
-    fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
-        KeyEvent {
-            code,
-            modifiers,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        }
     }
 
     fn connected_state() -> PlanListState {
@@ -801,26 +680,6 @@ mod tests {
         assert!(text.contains("direct: storage.tf:8-10"), "{text}");
     }
 
-    #[rstest]
-    #[case::up_arrow(KeyCode::Up)]
-    #[case::up_vim(KeyCode::Char('k'))]
-    fn previous_selection_keys_map_to_previous_action(#[case] code: KeyCode) {
-        assert_eq!(
-            key_to_action(key(code, KeyModifiers::NONE)),
-            Some(ListInput::Selection(PlanListAction::SelectPrevious))
-        );
-    }
-
-    #[rstest]
-    #[case::down_arrow(KeyCode::Down)]
-    #[case::down_vim(KeyCode::Char('j'))]
-    fn next_selection_keys_map_to_next_action(#[case] code: KeyCode) {
-        assert_eq!(
-            key_to_action(key(code, KeyModifiers::NONE)),
-            Some(ListInput::Selection(PlanListAction::SelectNext))
-        );
-    }
-
     #[test]
     fn selection_actions_select_adjacent_items() {
         let mut state = synthetic_state();
@@ -828,79 +687,6 @@ mod tests {
         assert_eq!(state.selected(), Some(1));
         state.apply(PlanListAction::SelectPrevious);
         assert_eq!(state.selected(), Some(0));
-    }
-
-    #[test]
-    fn key_to_action_maps_non_selection_keys() {
-        let cases = [
-            (
-                "quit",
-                key(KeyCode::Char('q'), KeyModifiers::NONE),
-                Some(ListInput::Quit),
-            ),
-            (
-                "control_c_quit",
-                key(KeyCode::Char('c'), KeyModifiers::CONTROL),
-                Some(ListInput::Quit),
-            ),
-            (
-                "open_detail",
-                key(KeyCode::Enter, KeyModifiers::NONE),
-                Some(ListInput::OpenDetail),
-            ),
-            (
-                "toggle_filter",
-                key(KeyCode::Char('f'), KeyModifiers::NONE),
-                Some(ListInput::Selection(PlanListAction::ToggleFilter)),
-            ),
-            (
-                "start_search",
-                key(KeyCode::Char('/'), KeyModifiers::NONE),
-                Some(ListInput::StartSearch),
-            ),
-            (
-                "copy_resource",
-                key(KeyCode::Char('y'), KeyModifiers::NONE),
-                Some(ListInput::Copy(CopyTarget::Resource)),
-            ),
-            (
-                "copy_plan",
-                key(KeyCode::Char('Y'), KeyModifiers::NONE),
-                Some(ListInput::Copy(CopyTarget::Plan)),
-            ),
-            (
-                "copy_plan_with_redundant_shift",
-                key(KeyCode::Char('Y'), KeyModifiers::SHIFT),
-                Some(ListInput::Copy(CopyTarget::Plan)),
-            ),
-            (
-                "uppercase_y_with_control_does_not_copy",
-                key(KeyCode::Char('Y'), KeyModifiers::CONTROL),
-                None,
-            ),
-            (
-                "uppercase_y_with_control_and_shift_does_not_copy",
-                key(
-                    KeyCode::Char('Y'),
-                    KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-                ),
-                None,
-            ),
-            (
-                "uppercase_y_with_alt_does_not_copy",
-                key(KeyCode::Char('Y'), KeyModifiers::ALT),
-                None,
-            ),
-            (
-                "uppercase_y_with_alt_and_shift_does_not_copy",
-                key(KeyCode::Char('Y'), KeyModifiers::ALT | KeyModifiers::SHIFT),
-                None,
-            ),
-        ];
-
-        for (name, input, expected) in cases {
-            assert_eq!(key_to_action(input), expected, "case: {name}");
-        }
     }
 
     #[test]
@@ -946,55 +732,6 @@ mod tests {
         state.apply(PlanListAction::SelectResource(0));
         render_to_buffer_with_state(&state, 80, 11, &mut list_state);
         assert!(list_state.offset() < original_offset);
-    }
-
-    #[test]
-    fn search_input_treats_regular_shortcut_keys_as_search_text() {
-        let key = |code, modifiers| KeyEvent {
-            code,
-            modifiers,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-
-        assert_eq!(
-            search_key_to_input(key(KeyCode::Char('q'), KeyModifiers::NONE)),
-            Some(SearchInput::Insert('q'))
-        );
-        assert_eq!(
-            search_key_to_input(key(KeyCode::Char('f'), KeyModifiers::NONE)),
-            Some(SearchInput::Insert('f'))
-        );
-        assert_eq!(
-            search_key_to_input(key(KeyCode::Char('y'), KeyModifiers::NONE)),
-            Some(SearchInput::Insert('y'))
-        );
-        assert_eq!(
-            search_key_to_input(key(KeyCode::Char('c'), KeyModifiers::CONTROL)),
-            Some(SearchInput::Quit)
-        );
-        assert_eq!(
-            search_key_to_input(key(KeyCode::Backspace, KeyModifiers::NONE)),
-            Some(SearchInput::Delete)
-        );
-        assert_eq!(
-            search_key_to_input(key(KeyCode::Enter, KeyModifiers::NONE)),
-            Some(SearchInput::Confirm)
-        );
-        assert_eq!(
-            search_key_to_input(key(KeyCode::Esc, KeyModifiers::NONE)),
-            Some(SearchInput::Cancel)
-        );
-    }
-
-    #[rstest]
-    #[case::uppercase_without_shift(KeyModifiers::NONE)]
-    #[case::uppercase_with_redundant_shift(KeyModifiers::SHIFT)]
-    fn uppercase_y_is_search_text_during_search(#[case] modifiers: KeyModifiers) {
-        assert_eq!(
-            search_key_to_input(key(KeyCode::Char('Y'), modifiers)),
-            Some(SearchInput::Insert('Y'))
-        );
     }
 
     #[test]
@@ -1062,7 +799,7 @@ mod tests {
         state.apply(PlanListAction::SetSearch("worker".to_owned()));
         state.apply(PlanListAction::ConfirmSearch);
 
-        let detail = super::super::resource_detail::ResourceDetailState::from_list(&state)
+        let detail = super::super::detail::ResourceDetailState::from_list(&state)
             .expect("the filtered search result should open details");
         assert_eq!(detail.item_index(), 0);
         assert_eq!(detail.total_items(), 1);
@@ -1083,7 +820,7 @@ mod tests {
         assert!(!text.contains("aws_instance.api"), "{text}");
         assert!(text.contains("aws_instance.worker"), "{text}");
 
-        let detail = super::super::resource_detail::ResourceDetailState::from_list(&state)
+        let detail = super::super::detail::ResourceDetailState::from_list(&state)
             .expect("filtered selection should open details");
         assert_eq!(detail.item_index(), 0);
         assert_eq!(detail.total_items(), 2);

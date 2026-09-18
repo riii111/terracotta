@@ -1,5 +1,6 @@
 ---
-source: src/ui/plan_list/tests/render_snapshots.rs
+source: src/ui/features/plan_review/tests/render_snapshots.rs
+assertion_line: 18
 expression: "buffer_text(&render_to_buffer(&state, 60, 16))"
 ---
 ┌Terracotta / Plan─────────────────────────────────────────┐

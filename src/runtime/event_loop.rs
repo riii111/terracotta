@@ -16,7 +16,7 @@ use crate::{
         session::{self, Action, Effect, SessionOutcome, SessionState},
     },
     infra::{ClipboardExecutor, terraform::CancellationToken},
-    ui,
+    ui::features::{execution, plan_review},
 };
 
 #[allow(
@@ -30,7 +30,7 @@ pub(crate) fn run_connected(
     cancellation: &CancellationToken,
     clipboard: &mut ClipboardExecutor,
 ) -> io::Result<SessionOutcome> {
-    let mut execution_view = ui::execution::ExecutionViewState::from_state(&execution);
+    let mut execution_view = execution::ExecutionViewState::from_state(&execution);
     let mut state = SessionState::new(execution);
     let mut list_view = ListState::default();
     let mut detail_view = None;
@@ -77,8 +77,8 @@ pub(crate) fn run_connected(
             {
                 let scroll = detail_view
                     .as_ref()
-                    .map_or(0, ui::resource_detail::ResourceDetailState::scroll);
-                detail_view = ui::resource_detail::ResourceDetailState::from_session(
+                    .map_or(0, plan_review::ResourceDetailState::scroll);
+                detail_view = plan_review::ResourceDetailState::from_session(
                     review.list(),
                     detail,
                     review.copy_notice(),
@@ -103,22 +103,22 @@ pub(crate) fn run_connected(
         {
             let now = Instant::now();
             let action = if let Some(execution) = state.execution() {
-                match ui::execution::execution_key_to_input(key, execution.stage()) {
-                    Some(ui::execution::ExecutionInput::Quit) => Some(Action::Quit),
-                    Some(ui::execution::ExecutionInput::Action(
+                match execution::execution_key_to_input(key, execution.stage()) {
+                    Some(execution::ExecutionInput::Quit) => Some(Action::Quit),
+                    Some(execution::ExecutionInput::Action(
                         ExecutionAction::RequestCancellation,
                     )) => Some(Action::Execution(ExecutionAction::RequestCancellation)),
-                    Some(ui::execution::ExecutionInput::End) => {
+                    Some(execution::ExecutionInput::End) => {
                         execution_view.end();
                         None
                     }
-                    Some(ui::execution::ExecutionInput::Scroll(scroll)) => {
+                    Some(execution::ExecutionInput::Scroll(scroll)) => {
                         let size = terminal.size()?;
-                        let body = ui::execution::execution_chunks(
+                        let body = execution::execution_chunks(
                             Rect::new(0, 0, size.width, size.height),
                             execution,
                         )[2];
-                        let (current, max) = ui::execution::execution_scroll_position_with_view(
+                        let (current, max) = execution::execution_scroll_position_with_view(
                             execution,
                             execution_view,
                             body,
@@ -126,26 +126,24 @@ pub(crate) fn run_connected(
                         execution_view.apply_scroll(scroll, current, max);
                         None
                     }
-                    Some(ui::execution::ExecutionInput::Copy(target)) => Some(Action::Copy(target)),
+                    Some(execution::ExecutionInput::Copy(target)) => Some(Action::Copy(target)),
                     None => None,
                 }
             } else if state
                 .review()
                 .is_some_and(|review| review.detail().is_some())
             {
-                match ui::resource_detail::key_to_input(key) {
-                    Some(ui::resource_detail::DetailInput::Back) => Some(Action::CloseDetail),
-                    Some(ui::resource_detail::DetailInput::Quit) => Some(Action::Quit),
-                    Some(ui::resource_detail::DetailInput::Navigate(navigation)) => {
+                match plan_review::key_to_detail_input(key) {
+                    Some(plan_review::DetailInput::Back) => Some(Action::CloseDetail),
+                    Some(plan_review::DetailInput::Quit) => Some(Action::Quit),
+                    Some(plan_review::DetailInput::Navigate(navigation)) => {
                         if let Some(view) = detail_view.as_mut() {
                             view.reset_scroll();
                         }
                         Some(Action::Navigate(navigation))
                     }
-                    Some(ui::resource_detail::DetailInput::Copy(target)) => {
-                        Some(Action::Copy(target))
-                    }
-                    Some(ui::resource_detail::DetailInput::Action(
+                    Some(plan_review::DetailInput::Copy(target)) => Some(Action::Copy(target)),
+                    Some(plan_review::DetailInput::Action(
                         action @ (DetailAction::PageUp | DetailAction::PageDown),
                     )) => {
                         if let Some(view) = detail_view.as_mut() {
@@ -159,7 +157,7 @@ pub(crate) fn run_connected(
                         }
                         None
                     }
-                    Some(ui::resource_detail::DetailInput::Action(action)) => {
+                    Some(plan_review::DetailInput::Action(action)) => {
                         if let Some(view) = detail_view.as_mut() {
                             let size = terminal.size()?;
                             view.apply_at(
@@ -175,20 +173,21 @@ pub(crate) fn run_connected(
                 }
             } else if let Some(review) = state.review() {
                 if review.list().searching() {
-                    match ui::plan_list::search_key_to_input(key) {
-                        Some(ui::plan_list::SearchInput::Quit) => Some(Action::Quit),
-                        _ => ui::plan_list::search_key_to_action(review.list(), key)
-                            .map(Action::List),
+                    match plan_review::search_key_to_input(key) {
+                        Some(plan_review::SearchInput::Quit) => Some(Action::Quit),
+                        _ => {
+                            plan_review::search_key_to_action(review.list(), key).map(Action::List)
+                        }
                     }
                 } else {
-                    match ui::plan_list::key_to_action(key) {
-                        Some(ui::plan_list::ListInput::Quit) => Some(Action::Quit),
-                        Some(ui::plan_list::ListInput::Selection(action)) => {
+                    match plan_review::key_to_list_input(key) {
+                        Some(plan_review::ListInput::Quit) => Some(Action::Quit),
+                        Some(plan_review::ListInput::Selection(action)) => {
                             Some(Action::List(action))
                         }
-                        Some(ui::plan_list::ListInput::Copy(target)) => Some(Action::Copy(target)),
-                        Some(ui::plan_list::ListInput::OpenDetail) => Some(Action::OpenDetail),
-                        Some(ui::plan_list::ListInput::StartSearch) => {
+                        Some(plan_review::ListInput::Copy(target)) => Some(Action::Copy(target)),
+                        Some(plan_review::ListInput::OpenDetail) => Some(Action::OpenDetail),
+                        Some(plan_review::ListInput::StartSearch) => {
                             Some(Action::List(PlanListAction::BeginSearch))
                         }
                         None => None,
@@ -211,13 +210,13 @@ fn draw(
     state: &mut SessionState,
     terminal: &mut DefaultTerminal,
     list_view: &mut ListState,
-    detail_view: &mut Option<ui::resource_detail::ResourceDetailState>,
-    execution_view: ui::execution::ExecutionViewState,
+    detail_view: &mut Option<plan_review::ResourceDetailState>,
+    execution_view: execution::ExecutionViewState,
 ) -> io::Result<()> {
     match state {
         SessionState::Execution(execution) => {
             terminal.draw(|frame| {
-                ui::execution::render_execution_with_view(
+                execution::render_execution_with_view(
                     frame,
                     execution,
                     execution_view,
@@ -227,11 +226,10 @@ fn draw(
         }
         SessionState::Review(review) => {
             if let Some(detail) = detail_view.as_mut() {
-                terminal
-                    .draw(|frame| ui::resource_detail::render_resource_detail(frame, detail))?;
+                terminal.draw(|frame| plan_review::render_resource_detail(frame, detail))?;
             } else {
                 terminal.draw(|frame| {
-                    ui::plan_list::render_plan_list_with_state(frame, review.list(), list_view);
+                    plan_review::render_plan_list_with_state(frame, review.list(), list_view);
                 })?;
             }
         }
