@@ -11,13 +11,14 @@ use std::{
 use std::os::unix::fs::OpenOptionsExt;
 
 use crate::app::execution::{ExecutionEvent, ExecutionPhase};
+use crate::app::plan::Plan;
 
 use super::{
     command::{
         CancellationToken, ProcessRunner, ProcessStatus, TerraformCommand, TerraformExecutionError,
         TerraformExecutionErrorKind, interrupted_error, non_zero_error, run_command_with_events,
     },
-    show::{PlanExecution, read_plan},
+    show::read_plan,
 };
 
 pub(crate) fn run_plan(
@@ -26,7 +27,7 @@ pub(crate) fn run_plan(
     runner: &dyn ProcessRunner,
     event_sink: &mut dyn FnMut(ExecutionEvent),
     phase_sink: &mut dyn FnMut(ExecutionPhase),
-) -> Result<PlanExecution, TerraformExecutionError> {
+) -> Result<Plan, TerraformExecutionError> {
     let temporary_plan = TemporaryPlan::create().map_err(|error| {
         TerraformExecutionError::new(TerraformExecutionErrorKind::TemporaryPlan {
             message: error.to_string(),
@@ -51,7 +52,7 @@ fn execute_plan(
     runner: &dyn ProcessRunner,
     event_sink: &mut dyn FnMut(ExecutionEvent),
     phase_sink: &mut dyn FnMut(ExecutionPhase),
-) -> Result<PlanExecution, TerraformExecutionError> {
+) -> Result<Plan, TerraformExecutionError> {
     let plan_arguments = plan_arguments(plan_path);
     let plan_output = run_command_with_events(
         root,
@@ -74,8 +75,8 @@ fn execute_plan(
 
 fn finish_plan(
     temporary_plan: TemporaryPlan,
-    result: Result<PlanExecution, TerraformExecutionError>,
-) -> Result<PlanExecution, TerraformExecutionError> {
+    result: Result<Plan, TerraformExecutionError>,
+) -> Result<Plan, TerraformExecutionError> {
     match temporary_plan.cleanup() {
         Ok(()) => result,
         Err(error) => match result {
@@ -167,7 +168,7 @@ mod tests {
         plan_path: &Path,
         cancellation: &CancellationToken,
         runner: &dyn ProcessRunner,
-    ) -> Result<PlanExecution, TerraformExecutionError> {
+    ) -> Result<Plan, TerraformExecutionError> {
         execute_plan(
             root,
             plan_path,
@@ -394,7 +395,7 @@ mod tests {
         runner: &FakeRunner,
         temporary_plan: TemporaryPlan,
         cancellation: &CancellationToken,
-    ) -> Result<PlanExecution, TerraformExecutionError> {
+    ) -> Result<Plan, TerraformExecutionError> {
         let result = execute_plan_without_events(
             Path::new("/root with spaces"),
             &temporary_plan.path,
@@ -421,8 +422,7 @@ mod tests {
         let result = run_fake(&runner, temporary_plan, &cancellation)
             .expect("Terraform plan should be returned");
 
-        assert_eq!(result.json(), PLAN_JSON);
-        assert!(result.plan().changes.is_empty());
+        assert!(result.changes.is_empty());
         let invocations = runner.invocations.borrow();
         assert_eq!(invocations.len(), 2);
         assert_eq!(invocations[0].root, Path::new("/root with spaces"));
@@ -479,7 +479,7 @@ mod tests {
         );
         let result = finish_plan(temporary_plan, result).expect("plan should be returned");
 
-        assert!(result.plan().changes.is_empty());
+        assert!(result.changes.is_empty());
         assert!(matches!(
             events.first().map(|event| &event.kind),
             Some(ExecutionEventKind::Resource(ResourceEvent {
@@ -749,10 +749,10 @@ mod tests {
             String::from_utf8_lossy(&cleanup.stderr)
         );
 
-        let execution = result.expect("Terraform plan should be obtained");
-        assert_eq!(execution.plan().summary.creates, 1);
-        assert_eq!(execution.plan().summary.updates, 2);
-        assert_eq!(execution.plan().summary.replaces, 1);
-        assert_eq!(execution.plan().summary.deletes, 1);
+        let plan = result.expect("Terraform plan should be obtained");
+        assert_eq!(plan.summary.creates, 1);
+        assert_eq!(plan.summary.updates, 2);
+        assert_eq!(plan.summary.replaces, 1);
+        assert_eq!(plan.summary.deletes, 1);
     }
 }
