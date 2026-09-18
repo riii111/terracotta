@@ -46,7 +46,6 @@ impl ExecutionStage {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ExecutionAction {
-    SetStage(ExecutionStage),
     End,
     RequestCancellation,
 }
@@ -87,7 +86,6 @@ impl ExecutionState {
 
     pub(crate) const fn apply(&mut self, action: ExecutionAction) {
         match action {
-            ExecutionAction::SetStage(stage) => self.stage = stage,
             ExecutionAction::End => {
                 self.follow = true;
                 self.scroll = 0;
