@@ -923,48 +923,36 @@ mod tests {
 
     #[test]
     fn preserves_arbitrary_precision_json_numbers() {
-        let json_number = |source: &str| {
-            serde_json::from_str::<Value>(source).expect("arbitrary precision number should parse")
-        };
-        let mut large_integer =
-            resource("terraform_data.large_integer", "managed", json!(["update"]));
-        large_integer["change"]["after"] = json_number("123456789012345678901234567891");
+        let cases = [
+            (
+                "large_integer",
+                "123456789012345678901234567891",
+                "123456789012345678901234567891",
+            ),
+            (
+                "precise_decimal",
+                "0.123456789012345678901234567890",
+                "0.123456789012345678901234567890",
+            ),
+            ("large_exponent", "1e400", "1e+400"),
+        ];
 
-        let mut precise_decimal = resource(
-            "terraform_data.precise_decimal",
-            "managed",
-            json!(["update"]),
-        );
-        precise_decimal["change"]["after"] = json_number("0.123456789012345678901234567890");
+        for (name, source, expected) in cases {
+            let mut resource = resource(
+                &format!("terraform_data.{name}"),
+                "managed",
+                json!(["update"]),
+            );
+            resource["change"]["after"] = serde_json::from_str(source)
+                .unwrap_or_else(|error| panic!("case {name}: number should parse: {error}"));
 
-        let mut large_exponent = resource(
-            "terraform_data.large_exponent",
-            "managed",
-            json!(["update"]),
-        );
-        large_exponent["change"]["after"] = json_number("1e400");
-
-        let plan = parse_plan_json(&plan_with_resources(json!([
-            large_integer,
-            precise_decimal,
-            large_exponent
-        ])))
-        .expect("plan should parse");
-
-        let Some(PlanValue::Number(large_integer)) = &plan.changes[0].after else {
-            panic!("large integer should remain a number");
-        };
-        assert_eq!(large_integer, "123456789012345678901234567891");
-
-        let Some(PlanValue::Number(precise_decimal)) = &plan.changes[1].after else {
-            panic!("precise decimal should remain a number");
-        };
-        assert_eq!(precise_decimal, "0.123456789012345678901234567890");
-
-        let Some(PlanValue::Number(large_exponent)) = &plan.changes[2].after else {
-            panic!("large exponent should remain a number");
-        };
-        assert_eq!(large_exponent, "1e+400");
+            let plan = parse_plan_json(&plan_with_resources(json!([resource])))
+                .unwrap_or_else(|error| panic!("case {name}: plan should parse: {error}"));
+            let Some(PlanValue::Number(actual)) = &plan.changes[0].after else {
+                panic!("case {name}: number should remain a number");
+            };
+            assert_eq!(actual, expected, "case: {name}");
+        }
     }
 
     #[test]
