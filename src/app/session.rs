@@ -144,100 +144,124 @@ impl SessionState {
     }
 }
 
-pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> Vec<Effect> {
+pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> Option<Effect> {
     match action {
         Action::Execution(action) => update_execution_action(state, action),
-        Action::WorkerEvent(event) => record_worker_event(state, event),
+        Action::WorkerEvent(event) => {
+            record_worker_event(state, event);
+            None
+        }
         Action::ReviewCompleted(review) => complete_review(state, review),
         Action::ReviewFailed {
             message,
             interrupted,
         } => fail_review(state, message, interrupted, now),
         Action::WorkerDisconnected => worker_disconnected(state),
-        Action::List(action) => update_list(state, action),
-        Action::OpenDiagnostics => open_diagnostics(state),
-        Action::CloseDiagnostics => close_diagnostics(state),
-        Action::OpenDetail => open_detail(state),
-        Action::CloseDetail => close_detail(state),
-        Action::Detail(action) => update_detail(state, action, now),
-        Action::Navigate(navigation) => navigate_detail(state, navigation),
-        Action::Copy(target) => copy_effect(state, target)
-            .map_or_else(Vec::new, |effect| vec![Effect::WriteClipboard(effect)]),
+        Action::List(action) => {
+            update_list(state, action);
+            None
+        }
+        Action::OpenDiagnostics => {
+            open_diagnostics(state);
+            None
+        }
+        Action::CloseDiagnostics => {
+            close_diagnostics(state);
+            None
+        }
+        Action::OpenDetail => {
+            open_detail(state);
+            None
+        }
+        Action::CloseDetail => {
+            close_detail(state);
+            None
+        }
+        Action::Detail(action) => {
+            update_detail(state, action, now);
+            None
+        }
+        Action::Navigate(navigation) => {
+            navigate_detail(state, navigation);
+            None
+        }
+        Action::Copy(target) => copy_effect(state, target).map(Effect::WriteClipboard),
         Action::CopyCompleted {
             target,
             resource_count,
             result,
-        } => copy_completed(state, target, resource_count, result),
-        Action::TimeUpdated => time_updated(state, now),
-        Action::DetailAreaTooSmall => detail_area_too_small(state),
+        } => {
+            copy_completed(state, target, resource_count, result);
+            None
+        }
+        Action::TimeUpdated => {
+            time_updated(state, now);
+            None
+        }
+        Action::DetailAreaTooSmall => {
+            detail_area_too_small(state);
+            None
+        }
         Action::Quit => quit_effect(state),
     }
 }
 
-fn record_worker_event(state: &mut SessionState, event: ExecutionEvent) -> Vec<Effect> {
+fn record_worker_event(state: &mut SessionState, event: ExecutionEvent) {
     if let SessionState::Execution(execution) = state {
         execution.record(event);
     }
-    Vec::new()
 }
 
-fn update_list(state: &mut SessionState, action: PlanListAction) -> Vec<Effect> {
+fn update_list(state: &mut SessionState, action: PlanListAction) {
     if let SessionState::Review(review) = state {
         review.list.apply(action);
     }
-    Vec::new()
 }
 
-const fn open_diagnostics(state: &mut SessionState) -> Vec<Effect> {
+const fn open_diagnostics(state: &mut SessionState) {
     if let SessionState::Review(review) = state
         && review.detail().is_none()
     {
         review.diagnostics.open();
     }
-    Vec::new()
 }
 
-const fn close_diagnostics(state: &mut SessionState) -> Vec<Effect> {
+const fn close_diagnostics(state: &mut SessionState) {
     if let SessionState::Review(review) = state {
         review.diagnostics.close();
     }
-    Vec::new()
 }
 
-fn open_detail(state: &mut SessionState) -> Vec<Effect> {
+fn open_detail(state: &mut SessionState) {
     if let SessionState::Review(review) = state
         && !review.diagnostics().is_open()
     {
         review.detail = ReviewDetailState::from_list(&review.list);
     }
-    Vec::new()
 }
 
-fn close_detail(state: &mut SessionState) -> Vec<Effect> {
+fn close_detail(state: &mut SessionState) {
     if let SessionState::Review(review) = state
         && let Some(detail) = review.detail.take()
     {
         review.list.select_resource(detail.index());
     }
-    Vec::new()
 }
 
-fn update_detail(state: &mut SessionState, action: DetailAction, now: Instant) -> Vec<Effect> {
+fn update_detail(state: &mut SessionState, action: DetailAction, now: Instant) {
     if let SessionState::Review(review) = state
         && let Some(detail) = review.detail.as_mut()
     {
         detail.apply(action, now);
     }
-    Vec::new()
 }
 
-fn navigate_detail(state: &mut SessionState, navigation: ResourceNavigation) -> Vec<Effect> {
+fn navigate_detail(state: &mut SessionState, navigation: ResourceNavigation) {
     if let SessionState::Review(review) = state
         && let Some(detail) = review.detail.as_mut()
     {
         detail.navigate(navigation, &mut review.list);
     }
-    Vec::new()
 }
 
 const fn copy_completed(
@@ -245,7 +269,7 @@ const fn copy_completed(
     target: CopyTarget,
     resource_count: usize,
     result: CopyResult,
-) -> Vec<Effect> {
+) {
     let notice = match result {
         CopyResult::Written => CopyNotice::Copied {
             target,
@@ -257,64 +281,63 @@ const fn copy_completed(
         SessionState::Execution(execution) => execution.set_copy_notice(notice),
         SessionState::Review(review) => review.copy_notice = Some(notice),
     }
-    Vec::new()
 }
 
-fn time_updated(state: &mut SessionState, now: Instant) -> Vec<Effect> {
+fn time_updated(state: &mut SessionState, now: Instant) {
     if let SessionState::Review(review) = state
         && let Some(detail) = review.detail.as_mut()
     {
         detail.clear_expired(now);
     }
-    Vec::new()
 }
 
-fn detail_area_too_small(state: &mut SessionState) -> Vec<Effect> {
+fn detail_area_too_small(state: &mut SessionState) {
     if let SessionState::Review(review) = state
         && let Some(detail) = review.detail.as_mut()
     {
         detail.mask();
     }
-    Vec::new()
 }
 
-fn quit_effect(state: &SessionState) -> Vec<Effect> {
+fn quit_effect(state: &SessionState) -> Option<Effect> {
     match state {
         SessionState::Execution(execution) if execution.stage() == ExecutionStage::Failed => {
-            vec![Effect::Finish(SessionOutcome::Failed)]
+            Some(Effect::Finish(SessionOutcome::Failed))
         }
-        SessionState::Execution(_) => Vec::new(),
-        SessionState::Review(_) => vec![Effect::Finish(SessionOutcome::Reviewed)],
+        SessionState::Execution(_) => None,
+        SessionState::Review(_) => Some(Effect::Finish(SessionOutcome::Reviewed)),
     }
 }
 
-fn update_execution_action(state: &mut SessionState, action: ExecutionAction) -> Vec<Effect> {
+const fn update_execution_action(
+    state: &mut SessionState,
+    action: ExecutionAction,
+) -> Option<Effect> {
     let SessionState::Execution(execution) = state else {
-        return Vec::new();
+        return None;
     };
 
-    if matches!(action, ExecutionAction::RequestCancellation) {
-        if execution.cancellation_requested() {
-            return Vec::new();
+    match action {
+        ExecutionAction::RequestCancellation => {
+            if execution.cancellation_requested() {
+                return None;
+            }
+            execution.apply(action);
+            Some(Effect::CancelExecution)
         }
-        execution.apply(action);
-        return vec![Effect::CancelExecution];
     }
-
-    execution.apply(action);
-    Vec::new()
 }
 
-fn complete_review(state: &mut SessionState, review: PlanReview) -> Vec<Effect> {
+fn complete_review(state: &mut SessionState, review: PlanReview) -> Option<Effect> {
     let SessionState::Execution(execution) = &mut *state else {
-        return Vec::new();
+        return None;
     };
     if execution.cancellation_requested() {
-        return vec![Effect::Finish(SessionOutcome::Interrupted)];
+        return Some(Effect::Finish(SessionOutcome::Interrupted));
     }
 
     let Ok(list) = PlanListState::from_review(review) else {
-        return vec![Effect::Finish(SessionOutcome::Failed)];
+        return Some(Effect::Finish(SessionOutcome::Failed));
     };
     let diagnostics = execution.take_review_diagnostics();
     *state = SessionState::Review(ReviewSessionState {
@@ -323,7 +346,7 @@ fn complete_review(state: &mut SessionState, review: PlanReview) -> Vec<Effect> 
         detail: None,
         copy_notice: None,
     });
-    Vec::new()
+    None
 }
 
 fn fail_review(
@@ -331,28 +354,26 @@ fn fail_review(
     message: String,
     interrupted: bool,
     now: Instant,
-) -> Vec<Effect> {
+) -> Option<Effect> {
     let SessionState::Execution(execution) = state else {
-        return Vec::new();
+        return None;
     };
     if interrupted || execution.cancellation_requested() {
-        return vec![Effect::Finish(SessionOutcome::Interrupted)];
+        return Some(Effect::Finish(SessionOutcome::Interrupted));
     }
 
     execution.fail(message, now);
-    Vec::new()
+    None
 }
 
-fn worker_disconnected(state: &SessionState) -> Vec<Effect> {
+fn worker_disconnected(state: &SessionState) -> Option<Effect> {
     match state {
         SessionState::Execution(execution) if execution.cancellation_requested() => {
-            vec![Effect::Finish(SessionOutcome::Interrupted)]
+            Some(Effect::Finish(SessionOutcome::Interrupted))
         }
-        SessionState::Execution(execution) if execution.stage() == ExecutionStage::Failed => {
-            Vec::new()
-        }
-        SessionState::Execution(_) => vec![Effect::Finish(SessionOutcome::Failed)],
-        SessionState::Review(_) => Vec::new(),
+        SessionState::Execution(execution) if execution.stage() == ExecutionStage::Failed => None,
+        SessionState::Execution(_) => Some(Effect::Finish(SessionOutcome::Failed)),
+        SessionState::Review(_) => None,
     }
 }
 
@@ -582,31 +603,29 @@ mod tests {
         let started_at = now();
         let mut state = SessionState::new(ExecutionState::new(started_at));
 
-        assert_eq!(
+        assert!(matches!(
             update(
                 &mut state,
                 Action::Execution(ExecutionAction::RequestCancellation),
                 started_at,
-            )
-            .len(),
-            1
-        );
+            ),
+            Some(Effect::CancelExecution)
+        ));
         assert!(
             update(
                 &mut state,
                 Action::Execution(ExecutionAction::RequestCancellation),
                 started_at,
             )
-            .is_empty()
+            .is_none()
         );
         assert!(matches!(
             update(
                 &mut state,
                 Action::ReviewCompleted(empty_review()),
                 started_at
-            )
-            .as_slice(),
-            [Effect::Finish(SessionOutcome::Interrupted)]
+            ),
+            Some(Effect::Finish(SessionOutcome::Interrupted))
         ));
     }
 
@@ -623,13 +642,13 @@ mod tests {
                 },
                 started_at,
             )
-            .is_empty()
+            .is_none()
         );
         assert!(matches!(state, SessionState::Execution(_)));
-        assert!(update(&mut state, Action::WorkerDisconnected, started_at).is_empty());
+        assert!(update(&mut state, Action::WorkerDisconnected, started_at).is_none());
         assert!(matches!(
-            update(&mut state, Action::Quit, started_at).as_slice(),
-            [Effect::Finish(SessionOutcome::Failed)]
+            update(&mut state, Action::Quit, started_at),
+            Some(Effect::Finish(SessionOutcome::Failed))
         ));
     }
 
@@ -664,8 +683,8 @@ mod tests {
             started_at,
         );
 
-        let effects = update(&mut state, Action::Copy(CopyTarget::Resource), started_at);
-        let Effect::WriteClipboard(effect) = effects.into_iter().next().expect("copy effect")
+        let Some(Effect::WriteClipboard(effect)) =
+            update(&mut state, Action::Copy(CopyTarget::Resource), started_at)
         else {
             panic!("resource copy should produce a clipboard effect");
         };
@@ -680,14 +699,17 @@ mod tests {
             None
         );
 
-        update(
-            &mut state,
-            Action::CopyCompleted {
-                target: CopyTarget::Resource,
-                resource_count: 1,
-                result: CopyResult::Written,
-            },
-            started_at,
+        assert!(
+            update(
+                &mut state,
+                Action::CopyCompleted {
+                    target: CopyTarget::Resource,
+                    resource_count: 1,
+                    result: CopyResult::Written,
+                },
+                started_at,
+            )
+            .is_none()
         );
         assert_eq!(
             state.review().and_then(ReviewSessionState::copy_notice),
@@ -745,8 +767,9 @@ mod tests {
             started_at,
         );
 
-        let effects = update(&mut state, Action::Copy(CopyTarget::Plan), started_at);
-        let [Effect::WriteClipboard(effect)] = effects.as_slice() else {
+        let Some(Effect::WriteClipboard(effect)) =
+            update(&mut state, Action::Copy(CopyTarget::Plan), started_at)
+        else {
             panic!("plan copy should produce a clipboard effect");
         };
         assert_eq!(effect.resource_count(), 1);
@@ -774,8 +797,9 @@ mod tests {
         let selected_before = state.review().expect("review state").list().selected();
         let detail_before = state.review().and_then(ReviewSessionState::detail).cloned();
 
-        let effects = update(&mut state, Action::Copy(CopyTarget::Resource), started_at);
-        let [Effect::WriteClipboard(effect)] = effects.as_slice() else {
+        let Some(Effect::WriteClipboard(effect)) =
+            update(&mut state, Action::Copy(CopyTarget::Resource), started_at)
+        else {
             panic!("resource copy should produce a clipboard effect");
         };
         assert!(!effect.text().contains("before-secret"));
