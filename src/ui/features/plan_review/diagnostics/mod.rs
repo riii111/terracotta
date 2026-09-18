@@ -69,7 +69,6 @@ mod tests {
             detail: Some("detail".to_owned()),
             position: None,
             source: DiagnosticSource::Terraform,
-            raw: Some("do not render this".to_owned()),
         }])
     }
 
@@ -93,7 +92,6 @@ mod tests {
             detail: Some("long detail ".repeat(100)),
             position: None,
             source: DiagnosticSource::Terraform,
-            raw: None,
         }]);
         let area = Rect::new(0, 0, 60, 12);
         let mut view = DiagnosticsViewState::default();

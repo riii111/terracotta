@@ -64,7 +64,6 @@ fn synthetic_diagnostic() -> PlanReviewMessage {
             detail: Some("The synthetic plan completed successfully.".to_owned()),
             position: None,
             source: DiagnosticSource::Terraform,
-            raw: None,
         }),
     })
 }

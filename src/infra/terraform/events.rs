@@ -86,24 +86,17 @@ impl TerraformEventParser {
         }
 
         let text = String::from_utf8_lossy(line);
-        let kind = match serde_json::from_str::<Value>(&text) {
-            Ok(value) => parse_json_event(stream, &value, &text),
-            Err(_) => {
-                ExecutionEventKind::Diagnostic(non_json_diagnostic(stream, text.into_owned()))
-            }
-        };
+        let kind = serde_json::from_str::<Value>(&text).map_or_else(
+            |_| ExecutionEventKind::Diagnostic(non_json_diagnostic(stream, text.into_owned())),
+            |value| parse_json_event(stream, &value),
+        );
         Some(ExecutionEvent { received_at, kind })
     }
 }
 
-fn parse_json_event(stream: EventStream, value: &Value, raw: &str) -> ExecutionEventKind {
+fn parse_json_event(stream: EventStream, value: &Value) -> ExecutionEventKind {
     let Some(object) = value.as_object() else {
-        return ExecutionEventKind::Diagnostic(unknown_event_diagnostic(
-            stream,
-            None,
-            None,
-            raw.to_owned(),
-        ));
+        return ExecutionEventKind::Diagnostic(unknown_event_diagnostic(stream, None, None));
     };
     let event_type = object
         .get("type")
@@ -118,10 +111,7 @@ fn parse_json_event(stream: EventStream, value: &Value, raw: &str) -> ExecutionE
         Some("diagnostic") => parse_diagnostic(object).map_or_else(
             || {
                 ExecutionEventKind::Diagnostic(unknown_event_diagnostic(
-                    stream,
-                    event_type,
-                    message,
-                    raw.to_owned(),
+                    stream, event_type, message,
                 ))
             },
             ExecutionEventKind::Diagnostic,
@@ -129,10 +119,7 @@ fn parse_json_event(stream: EventStream, value: &Value, raw: &str) -> ExecutionE
         Some("change_summary" | "summary") => parse_summary(object).map_or_else(
             || {
                 ExecutionEventKind::Diagnostic(unknown_event_diagnostic(
-                    stream,
-                    event_type,
-                    message,
-                    raw.to_owned(),
+                    stream, event_type, message,
                 ))
             },
             ExecutionEventKind::Summary,
@@ -163,17 +150,11 @@ fn parse_json_event(stream: EventStream, value: &Value, raw: &str) -> ExecutionE
                         stream,
                         Some(event_type.to_owned()),
                         message,
-                        raw.to_owned(),
                     ))
                 },
                 |(kind, address)| ExecutionEventKind::Resource(ResourceEvent { address, kind }),
             ),
-        None => ExecutionEventKind::Diagnostic(unknown_event_diagnostic(
-            stream,
-            None,
-            message,
-            raw.to_owned(),
-        )),
+        None => ExecutionEventKind::Diagnostic(unknown_event_diagnostic(stream, None, message)),
     }
 }
 
@@ -267,7 +248,6 @@ fn parse_diagnostic(object: &Map<String, Value>) -> Option<Diagnostic> {
         detail,
         position: diagnostic.get("range").and_then(parse_position),
         source: DiagnosticSource::Terraform,
-        raw: None,
     })
 }
 
@@ -306,7 +286,6 @@ const fn non_json_diagnostic(stream: EventStream, text: String) -> Diagnostic {
         detail: None,
         position: None,
         source: DiagnosticSource::NonJson { stream },
-        raw: None,
     }
 }
 
@@ -314,7 +293,6 @@ fn unknown_event_diagnostic(
     stream: EventStream,
     event_type: Option<String>,
     message: Option<String>,
-    raw: String,
 ) -> Diagnostic {
     Diagnostic {
         severity: DiagnosticSeverity::Error,
@@ -324,7 +302,6 @@ fn unknown_event_diagnostic(
             .map(|event_type| format!("Event type: {event_type}")),
         position: None,
         source: DiagnosticSource::UnknownEvent { stream, event_type },
-        raw: Some(raw),
     }
 }
 
@@ -332,6 +309,7 @@ fn unknown_event_diagnostic(
 mod tests {
     use std::time::Duration;
 
+    use rstest::rstest;
     use serde_json::json;
 
     use super::*;
@@ -470,11 +448,8 @@ mod tests {
     }
 
     #[test]
-    fn retains_unknown_json_and_long_non_json_stderr() {
+    fn preserves_long_non_json_diagnostic_text() {
         let mut parser = TerraformEventParser::new();
-        let unknown = br#"{"@message":"Future event occurred","type":"future_event","payload":{"value":"kept"}}
-"#;
-        let unknown_events = parser.push(EventStream::Stdout, unknown, Instant::now());
         let long_text = "x".repeat(100_000);
         let stderr_events = parser.push(
             EventStream::Stderr,
@@ -482,12 +457,6 @@ mod tests {
             Instant::now(),
         );
 
-        let ExecutionEventKind::Diagnostic(diagnostic) = &unknown_events[0].kind else {
-            panic!("expected an unknown event diagnostic");
-        };
-        let expected_raw = String::from_utf8_lossy(&unknown[..unknown.len() - 1]);
-        assert_eq!(diagnostic.raw.as_deref(), Some(expected_raw.as_ref()));
-        assert_eq!(diagnostic.summary, "Future event occurred");
         let ExecutionEventKind::Diagnostic(diagnostic) = &stderr_events[0].kind else {
             panic!("expected a stderr diagnostic");
         };
@@ -495,6 +464,52 @@ mod tests {
         assert!(diagnostic.detail.is_none());
         assert!(
             Instant::now().duration_since(stderr_events[0].received_at) < Duration::from_secs(1)
+        );
+    }
+
+    #[rstest]
+    #[case::unknown_type(
+        r#"{"@message":"Future event occurred","type":"future_event"}"#,
+        "Future event occurred",
+        Some("Event type: future_event"),
+        Some("future_event")
+    )]
+    #[case::missing_type(
+        r#"{"@message":"Event type is missing"}"#,
+        "Event type is missing",
+        None,
+        None
+    )]
+    #[case::malformed_diagnostic(
+        r#"{"@message":"Malformed diagnostic","type":"diagnostic"}"#,
+        "Malformed diagnostic",
+        Some("Event type: diagnostic"),
+        Some("diagnostic")
+    )]
+    fn classifies_unusable_json_events_as_diagnostics(
+        #[case] input: &str,
+        #[case] expected_summary: &str,
+        #[case] expected_detail: Option<&str>,
+        #[case] expected_event_type: Option<&str>,
+    ) {
+        let mut parser = TerraformEventParser::new();
+        let events = parser.push(
+            EventStream::Stdout,
+            format!("{input}\n").as_bytes(),
+            Instant::now(),
+        );
+
+        let ExecutionEventKind::Diagnostic(diagnostic) = &events[0].kind else {
+            panic!("expected an unusable JSON event diagnostic");
+        };
+        assert_eq!(diagnostic.summary, expected_summary);
+        assert_eq!(diagnostic.detail.as_deref(), expected_detail);
+        assert_eq!(
+            diagnostic.source,
+            DiagnosticSource::UnknownEvent {
+                stream: EventStream::Stdout,
+                event_type: expected_event_type.map(str::to_owned),
+            }
         );
     }
 

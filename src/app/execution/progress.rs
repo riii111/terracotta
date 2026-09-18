@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use super::event::{
-    Diagnostic, DiagnosticSeverity, ExecutionEvent, ExecutionEventKind, ExecutionSummary,
-    ProcessTermination, ResourceEventKind,
+    Diagnostic, DiagnosticSeverity, ExecutionEvent, ExecutionEventKind, ProcessTermination,
+    ResourceEventKind,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,7 +16,6 @@ pub(crate) struct ResourceProgress {
 pub(crate) struct ExecutionProgress {
     resources: Vec<(String, ResourceProgress)>,
     resource_indices: BTreeMap<String, usize>,
-    summary: Option<ExecutionSummary>,
     diagnostics: Vec<Diagnostic>,
     termination: Option<ProcessTermination>,
     completed_resources: usize,
@@ -53,9 +52,9 @@ impl ExecutionProgress {
                     }
                 }
             }
-            ExecutionEventKind::Summary(summary) => self.summary = Some(summary),
             ExecutionEventKind::Diagnostic(diagnostic) => self.diagnostics.push(diagnostic),
-            ExecutionEventKind::Phase(_)
+            ExecutionEventKind::Summary(_)
+            | ExecutionEventKind::Phase(_)
             | ExecutionEventKind::Workspace(_)
             | ExecutionEventKind::Git(_)
             | ExecutionEventKind::Informational { .. } => {}
@@ -101,14 +100,12 @@ impl ExecutionProgress {
 
 #[cfg(test)]
 mod tests {
-    use super::super::event::{DiagnosticSource, ProcessExitStatus, ResourceEvent};
+    use super::super::event::{
+        DiagnosticSource, ExecutionSummary, ProcessExitStatus, ResourceEvent,
+    };
     use super::*;
 
     impl ExecutionProgress {
-        fn summary(&self) -> Option<&ExecutionSummary> {
-            self.summary.as_ref()
-        }
-
         fn completed_resources(&self) -> usize {
             self.completed_resources
         }
@@ -225,12 +222,11 @@ mod tests {
             ten_thousand.completed_resources()
         );
         assert_eq!(hundred.diagnostics(), ten_thousand.diagnostics());
-        assert_eq!(hundred.summary(), ten_thousand.summary());
         assert_eq!(hundred.termination(), ten_thousand.termination());
     }
 
     #[test]
-    fn retains_summary_diagnostics_termination_and_last_received_time() {
+    fn summary_updates_last_received_time_and_diagnostics_survive_termination() {
         let started_at = Instant::now();
         let summary_at = started_at + std::time::Duration::from_secs(1);
         let diagnostic_at = started_at + std::time::Duration::from_secs(2);
@@ -245,6 +241,7 @@ mod tests {
                 operation: Some("plan".to_owned()),
             }),
         });
+        assert_eq!(progress.last_event_at(), Some(summary_at));
         progress.record(ExecutionEvent {
             received_at: diagnostic_at,
             kind: ExecutionEventKind::Diagnostic(Diagnostic {
@@ -253,7 +250,6 @@ mod tests {
                 detail: Some("The configuration is invalid.".to_owned()),
                 position: None,
                 source: DiagnosticSource::Terraform,
-                raw: None,
             }),
         });
         progress.record(ExecutionEvent {
@@ -264,10 +260,6 @@ mod tests {
             }),
         });
 
-        assert_eq!(
-            progress.summary().expect("summary should be retained").adds,
-            Some(1)
-        );
         assert_eq!(progress.diagnostics().len(), 1);
         assert_eq!(
             progress.termination(),
@@ -294,7 +286,6 @@ mod tests {
                 detail: None,
                 position: None,
                 source: DiagnosticSource::Terraform,
-                raw: None,
             })));
         }
 
