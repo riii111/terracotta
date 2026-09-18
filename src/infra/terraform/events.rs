@@ -309,7 +309,6 @@ fn unknown_event_diagnostic(
 mod tests {
     use std::time::Duration;
 
-    use rstest::rstest;
     use serde_json::json;
 
     use super::*;
@@ -467,50 +466,73 @@ mod tests {
         );
     }
 
-    #[rstest]
-    #[case::unknown_type(
-        r#"{"@message":"Future event occurred","type":"future_event"}"#,
-        "Future event occurred",
-        Some("Event type: future_event"),
-        Some("future_event")
-    )]
-    #[case::missing_type(
-        r#"{"@message":"Event type is missing"}"#,
-        "Event type is missing",
-        None,
-        None
-    )]
-    #[case::malformed_diagnostic(
-        r#"{"@message":"Malformed diagnostic","type":"diagnostic"}"#,
-        "Malformed diagnostic",
-        Some("Event type: diagnostic"),
-        Some("diagnostic")
-    )]
-    fn classifies_unusable_json_events_as_diagnostics(
-        #[case] input: &str,
-        #[case] expected_summary: &str,
-        #[case] expected_detail: Option<&str>,
-        #[case] expected_event_type: Option<&str>,
-    ) {
-        let mut parser = TerraformEventParser::new();
-        let events = parser.push(
-            EventStream::Stdout,
-            format!("{input}\n").as_bytes(),
-            Instant::now(),
-        );
+    #[test]
+    fn classifies_unusable_json_events_as_diagnostics() {
+        struct DiagnosticCase {
+            name: &'static str,
+            input: &'static str,
+            expected_summary: &'static str,
+            expected_detail: Option<&'static str>,
+            expected_event_type: Option<&'static str>,
+        }
 
-        let ExecutionEventKind::Diagnostic(diagnostic) = &events[0].kind else {
-            panic!("expected an unusable JSON event diagnostic");
-        };
-        assert_eq!(diagnostic.summary, expected_summary);
-        assert_eq!(diagnostic.detail.as_deref(), expected_detail);
-        assert_eq!(
-            diagnostic.source,
-            DiagnosticSource::UnknownEvent {
-                stream: EventStream::Stdout,
-                event_type: expected_event_type.map(str::to_owned),
-            }
-        );
+        for case in [
+            DiagnosticCase {
+                name: "unknown_type",
+                input: r#"{"@message":"Future event occurred","type":"future_event"}"#,
+                expected_summary: "Future event occurred",
+                expected_detail: Some("Event type: future_event"),
+                expected_event_type: Some("future_event"),
+            },
+            DiagnosticCase {
+                name: "missing_type",
+                input: r#"{"@message":"Event type is missing"}"#,
+                expected_summary: "Event type is missing",
+                expected_detail: None,
+                expected_event_type: None,
+            },
+            DiagnosticCase {
+                name: "malformed_diagnostic",
+                input: r#"{"@message":"Malformed diagnostic","type":"diagnostic"}"#,
+                expected_summary: "Malformed diagnostic",
+                expected_detail: Some("Event type: diagnostic"),
+                expected_event_type: Some("diagnostic"),
+            },
+        ] {
+            let mut parser = TerraformEventParser::new();
+            let events = parser.push(
+                EventStream::Stdout,
+                format!("{}\n", case.input).as_bytes(),
+                Instant::now(),
+            );
+
+            let ExecutionEventKind::Diagnostic(diagnostic) = &events[0].kind else {
+                panic!(
+                    "case {}: expected an unusable JSON event diagnostic",
+                    case.name
+                );
+            };
+            assert_eq!(
+                diagnostic.summary, case.expected_summary,
+                "case: {}",
+                case.name
+            );
+            assert_eq!(
+                diagnostic.detail.as_deref(),
+                case.expected_detail,
+                "case: {}",
+                case.name
+            );
+            assert_eq!(
+                diagnostic.source,
+                DiagnosticSource::UnknownEvent {
+                    stream: EventStream::Stdout,
+                    event_type: case.expected_event_type.map(str::to_owned),
+                },
+                "case: {}",
+                case.name
+            );
+        }
     }
 
     #[test]
