@@ -12,8 +12,11 @@ use crate::infra::CancellationToken;
 
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct GitInterrupted;
+
 #[derive(Debug)]
-pub(crate) struct GitCommandError {
+pub(super) struct GitCommandError {
     pub(super) operation: String,
     pub(super) message: String,
     interrupted: bool,
@@ -59,7 +62,7 @@ impl GitCommandError {
         }
     }
 
-    pub(crate) const fn is_interrupted(&self) -> bool {
+    pub(super) const fn is_interrupted(&self) -> bool {
         self.interrupted
     }
 }

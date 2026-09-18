@@ -2,12 +2,12 @@ use std::{ffi::OsStr, path::Path};
 
 use crate::infra::CancellationToken;
 
-use super::command::checked_git;
+use super::{GitInterrupted, command::checked_git};
 
 pub(crate) fn current_branch(
     root: &Path,
     cancellation: &CancellationToken,
-) -> Result<Option<String>, super::command::GitCommandError> {
+) -> Result<Option<String>, GitInterrupted> {
     let output = match checked_git(
         root,
         "read current Git branch",
@@ -15,7 +15,7 @@ pub(crate) fn current_branch(
         cancellation,
     ) {
         Ok(output) => output,
-        Err(error) if error.is_interrupted() => return Err(error),
+        Err(error) if error.is_interrupted() => return Err(GitInterrupted),
         Err(_) => return Ok(None),
     };
     let branch = String::from_utf8(output.stdout)
