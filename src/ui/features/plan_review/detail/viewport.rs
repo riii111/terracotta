@@ -89,6 +89,9 @@ mod tests {
     use crate::app::plan::AttributePathSegment;
     use crate::app::review::{AttributeGroup, DetailAction, DetailRow};
     use crate::ui::test_support::buffer_text;
+    use ratatui::text::Line;
+
+    use super::wrapped_selected_line;
 
     #[test]
     fn selects_changed_attributes_and_scrolls_without_exposing_values() {
@@ -152,6 +155,16 @@ mod tests {
         state.apply_scroll(DetailScroll::PageDown, 46, 4, Instant::now());
 
         assert_eq!(state.scroll(), last_scroll);
+    }
+
+    #[test]
+    fn selected_line_starts_on_the_next_rendered_row_after_fitting_trailing_space() {
+        let content = super::super::rows::DetailContent {
+            lines: vec![Line::from("12345 "), Line::from("next")],
+            selected_line: Some(1),
+        };
+
+        assert_eq!(wrapped_selected_line(&content, 5), Some(1));
     }
 
     #[test]
