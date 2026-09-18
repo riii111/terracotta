@@ -524,15 +524,21 @@ mod tests {
 
         let unavailable = ExecutionState::with_context(
             started_at,
-            ExecutionContext::known("unavailable", "unavailable", "unavailable", "unavailable"),
+            ExecutionContext::known(
+                "infra/prod",
+                "default",
+                "feature/plan-ui",
+                "working tree vs HEAD",
+            )
+            .with_git(None),
         );
         let unavailable_text = buffer_text(&render_to_buffer(&unavailable, started_at, 80, 16));
         assert!(
-            unavailable_text.contains("cwd unavailable"),
+            unavailable_text.contains("cwd infra/prod"),
             "{unavailable_text}"
         );
         assert!(
-            unavailable_text.contains("compare unavailable"),
+            unavailable_text.contains("git unavailable"),
             "{unavailable_text}"
         );
     }

@@ -776,6 +776,7 @@ mod tests {
 
     use std::process::Command;
 
+    use super::super::rev_parse::tests::resolve_compare_ref_with_env;
     use super::*;
 
     static NEXT_REPOSITORY: AtomicU64 = AtomicU64::new(0);
@@ -1024,15 +1025,16 @@ mod tests {
     }
 
     #[test]
-    fn resolves_an_unambiguous_ref() {
+    fn resolves_an_unambiguous_ref_when_git_trace_writes_to_stderr() {
         let repository = TestRepository::new();
         write(&repository, "main.tf", "resource \"example\" \"one\" {}\n");
         repository.commit("initial");
         git(&repository.path, &["branch", "compare"]);
 
-        let result = resolve_compare_ref(&repository.path, "compare", &CancellationToken::new());
+        let result =
+            resolve_compare_ref_with_env(&repository.path, "compare", &[("GIT_TRACE", "1")]);
 
-        assert!(matches!(result, Ok(commit) if commit.len() == 40));
+        assert!(result.is_some_and(|commit| commit.len() == 40));
     }
 
     #[test]
