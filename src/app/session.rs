@@ -255,10 +255,7 @@ const fn copy_completed(
     };
     match state {
         SessionState::Execution(execution) => execution.set_copy_notice(notice),
-        SessionState::Review(review) => {
-            review.copy_notice = Some(notice);
-            review.list.set_copy_notice(notice);
-        }
+        SessionState::Review(review) => review.copy_notice = Some(notice),
     }
     Vec::new()
 }
@@ -706,12 +703,6 @@ mod tests {
                 resource_count: 1,
             })
         );
-        assert!(
-            state
-                .review()
-                .and_then(|review| review.list().copy_notice())
-                .is_some()
-        );
     }
 
     #[test]
@@ -793,7 +784,6 @@ mod tests {
         assert_eq!(review.list().selected(), selected_before);
         assert_eq!(review.detail(), detail_before.as_ref());
         assert_eq!(review.copy_notice(), Some(CopyNotice::Failed));
-        assert_eq!(review.list().copy_notice(), Some(CopyNotice::Failed));
     }
 
     #[test]

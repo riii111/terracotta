@@ -4,7 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
-use crate::app::copy::CopyTarget;
+use crate::app::copy::{CopyNotice, CopyTarget};
 use crate::app::plan::ResourceChangeKind;
 use crate::app::review::{
     PlanListAction, PlanListFilter, PlanListItem, PlanListState, ReviewDiagnosticsState,
@@ -35,6 +35,7 @@ pub(crate) fn render_plan_list_with_diagnostics(
     frame: &mut Frame<'_>,
     state: &PlanListState,
     diagnostics: &ReviewDiagnosticsState,
+    copy_notice: Option<CopyNotice>,
     list_state: &mut ListState,
 ) {
     let area = frame.area();
@@ -66,7 +67,7 @@ pub(crate) fn render_plan_list_with_diagnostics(
     let notice_height = u16::try_from(notices.len()).unwrap_or(u16::MAX);
     let context_height = u16::from(state.context().is_some()) * 2;
     let separator_height = u16::from(!compact_layout && notice_height < 2);
-    let copy_notice_height = u16::from(state.copy_notice().is_some());
+    let copy_notice_height = u16::from(copy_notice.is_some());
     let (chunks, footer_lines) = list_layout(
         content_area,
         state,
@@ -121,7 +122,7 @@ pub(crate) fn render_plan_list_with_diagnostics(
         frame.render_widget(Paragraph::new(notices), chunks[5]);
     }
 
-    if let Some(notice) = state.copy_notice() {
+    if let Some(notice) = copy_notice {
         frame.render_widget(Paragraph::new(notice.message()), chunks[6]);
     }
     render_rows(frame, state, chunks[7], list_state);
@@ -472,7 +473,6 @@ mod tests {
 
     use super::*;
     use crate::app::attribution::AnalysisIssue;
-    use crate::app::copy::CopyNotice;
     use crate::app::execution::{Diagnostic, DiagnosticSeverity, DiagnosticSource};
     use crate::app::review::{
         PlanReview, ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus,
@@ -490,6 +490,7 @@ mod tests {
             frame,
             state,
             &ReviewDiagnosticsState::default(),
+            None,
             list_state,
         );
     }
@@ -665,7 +666,25 @@ mod tests {
     ) -> Buffer {
         let mut list_state = ListState::default();
         render_test_buffer((width, height), |frame| {
-            render_plan_list_with_diagnostics(frame, state, diagnostics, &mut list_state);
+            render_plan_list_with_diagnostics(frame, state, diagnostics, None, &mut list_state);
+        })
+    }
+
+    fn render_to_buffer_with_notice(
+        state: &PlanListState,
+        copy_notice: Option<CopyNotice>,
+        width: u16,
+        height: u16,
+    ) -> Buffer {
+        let mut list_state = ListState::default();
+        render_test_buffer((width, height), |frame| {
+            render_plan_list_with_diagnostics(
+                frame,
+                state,
+                &ReviewDiagnosticsState::default(),
+                copy_notice,
+                &mut list_state,
+            );
         })
     }
 
@@ -986,9 +1005,13 @@ mod tests {
 
         for (notice, expected) in cases {
             for width in [48, 60, 80, 120] {
-                let mut state = synthetic_state();
-                state.set_copy_notice(notice);
-                let text = buffer_text(&render_to_buffer(&state, width, MIN_HEIGHT));
+                let state = synthetic_state();
+                let text = buffer_text(&render_to_buffer_with_notice(
+                    &state,
+                    Some(notice),
+                    width,
+                    MIN_HEIGHT,
+                ));
                 let notice_line = text
                     .lines()
                     .position(|line| line.contains(expected))
