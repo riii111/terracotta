@@ -1,6 +1,6 @@
 #[test]
 fn realistic_diagnostics_120x40() {
-    let state = diagnostics();
+    let state = realistic_diagnostics();
     let list = realistic_list();
 
     insta::assert_snapshot!(buffer_text(&render_to_buffer((120, 40), |frame| {
@@ -10,7 +10,7 @@ fn realistic_diagnostics_120x40() {
 
 #[test]
 fn realistic_diagnostics_80x24() {
-    let state = diagnostics();
+    let state = realistic_diagnostics();
     let list = realistic_list();
 
     insta::assert_snapshot!(buffer_text(&render_to_buffer((80, 24), |frame| {

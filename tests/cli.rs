@@ -294,6 +294,98 @@ mod pty_tests {
         }
     }
 
+    struct BasicScenario {
+        directory: PathBuf,
+    }
+
+    impl BasicScenario {
+        fn setup() -> Self {
+            let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+            let output = Command::new("python3")
+                .current_dir(manifest_dir)
+                .args(["fixtures/basic/scenario.py", "setup"])
+                .output()
+                .expect("basic scenario setup should start");
+            assert!(
+                output.status.success(),
+                "basic scenario setup failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let directory = String::from_utf8(output.stdout)
+                .expect("scenario path should be UTF-8")
+                .trim()
+                .parse()
+                .expect("scenario path should be valid");
+            Self { directory }
+        }
+
+        fn run(&self, binary: &Path) -> PtyResult {
+            let mut process = Command::new("python3");
+            process
+                .current_dir(env!("CARGO_MANIFEST_DIR"))
+                .arg("tests/support/cli/pty_driver.py")
+                .arg(binary)
+                .arg(&self.directory)
+                .args(["100", "24", "basic_workflow", "plan"])
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .env("TF_IN_AUTOMATION", "1")
+                .env("TF_DATA_DIR", self.directory.join(".terraform"))
+                .env("TF_CLI_CONFIG_FILE", "/dev/null")
+                .env("CHECKPOINT_DISABLE", "1");
+            let output = process.output().expect("basic scenario PTY should start");
+            assert!(
+                output.status.success(),
+                "basic scenario PTY failed: {}\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
+            PtyResult::parse(&String::from_utf8_lossy(&output.stdout))
+        }
+
+        fn clean(mut self) {
+            clean_basic_scenario(&self.directory);
+            self.directory.clear();
+        }
+    }
+
+    impl Drop for BasicScenario {
+        fn drop(&mut self) {
+            if !self.directory.as_os_str().is_empty() {
+                clean_basic_scenario(&self.directory);
+            }
+        }
+    }
+
+    fn clean_basic_scenario(directory: &Path) {
+        let output = Command::new("python3")
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .args(["fixtures/basic/scenario.py", "clean"])
+            .arg(directory)
+            .output()
+            .expect("basic scenario cleanup should start");
+        assert!(
+            output.status.success(),
+            "basic scenario cleanup failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    #[ignore = "requires Terraform CLI and the cloudless basic scenario"]
+    fn pty_basic_scenario_covers_review_path_and_restores_terminal() {
+        let scenario = BasicScenario::setup();
+        let result = scenario.run(Path::new(env!("CARGO_BIN_EXE_terracotta")));
+
+        assert_eq!(result.exit_code, 0);
+        result.assert_restored();
+        for event in ["list", "filter", "detail", "analysis_info", "back"] {
+            result.observed(event);
+        }
+        scenario.clean();
+    }
+
     fn git(root: &Path, arguments: &[&str]) {
         let output = Command::new("git")
             .arg("-C")

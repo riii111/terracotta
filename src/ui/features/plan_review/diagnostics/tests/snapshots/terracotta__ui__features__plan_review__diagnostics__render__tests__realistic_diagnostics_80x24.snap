@@ -6,9 +6,9 @@ Terracotta | repo / environments/development/main
 Git: working tree vs HEAD [branch: feature/ui07]
 ┌Diagnostics───────────────────────────────────────────────────────────────────┐
 │Warning 1/1                                                                   │
-│Summary: 警 告 🙂                                                                │
-│Detail: long detail with Unicode 日 本 語                                        │
-│Location: main.tf:4:2-4:8                                                     │
+│Summary: development configuration warning                                    │
+│Detail: resource is defined in the development environment                    │
+│Location: environments/development/main/service.tf:12:2-16:1                  │
 │                                                                              │
 │                                                                              │
 │                                                                              │

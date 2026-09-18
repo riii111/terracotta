@@ -7,9 +7,11 @@ use ratatui::{Frame, Terminal};
 pub(super) const REPRESENTATIVE_TERMINAL_SIZE: (u16, u16) = (165, 51);
 pub(super) const REALISTIC_REPOSITORY_ROOT: &str = "/repo";
 pub(super) const REALISTIC_EXECUTION_ROOT: &str = "/repo/environments/development/main";
-pub(super) const REALISTIC_DEVELOPMENT_SOURCE: &str = "environments/development/main/service.tf";
-pub(super) const REALISTIC_PRODUCTION_SOURCE: &str = "environments/production/main/service.tf";
-pub(super) const REALISTIC_COMMON_SOURCE: &str = "common/main/service.tf";
+pub(super) const REALISTIC_DEVELOPMENT_SOURCE: &str =
+    "/repo/environments/development/main/service.tf";
+pub(super) const REALISTIC_PRODUCTION_SOURCE: &str =
+    "/repo/environments/production/main/service.tf";
+pub(super) const REALISTIC_COMMON_SOURCE: &str = "/repo/common/main/service.tf";
 
 pub(super) fn render_to_buffer(
     (width, height): (u16, u16),

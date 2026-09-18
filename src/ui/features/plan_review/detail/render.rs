@@ -238,6 +238,7 @@ mod tests {
     use crate::app::review::DetailAction;
     use crate::ui::test_support::{assert_shell_frame_and_footer, buffer_text};
 
+    use super::super::rows::detail_content;
     use super::super::test_support::*;
     use super::*;
 

@@ -32,13 +32,13 @@ Git: working tree vs HEAD [branch: feature/ui07]
 │Git evidence:                                                                                                         │
 │  environments/development/main/service.tf:12-16 (working tree)                                                       │
 │                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
+│Analysis info (s hide):                                                                                               │
+│Analysis scope (all analyzed files, not selected-resource evidence)                                                   │
+│Execution root: /repo/environments/development/main                                                                   │
+│Repository root: /repo                                                                                                │
+│Workspace: default                                                                                                    │
+│Git branch: feature/ui07                                                                                              │
+│Comparison: working tree vs HEAD                                                                                      │
+│Analyzed files:                                                                                                       │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 q quit | Esc back | PgUp/PgDn scroll | s analysis info | y resource | Y plan | ↑/↓ select | Enter expand

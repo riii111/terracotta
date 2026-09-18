@@ -206,8 +206,8 @@ mod tests {
     use crate::app::plan::{Plan, PlanSummary};
     use crate::app::review::{PlanReview, ReviewComparison};
     use crate::ui::test_support::{
-        REALISTIC_EXECUTION_ROOT, REALISTIC_REPOSITORY_ROOT, assert_shell_frame_and_footer,
-        buffer_text, render_to_buffer,
+        REALISTIC_DEVELOPMENT_SOURCE, REALISTIC_EXECUTION_ROOT, REALISTIC_REPOSITORY_ROOT,
+        assert_shell_frame_and_footer, buffer_text, render_to_buffer,
     };
 
     use super::*;
@@ -229,6 +229,28 @@ mod tests {
                 end: DiagnosticPoint {
                     line: 4,
                     column: 8,
+                    byte: None,
+                },
+            }),
+            source: DiagnosticSource::Terraform,
+        }])
+    }
+
+    fn realistic_diagnostics() -> ReviewDiagnosticsState {
+        ReviewDiagnosticsState::new(vec![Diagnostic {
+            severity: DiagnosticSeverity::Warning,
+            summary: "development configuration warning".to_owned(),
+            detail: Some("resource is defined in the development environment".to_owned()),
+            position: Some(DiagnosticPosition {
+                filename: REALISTIC_DEVELOPMENT_SOURCE.to_owned(),
+                start: DiagnosticPoint {
+                    line: 12,
+                    column: 2,
+                    byte: None,
+                },
+                end: DiagnosticPoint {
+                    line: 16,
+                    column: 1,
                     byte: None,
                 },
             }),
