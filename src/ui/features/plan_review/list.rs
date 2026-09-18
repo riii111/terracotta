@@ -12,6 +12,8 @@ use crate::ui::primitives::molecules::terminal_notice;
 use crate::ui::shell::{footer, header};
 use crate::ui::theme;
 
+use super::text::truncate_end;
+
 #[cfg(test)]
 use crate::app::attribution::{
     ResourceAddress, ResourceSourceLocation, SourceFileAnalysis,
@@ -185,8 +187,8 @@ fn notice_lines(state: &PlanListState, width: usize, compact: bool) -> Vec<Line<
             count => format!(" (+{} more)", count - 1),
         };
         let issue_width = width
-            .saturating_sub(ANALYSIS_PREFIX.len())
-            .saturating_sub(suffix.chars().count());
+            .saturating_sub(Line::from(ANALYSIS_PREFIX).width())
+            .saturating_sub(Line::from(suffix.as_str()).width());
         format!(
             "{ANALYSIS_PREFIX}{}{}",
             truncate_end(first, issue_width),
@@ -268,15 +270,15 @@ fn list_item(item: &PlanListItem, width: usize) -> ListItem<'static> {
     let git = item.git_label();
     let inline_separator = "  ";
     let address_width = width
-        .saturating_sub(prefix.chars().count())
-        .saturating_sub(inline_separator.chars().count())
-        .saturating_sub(git.chars().count());
+        .saturating_sub(Line::from(prefix.as_str()).width())
+        .saturating_sub(Line::from(inline_separator).width())
+        .saturating_sub(Line::from(git.as_str()).width());
 
     let action_style = theme::action_style(item.kind());
     let review_style = theme::review_style(item.needs_review());
     let git_style = theme::git_style(item.needs_review());
 
-    if address_width >= 12 && item.address().chars().count() <= address_width {
+    if address_width >= 12 && Line::from(item.address()).width() <= address_width {
         return ListItem::new(Line::from(vec![
             Span::styled(marker.to_owned(), review_style),
             Span::raw(" "),
@@ -288,9 +290,9 @@ fn list_item(item: &PlanListItem, width: usize) -> ListItem<'static> {
         ]));
     }
 
-    let address_width = width.saturating_sub(prefix.chars().count());
+    let address_width = width.saturating_sub(Line::from(prefix.as_str()).width());
     let address = truncate_end(item.address(), address_width);
-    let evidence_width = width.saturating_sub(4);
+    let evidence_width = width.saturating_sub(Line::from("    ").width());
     ListItem::new(vec![
         Line::from(vec![
             Span::styled(marker.to_owned(), review_style),
@@ -422,19 +424,6 @@ fn required_footer_lines(state: &PlanListState, width: u16) -> Vec<Line<'static>
         vec![Line::from("q quit")]
     };
     footer::layout(items, width)
-}
-
-fn truncate_end(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        return value.to_owned();
-    }
-    if max_chars <= 3 {
-        return ".".repeat(max_chars);
-    }
-    format!(
-        "{}...",
-        value.chars().take(max_chars - 3).collect::<String>()
-    )
 }
 
 #[cfg(test)]
@@ -728,6 +717,60 @@ mod tests {
     }
 
     #[test]
+    fn unicode_rows_fit_the_allocated_cells_in_one_or_two_lines() {
+        let state = unicode_state();
+        let wide_buffer = render_to_buffer(&state, 120, 16);
+        let wide_text = buffer_text(&wide_buffer);
+        let wide_lines = wide_text.lines().collect::<Vec<_>>();
+        let wide_row_index = wide_lines
+            .iter()
+            .position(|line| line.contains("aws_instance."))
+            .expect("wide resource row should be rendered");
+        let wide_row = wide_lines[wide_row_index];
+        assert!(wide_row.contains("direct: 証 拠 /東 京 /very_long_source_file.tf:12-18"));
+        assert_eq!(
+            wide_buffer
+                .cell((
+                    wide_buffer.area().right() - 1,
+                    u16::try_from(wide_row_index).expect("buffer row should fit in u16"),
+                ))
+                .expect("wide row should have a right border")
+                .symbol(),
+            "│"
+        );
+
+        let narrow_buffer = render_to_buffer(&state, 48, 16);
+        let narrow_text = buffer_text(&narrow_buffer);
+        let narrow_lines = narrow_text.lines().collect::<Vec<_>>();
+        let address_line = narrow_lines
+            .iter()
+            .position(|line| line.contains("aws_instance."))
+            .expect("narrow resource row should be rendered");
+        let evidence_line = narrow_lines
+            .iter()
+            .position(|line| line.contains("direct:"))
+            .expect("Git evidence should be rendered");
+        assert_eq!(evidence_line, address_line + 1);
+        assert!(narrow_lines[address_line].contains("..."));
+        for line_index in address_line..=evidence_line {
+            assert_eq!(
+                narrow_buffer
+                    .cell((
+                        narrow_buffer.area().right() - 1,
+                        u16::try_from(line_index).expect("buffer row should fit in u16"),
+                    ))
+                    .expect("narrow row should have a right border")
+                    .symbol(),
+                "│"
+            );
+        }
+        assert_eq!(
+            state.items()[0].address(),
+            "aws_instance.東京_東京_東京_東京_東京_東京_東京"
+        );
+    }
+
+    #[test]
     fn minimum_supported_width_keeps_summary_counts_visible() {
         let state = synthetic_state();
         let text = buffer_text(&render_to_buffer(&state, MIN_WIDTH, MIN_HEIGHT));
@@ -988,6 +1031,45 @@ mod tests {
             "working tree vs HEAD",
         )
         .expect("direct-only fixture should build a list")
+    }
+
+    fn unicode_state() -> PlanListState {
+        let address = "aws_instance.東京_東京_東京_東京_東京_東京_東京";
+        let change = synthetic_change(address, ResourceChangeKind::Update, PlanAction::Update);
+        let source_files = vec![SourceFileAnalysis::new(
+            "証拠/東京/very_long_source_file.tf".into(),
+            SourceSide::After,
+            vec![ResourceSourceLocation::new(
+                ResourceAddress::new("aws_instance", "東京_東京_東京_東京_東京_東京_東京"),
+                "証拠/東京/very_long_source_file.tf".into(),
+                SourceSide::After,
+                SourceRange::new(12, 18),
+            )],
+            Vec::new(),
+        )];
+        let attributions = attribute_changes(
+            std::slice::from_ref(&change),
+            &source_files,
+            &[AttributionSourceLineChange::new(
+                "証拠/東京/very_long_source_file.tf",
+                SourceSide::After,
+                SourceRange::new(12, 12),
+            )],
+        );
+
+        PlanListState::from_plan(
+            Plan {
+                changes: vec![change],
+                summary: PlanSummary {
+                    updates: 1,
+                    ..PlanSummary::default()
+                },
+                unsupported_changes: Vec::new(),
+            },
+            attributions,
+            "working tree vs HEAD",
+        )
+        .expect("Unicode synthetic change should produce a list")
     }
 
     #[test]

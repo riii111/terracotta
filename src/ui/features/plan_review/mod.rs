@@ -1,6 +1,7 @@
 mod detail;
 mod input;
 mod list;
+mod text;
 
 pub(crate) use detail::{
     DetailInput, ResourceDetailState, key_to_input as key_to_detail_input, render_resource_detail,
