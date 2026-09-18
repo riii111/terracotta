@@ -312,10 +312,13 @@ mod tests {
     use std::{
         fs,
         path::PathBuf,
+        sync::atomic::{AtomicU64, Ordering},
         time::{SystemTime, UNIX_EPOCH},
     };
 
     use super::*;
+
+    static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
     struct TestDirectory(PathBuf);
 
@@ -325,9 +328,10 @@ mod tests {
                 .duration_since(UNIX_EPOCH)
                 .expect("system clock should be after Unix epoch")
                 .as_nanos();
+            let sequence = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
             let path = std::env::temp_dir().join(format!(
-                "terracotta-git-command-{}-{suffix}",
-                std::process::id()
+                "terracotta-git-command-{}-{suffix}-{sequence}",
+                std::process::id(),
             ));
             fs::create_dir(&path).expect("test directory should be created");
             Self(path)
@@ -349,6 +353,29 @@ fi
 if [ "$MODE" = "interrupt" ]; then
   printf '%s\n' "$$" > "$PID_FILE"
   while :; do :; done
+fi
+if [ "$MODE" = "interrupt-stream" ]; then
+  printf '%s\n' "$$" > "$PID_FILE"
+  i=0
+  while [ "$i" -lt 20000 ]; do
+    printf 'stdout-output-0123456789\n'
+    printf 'stderr-output-0123456789\n' >&2
+    i=$((i + 1))
+  done
+  : > "$READY_FILE"
+  while :; do :; done
+fi
+if [ "$MODE" = "race" ]; then
+  printf '%s\n' "$$" > "$PID_FILE"
+  (
+    while [ ! -f "$RELEASE_FILE" ]; do
+      sleep 0.01
+    done
+    : > "$HOLDER_DONE_FILE"
+  ) &
+  printf 'race-output\n'
+  : > "$READY_FILE"
+  exit 0
 fi
 if [ "$MODE" = "stream" ]; then
   i=0
@@ -486,6 +513,167 @@ exit 0
                 .status()
                 .expect("kill should start")
                 .success()
+        );
+    }
+
+    #[test]
+    fn kills_and_reaps_git_after_both_pipes_fill_when_cancelled() {
+        let directory = TestDirectory::new();
+        directory.install_fake_git();
+        let pid_file = directory.path().join("pid");
+        let ready_file = directory.path().join("ready");
+        let cancellation = CancellationToken::new();
+        let worker_cancellation = cancellation.clone();
+        let path = directory.path().to_owned();
+        let path_environment = directory.path_environment();
+        let pid_path = pid_file
+            .to_str()
+            .expect("pid path should be UTF-8")
+            .to_owned();
+        let ready_path = ready_file
+            .to_str()
+            .expect("ready path should be UTF-8")
+            .to_owned();
+        let worker = thread::spawn(move || {
+            run_git_with_env(
+                &path,
+                "interruptible Git stream",
+                std::iter::empty::<&str>(),
+                &[
+                    ("PATH", path_environment.as_str()),
+                    ("MODE", "interrupt-stream"),
+                    ("PID_FILE", pid_path.as_str()),
+                    ("READY_FILE", ready_path.as_str()),
+                ],
+                &worker_cancellation,
+            )
+        });
+        for _ in 0..100 {
+            if ready_file.is_file() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            ready_file.is_file(),
+            "fake Git should fill both pipes before waiting"
+        );
+        cancellation.cancel();
+
+        let error = worker
+            .join()
+            .expect("Git worker should join")
+            .expect_err("cancelled Git stream should return interruption");
+        assert!(error.is_interrupted());
+        let pid = fs::read_to_string(pid_file)
+            .expect("Git pid should be recorded")
+            .trim()
+            .parse::<u32>()
+            .expect("Git pid should be numeric");
+        assert!(
+            !Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .stderr(Stdio::null())
+                .status()
+                .expect("kill should start")
+                .success(),
+            "Git process {pid} remains alive"
+        );
+    }
+
+    #[test]
+    fn cancellation_wins_after_git_exit_before_output_readers_finish() {
+        let directory = TestDirectory::new();
+        directory.install_fake_git();
+        let pid_file = directory.path().join("pid");
+        let ready_file = directory.path().join("ready");
+        let release_file = directory.path().join("release");
+        let holder_done_file = directory.path().join("holder-done");
+        let cancellation = CancellationToken::new();
+        let worker_cancellation = cancellation.clone();
+        let path = directory.path().to_owned();
+        let path_environment = directory.path_environment();
+        let pid_path = pid_file
+            .to_str()
+            .expect("pid path should be UTF-8")
+            .to_owned();
+        let ready_path = ready_file
+            .to_str()
+            .expect("ready path should be UTF-8")
+            .to_owned();
+        let release_path = release_file
+            .to_str()
+            .expect("release path should be UTF-8")
+            .to_owned();
+        let holder_done_path = holder_done_file
+            .to_str()
+            .expect("holder-done path should be UTF-8")
+            .to_owned();
+        let worker = thread::spawn(move || {
+            run_git_with_env(
+                &path,
+                "racing Git command",
+                std::iter::empty::<&str>(),
+                &[
+                    ("PATH", path_environment.as_str()),
+                    ("MODE", "race"),
+                    ("PID_FILE", pid_path.as_str()),
+                    ("READY_FILE", ready_path.as_str()),
+                    ("RELEASE_FILE", release_path.as_str()),
+                    ("HOLDER_DONE_FILE", holder_done_path.as_str()),
+                ],
+                &worker_cancellation,
+            )
+        });
+        for _ in 0..100 {
+            if ready_file.is_file() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(ready_file.is_file(), "fake Git should signal before exit");
+        for _ in 0..100 {
+            let alive = Command::new("kill")
+                .args([
+                    "-0",
+                    fs::read_to_string(&pid_file)
+                        .expect("Git pid should be recorded")
+                        .trim(),
+                ])
+                .stderr(Stdio::null())
+                .status()
+                .expect("kill should start")
+                .success();
+            if !alive {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let pid = fs::read_to_string(&pid_file)
+            .expect("Git pid should be recorded")
+            .trim()
+            .parse::<u32>()
+            .expect("Git pid should be numeric");
+        assert!(
+            !Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .stderr(Stdio::null())
+                .status()
+                .expect("kill should start")
+                .success(),
+            "Git process {pid} should exit before cancellation"
+        );
+        cancellation.cancel();
+        fs::write(&release_file, "release").expect("output holder should be released");
+
+        let error = worker
+            .join()
+            .expect("Git worker should join")
+            .expect_err("cancellation should win the normal-exit race");
+        assert!(error.is_interrupted());
+        assert!(
+            holder_done_file.is_file(),
+            "output reader holder should be reaped"
         );
     }
 }
