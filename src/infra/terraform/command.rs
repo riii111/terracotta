@@ -608,6 +608,8 @@ fn join_readers(readers: &mut Vec<JoinHandle<io::Result<()>>>) -> io::Result<()>
     first_error.map_or(Ok(()), Err)
 }
 
+// Shared by sibling Terraform tests because the represented fields stay private
+// to this implementation module in production.
 #[cfg(test)]
 mod tests {
     use super::*;

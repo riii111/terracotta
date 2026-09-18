@@ -87,27 +87,6 @@ impl ReviewComparison {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    impl ReviewComparisonStatus {
-        pub(crate) const fn is_complete(&self) -> bool {
-            matches!(self, Self::Complete)
-        }
-    }
-
-    impl ReviewComparison {
-        pub(crate) const fn basis(&self) -> ReviewComparisonBasis {
-            self.basis
-        }
-
-        pub(crate) fn head_commit(&self) -> Option<&str> {
-            self.head_commit.as_deref()
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PlanReview {
     root: PathBuf,
@@ -201,5 +180,26 @@ impl PlanReview {
             .iter()
             .filter(|attribution| attribution.needs_review())
             .count()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    impl ReviewComparisonStatus {
+        pub(crate) const fn is_complete(&self) -> bool {
+            matches!(self, Self::Complete)
+        }
+    }
+
+    impl ReviewComparison {
+        pub(crate) const fn basis(&self) -> ReviewComparisonBasis {
+            self.basis
+        }
+
+        pub(crate) fn head_commit(&self) -> Option<&str> {
+            self.head_commit.as_deref()
+        }
     }
 }
