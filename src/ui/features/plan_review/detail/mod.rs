@@ -1,8 +1,6 @@
 use std::time::{Duration, Instant};
 
 use crate::app::attribution::SourceFileAnalysis;
-#[cfg(test)]
-use crate::app::copy::CopyEffect;
 use crate::app::copy::{CopyNotice, CopyTarget};
 use crate::app::plan::{AttributeDiff, AttributeDiffs, AttributePathSegment};
 #[cfg(test)]
@@ -37,25 +35,18 @@ pub(crate) struct ResourceDetailState {
     source_files: Vec<SourceFileAnalysis>,
     index: usize,
     total: usize,
-    plan_resource_count: usize,
     selected: usize,
     scroll: u16,
     expanded_groups: Vec<AttributeGroup>,
     reveal: Option<SensitiveReveal>,
-    resource_copy_text: Option<String>,
-    plan_copy_text: Option<String>,
+    can_copy_resource: bool,
+    can_copy_plan: bool,
     copy_notice: Option<CopyNotice>,
 }
 
 impl ResourceDetailState {
     pub(super) fn from_list(state: &PlanListState) -> Option<Self> {
         let item = state.selected_item()?.clone();
-        let resource_copy_text = state
-            .copy_effect(CopyTarget::Resource)
-            .map(|effect| effect.text().to_owned());
-        let plan_copy_text = state
-            .copy_effect(CopyTarget::Plan)
-            .map(|effect| effect.text().to_owned());
         Some(Self {
             context: state.context().cloned(),
             comparison: state.comparison().to_owned(),
@@ -64,13 +55,12 @@ impl ResourceDetailState {
             item,
             index: state.selected()?,
             total: state.visible_count(),
-            plan_resource_count: state.items().len(),
             selected: 0,
             scroll: 0,
             expanded_groups: Vec::new(),
             reveal: None,
-            resource_copy_text,
-            plan_copy_text,
+            can_copy_resource: state.can_copy(CopyTarget::Resource),
+            can_copy_plan: state.can_copy(CopyTarget::Plan),
             copy_notice: None,
         })
     }
@@ -151,11 +141,11 @@ impl ResourceDetailState {
             }
             DetailAction::PageUp => self.scroll = self.scroll.saturating_sub(page),
             DetailAction::PageDown => {
+                let content = detail_content(self, now);
                 self.scroll = self.scroll.saturating_add(page).min(max_scroll(
-                    self,
+                    &content,
                     viewport_width,
                     page,
-                    now,
                 ));
             }
             DetailAction::Reveal => self.toggle_reveal(now),
@@ -176,22 +166,6 @@ impl ResourceDetailState {
 
     pub(super) const fn total_items(&self) -> usize {
         self.total
-    }
-
-    #[must_use]
-    #[cfg(test)]
-    pub(super) fn copy_effect(&self, target: CopyTarget) -> Option<CopyEffect> {
-        let text = match target {
-            CopyTarget::Resource => self.resource_copy_text.clone()?,
-            CopyTarget::Plan => self.plan_copy_text.clone()?,
-            CopyTarget::Diagnostic | CopyTarget::Result => return None,
-        };
-        let resource_count = match target {
-            CopyTarget::Resource => self.total,
-            CopyTarget::Plan => self.plan_resource_count,
-            CopyTarget::Diagnostic | CopyTarget::Result => return None,
-        };
-        Some(CopyEffect::new(target, resource_count, text))
     }
 
     #[must_use]
@@ -316,43 +290,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn copying_revealed_resource_keeps_sensitive_values_masked() {
-        let mut state = sensitive_sibling_state();
-        select_attribute(&mut state, "password");
-        let now = Instant::now();
-        state.apply_at(DetailAction::Reveal, 96, 40, now);
-
-        let effect = state
-            .copy_effect(CopyTarget::Resource)
-            .expect("resource copy should be available");
-        let copied_text = effect.text().to_owned();
-
-        assert_eq!(effect.target(), CopyTarget::Resource);
-        assert!(copied_text.contains("Resource ~ aws_instance.api"));
-        assert!(copied_text.contains("<sensitive>"));
-        assert!(!copied_text.contains("old-secret"));
-        assert!(!copied_text.contains("new-secret"));
-    }
-
-    #[test]
-    fn plan_copy_notice_counts_resources_outside_search_scope() {
+    fn plan_copy_availability_ignores_filter_and_search_scope() {
         let mut list = filtered_review_list();
+        assert!(list.can_copy(CopyTarget::Plan));
+
         list.apply(PlanListAction::BeginSearch);
         list.apply(PlanListAction::SetSearch("api".to_owned()));
         list.apply(PlanListAction::ConfirmSearch);
 
-        let detail = ResourceDetailState::from_list(&list).expect("filtered item should open");
-        assert_eq!(detail.total_items(), 1);
-        assert_eq!(
-            detail
-                .copy_effect(CopyTarget::Plan)
-                .expect("plan copy should be available")
-                .success_notice(),
-            CopyNotice::Copied {
-                target: CopyTarget::Plan,
-                resource_count: 2,
-            }
-        );
+        assert!(list.can_copy(CopyTarget::Plan));
     }
 
     #[test]

@@ -527,6 +527,39 @@ mod tests {
     }
 
     #[test]
+    fn plan_copy_ignores_search_scope_when_copy_action_runs() {
+        let started_at = now();
+        let mut state = SessionState::new(ExecutionState::new(started_at));
+        update(
+            &mut state,
+            Action::ReviewCompleted(review_with_resource()),
+            started_at,
+        );
+        update(
+            &mut state,
+            Action::List(PlanListAction::BeginSearch),
+            started_at,
+        );
+        update(
+            &mut state,
+            Action::List(PlanListAction::SetSearch("not-present".to_owned())),
+            started_at,
+        );
+        update(
+            &mut state,
+            Action::List(PlanListAction::ConfirmSearch),
+            started_at,
+        );
+
+        let effects = update(&mut state, Action::Copy(CopyTarget::Plan), started_at);
+        let [Effect::WriteClipboard(effect)] = effects.as_slice() else {
+            panic!("plan copy should produce a clipboard effect");
+        };
+        assert_eq!(effect.resource_count(), 1);
+        assert!(effect.text().contains("aws_instance.api"));
+    }
+
+    #[test]
     fn failed_copy_preserves_detail_and_selection_while_notifying_failure() {
         let started_at = now();
         let mut state = SessionState::new(ExecutionState::new(started_at));

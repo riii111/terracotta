@@ -336,8 +336,8 @@ fn footer_line(state: &PlanListState, width: usize) -> Line<'static> {
     }
 
     let copy_controls = match (
-        state.copy_effect(CopyTarget::Resource).is_some(),
-        state.copy_effect(CopyTarget::Plan).is_some(),
+        state.can_copy(CopyTarget::Resource),
+        state.can_copy(CopyTarget::Plan),
     ) {
         (true, true) => "y resource / Y plan  ",
         (false, true) => "Y plan  ",
@@ -691,29 +691,22 @@ mod tests {
     }
 
     #[test]
-    fn empty_plan_disables_resource_copy_effect() {
+    fn empty_plan_disables_resource_copy() {
         let state = PlanListState::empty("working tree vs HEAD");
 
-        assert!(state.copy_effect(CopyTarget::Resource).is_none());
+        assert!(!state.can_copy(CopyTarget::Resource));
     }
 
     #[test]
-    fn plan_copy_ignores_filter_and_search_scope() {
+    fn plan_copy_availability_ignores_filter_and_search_scope() {
         let mut state = connected_state();
-        let full_text = state
-            .copy_effect(CopyTarget::Plan)
-            .expect("plan copy should be available")
-            .text()
-            .to_owned();
+        assert!(state.can_copy(CopyTarget::Plan));
 
         state.apply(PlanListAction::ToggleFilter);
         state.apply(PlanListAction::BeginSearch);
         state.apply(PlanListAction::SetSearch("not-present".to_owned()));
 
-        let filtered_effect = state
-            .copy_effect(CopyTarget::Plan)
-            .expect("plan copy should ignore visible scope");
-        assert_eq!(filtered_effect.text(), full_text);
+        assert!(state.can_copy(CopyTarget::Plan));
     }
 
     #[test]

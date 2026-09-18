@@ -308,6 +308,15 @@ impl PlanListState {
     }
 
     #[must_use]
+    pub(crate) fn can_copy(&self, target: CopyTarget) -> bool {
+        match target {
+            CopyTarget::Resource => self.selected_item().is_some_and(PlanListItem::can_copy),
+            CopyTarget::Plan => self.plan_copy_text.is_some(),
+            CopyTarget::Diagnostic | CopyTarget::Result => false,
+        }
+    }
+
+    #[must_use]
     pub(crate) fn copy_effect(&self, target: CopyTarget) -> Option<CopyEffect> {
         match target {
             CopyTarget::Resource => self.selected_item()?.copy_effect(target, self.items.len()),

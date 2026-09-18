@@ -107,10 +107,9 @@ pub(super) fn render_resource_detail_at(
 
     let content = super::detail_content(state, now);
     let scroll = state.scroll().min(super::max_scroll(
-        state,
+        &content,
         chunks[4].width,
         chunks[4].height,
-        now,
     ));
     frame.render_widget(
         Paragraph::new(content.lines)
@@ -141,10 +140,7 @@ fn footer_line(state: &ResourceDetailState, now: Instant, width: u16) -> String 
     } else {
         format!("{reveal}   ")
     };
-    let copy_controls = match (
-        state.resource_copy_text.is_some(),
-        state.plan_copy_text.is_some(),
-    ) {
+    let copy_controls = match (state.can_copy_resource, state.can_copy_plan) {
         (true, true) => "y resource / Y plan | ",
         (false, true) => "Y plan | ",
         (true, false) => "y resource | ",

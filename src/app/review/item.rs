@@ -49,6 +49,11 @@ impl PlanListItem {
     }
 
     #[must_use]
+    pub(super) const fn can_copy(&self) -> bool {
+        self.resource_copy_text.is_some()
+    }
+
+    #[must_use]
     pub(crate) fn attribute_diffs(&self) -> AttributeDiffs {
         diff_resource_attributes(&self.change)
     }
