@@ -108,6 +108,8 @@ pub(super) enum SearchInput {
 }
 
 pub(super) fn key_to_action(key: KeyEvent) -> Option<ListInput> {
+    let key = super::input::normalize_key(key);
+
     if matches!(key.code, KeyCode::Char('q'))
         || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
     {
@@ -136,6 +138,8 @@ pub(super) fn key_to_action(key: KeyEvent) -> Option<ListInput> {
 }
 
 pub(super) fn search_key_to_input(key: KeyEvent) -> Option<SearchInput> {
+    let key = super::input::normalize_key(key);
+
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
         return Some(SearchInput::Quit);
     }
@@ -935,6 +939,34 @@ mod tests {
                 key(KeyCode::Char('Y'), KeyModifiers::NONE),
                 Some(ListInput::Copy(CopyTarget::Plan)),
             ),
+            (
+                "copy_plan_with_redundant_shift",
+                key(KeyCode::Char('Y'), KeyModifiers::SHIFT),
+                Some(ListInput::Copy(CopyTarget::Plan)),
+            ),
+            (
+                "uppercase_y_with_control_does_not_copy",
+                key(KeyCode::Char('Y'), KeyModifiers::CONTROL),
+                None,
+            ),
+            (
+                "uppercase_y_with_control_and_shift_does_not_copy",
+                key(
+                    KeyCode::Char('Y'),
+                    KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+                ),
+                None,
+            ),
+            (
+                "uppercase_y_with_alt_does_not_copy",
+                key(KeyCode::Char('Y'), KeyModifiers::ALT),
+                None,
+            ),
+            (
+                "uppercase_y_with_alt_and_shift_does_not_copy",
+                key(KeyCode::Char('Y'), KeyModifiers::ALT | KeyModifiers::SHIFT),
+                None,
+            ),
         ];
 
         for (name, input, expected) in cases {
@@ -1023,6 +1055,16 @@ mod tests {
         assert_eq!(
             search_key_to_input(key(KeyCode::Esc, KeyModifiers::NONE)),
             Some(SearchInput::Cancel)
+        );
+    }
+
+    #[rstest]
+    #[case::uppercase_without_shift(KeyModifiers::NONE)]
+    #[case::uppercase_with_redundant_shift(KeyModifiers::SHIFT)]
+    fn uppercase_y_is_search_text_during_search(#[case] modifiers: KeyModifiers) {
+        assert_eq!(
+            search_key_to_input(key(KeyCode::Char('Y'), modifiers)),
+            Some(SearchInput::Insert('Y'))
         );
     }
 

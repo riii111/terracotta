@@ -86,6 +86,8 @@ pub(super) fn execution_key_to_input(
     key: KeyEvent,
     stage: ExecutionStage,
 ) -> Option<ExecutionInput> {
+    let key = super::input::normalize_key(key);
+
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
         return Some(if stage == ExecutionStage::Failed {
             ExecutionInput::Quit
@@ -445,6 +447,7 @@ fn footer_line(state: &ExecutionState) -> String {
 #[cfg(test)]
 mod tests {
     use ratatui::buffer::Buffer;
+    use rstest::rstest;
 
     use crate::ui::test_support::buffer_text;
     use crate::ui::test_support::render_to_buffer as render_test_buffer;
@@ -462,6 +465,10 @@ mod tests {
 
     fn render_to_buffer(state: &ExecutionState, now: Instant, width: u16, height: u16) -> Buffer {
         render_test_buffer((width, height), |frame| render_execution(frame, state, now))
+    }
+
+    fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, modifiers)
     }
 
     fn resource_event(at: Instant, address: &str, kind: ResourceEventKind) -> ExecutionEvent {
@@ -797,12 +804,6 @@ mod tests {
                 ExecutionStage::Failed,
                 Some(ExecutionInput::Copy(CopyTarget::Diagnostic)),
             ),
-            (
-                "uppercase_y_copies_result_after_failure",
-                key(KeyCode::Char('Y'), KeyModifiers::NONE),
-                ExecutionStage::Failed,
-                Some(ExecutionInput::Copy(CopyTarget::Result)),
-            ),
         ];
 
         for (name, input, stage, expected) in cases {
@@ -812,5 +813,38 @@ mod tests {
                 "case: {name}"
             );
         }
+    }
+
+    #[rstest]
+    #[case::uppercase_without_shift(KeyModifiers::NONE)]
+    #[case::uppercase_with_redundant_shift(KeyModifiers::SHIFT)]
+    fn uppercase_y_copies_result_after_failure(#[case] modifiers: KeyModifiers) {
+        assert_eq!(
+            execution_key_to_input(key(KeyCode::Char('Y'), modifiers), ExecutionStage::Failed,),
+            Some(ExecutionInput::Copy(CopyTarget::Result))
+        );
+    }
+
+    #[rstest]
+    #[case::control(KeyModifiers::CONTROL)]
+    #[case::control_with_redundant_shift(KeyModifiers::CONTROL | KeyModifiers::SHIFT)]
+    #[case::alt(KeyModifiers::ALT)]
+    #[case::alt_with_redundant_shift(KeyModifiers::ALT | KeyModifiers::SHIFT)]
+    fn uppercase_y_with_control_or_alt_does_not_copy(#[case] modifiers: KeyModifiers) {
+        assert_eq!(
+            execution_key_to_input(key(KeyCode::Char('Y'), modifiers), ExecutionStage::Failed,),
+            None
+        );
+    }
+
+    #[rstest]
+    #[case::lowercase(KeyCode::Char('y'), KeyModifiers::NONE)]
+    #[case::uppercase(KeyCode::Char('Y'), KeyModifiers::NONE)]
+    #[case::uppercase_with_redundant_shift(KeyCode::Char('Y'), KeyModifiers::SHIFT)]
+    fn copy_keys_are_ignored_while_running(#[case] code: KeyCode, #[case] modifiers: KeyModifiers) {
+        assert_eq!(
+            execution_key_to_input(key(code, modifiers), ExecutionStage::Planning),
+            None
+        );
     }
 }

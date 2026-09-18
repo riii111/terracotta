@@ -330,6 +330,8 @@ impl ResourceDetailState {
 }
 
 pub(super) fn key_to_input(key: KeyEvent) -> Option<DetailInput> {
+    let key = super::input::normalize_key(key);
+
     if key.code == KeyCode::Esc {
         return Some(DetailInput::Back);
     }
@@ -1351,6 +1353,11 @@ mod tests {
                 Some(DetailInput::Copy(CopyTarget::Plan)),
             ),
             (
+                "copy_plan_with_redundant_shift",
+                key_with_modifiers(KeyCode::Char('Y'), KeyModifiers::SHIFT),
+                Some(DetailInput::Copy(CopyTarget::Plan)),
+            ),
+            (
                 "expand",
                 key(KeyCode::Enter),
                 Some(DetailInput::Action(DetailAction::ToggleExpansion)),
@@ -1378,6 +1385,29 @@ mod tests {
             (
                 "alt_r_does_not_reveal",
                 key_with_modifiers(KeyCode::Char('r'), KeyModifiers::ALT),
+                None,
+            ),
+            (
+                "uppercase_y_with_control_does_not_copy",
+                key_with_modifiers(KeyCode::Char('Y'), KeyModifiers::CONTROL),
+                None,
+            ),
+            (
+                "uppercase_y_with_control_and_shift_does_not_copy",
+                key_with_modifiers(
+                    KeyCode::Char('Y'),
+                    KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+                ),
+                None,
+            ),
+            (
+                "uppercase_y_with_alt_does_not_copy",
+                key_with_modifiers(KeyCode::Char('Y'), KeyModifiers::ALT),
+                None,
+            ),
+            (
+                "uppercase_y_with_alt_and_shift_does_not_copy",
+                key_with_modifiers(KeyCode::Char('Y'), KeyModifiers::ALT | KeyModifiers::SHIFT),
                 None,
             ),
         ];
