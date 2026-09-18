@@ -560,6 +560,7 @@ fn synthetic_change(address: &str, kind: ResourceChangeKind, action: PlanAction)
 
 #[cfg(test)]
 mod tests {
+    use crate::app::review::ReviewDetailState;
     use std::path::PathBuf;
 
     use ratatui::buffer::Buffer;
@@ -897,10 +898,10 @@ mod tests {
         state.apply(PlanListAction::SetSearch("worker".to_owned()));
         state.apply(PlanListAction::ConfirmSearch);
 
-        let detail = super::super::detail::ResourceDetailState::from_list(&state)
+        let detail = ReviewDetailState::from_list(&state)
             .expect("the filtered search result should open details");
-        assert_eq!(detail.item_index(), 0);
-        assert_eq!(detail.total_items(), 1);
+        assert_eq!(detail.index(), 0);
+        assert_eq!(detail.total(), 1);
         assert_eq!(state.filter(), PlanListFilter::NeedsReview);
         assert_eq!(state.search(), "worker");
     }
@@ -918,10 +919,10 @@ mod tests {
         assert!(!text.contains("aws_instance.api"), "{text}");
         assert!(text.contains("aws_instance.worker"), "{text}");
 
-        let detail = super::super::detail::ResourceDetailState::from_list(&state)
-            .expect("filtered selection should open details");
-        assert_eq!(detail.item_index(), 0);
-        assert_eq!(detail.total_items(), 2);
+        let detail =
+            ReviewDetailState::from_list(&state).expect("filtered selection should open details");
+        assert_eq!(detail.index(), 0);
+        assert_eq!(detail.total(), 2);
         assert_eq!(state.filter(), PlanListFilter::NeedsReview);
     }
 
