@@ -255,10 +255,7 @@ const fn copy_completed(
     };
     match state {
         SessionState::Execution(execution) => execution.set_copy_notice(notice),
-        SessionState::Review(review) => {
-            review.copy_notice = Some(notice);
-            review.list.set_copy_notice(notice);
-        }
+        SessionState::Review(review) => review.copy_notice = Some(notice),
     }
     Vec::new()
 }
@@ -699,11 +696,27 @@ mod tests {
                 resource_count: 1,
             })
         );
-        assert!(
-            state
-                .review()
-                .and_then(|review| review.list().copy_notice())
-                .is_some()
+
+        update(&mut state, Action::OpenDetail, started_at);
+        let review = state.review().expect("review state");
+        assert!(review.detail().is_some());
+        assert_eq!(
+            review.copy_notice(),
+            Some(CopyNotice::Copied {
+                target: CopyTarget::Resource,
+                resource_count: 1,
+            })
+        );
+
+        update(&mut state, Action::CloseDetail, started_at);
+        let review = state.review().expect("review state");
+        assert!(review.detail().is_none());
+        assert_eq!(
+            review.copy_notice(),
+            Some(CopyNotice::Copied {
+                target: CopyTarget::Resource,
+                resource_count: 1,
+            })
         );
     }
 
@@ -786,7 +799,16 @@ mod tests {
         assert_eq!(review.list().selected(), selected_before);
         assert_eq!(review.detail(), detail_before.as_ref());
         assert_eq!(review.copy_notice(), Some(CopyNotice::Failed));
-        assert_eq!(review.list().copy_notice(), Some(CopyNotice::Failed));
+
+        update(&mut state, Action::CloseDetail, started_at);
+        let review = state.review().expect("review state");
+        assert!(review.detail().is_none());
+        assert_eq!(review.copy_notice(), Some(CopyNotice::Failed));
+
+        update(&mut state, Action::OpenDetail, started_at);
+        let review = state.review().expect("review state");
+        assert!(review.detail().is_some());
+        assert_eq!(review.copy_notice(), Some(CopyNotice::Failed));
     }
 
     #[test]

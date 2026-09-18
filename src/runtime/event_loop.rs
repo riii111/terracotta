@@ -378,6 +378,7 @@ fn draw(
                         frame,
                         review.list(),
                         review.diagnostics(),
+                        review.copy_notice(),
                         list_view,
                     );
                 })?;

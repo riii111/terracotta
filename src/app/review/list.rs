@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::app::attribution::{ResourceAttribution, SourceFileAnalysis};
-use crate::app::copy::{self, CopyEffect, CopyNotice, CopyTarget};
+use crate::app::copy::{self, CopyEffect, CopyTarget};
 use crate::app::plan::{Plan, PlanSummary, UnsupportedChangeKind};
 use crate::app::review::PlanReview;
 
@@ -90,7 +90,6 @@ pub(crate) struct PlanListState {
     search_backup: Option<SearchBackup>,
     selected: Option<usize>,
     plan_copy_text: Option<String>,
-    copy_notice: Option<CopyNotice>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,7 +203,6 @@ impl PlanListState {
             search_backup: None,
             selected,
             plan_copy_text: None,
-            copy_notice: None,
         })
     }
 
@@ -320,15 +318,6 @@ impl PlanListState {
             )),
             CopyTarget::Diagnostic | CopyTarget::Result => None,
         }
-    }
-
-    #[must_use]
-    pub(crate) const fn copy_notice(&self) -> Option<CopyNotice> {
-        self.copy_notice
-    }
-
-    pub(crate) const fn set_copy_notice(&mut self, notice: CopyNotice) {
-        self.copy_notice = Some(notice);
     }
 
     #[must_use]
