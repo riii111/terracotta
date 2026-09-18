@@ -3,11 +3,11 @@ use ratatui::style::{Color, Modifier, Style};
 use crate::app::plan::{AttributeChangeKind, ResourceChangeKind};
 
 pub(crate) fn footer_key_style() -> Style {
-    Style::default().fg(Color::Cyan)
+    Style::default().fg(Color::Rgb(0xd4, 0xa4, 0x85))
 }
 
 pub(crate) fn footer_text_style() -> Style {
-    Style::default().fg(Color::Gray)
+    Style::default().fg(Color::Rgb(0xc0, 0xb8, 0xb8))
 }
 
 pub(crate) fn diff_style(kind: AttributeChangeKind, after: bool) -> Style {

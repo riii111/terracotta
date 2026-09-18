@@ -64,6 +64,30 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn rendered_keys_and_descriptions_use_rgb_colors_independent_of_ansi_palette() {
+        let backend = ratatui::backend::TestBackend::new(80, 2);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                render(
+                    frame,
+                    frame.area(),
+                    layout(vec![hint("q", "quit"), hint("[/]", "prev/next")], 80),
+                );
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(
+            buffer[(0, 0)].fg,
+            ratatui::style::Color::Rgb(0xd4, 0xa4, 0x85)
+        );
+        assert_eq!(
+            buffer[(2, 0)].fg,
+            ratatui::style::Color::Rgb(0xc0, 0xb8, 0xb8)
+        );
+    }
+
     #[rstest]
     #[case::single_row(80)]
     #[case::wrapped_rows(16)]
