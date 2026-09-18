@@ -669,7 +669,6 @@ mod tests {
                     },
                 }),
                 source: DiagnosticSource::Terraform,
-                raw: None,
             }),
         ));
         state.record(event(

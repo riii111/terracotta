@@ -773,7 +773,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_text_formats_diagnostics_without_copying_raw_payload() {
+    fn failed_text_formats_structured_diagnostic_fields() {
         let context = ExecutionContext::known(
             "infra/prod",
             "default",
@@ -798,7 +798,6 @@ mod tests {
                 },
             }),
             source: DiagnosticSource::Terraform,
-            raw: Some("secret raw payload".to_owned()),
         };
 
         let output = failed_text(
@@ -811,7 +810,6 @@ mod tests {
         assert!(output.contains("error: Terraform initialization required."));
         assert!(output.contains("Run terraform init, then try again."));
         assert!(output.contains("at main.tf:3:4"));
-        assert!(!output.contains("secret raw payload"));
         assert!(output.contains("Review result is unavailable."));
     }
 }

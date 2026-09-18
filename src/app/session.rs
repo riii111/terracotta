@@ -508,7 +508,6 @@ mod tests {
                 detail: None,
                 position: None,
                 source: DiagnosticSource::Terraform,
-                raw: None,
             }),
         })
     }

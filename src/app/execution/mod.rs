@@ -106,7 +106,6 @@ impl ExecutionState {
                 detail: None,
                 position: None,
                 source: DiagnosticSource::Terraform,
-                raw: None,
             }),
         });
     }

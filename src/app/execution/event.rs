@@ -101,7 +101,6 @@ pub(crate) struct Diagnostic {
     pub(crate) detail: Option<String>,
     pub(crate) position: Option<DiagnosticPosition>,
     pub(crate) source: DiagnosticSource,
-    pub(crate) raw: Option<String>,
 }
 
 impl Debug for Diagnostic {
@@ -113,7 +112,6 @@ impl Debug for Diagnostic {
             .field("detail", &self.detail.as_ref().map(|_| "<redacted>"))
             .field("position", &self.position)
             .field("source", &self.source)
-            .field("raw", &self.raw.as_ref().map(|_| "<redacted>"))
             .finish()
     }
 }

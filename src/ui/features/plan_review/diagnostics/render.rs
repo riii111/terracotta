@@ -192,12 +192,11 @@ mod tests {
                 },
             }),
             source: DiagnosticSource::Terraform,
-            raw: Some("raw must stay hidden".to_owned()),
         }])
     }
 
     #[test]
-    fn renders_structured_fields_without_raw_text() {
+    fn renders_structured_fields() {
         let state = diagnostics();
         let text = buffer_text(&render_to_buffer((80, 20), |frame| {
             render_diagnostics(frame, &state, DiagnosticsViewState::default());
@@ -210,7 +209,6 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("main.tf:4:2-4:8"), "{text}");
-        assert!(!text.contains("raw must stay hidden"), "{text}");
     }
 
     #[test]

@@ -57,7 +57,6 @@ fn narrow_failure_wraps_diagnostic_and_preserves_quit_hint() {
                 },
             }),
             source: DiagnosticSource::Terraform,
-            raw: None,
         }),
     ));
     state.record(event(
