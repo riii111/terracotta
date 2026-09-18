@@ -7,6 +7,9 @@ description = "Review Terraform plan changes against Git evidence"
 repository = "https://github.com/riii111/terracotta"
 publish = false
 
+[features]
+test-support = []
+
 [dependencies]
 arboard = { version = "3.6.1", default-features = false }
 clap = { version = "4", features = ["derive"] }

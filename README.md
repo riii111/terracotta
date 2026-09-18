@@ -1,16 +1,36 @@
 # Terracotta
 
-Terraformのplanを楽に読んで判断しやすくするためのCLI。
+Terraformのplanを楽に読んで判断しやすくする、一時的なTUI付きCLI。
 
 Gitの変更と突き合わせて、**「自分のコード変更だけでは説明しづらい差分」**を見つけやすくする。
 
-> まだ開発中。Terraformの実行機能は未実装。
+MVPは`terracotta plan`によるplan実行、変更一覧、resource詳細、Gitのdirect照合、機微値の一時表示、マスク済みコピーを提供する。確認を終えるとシェルへ戻る。
+
+## 使い方
+
+Terraformを初期化済みのrootで実行する。
+
+```sh
+terracotta plan
+```
+
+通常は作業ツリーと`HEAD`を比較する。基準ブランチとの差分を確認する場合は、`HEAD`と指定refのmerge-baseを比較する。
+
+```sh
+terracotta plan --compare-ref main
+```
+
+一覧では`f`で要確認だけに絞り込み、`/`でresource addressを検索する。`Enter`で詳細を開き、`Enter`で省略属性を展開する。`y`は選択resource、`Y`はplan全体をマスク済みでコピーする。`q`または`Ctrl-C`で終了する。
+
+Terraformのplan失敗時はdiagnosticを表示して終了を待つ。Gitの取得・解析だけが失敗した場合は、planを閲覧できる状態を保ったまま「解析不完全」と表示する。
+
+`plan`はクラウド接続を隠す機能ではない。対象rootのTerraform設定、state、認証情報など、通常の`terraform plan`に必要な環境を用意する。
 
 ## イメージ
 
 - **一時CLI**：使うときだけ開き、終わったらシェルに戻る
 - **Git変更との照合**：各リソースが今のコード変更とつながるかを見る
-- **確認したplanのまま進む**：見たsaved planを、再planせずにapplyする
+- **確認したplanを持ち出す**：機微値をマスクしたplanやresourceをclipboardへコピーする
 
 ### 一時CLI
 
@@ -26,7 +46,7 @@ $ terracotta plan
       ↓
   plan review
       ↓
-  apply / quit
+  quit
 
       ↓
 
@@ -75,21 +95,10 @@ Diff:
     → t3.medium
 ```
 
-直接変えていないリソースでも、辿れるなら経路だけ出す。
+MVPではroot直下のmanaged resourceとネイティブHCLのGit変更をdirectに照合する。間接的な影響経路の推定は行わない。
 
-```text
-locals.common_tags
-  ↓
-module.ecs
-  ↓
-aws_ecs_service.app
-```
+### 確認したplanを持ち出す
 
-変更原因の断定ではない。Terraform設定上の対応関係。
+plan全体やresource単位の情報を、機微値をマスクしたテキストとしてclipboardへコピーできる。
 
-### 確認したplanのまま進む
-
-レビューしたsaved planを、そのままapplyする。
-失敗したら成功済み、失敗、diagnostic、plan差分、Git対応を同じ場で見る。
-
-普通の `terraform plan` に戻りたくなくなるかどうか。
+普通の`terraform plan`に戻りたくなくなるかどうか。

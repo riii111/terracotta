@@ -1,5 +1,6 @@
 use std::{
     io::{self, IsTerminal, Write},
+    panic::{self, AssertUnwindSafe},
     path::Path,
     process::ExitCode,
     sync::mpsc,
@@ -14,12 +15,14 @@ use crate::{
         review::PlanReviewMessage,
     },
     infra::{
-        clipboard::SystemClipboard,
-        review,
+        ClipboardExecutor, review,
         terraform::{CancellationToken, TerraformExecutionErrorKind},
     },
     ui::{self, UiOutcome},
 };
+
+#[cfg(feature = "test-support")]
+use crate::test_support;
 
 const EXECUTION_FAILURE: u8 = 1;
 const INTERRUPTED: u8 = 130;
@@ -80,9 +83,15 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
         cancellation: cancellation.clone(),
         handle: Some(worker),
     };
-    let mut clipboard = SystemClipboard::new();
+    let mut clipboard = ClipboardExecutor::new();
     let context = initial_execution_context(root, compare_ref);
-    let ui_result = ratatui::run(|terminal| {
+    let ui_result = run_terminal(|terminal| {
+        #[cfg(feature = "test-support")]
+        if test_support::panic_after_draw_requested() {
+            terminal.draw(|_| {})?;
+            panic!("synthetic terminal panic");
+        }
+
         ui::run_connected(
             terminal,
             ExecutionState::with_context(Instant::now(), context),
@@ -107,6 +116,19 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
         (_, Err(_)) => {
             report_error("the plan worker terminated unexpectedly");
             ExitCode::from(EXECUTION_FAILURE)
+        }
+    }
+}
+
+fn run_terminal<F, R>(callback: F) -> R
+where
+    F: FnOnce(&mut ratatui::DefaultTerminal) -> R,
+{
+    match panic::catch_unwind(AssertUnwindSafe(|| ratatui::run(callback))) {
+        Ok(result) => result,
+        Err(payload) => {
+            let _ = crossterm::execute!(io::stdout(), crossterm::cursor::Show);
+            panic::resume_unwind(payload);
         }
     }
 }
