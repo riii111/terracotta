@@ -115,7 +115,7 @@ fn parse_diff_hunks(
     repository_root: &Path,
     root: &Path,
 ) -> Result<Vec<SourceLineChange>, GitCommandError> {
-    let text = String::from_utf8(output.to_owned()).map_err(|error| {
+    let text = std::str::from_utf8(output).map_err(|error| {
         parse_error(
             "parse Git diff hunks",
             &format!("diff is not valid UTF-8: {error}"),
@@ -292,4 +292,22 @@ fn add_line_change(
         side,
         SourceRange::new(start, end),
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_non_utf8_diff_as_parse_error() {
+        let error = parse_diff_hunks(
+            b"diff --git \xff",
+            std::path::Path::new("/repository"),
+            std::path::Path::new("/repository"),
+        )
+        .expect_err("invalid UTF-8 should fail diff parsing");
+
+        assert_eq!(error.operation, "parse Git diff hunks");
+        assert!(error.message.starts_with("diff is not valid UTF-8: "));
+    }
 }
