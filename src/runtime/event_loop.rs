@@ -35,26 +35,35 @@ pub(crate) fn run_connected(
     let mut list_view = ListState::default();
     let mut detail_view = None;
     let mut worker_disconnected = false;
+    let mut dirty = true;
 
     loop {
-        if let Some(outcome) = receive_messages(
+        let (outcome, received_message) = receive_messages(
             messages,
             &mut state,
             &mut worker_disconnected,
             cancellation,
             clipboard,
-        )? {
+        )?;
+        dirty |= received_message;
+        if let Some(outcome) = outcome {
             return Ok(outcome);
         }
+        let now = Instant::now();
+        let reveal_present = state
+            .review()
+            .and_then(|review| review.detail())
+            .is_some_and(|detail| detail.reveal().is_some());
         if let Some(outcome) = dispatch(
             &mut state,
             Action::TimeUpdated,
-            Instant::now(),
+            now,
             cancellation,
             clipboard,
         ) {
             return Ok(outcome);
         }
+        dirty |= reveal_present;
 
         let detail_is_open = state
             .review()
@@ -72,7 +81,8 @@ pub(crate) fn run_connected(
             {
                 return Ok(outcome);
             }
-            if let Some(review) = state.review()
+            if dirty
+                && let Some(review) = state.review()
                 && let Some(detail) = review.detail()
             {
                 let scroll = detail_view
@@ -85,122 +95,137 @@ pub(crate) fn run_connected(
                     scroll,
                 );
             }
-        } else {
+        } else if dirty {
             detail_view = None;
         }
 
-        draw(
-            &mut state,
-            terminal,
-            &mut list_view,
-            &mut detail_view,
-            execution_view,
-        )?;
+        if dirty || state.execution().is_some() {
+            draw(
+                &mut state,
+                terminal,
+                &mut list_view,
+                &mut detail_view,
+                execution_view,
+            )?;
+            dirty = false;
+        }
 
-        if event::poll(Duration::from_millis(100))?
-            && let Event::Key(key) = event::read()?
-            && key.is_press()
-        {
-            let now = Instant::now();
-            let action = if let Some(execution) = state.execution() {
-                match execution::execution_key_to_input(key, execution.stage()) {
-                    Some(execution::ExecutionInput::Quit) => Some(Action::Quit),
-                    Some(execution::ExecutionInput::Action(
-                        ExecutionAction::RequestCancellation,
-                    )) => Some(Action::Execution(ExecutionAction::RequestCancellation)),
-                    Some(execution::ExecutionInput::End) => {
-                        execution_view.end();
+        if event::poll(Duration::from_millis(100))? {
+            match event::read()? {
+                Event::Resize(_, _) => dirty = true,
+                Event::Key(key) if key.is_press() => {
+                    dirty = true;
+                    let now = Instant::now();
+                    let action = if let Some(execution) = state.execution() {
+                        match execution::execution_key_to_input(key, execution.stage()) {
+                            Some(execution::ExecutionInput::Quit) => Some(Action::Quit),
+                            Some(execution::ExecutionInput::Action(
+                                ExecutionAction::RequestCancellation,
+                            )) => Some(Action::Execution(ExecutionAction::RequestCancellation)),
+                            Some(execution::ExecutionInput::End) => {
+                                execution_view.end();
+                                None
+                            }
+                            Some(execution::ExecutionInput::Scroll(scroll)) => {
+                                let size = terminal.size()?;
+                                let body = execution::execution_chunks(
+                                    Rect::new(0, 0, size.width, size.height),
+                                    execution,
+                                )[2];
+                                let (current, max) = execution::execution_scroll_position_with_view(
+                                    execution,
+                                    execution_view,
+                                    body,
+                                );
+                                execution_view.apply_scroll(scroll, current, max);
+                                None
+                            }
+                            Some(execution::ExecutionInput::Copy(target)) => {
+                                Some(Action::Copy(target))
+                            }
+                            None => None,
+                        }
+                    } else if state
+                        .review()
+                        .is_some_and(|review| review.detail().is_some())
+                    {
+                        match plan_review::key_to_detail_input(key) {
+                            Some(plan_review::DetailInput::Back) => Some(Action::CloseDetail),
+                            Some(plan_review::DetailInput::Quit) => Some(Action::Quit),
+                            Some(plan_review::DetailInput::Navigate(navigation)) => {
+                                if let Some(view) = detail_view.as_mut() {
+                                    view.reset_scroll();
+                                }
+                                Some(Action::Navigate(navigation))
+                            }
+                            Some(plan_review::DetailInput::Copy(target)) => {
+                                Some(Action::Copy(target))
+                            }
+                            Some(plan_review::DetailInput::Action(
+                                action @ (DetailAction::PageUp | DetailAction::PageDown),
+                            )) => {
+                                if let Some(view) = detail_view.as_mut() {
+                                    let size = terminal.size()?;
+                                    view.apply_at(
+                                        action,
+                                        size.width.saturating_sub(2),
+                                        size.height.saturating_sub(7),
+                                        now,
+                                    );
+                                }
+                                None
+                            }
+                            Some(plan_review::DetailInput::Action(action)) => {
+                                if let Some(view) = detail_view.as_mut() {
+                                    let size = terminal.size()?;
+                                    view.apply_at(
+                                        action,
+                                        size.width.saturating_sub(2),
+                                        size.height.saturating_sub(7),
+                                        now,
+                                    );
+                                }
+                                Some(Action::Detail(action))
+                            }
+                            None => None,
+                        }
+                    } else if let Some(review) = state.review() {
+                        if review.list().searching() {
+                            match plan_review::search_key_to_input(key) {
+                                Some(plan_review::SearchInput::Quit) => Some(Action::Quit),
+                                _ => plan_review::search_key_to_action(review.list(), key)
+                                    .map(Action::List),
+                            }
+                        } else {
+                            match plan_review::key_to_list_input(key) {
+                                Some(plan_review::ListInput::Quit) => Some(Action::Quit),
+                                Some(plan_review::ListInput::Selection(action)) => {
+                                    Some(Action::List(action))
+                                }
+                                Some(plan_review::ListInput::Copy(target)) => {
+                                    Some(Action::Copy(target))
+                                }
+                                Some(plan_review::ListInput::OpenDetail) => {
+                                    Some(Action::OpenDetail)
+                                }
+                                Some(plan_review::ListInput::StartSearch) => {
+                                    Some(Action::List(PlanListAction::BeginSearch))
+                                }
+                                None => None,
+                            }
+                        }
+                    } else {
                         None
-                    }
-                    Some(execution::ExecutionInput::Scroll(scroll)) => {
-                        let size = terminal.size()?;
-                        let body = execution::execution_chunks(
-                            Rect::new(0, 0, size.width, size.height),
-                            execution,
-                        )[2];
-                        let (current, max) = execution::execution_scroll_position_with_view(
-                            execution,
-                            execution_view,
-                            body,
-                        );
-                        execution_view.apply_scroll(scroll, current, max);
-                        None
-                    }
-                    Some(execution::ExecutionInput::Copy(target)) => Some(Action::Copy(target)),
-                    None => None,
-                }
-            } else if state
-                .review()
-                .is_some_and(|review| review.detail().is_some())
-            {
-                match plan_review::key_to_detail_input(key) {
-                    Some(plan_review::DetailInput::Back) => Some(Action::CloseDetail),
-                    Some(plan_review::DetailInput::Quit) => Some(Action::Quit),
-                    Some(plan_review::DetailInput::Navigate(navigation)) => {
-                        if let Some(view) = detail_view.as_mut() {
-                            view.reset_scroll();
-                        }
-                        Some(Action::Navigate(navigation))
-                    }
-                    Some(plan_review::DetailInput::Copy(target)) => Some(Action::Copy(target)),
-                    Some(plan_review::DetailInput::Action(
-                        action @ (DetailAction::PageUp | DetailAction::PageDown),
-                    )) => {
-                        if let Some(view) = detail_view.as_mut() {
-                            let size = terminal.size()?;
-                            view.apply_at(
-                                action,
-                                size.width.saturating_sub(2),
-                                size.height.saturating_sub(7),
-                                now,
-                            );
-                        }
-                        None
-                    }
-                    Some(plan_review::DetailInput::Action(action)) => {
-                        if let Some(view) = detail_view.as_mut() {
-                            let size = terminal.size()?;
-                            view.apply_at(
-                                action,
-                                size.width.saturating_sub(2),
-                                size.height.saturating_sub(7),
-                                now,
-                            );
-                        }
-                        Some(Action::Detail(action))
-                    }
-                    None => None,
-                }
-            } else if let Some(review) = state.review() {
-                if review.list().searching() {
-                    match plan_review::search_key_to_input(key) {
-                        Some(plan_review::SearchInput::Quit) => Some(Action::Quit),
-                        _ => {
-                            plan_review::search_key_to_action(review.list(), key).map(Action::List)
-                        }
-                    }
-                } else {
-                    match plan_review::key_to_list_input(key) {
-                        Some(plan_review::ListInput::Quit) => Some(Action::Quit),
-                        Some(plan_review::ListInput::Selection(action)) => {
-                            Some(Action::List(action))
-                        }
-                        Some(plan_review::ListInput::Copy(target)) => Some(Action::Copy(target)),
-                        Some(plan_review::ListInput::OpenDetail) => Some(Action::OpenDetail),
-                        Some(plan_review::ListInput::StartSearch) => {
-                            Some(Action::List(PlanListAction::BeginSearch))
-                        }
-                        None => None,
-                    }
-                }
-            } else {
-                None
-            };
+                    };
 
-            if let Some(action) = action
-                && let Some(outcome) = dispatch(&mut state, action, now, cancellation, clipboard)
-            {
-                return Ok(outcome);
+                    if let Some(action) = action
+                        && let Some(outcome) =
+                            dispatch(&mut state, action, now, cancellation, clipboard)
+                    {
+                        return Ok(outcome);
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -243,10 +268,12 @@ fn receive_messages(
     worker_disconnected: &mut bool,
     cancellation: &CancellationToken,
     clipboard: &mut ClipboardExecutor,
-) -> io::Result<Option<SessionOutcome>> {
+) -> io::Result<(Option<SessionOutcome>, bool)> {
+    let mut received = false;
     loop {
         match messages.try_recv() {
             Ok(message) => {
+                received = true;
                 if let Some(outcome) = dispatch(
                     state,
                     SessionState::from_message(message),
@@ -254,13 +281,16 @@ fn receive_messages(
                     cancellation,
                     clipboard,
                 ) {
-                    return Ok(Some(outcome));
+                    return Ok((Some(outcome), received));
                 }
             }
-            Err(TryRecvError::Empty) => return Ok(None),
-            Err(TryRecvError::Disconnected) if *worker_disconnected => return Ok(None),
+            Err(TryRecvError::Empty) => return Ok((None, received)),
+            Err(TryRecvError::Disconnected) if *worker_disconnected => {
+                return Ok((None, received));
+            }
             Err(TryRecvError::Disconnected) => {
                 *worker_disconnected = true;
+                received = true;
                 if let Some(outcome) = dispatch(
                     state,
                     Action::WorkerDisconnected,
@@ -268,9 +298,9 @@ fn receive_messages(
                     cancellation,
                     clipboard,
                 ) {
-                    return Ok(Some(outcome));
+                    return Ok((Some(outcome), received));
                 }
-                return Ok(None);
+                return Ok((None, received));
             }
         }
     }

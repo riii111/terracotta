@@ -2,17 +2,13 @@ use ratatui::buffer::CellWidth;
 use ratatui::style::Style;
 use ratatui::text::Line;
 
-use super::ResourceDetailState;
-
 pub(super) fn max_scroll(
-    state: &ResourceDetailState,
+    content: &super::rows::DetailContent,
     viewport_width: u16,
     viewport_height: u16,
-    now: std::time::Instant,
 ) -> u16 {
-    let content = super::detail_content(state, now);
     let max_scroll =
-        wrapped_line_count(&content, viewport_width).saturating_sub(usize::from(viewport_height));
+        wrapped_line_count(content, viewport_width).saturating_sub(usize::from(viewport_height));
     u16::try_from(max_scroll).unwrap_or(u16::MAX)
 }
 
