@@ -1,10 +1,9 @@
 use std::{ffi::OsStr, path::Path};
 
 use crate::app::{
-    attribution::{AnalysisIssue, attribute_changes, mark_analysis_incomplete},
-    progress::{ExecutionEvent, ExecutionEventKind, ExecutionPhase},
+    attribution::{AnalysisIssue, SourceFileAnalysis, attribute_changes, mark_analysis_incomplete},
+    execution::{ExecutionEvent, ExecutionEventKind, ExecutionPhase},
     review::{PlanReview, ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus},
-    source_location::SourceFileAnalysis,
 };
 
 use super::{

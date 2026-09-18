@@ -13,7 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::app::progress::{
+use crate::app::execution::{
     EventStream, ExecutionEvent, ExecutionEventKind, ProcessExitStatus, ProcessTermination,
 };
 

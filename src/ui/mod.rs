@@ -11,8 +11,7 @@ use ratatui::widgets::ListState;
 use crate::app::{
     copy::{CopyEffect, CopyNotice, CopyResult},
     execution::{ExecutionAction, ExecutionStage, ExecutionState},
-    plan_list::{PlanListAction, PlanListState},
-    review::PlanReviewMessage,
+    review::{PlanListAction, PlanListState, PlanReviewMessage},
 };
 
 use self::execution::ExecutionInput;

@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-use crate::{app::source_location::SourceSide, infra::terraform::hcl::HclSourceFile};
+use crate::{app::attribution::SourceSide, infra::terraform::hcl::HclSourceFile};
 
 use super::{
     super::command::{GitCommandError, checked_git, parse_error},

@@ -1,11 +1,16 @@
 use std::path::{Path, PathBuf};
 
 use super::{
-    attribution::{AnalysisIssue, ResourceAttribution},
+    attribution::{AnalysisIssue, ResourceAttribution, SourceFileAnalysis},
+    execution::ExecutionEvent,
     plan::Plan,
-    progress::ExecutionEvent,
-    source_location::SourceFileAnalysis,
 };
+
+mod item;
+mod list;
+
+pub(crate) use item::PlanListItem;
+pub(crate) use list::{PlanListAction, PlanListContext, PlanListFilter, PlanListState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReviewComparisonBasis {

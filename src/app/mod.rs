@@ -3,13 +3,8 @@
     reason = "source model is shared with the crate-private infrastructure module"
 )]
 
-pub(crate) mod attribute_diff;
 pub(crate) mod attribution;
 pub(crate) mod copy;
-pub(crate) mod copy_text;
 pub(crate) mod execution;
 pub(crate) mod plan;
-pub(crate) mod plan_list;
-pub(crate) mod progress;
 pub(crate) mod review;
-pub(crate) mod source_location;
