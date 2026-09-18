@@ -295,8 +295,8 @@ mod tests {
             let mut lines = Vec::new();
             append_attribute(&mut lines, attribute, false, false);
             if attribute.kind == AttributeChangeKind::Changed {
-                assert_eq!(lines[1].style.fg, Some(Color::Red));
-                assert_eq!(lines[2].style.fg, Some(Color::Green));
+                assert_eq!(lines[1].style.fg, Some(Color::Rgb(0xbf, 0x61, 0x6a)));
+                assert_eq!(lines[2].style.fg, Some(Color::Rgb(0xa3, 0xbe, 0x8c)));
             } else {
                 assert!(lines[1].style.add_modifier.contains(Modifier::DIM));
                 assert!(lines[2].style.add_modifier.contains(Modifier::DIM));

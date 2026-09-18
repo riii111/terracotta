@@ -785,7 +785,7 @@ mod tests {
             .iter()
             .find(|cell| cell.symbol() == "-")
             .expect("delete symbol should be rendered");
-        assert_eq!(delete_cell.fg, Color::Red);
+        assert_eq!(delete_cell.fg, Color::Rgb(0xbf, 0x61, 0x6a));
 
         let selected_cell = buffer
             .content()
@@ -1357,7 +1357,7 @@ mod tests {
             })
             .unwrap_or_else(|| panic!("summary label not found for {case}: {label}"));
         let expected_fg = if highlighted {
-            Color::Yellow
+            Color::Rgb(0xeb, 0xcb, 0x8b)
         } else {
             Color::Reset
         };
