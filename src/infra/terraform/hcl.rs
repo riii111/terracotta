@@ -53,8 +53,8 @@ impl HclParseResult {
     }
 
     #[must_use]
-    pub(crate) fn files(&self) -> &[SourceFileAnalysis] {
-        &self.files
+    pub(crate) fn into_files(self) -> Vec<SourceFileAnalysis> {
+        self.files
     }
 }
 

@@ -225,7 +225,7 @@ fn parse_git_sources(
     if cancellation.is_cancelled() {
         return Err(ReviewError::Interrupted);
     }
-    Ok(parsed.files().to_vec())
+    Ok(parsed.into_files())
 }
 
 fn git_review_error(error: &git::GitCommandError) -> ReviewError {
