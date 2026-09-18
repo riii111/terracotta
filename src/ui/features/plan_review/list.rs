@@ -254,11 +254,13 @@ fn render_rows(
         .visible_items()
         .map(|item| list_item(item, resource_width, wide_actions))
         .collect::<Vec<_>>();
-    let list = List::new(items)
-        .block(Block::new().title(header))
+    let mut list = List::new(items)
         .style(theme::body_style())
         .highlight_symbol("> ")
         .highlight_style(theme::selection_style());
+    if area.height >= 2 {
+        list = list.block(Block::new().title(header));
+    }
     *list_state.selected_mut() = state.selected();
     frame.render_stateful_widget(list, area, list_state);
 }
@@ -743,6 +745,25 @@ mod tests {
         })
     }
 
+    fn render_to_buffer_with_diagnostics_and_notice(
+        state: &PlanListState,
+        diagnostics: &ReviewDiagnosticsState,
+        copy_notice: Option<CopyNotice>,
+        width: u16,
+        height: u16,
+    ) -> Buffer {
+        let mut list_state = ListState::default();
+        render_test_buffer((width, height), |frame| {
+            render_plan_list_with_diagnostics(
+                frame,
+                state,
+                diagnostics,
+                copy_notice,
+                &mut list_state,
+            );
+        })
+    }
+
     fn empty_state() -> PlanListState {
         PlanListState::from_plan(
             Plan {
@@ -1213,6 +1234,22 @@ mod tests {
                 assert!(notice_line < footer_line, "width: {width}\n{text}");
             }
         }
+    }
+
+    #[test]
+    fn minimum_height_keeps_resource_row_visible_with_notice() {
+        let state = direct_only_state();
+        let text = buffer_text(&render_to_buffer_with_diagnostics_and_notice(
+            &state,
+            &warning_diagnostics(),
+            Some(CopyNotice::Failed),
+            MIN_WIDTH,
+            MIN_HEIGHT,
+        ));
+
+        assert!(text.contains("Diagnostics: 1"), "{text}");
+        assert!(text.contains("Copy failed"), "{text}");
+        assert!(text.contains("aws_instance.direct"), "{text}");
     }
 
     #[test]

@@ -105,22 +105,12 @@ pub(super) fn render_resource_detail_at(
     let content_area = shell_layout::render_content_block(
         frame,
         layout.shell.content(),
-        if detail.total() == list.items().len() {
-            format!(
-                "Resource {}/{} | Filter: {}",
-                detail.index() + 1,
-                detail.total(),
-                filter_label(list.filter())
-            )
-        } else {
-            format!(
-                "Resource {}/{} (of {} total) | Filter: {}",
-                detail.index() + 1,
-                detail.total(),
-                list.items().len(),
-                filter_label(list.filter())
-            )
-        },
+        format!(
+            "Resource {}/{} | Filter: {}",
+            detail.index() + 1,
+            detail.total(),
+            filter_label(list.filter())
+        ),
     );
     debug_assert_eq!(content_area, layout.shell.content_inner());
 
@@ -225,10 +215,13 @@ fn required_footer_lines(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     use std::time::Duration;
 
-    use crate::app::review::DetailAction;
-    use crate::ui::test_support::{assert_shell_frame_and_footer, buffer_text};
+    use crate::app::attribution::attribute_changes;
+    use crate::app::plan::{Plan, PlanSummary};
+    use crate::app::review::{DetailAction, PlanListAction, PlanReview, ReviewComparison};
+    use crate::ui::test_support::{assert_shell_frame_and_footer, buffer_text, render_to_buffer};
 
     use super::super::rows::detail_content;
     use super::super::test_support::*;
@@ -282,6 +275,53 @@ mod tests {
         assert!(text.contains("<sensitive>"), "{text}");
         assert!(!text.contains("not-known-yet"), "{text}");
         assert!(state.detail.reveal().is_none());
+    }
+
+    #[test]
+    fn filtered_detail_keeps_total_count_on_resource_name_only() {
+        let mut changes = vec![change(), change()];
+        changes[1].address = "aws_instance.worker".to_owned();
+        let attributions = attribute_changes(&changes, &[], &[]);
+        let review = PlanReview::new(
+            PathBuf::from("/infra/prod"),
+            "default".to_owned(),
+            Plan {
+                changes,
+                summary: PlanSummary {
+                    updates: 2,
+                    ..PlanSummary::default()
+                },
+                unsupported_changes: Vec::new(),
+            },
+            Vec::new(),
+            attributions,
+            ReviewComparison::working_tree(),
+            Vec::new(),
+        );
+        let mut list = PlanListState::from_review(review).expect("review should build");
+        list.apply(PlanListAction::BeginSearch);
+        list.apply(PlanListAction::SetSearch("worker".to_owned()));
+        list.apply(PlanListAction::ConfirmSearch);
+        let detail = ReviewDetailState::from_list(&list).expect("filtered detail should open");
+
+        let text = buffer_text(&render_to_buffer((100, 30), |frame| {
+            render_resource_detail_at(
+                frame,
+                &list,
+                &detail,
+                None,
+                &DetailViewState::default(),
+                Instant::now(),
+            );
+        }));
+        let title = text
+            .lines()
+            .find(|line| line.contains("Resource 1/1"))
+            .expect("detail title should be rendered");
+
+        assert!(title.contains("Resource 1/1 | Filter: All"), "{title}");
+        assert!(!title.contains("of 2 total"), "{title}");
+        assert!(text.contains("aws_instance.worker (of 2 total)"), "{text}");
     }
 
     #[test]

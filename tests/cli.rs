@@ -75,6 +75,39 @@ mod pty_tests {
 
     const EMPTY_PLAN_JSON: &str = r#"{"format_version":"1.0"}"#;
 
+    const UI11_PLAN_JSON: &str = r#"{
+  "format_version": "1.0",
+  "resource_changes": [
+    {
+      "address": "terraform_data.api",
+      "mode": "managed",
+      "change": {
+        "actions": ["update"],
+        "before": {"input": "old"},
+        "after": {"input": "new"}
+      }
+    },
+    {
+      "address": "terraform_data.new",
+      "mode": "managed",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {"input": "created"}
+      }
+    },
+    {
+      "address": "terraform_data.old",
+      "mode": "managed",
+      "change": {
+        "actions": ["delete"],
+        "before": {"input": "old"},
+        "after": null
+      }
+    }
+  ]
+}"#;
+
     const FAKE_TERRAFORM: &str = include_str!("support/cli/fake_terraform.sh");
 
     const FAKE_GIT: &str = include_str!("support/cli/fake_git.sh");
@@ -228,6 +261,10 @@ mod pty_tests {
 
         fn use_empty_plan(&self) {
             fs::write(&self.show_json, EMPTY_PLAN_JSON).expect("empty plan should be written");
+        }
+
+        fn use_plan_json(&self, plan_json: &str) {
+            fs::write(&self.show_json, plan_json).expect("plan JSON should be written");
         }
 
         fn assert_temporary_plan_removed(&self) {
@@ -448,6 +485,35 @@ mod pty_tests {
         assert_eq!(result.exit_code, 0);
         result.assert_restored();
         for event in ["list", "filter_empty", "detail", "expanded", "copy", "back"] {
+            result.observed(event);
+        }
+        fixture.assert_temporary_plan_removed();
+    }
+
+    #[test]
+    fn pty_ui11_covers_filtered_navigation_and_change_sides() {
+        let fixture = Fixture::new(true);
+        fixture.use_plan_json(UI11_PLAN_JSON);
+        let result = fixture.run(
+            "ui11",
+            100,
+            24,
+            Path::new(env!("CARGO_BIN_EXE_terracotta")),
+            &["plan"],
+        );
+
+        assert_eq!(result.exit_code, 0);
+        result.assert_restored();
+        for event in [
+            "ui11_list",
+            "ui11_filter",
+            "ui11_create_detail",
+            "ui11_delete_detail",
+            "ui11_previous",
+            "ui11_analysis_open",
+            "ui11_analysis_closed",
+            "ui11_detail_back",
+        ] {
             result.observed(event);
         }
         fixture.assert_temporary_plan_removed();
