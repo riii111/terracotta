@@ -767,6 +767,37 @@ mod tests {
     }
 
     #[test]
+    fn mismatched_attribution_address_is_rejected() {
+        let api_change = change("aws_instance.api");
+        let wrong_attribution = attribute_changes(
+            std::slice::from_ref(&change("aws_instance.other")),
+            &[],
+            &[],
+        )
+        .pop()
+        .expect("one attribution should be created");
+        let error = PlanListState::from_plan(
+            Plan {
+                changes: vec![api_change],
+                summary: PlanSummary::default(),
+                unsupported_changes: Vec::new(),
+            },
+            vec![wrong_attribution],
+            "working tree vs HEAD",
+        )
+        .expect_err("an attribution for another address must not be hidden");
+
+        assert_eq!(
+            error,
+            PlanListError::AttributionAddressMismatch {
+                index: 0,
+                change: "aws_instance.api".to_owned(),
+                attribution: "aws_instance.other".to_owned(),
+            }
+        );
+    }
+
+    #[test]
     fn review_list_preserves_incomplete_comparison_and_analysis_reasons() {
         let source = state();
         let review = PlanReview::new(
