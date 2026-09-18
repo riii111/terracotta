@@ -190,15 +190,12 @@ pub(super) fn state_for_change_with_sources(
         ReviewComparison::new(
             ReviewComparisonBasis::WorkingTreeVsHead,
             None,
-            None,
-            None,
-            None,
             ReviewComparisonStatus::Complete,
         ),
         Vec::new(),
     )
     .with_git("feature/resize".to_owned());
-    let list = PlanListState::from_review(&review).expect("review should build a list");
+    let list = PlanListState::from_review(review).expect("review should build a list");
     DetailFixture {
         detail: ReviewDetailState::from_list(&list).expect("selected item should open"),
         list,

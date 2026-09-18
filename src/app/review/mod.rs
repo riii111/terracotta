@@ -44,9 +44,6 @@ impl ReviewComparisonStatus {
 pub(crate) struct ReviewComparison {
     basis: ReviewComparisonBasis,
     compare_ref: Option<String>,
-    resolved_commit: Option<String>,
-    head_commit: Option<String>,
-    merge_base: Option<String>,
     status: ReviewComparisonStatus,
 }
 
@@ -55,17 +52,11 @@ impl ReviewComparison {
     pub(crate) const fn new(
         basis: ReviewComparisonBasis,
         compare_ref: Option<String>,
-        resolved_commit: Option<String>,
-        head_commit: Option<String>,
-        merge_base: Option<String>,
         status: ReviewComparisonStatus,
     ) -> Self {
         Self {
             basis,
             compare_ref,
-            resolved_commit,
-            head_commit,
-            merge_base,
             status,
         }
     }
@@ -196,10 +187,6 @@ mod tests {
     impl ReviewComparison {
         pub(crate) const fn basis(&self) -> ReviewComparisonBasis {
             self.basis
-        }
-
-        pub(crate) fn head_commit(&self) -> Option<&str> {
-            self.head_commit.as_deref()
         }
     }
 }

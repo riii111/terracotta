@@ -148,7 +148,7 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
     match action {
         Action::Execution(action) => update_execution_action(state, action),
         Action::WorkerEvent(event) => record_worker_event(state, event),
-        Action::ReviewCompleted(review) => complete_review(state, &review),
+        Action::ReviewCompleted(review) => complete_review(state, review),
         Action::ReviewFailed {
             message,
             interrupted,
@@ -308,7 +308,7 @@ fn update_execution_action(state: &mut SessionState, action: ExecutionAction) ->
     Vec::new()
 }
 
-fn complete_review(state: &mut SessionState, review: &PlanReview) -> Vec<Effect> {
+fn complete_review(state: &mut SessionState, review: PlanReview) -> Vec<Effect> {
     let SessionState::Execution(execution) = &mut *state else {
         return Vec::new();
     };
@@ -399,9 +399,6 @@ mod tests {
             ReviewComparison::new(
                 ReviewComparisonBasis::WorkingTreeVsHead,
                 None,
-                None,
-                None,
-                None,
                 ReviewComparisonStatus::Complete,
             ),
             Vec::new(),
@@ -468,9 +465,6 @@ mod tests {
             attributions,
             ReviewComparison::new(
                 ReviewComparisonBasis::WorkingTreeVsHead,
-                None,
-                None,
-                None,
                 None,
                 ReviewComparisonStatus::Complete,
             ),

@@ -541,14 +541,7 @@ mod tests {
     }
 
     fn comparison(status: ReviewComparisonStatus) -> ReviewComparison {
-        ReviewComparison::new(
-            ReviewComparisonBasis::WorkingTreeVsHead,
-            None,
-            Some("head".to_owned()),
-            Some("head".to_owned()),
-            None,
-            status,
-        )
+        ReviewComparison::new(ReviewComparisonBasis::WorkingTreeVsHead, None, status)
     }
 
     #[test]

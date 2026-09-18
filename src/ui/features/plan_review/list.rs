@@ -724,9 +724,6 @@ mod tests {
             ReviewComparison::new(
                 ReviewComparisonBasis::WorkingTreeVsHead,
                 None,
-                None,
-                None,
-                None,
                 ReviewComparisonStatus::Complete,
             ),
             vec![
@@ -736,7 +733,7 @@ mod tests {
             ],
         )
         .with_git("feature/review".to_owned());
-        PlanListState::from_review(&review).expect("review data should build a list")
+        PlanListState::from_review(review).expect("review data should build a list")
     }
 
     #[test]
