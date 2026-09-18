@@ -1,5 +1,7 @@
 use ratatui::backend::TestBackend;
 use ratatui::buffer::{Buffer, Cell};
+use ratatui::layout::Rect;
+use ratatui::style::Color;
 use ratatui::{Frame, Terminal};
 
 pub(super) const REPRESENTATIVE_TERMINAL_SIZE: (u16, u16) = (165, 51);
@@ -27,4 +29,23 @@ pub(super) fn buffer_text(buffer: &Buffer) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+pub(super) fn assert_shell_frame_and_footer(
+    buffer: &Buffer,
+    content: Rect,
+    footer: Rect,
+    footer_marker: &str,
+) {
+    assert_eq!(content.y + content.height, footer.y);
+    assert!(content.height >= 2);
+    assert_eq!(
+        buffer.cell((content.x, content.y)).expect("frame cell").fg,
+        Color::Rgb(0x76, 0x7a, 0x84)
+    );
+    let footer_text = (footer.y..footer.bottom())
+        .flat_map(|y| (footer.x..footer.right()).filter_map(move |x| buffer.cell((x, y))))
+        .map(Cell::symbol)
+        .collect::<String>();
+    assert!(footer_text.contains(footer_marker), "{footer_text}");
 }

@@ -2,7 +2,7 @@
 source: src/ui/features/execution/tests/render_snapshots.rs
 expression: "buffer_text(&render_to_buffer(&state, started_at + Duration::from_secs(2), 60,\n20,))"
 ---
-Terracotta | loading... (Git loading)
+Terracotta | loading... (Git loading) [workspace: loa......]
 Git: loading...
 ┌Failed────────────────────────────────────────────────────┐
 │Terraform plan failed.    Follow: On                      │

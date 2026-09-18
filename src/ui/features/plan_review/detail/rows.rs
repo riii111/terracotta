@@ -9,7 +9,7 @@ use crate::app::plan::{
 use crate::app::review::{
     AttributeGroup, DetailRow, PlanListContext, PlanListState, ReviewDetailState,
 };
-use crate::ui::shell::context::display_path;
+use crate::ui::shell::context::{display_path, truncate_middle};
 use crate::ui::theme;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,11 +18,22 @@ pub(crate) struct DetailContent {
     pub(crate) selected_line: Option<usize>,
 }
 
+#[cfg(test)]
 pub(super) fn detail_content(
     list: &PlanListState,
     detail: &ReviewDetailState,
     sources_expanded: bool,
     now: std::time::Instant,
+) -> DetailContent {
+    detail_content_with_width(list, detail, sources_expanded, now, usize::MAX)
+}
+
+pub(super) fn detail_content_with_width(
+    list: &PlanListState,
+    detail: &ReviewDetailState,
+    sources_expanded: bool,
+    now: std::time::Instant,
+    body_width: usize,
 ) -> DetailContent {
     let item = list
         .selected_item()
@@ -48,6 +59,7 @@ pub(super) fn detail_content(
         sources_expanded,
         repository_root,
         execution_root,
+        body_width,
     );
     lines.push(Line::default());
     lines.push(Line::from("Diff:"));
@@ -90,6 +102,7 @@ pub(super) fn detail_content(
             list.source_files(),
             repository_root,
             execution_root,
+            body_width,
         );
     }
 
@@ -106,6 +119,7 @@ fn append_attribution(
     sources_expanded: bool,
     repository_root: Option<&std::path::Path>,
     execution_root: Option<&std::path::Path>,
+    body_width: usize,
 ) {
     lines.push(Line::from(format!(
         "Git: {}",
@@ -117,23 +131,24 @@ fn append_attribution(
     }
     for evidence in attribution.evidence() {
         let range = evidence.range();
-        let location = if range.start_line() == range.end_line() {
+        let location_suffix = if range.start_line() == range.end_line() {
             format!(
-                "{}:{}",
-                display_path(evidence.path(), repository_root, execution_root),
-                range.start_line()
+                ":{} ({})",
+                range.start_line(),
+                source_side_label(evidence.side())
             )
         } else {
             format!(
-                "{}:{}-{}",
-                display_path(evidence.path(), repository_root, execution_root),
+                ":{}-{} ({})",
                 range.start_line(),
-                range.end_line()
+                range.end_line(),
+                source_side_label(evidence.side())
             )
         };
-        lines.push(Line::from(format!(
-            "  {location} ({})",
-            source_side_label(evidence.side())
+        lines.push(Line::from(detail_path(
+            &display_path(evidence.path(), repository_root, execution_root),
+            &location_suffix,
+            body_width,
         )));
     }
     if attribution.status() == AttributionStatus::Direct && !attribution.evidence().is_empty() {
@@ -162,6 +177,7 @@ fn append_source_files(
     source_files: &[SourceFileAnalysis],
     repository_root: Option<&std::path::Path>,
     execution_root: Option<&std::path::Path>,
+    body_width: usize,
 ) {
     lines.push(Line::default());
     lines.push(Line::from("Analyzed sources:"));
@@ -171,12 +187,50 @@ fn append_source_files(
         } else {
             " [incomplete]".to_owned()
         };
-        lines.push(Line::from(format!(
-            "  {} ({}){suffix}",
-            display_path(source.path(), repository_root, execution_root),
-            source_side_label(source.side())
+        let location_suffix = format!(" ({}){suffix}", source_side_label(source.side()));
+        lines.push(Line::from(detail_path(
+            &display_path(source.path(), repository_root, execution_root),
+            &location_suffix,
+            body_width,
         )));
     }
+}
+
+fn detail_path(path: &str, suffix: &str, body_width: usize) -> String {
+    let prefix = "  ";
+    let path_width = body_width.saturating_sub(Line::from(format!("{prefix}{suffix}")).width());
+    format!("{prefix}{}{suffix}", truncate_path(path, path_width))
+}
+
+fn truncate_path(path: &str, max_width: usize) -> String {
+    if Line::from(path).width() <= max_width {
+        return path.to_owned();
+    }
+
+    let basename = std::path::Path::new(path).file_name().map_or_else(
+        || path.to_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let basename_width = Line::from(basename.as_str()).width();
+    if max_width >= basename_width.saturating_add(3) {
+        let directory = std::path::Path::new(path)
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .map_or_else(String::new, |parent| {
+                let mut directory = parent.display().to_string();
+                if !directory.ends_with('/') {
+                    directory.push('/');
+                }
+                directory
+            });
+        let directory_width = max_width.saturating_sub(basename_width + 3);
+        return format!(
+            "{}...{basename}",
+            truncate_middle(&directory, directory_width)
+        );
+    }
+
+    truncate_middle(&basename, max_width)
 }
 
 fn append_attribute(
@@ -482,5 +536,18 @@ mod tests {
             .position(|line| line.to_string() == "Analyzed sources:")
             .expect("expanded source heading should be present");
         assert!(sources > replacement);
+    }
+
+    #[test]
+    fn path_elision_keeps_filename_and_location_suffix() {
+        let line = detail_path(
+            "modules/production/services/networking/main.tf",
+            ":42-46 (after)",
+            32,
+        );
+
+        assert!(line.contains("..."));
+        assert!(line.ends_with("main.tf:42-46 (after)"));
+        assert!(Line::from(line.as_str()).width() <= 32);
     }
 }

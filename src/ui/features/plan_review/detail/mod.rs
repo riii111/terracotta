@@ -11,7 +11,6 @@ mod viewport;
 
 pub(crate) use input::{DetailInput, DetailScroll, key_to_input};
 pub(crate) use render::{render_resource_detail, resource_detail_layout};
-use rows::detail_content;
 use viewport::{apply_scroll, clamp_scroll, ensure_selected_visible};
 
 const MIN_HEIGHT: u16 = 8;
@@ -52,7 +51,13 @@ pub(crate) fn apply_detail_scroll(
     area: Rect,
 ) {
     let layout = resource_detail_layout(area, list, detail, copy_notice, now);
-    let content = detail_content(list, detail, view.sources_expanded(), now);
+    let content = rows::detail_content_with_width(
+        list,
+        detail,
+        view.sources_expanded(),
+        now,
+        usize::from(layout.body().width),
+    );
     apply_scroll(
         view,
         scroll,
@@ -71,7 +76,13 @@ pub(crate) fn ensure_detail_selection_visible(
     area: Rect,
 ) {
     let layout = resource_detail_layout(area, list, detail, copy_notice, now);
-    let content = detail_content(list, detail, view.sources_expanded(), now);
+    let content = rows::detail_content_with_width(
+        list,
+        detail,
+        view.sources_expanded(),
+        now,
+        usize::from(layout.body().width),
+    );
     ensure_selected_visible(view, &content, layout.body().width, layout.body().height);
 }
 
@@ -84,7 +95,13 @@ pub(crate) fn clamp_detail_scroll(
     area: Rect,
 ) {
     let layout = resource_detail_layout(area, list, detail, copy_notice, now);
-    let content = detail_content(list, detail, view.sources_expanded(), now);
+    let content = rows::detail_content_with_width(
+        list,
+        detail,
+        view.sources_expanded(),
+        now,
+        usize::from(layout.body().width),
+    );
     clamp_scroll(view, &content, layout.body().width, layout.body().height);
 }
 

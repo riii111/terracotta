@@ -20,6 +20,11 @@ pub(crate) struct DiagnosticsLayout {
 }
 
 impl DiagnosticsLayout {
+    #[cfg(test)]
+    pub(crate) const fn content(&self) -> Rect {
+        self.shell.content()
+    }
+
     pub(crate) const fn body(&self) -> Rect {
         self.body
     }
@@ -183,7 +188,7 @@ mod tests {
     use crate::app::execution::{Diagnostic, DiagnosticPoint, DiagnosticSource};
     use crate::app::plan::{Plan, PlanSummary};
     use crate::app::review::ReviewComparison;
-    use crate::ui::test_support::{buffer_text, render_to_buffer};
+    use crate::ui::test_support::{assert_shell_frame_and_footer, buffer_text, render_to_buffer};
 
     use super::*;
 
@@ -242,6 +247,25 @@ mod tests {
         let layout = diagnostics_layout(Rect::new(0, 0, 80, 20));
 
         assert!(layout.body().height > 0);
+    }
+
+    #[test]
+    fn common_shell_geometry_survives_supported_sizes() {
+        let state = diagnostics();
+        for (width, height) in [(120, 40), (80, 24), (48, 12)] {
+            let layout = diagnostics_layout(Rect::new(0, 0, width, height));
+            let buffer = render_to_buffer((width, height), |frame| {
+                let list = empty_list();
+                render_diagnostics(frame, &list, &state, DiagnosticsViewState::default());
+            });
+            assert_shell_frame_and_footer(&buffer, layout.content(), layout.footer(), "q quit");
+        }
+
+        let small = buffer_text(&render_to_buffer((47, 7), |frame| {
+            let list = empty_list();
+            render_diagnostics(frame, &list, &state, DiagnosticsViewState::default());
+        }));
+        assert!(small.contains("Terminal too small"), "{small}");
     }
 
     #[test]

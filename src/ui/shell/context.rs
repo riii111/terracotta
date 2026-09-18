@@ -74,14 +74,11 @@ pub(crate) fn truncate_middle(value: &str, max_width: usize) -> String {
 
 fn repository_target(repository_root: &Path, execution_root: &Path) -> String {
     let repository_name = path_name(repository_root);
-    execution_root
-        .strip_prefix(repository_root)
-        .ok()
-        .filter(|relative| !relative.as_os_str().is_empty())
-        .map_or_else(
-            || format!("{repository_name} / {}", execution_root.display()),
-            |relative| format!("{repository_name} / {}", relative.display()),
-        )
+    match execution_root.strip_prefix(repository_root).ok() {
+        Some(relative) if relative.as_os_str().is_empty() => repository_name,
+        Some(relative) => format!("{repository_name} / {}", relative.display()),
+        None => format!("{repository_name} / {}", execution_root.display()),
+    }
 }
 
 fn path_name(path: &Path) -> String {
@@ -170,6 +167,18 @@ mod tests {
 
         let unavailable = loading.with_repository_root(None);
         assert_eq!(execution_target(&unavailable), "main (Git unavailable)");
+    }
+
+    #[test]
+    fn repository_root_target_uses_the_repository_name() {
+        let context = ExecutionContext::known("/repo", "default", "main", "working tree vs HEAD")
+            .with_repository_root(Some(Path::new("/repo").to_path_buf()));
+
+        assert_eq!(execution_target(&context), "repo");
+        assert_eq!(
+            repository_target(Path::new("/repo"), Path::new("/repo")),
+            "repo"
+        );
     }
 
     #[test]

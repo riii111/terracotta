@@ -80,8 +80,18 @@ pub(crate) struct ExecutionLayout {
 }
 
 impl ExecutionLayout {
+    #[cfg(test)]
+    pub(crate) const fn content(&self) -> Rect {
+        self.shell.content()
+    }
+
     pub(crate) fn body(&self) -> Rect {
         self.chunks[1]
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn footer(&self) -> Rect {
+        self.shell.footer()
     }
 }
 
@@ -341,8 +351,8 @@ fn required_footer_lines(state: &ExecutionState, width: u16) -> Vec<Line<'static
 
 #[cfg(test)]
 mod tests {
-    use crate::ui::test_support::buffer_text;
     use crate::ui::test_support::render_to_buffer as render_test_buffer;
+    use crate::ui::test_support::{assert_shell_frame_and_footer, buffer_text};
     use ratatui::buffer::Buffer;
 
     use crate::app::copy::{CopyNotice, CopyTarget};
@@ -475,7 +485,7 @@ mod tests {
             "{long_context_text}"
         );
         assert!(
-            long_context_text.contains("workspac...ong-name"),
+            long_context_text.contains("[workspace: ") && long_context_text.contains("long-name]"),
             "{long_context_text}"
         );
         assert!(
@@ -797,5 +807,24 @@ mod tests {
             failed_text.contains("Resize or press q to quit."),
             "{failed_text}"
         );
+    }
+
+    #[test]
+    fn common_shell_geometry_survives_supported_sizes() {
+        let started_at = Instant::now();
+        let state = ExecutionState::new(started_at);
+        for (width, height) in [(120, 40), (80, 24), (48, 12)] {
+            let layout = execution_layout(Rect::new(0, 0, width, height), &state);
+            let buffer = render_to_buffer(&state, started_at, width, height);
+            assert_shell_frame_and_footer(
+                &buffer,
+                layout.content(),
+                layout.footer(),
+                "Ctrl-C cancel",
+            );
+        }
+
+        let small = buffer_text(&render_to_buffer(&state, started_at, 47, 10));
+        assert!(small.contains("Terminal too small"), "{small}");
     }
 }

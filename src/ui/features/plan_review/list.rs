@@ -447,7 +447,9 @@ mod tests {
     use crate::app::review::{
         PlanListAction, PlanReview, ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus,
     };
-    use crate::ui::test_support::{buffer_text, render_to_buffer as render_test_buffer};
+    use crate::ui::test_support::{
+        assert_shell_frame_and_footer, buffer_text, render_to_buffer as render_test_buffer,
+    };
 
     include!("tests/render_snapshots.rs");
 
@@ -615,6 +617,24 @@ mod tests {
     fn render_to_buffer(state: &PlanListState, width: u16, height: u16) -> Buffer {
         let mut list_state = ListState::default();
         render_to_buffer_with_state(state, width, height, &mut list_state)
+    }
+
+    #[test]
+    fn common_shell_geometry_survives_supported_sizes() {
+        let state = empty_state();
+        for (width, height) in [(120, 40), (80, 24), (48, 12)] {
+            let layout = shell_layout::layout(
+                Rect::new(0, 0, width, height),
+                footer_lines(&state, &ReviewDiagnosticsState::default(), width),
+                required_footer_lines(&state, width),
+                6,
+            );
+            let buffer = render_to_buffer(&state, width, height);
+            assert_shell_frame_and_footer(&buffer, layout.content(), layout.footer(), "q quit");
+        }
+
+        let small = buffer_text(&render_to_buffer(&state, 47, 11));
+        assert!(small.contains("Terminal too small"), "{small}");
     }
 
     fn render_to_buffer_with_state(

@@ -29,8 +29,18 @@ pub(crate) struct ResourceDetailLayout {
 }
 
 impl ResourceDetailLayout {
+    #[cfg(test)]
+    pub(crate) const fn content(&self) -> Rect {
+        self.shell.content()
+    }
+
     pub(crate) fn body(&self) -> Rect {
         self.chunks[1]
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn footer(&self) -> Rect {
+        self.shell.footer()
     }
 }
 
@@ -116,7 +126,13 @@ pub(super) fn render_resource_detail_at(
         );
     }
 
-    let content = super::detail_content(list, detail, view.sources_expanded(), now);
+    let content = super::rows::detail_content_with_width(
+        list,
+        detail,
+        view.sources_expanded(),
+        now,
+        usize::from(chunks[1].width),
+    );
     let scroll = view.scroll().min(super::viewport::max_scroll(
         &content,
         chunks[1].width,
@@ -204,7 +220,7 @@ mod tests {
     use std::time::Duration;
 
     use crate::app::review::DetailAction;
-    use crate::ui::test_support::buffer_text;
+    use crate::ui::test_support::{assert_shell_frame_and_footer, buffer_text};
 
     use super::super::test_support::*;
     use super::*;
@@ -280,6 +296,25 @@ mod tests {
         let text = buffer_text(&render(&state, 48, 30));
 
         assert!(text.contains("Analyzed sources: 1 (s show)"), "{text}");
+    }
+
+    #[test]
+    fn common_shell_geometry_survives_supported_sizes() {
+        let state = state();
+        for (width, height) in [(120, 40), (80, 24), (48, 12)] {
+            let layout = resource_detail_layout(
+                Rect::new(0, 0, width, height),
+                &state.list,
+                &state.detail,
+                state.copy_notice,
+                Instant::now(),
+            );
+            let buffer = render(&state, width, height);
+            assert_shell_frame_and_footer(&buffer, layout.content(), layout.footer(), "q quit");
+        }
+
+        let small = buffer_text(&render(&state, 47, 7));
+        assert!(small.contains("Terminal too small"), "{small}");
     }
 
     #[test]

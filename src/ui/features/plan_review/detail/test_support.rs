@@ -39,11 +39,12 @@ impl DetailFixture {
             action,
             DetailAction::SelectPrevious | DetailAction::SelectNext | DetailAction::ToggleExpansion
         ) {
-            let content = super::rows::detail_content(
+            let content = super::rows::detail_content_with_width(
                 &self.list,
                 &self.detail,
                 self.view.sources_expanded(),
                 now,
+                usize::from(width),
             );
             super::viewport::ensure_selected_visible(&mut self.view, &content, width, height);
         }
@@ -56,11 +57,12 @@ impl DetailFixture {
         height: u16,
         now: std::time::Instant,
     ) {
-        let content = super::rows::detail_content(
+        let content = super::rows::detail_content_with_width(
             &self.list,
             &self.detail,
             self.view.sources_expanded(),
             now,
+            usize::from(width),
         );
         super::viewport::apply_scroll(&mut self.view, scroll, &content, width, height);
     }
