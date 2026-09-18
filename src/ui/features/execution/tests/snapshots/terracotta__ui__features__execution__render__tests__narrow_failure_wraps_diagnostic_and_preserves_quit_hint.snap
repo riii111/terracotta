@@ -6,13 +6,13 @@ Terracotta | loading... (Git loading) [workspace: loa......]
 Git: loading...
 ┌Failed────────────────────────────────────────────────────┐
 │Elapsed 2.0s                                              │
+│  Error 1/1                                               │
 │  Summary: Terraform initialization required              │
 │  Detail: Run terraform init to install the providers requ│
 │ired by this configuration.                               │
-│  Location: infra/prod/main.tf:12:3                       │
+│  Location: infra/prod/main.tf:12:3-12:9                  │
 │                                                          │
 │  Review result is unavailable.                           │
-│                                                          │
 │                                                          │
 │                                                          │
 │                                                          │

@@ -203,6 +203,12 @@ fn failed_lines(state: &ExecutionState) -> Vec<String> {
             if index > 0 {
                 lines.push(String::new());
             }
+            lines.push(format!(
+                "  {} {}/{}",
+                diagnostic_severity_label(diagnostic.severity),
+                index + 1,
+                diagnostics.len()
+            ));
             lines.push(format!("  Summary: {}", diagnostic.summary));
             if let Some(detail) = &diagnostic.detail {
                 for line in detail.lines() {
@@ -216,8 +222,11 @@ fn failed_lines(state: &ExecutionState) -> Vec<String> {
                     Some(state.context().cwd_path()),
                 );
                 lines.push(format!(
-                    "  Location: {filename}:{}:{}",
-                    position.start.line, position.start.column
+                    "  Location: {filename}:{}:{}-{}:{}",
+                    position.start.line,
+                    position.start.column,
+                    position.end.line,
+                    position.end.column
                 ));
             }
         }
@@ -341,6 +350,15 @@ const fn diagnostic_severity(severity: DiagnosticSeverity) -> &'static str {
     }
 }
 
+const fn diagnostic_severity_label(severity: DiagnosticSeverity) -> &'static str {
+    match severity {
+        DiagnosticSeverity::Error => "Error",
+        DiagnosticSeverity::Warning => "Warning",
+        DiagnosticSeverity::Info => "Info",
+        DiagnosticSeverity::Unknown => "Unknown",
+    }
+}
+
 fn format_elapsed(elapsed: Duration) -> String {
     format!(
         "{}.{:01}s",
@@ -450,7 +468,7 @@ mod tests {
     }
 
     #[test]
-    fn renders_spinner_elapsed_waiting_and_interleaved_resource_progress() {
+    fn renders_elapsed_waiting_and_interleaved_resource_progress() {
         let started_at = Instant::now();
         let mut state = ExecutionState::new(started_at);
         state.record(resource_event(
@@ -730,7 +748,11 @@ mod tests {
         let compact = text.replace(' ', "");
         assert!(compact.contains("日本語の診断文"), "{text}");
         assert!(compact.contains("絵文字🙂"), "{text}");
-        assert!(text.contains("Location: infra/prod/main.tf:12:3"), "{text}");
+        assert!(
+            text.contains("Location: infra/prod/main.tf:12:3-12:9"),
+            "{text}"
+        );
+        assert!(text.contains("Error 1/1"), "{text}");
         assert!(text.contains("q quit"), "{text}");
     }
 

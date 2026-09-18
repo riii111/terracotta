@@ -92,13 +92,12 @@ impl ExecutionState {
             ExecutionEventKind::Git(git) => {
                 self.context = self.context.clone().with_git(git.clone());
             }
-            ExecutionEventKind::Terminated(termination) => {
-                self.finished_at.get_or_insert(event.received_at);
+            ExecutionEventKind::Terminated(termination)
                 if !termination.interrupted
-                    && !matches!(termination.status, ProcessExitStatus::Exited(0))
-                {
-                    self.stage = ExecutionStage::Failed;
-                }
+                    && !matches!(termination.status, ProcessExitStatus::Exited(0)) =>
+            {
+                self.finished_at.get_or_insert(event.received_at);
+                self.stage = ExecutionStage::Failed;
             }
             _ => {}
         }
@@ -107,7 +106,7 @@ impl ExecutionState {
 
     pub(crate) fn fail(&mut self, message: String, received_at: Instant) {
         self.stage = ExecutionStage::Failed;
-        self.finished_at = Some(received_at);
+        self.finished_at.get_or_insert(received_at);
         self.failure_message = Some(message.clone());
         self.record(ExecutionEvent {
             received_at,
@@ -251,6 +250,52 @@ mod tests {
                 interrupted: false,
             }),
         ));
+
+        assert_eq!(
+            state.elapsed_at(started_at + Duration::from_secs(10)),
+            Duration::from_secs(2)
+        );
+    }
+
+    #[test]
+    fn successful_termination_does_not_stop_elapsed_time_before_later_phases() {
+        let started_at = Instant::now();
+        let termination_at = started_at + Duration::from_secs(2);
+        let mut state = ExecutionState::new(started_at);
+
+        state.record(event(
+            termination_at,
+            ExecutionEventKind::Terminated(ProcessTermination {
+                status: ProcessExitStatus::Exited(0),
+                interrupted: false,
+            }),
+        ));
+        state.record(event(
+            started_at + Duration::from_secs(3),
+            ExecutionEventKind::Phase(ExecutionPhase::Reading),
+        ));
+
+        assert_eq!(
+            state.elapsed_at(started_at + Duration::from_secs(5)),
+            Duration::from_secs(5)
+        );
+    }
+
+    #[test]
+    fn failure_keeps_termination_time_when_diagnostic_arrives_later() {
+        let started_at = Instant::now();
+        let termination_at = started_at + Duration::from_secs(2);
+        let diagnostic_at = started_at + Duration::from_secs(4);
+        let mut state = ExecutionState::new(started_at);
+
+        state.record(event(
+            termination_at,
+            ExecutionEventKind::Terminated(ProcessTermination {
+                status: ProcessExitStatus::Exited(1),
+                interrupted: false,
+            }),
+        ));
+        state.fail("Terraform failed".to_owned(), diagnostic_at);
 
         assert_eq!(
             state.elapsed_at(started_at + Duration::from_secs(10)),
