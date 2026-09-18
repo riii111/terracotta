@@ -11,7 +11,7 @@ use ratatui::{DefaultTerminal, Frame};
 use crate::app::copy::CopyTarget;
 use crate::app::execution::{
     Diagnostic, DiagnosticSeverity, ExecutionEvent, ExecutionEventKind, ResourceEvent,
-    ResourceEventKind,
+    ResourceEventKind, ResourceProgress,
 };
 use crate::app::execution::{
     ExecutionAction, ExecutionContext, ExecutionScroll, ExecutionStage, ExecutionState,
@@ -271,7 +271,7 @@ fn context_lines(state: &ExecutionState) -> Vec<String> {
 }
 
 fn execution_lines(state: &ExecutionState) -> Vec<String> {
-    let mut lines = resource_lines(state.progress().events());
+    let mut lines = resource_lines(state.progress().resources());
     if lines.is_empty() {
         lines.push("  No Terraform events yet.".to_owned());
     }
@@ -292,29 +292,14 @@ fn execution_lines(state: &ExecutionState) -> Vec<String> {
     lines
 }
 
-fn resource_lines(events: &[ExecutionEvent]) -> Vec<String> {
-    let mut resources = Vec::new();
-    for event in events {
-        let ExecutionEventKind::Resource(resource) = &event.kind else {
-            continue;
-        };
-        if let Some((_, kind)) = resources
-            .iter_mut()
-            .find(|(address, _)| address == &resource.address)
-        {
-            *kind = resource.kind;
-        } else {
-            resources.push((resource.address.clone(), resource.kind));
-        }
-    }
+fn resource_lines<'a>(resources: impl Iterator<Item = (&'a str, ResourceProgress)>) -> Vec<String> {
     resources
-        .into_iter()
-        .map(|(address, kind)| {
+        .map(|(address, progress)| {
             format!(
                 "  [{}] {:<36} {}",
-                resource_status(kind),
+                resource_status(progress.kind),
                 address,
-                resource_label(kind)
+                resource_label(progress.kind)
             )
         })
         .collect()
