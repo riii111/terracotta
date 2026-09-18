@@ -3,14 +3,14 @@ use ratatui::text::{Line, Span};
 use crate::app::attribution::SourceSide;
 use crate::app::attribution::{AttributionEvidence, AttributionStatus, ResourceAttribution};
 use crate::app::plan::{
-    AttributeChangeKind, AttributeDiff, AttributeDiffs, AttributeValue, format_attribute_path,
-    format_replace_path,
+    AttributeChangeKind, AttributeDiff, AttributeDiffs, AttributeValue, ResourceChangeKind,
+    format_attribute_path, format_replace_path,
 };
 use crate::app::review::{
     AttributeGroup, DetailRow, PlanListContext, PlanListState, ReviewComparison,
     ReviewComparisonSource, ReviewDetailState,
 };
-use crate::ui::shell::context::{display_path, truncate_middle};
+use crate::ui::shell::context::display_path;
 use crate::ui::theme;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,7 +23,6 @@ pub(super) fn detail_content(
     list: &PlanListState,
     detail: &ReviewDetailState,
     analysis_info_expanded: bool,
-    width: u16,
     now: std::time::Instant,
 ) -> DetailContent {
     let item = list
@@ -41,20 +40,17 @@ pub(super) fn detail_content(
         ),
         Span::raw(" "),
         Span::raw(item.address().to_owned()),
-        Span::raw(format!(" (of {} total)", list.items().len())),
+        if detail.total() == list.items().len() {
+            Span::raw(String::new())
+        } else {
+            Span::raw(format!(" (of {} total)", list.items().len()))
+        },
     ]));
     if !list.search().is_empty() {
         lines.push(Line::from(format!("Search: {}", list.search())));
     }
     lines.push(Line::default());
-    append_attribution_summary(
-        &mut lines,
-        item.attribution(),
-        list.comparison(),
-        repository_root,
-        execution_root,
-        width,
-    );
+    append_attribution_summary(&mut lines, item.attribution());
     lines.push(Line::default());
     lines.push(Line::from("Diff:"));
 
@@ -76,6 +72,7 @@ pub(super) fn detail_content(
             DetailRow::Attribute(attribute_index) => append_attribute(
                 &mut lines,
                 &attributes.attributes[*attribute_index],
+                item.kind(),
                 row_index == detail.selected(),
                 detail.reveals_attribute(&attributes.attributes[*attribute_index], now),
             ),
@@ -108,14 +105,7 @@ pub(super) fn detail_content(
     }
 }
 
-fn append_attribution_summary(
-    lines: &mut Vec<Line<'static>>,
-    attribution: &ResourceAttribution,
-    comparison: &ReviewComparison,
-    repository_root: Option<&std::path::Path>,
-    execution_root: Option<&std::path::Path>,
-    width: u16,
-) {
+fn append_attribution_summary(lines: &mut Vec<Line<'static>>, attribution: &ResourceAttribution) {
     lines.push(Line::from(format!(
         "Git: {} ({} {})",
         attribution_label(attribution),
@@ -123,15 +113,6 @@ fn append_attribution_summary(
         "evidence",
     )));
 
-    if let Some(evidence) = attribution.evidence().first() {
-        const PREFIX: &str = "  First evidence: ";
-        let location = evidence_location(evidence, comparison, repository_root, execution_root);
-        let available = usize::from(width).saturating_sub(PREFIX.len());
-        lines.push(Line::from(format!(
-            "{PREFIX}{}",
-            truncate_middle(&location, available)
-        )));
-    }
     if attribution.status() == AttributionStatus::NoMatch {
         lines.push(Line::from(
             "No direct match within the analyzed scope; this does not establish safety.",
@@ -284,6 +265,7 @@ const fn pluralize(count: usize, singular: &'static str, plural: &'static str) -
 fn append_attribute(
     lines: &mut Vec<Line<'static>>,
     attribute: &AttributeDiff,
+    change_kind: ResourceChangeKind,
     selected: bool,
     reveal: bool,
 ) {
@@ -292,23 +274,52 @@ fn append_attribute(
         Span::raw(marker),
         Span::raw(format_attribute_path(&attribute.path)),
     ]));
-    lines.push(Line::styled(
-        format!(
-            "    - {}",
-            display_attribute_value(&attribute.before, reveal)
-        ),
-        theme::diff_style(attribute.kind, false),
-    ));
-    lines.push(Line::styled(
-        format!(
-            "    + {}",
-            display_attribute_value(&attribute.after, reveal)
-        ),
-        theme::diff_style(attribute.kind, true),
-    ));
+    if !matches!(change_kind, ResourceChangeKind::Create) {
+        lines.push(attribute_line(
+            &attribute.before,
+            attribute.kind,
+            false,
+            attribute.path.len() == 1,
+            reveal,
+        ));
+    }
+    if !matches!(change_kind, ResourceChangeKind::Delete) {
+        lines.push(attribute_line(
+            &attribute.after,
+            attribute.kind,
+            true,
+            attribute.path.len() == 1,
+            reveal,
+        ));
+    }
 }
 
-fn display_attribute_value(value: &AttributeValue, reveal: bool) -> String {
+fn attribute_line(
+    value: &AttributeValue,
+    kind: AttributeChangeKind,
+    after: bool,
+    top_level: bool,
+    reveal: bool,
+) -> Line<'static> {
+    let style = if top_level && value.is_unmasked_unknown() {
+        theme::secondary_style()
+    } else {
+        theme::diff_style(kind, after)
+    };
+    let prefix = if after { "+" } else { "-" };
+    Line::styled(
+        format!(
+            "    {prefix} {}",
+            display_attribute_value(value, top_level, reveal)
+        ),
+        style,
+    )
+}
+
+fn display_attribute_value(value: &AttributeValue, top_level: bool, reveal: bool) -> String {
+    if top_level && value.is_unmasked_unknown() {
+        return "(known after apply)".to_owned();
+    }
     if reveal {
         value.revealed_display().unwrap_or_else(|| value.display())
     } else {
@@ -387,10 +398,12 @@ const fn attribution_label(attribution: &ResourceAttribution) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use crate::app::attribution::{
         ResourceAddress, ResourceSourceLocation, SourceFileAnalysis, SourceLineChange, SourceRange,
     };
-    use crate::app::plan::AttributePathSegment;
+    use crate::app::plan::{AttributePathSegment, PlanAction, PlanValue, diff_resource_attributes};
     use crate::app::review::{DetailAction, ReviewComparisonBasis, ReviewComparisonStatus};
     use crate::ui::test_support::buffer_text;
 
@@ -406,7 +419,13 @@ mod tests {
         let attributes = state.detail.attributes();
         for attribute in &attributes.attributes {
             let mut lines = Vec::new();
-            append_attribute(&mut lines, attribute, false, false);
+            append_attribute(
+                &mut lines,
+                attribute,
+                ResourceChangeKind::Update,
+                false,
+                false,
+            );
             if attribute.kind == AttributeChangeKind::Changed {
                 assert_eq!(lines[1].style.fg, Some(Color::Rgb(0xbf, 0x61, 0x6a)));
                 assert_eq!(lines[2].style.fg, Some(Color::Rgb(0xa3, 0xbe, 0x8c)));
@@ -415,6 +434,113 @@ mod tests {
                 assert!(lines[2].style.add_modifier.contains(Modifier::DIM));
             }
         }
+    }
+
+    #[test]
+    fn create_and_delete_details_show_only_the_existing_side() {
+        for (kind, expected_prefix, absent_prefix) in [
+            (ResourceChangeKind::Create, "+ ", "- <absent>"),
+            (ResourceChangeKind::Delete, "- ", "+ <absent>"),
+        ] {
+            let mut change = change();
+            change.kind = kind;
+            change.actions = match kind {
+                ResourceChangeKind::Create => vec![PlanAction::Create],
+                ResourceChangeKind::Delete => vec![PlanAction::Delete],
+                ResourceChangeKind::Update | ResourceChangeKind::Replace => unreachable!(),
+            };
+            if matches!(kind, ResourceChangeKind::Create) {
+                change.before = Some(PlanValue::Null);
+            } else {
+                change.after = Some(PlanValue::Null);
+            }
+
+            let attributes = diff_resource_attributes(&change);
+            let attribute = attributes
+                .attributes
+                .iter()
+                .find(|attribute| {
+                    attribute.path == [AttributePathSegment::Key("instance_type".to_owned())]
+                })
+                .expect("fixture attribute should exist");
+            let mut lines = Vec::new();
+            append_attribute(&mut lines, attribute, kind, false, false);
+            let text = lines
+                .iter()
+                .map(Line::to_string)
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            assert!(text.contains(expected_prefix), "case: {kind:?}\n{text}");
+            assert!(!text.contains(absent_prefix), "case: {kind:?}\n{text}");
+        }
+    }
+
+    #[test]
+    fn non_sensitive_unknown_values_use_the_secondary_known_after_apply_display() {
+        let state = state();
+        let text = buffer_text(&render(&state, 100, 40));
+
+        assert!(text.contains("+ (known after apply)"), "{text}");
+        assert!(!text.contains("+ <unknown>"), "{text}");
+
+        let attribute = state
+            .detail
+            .attributes()
+            .attributes
+            .iter()
+            .find(|attribute| {
+                attribute.path == [AttributePathSegment::Key("private_ip".to_owned())]
+            })
+            .expect("unknown fixture attribute should exist");
+        let mut lines = Vec::new();
+        append_attribute(
+            &mut lines,
+            attribute,
+            ResourceChangeKind::Update,
+            false,
+            false,
+        );
+        assert_eq!(lines[2].style, theme::secondary_style());
+    }
+
+    #[test]
+    fn nested_unknown_values_keep_the_unknown_formatter() {
+        let mut change = change();
+        change.before = Some(plan_value(json!({"settings": {"token": "old"}})));
+        change.after = Some(plan_value(json!({"settings": {"token": "new"}})));
+        change.before_sensitive = Some(plan_value(json!(false)));
+        change.after_sensitive = Some(plan_value(json!(false)));
+        change.after_unknown = Some(plan_value(json!({"settings": {"token": true}})));
+
+        let state = state_for_change(change, &[]);
+        let attribute = state
+            .detail
+            .attributes()
+            .attributes
+            .iter()
+            .find(|attribute| {
+                attribute.path
+                    == [
+                        AttributePathSegment::Key("settings".to_owned()),
+                        AttributePathSegment::Key("token".to_owned()),
+                    ]
+            })
+            .expect("nested unknown fixture attribute should exist");
+        let mut lines = Vec::new();
+        append_attribute(
+            &mut lines,
+            attribute,
+            ResourceChangeKind::Update,
+            false,
+            false,
+        );
+
+        assert_eq!(lines[2].to_string(), "    + <unknown>");
+        assert_eq!(
+            lines[2].style,
+            theme::diff_style(AttributeChangeKind::Changed, true)
+        );
     }
 
     #[test]
@@ -526,7 +652,7 @@ mod tests {
                 .contains("Analysis scope (all analyzed files, not selected-resource evidence)"),
             "{expanded}"
         );
-        let content = detail_content(&state.list, &state.detail, true, 120, Instant::now());
+        let content = detail_content(&state.list, &state.detail, true, Instant::now());
         assert!(
             content
                 .lines
@@ -541,7 +667,7 @@ mod tests {
     #[test]
     fn analysis_info_opens_without_context_or_analyzed_files() {
         let state = state_without_context();
-        let content = detail_content(&state.list, &state.detail, true, 120, Instant::now());
+        let content = detail_content(&state.list, &state.detail, true, Instant::now());
         let text = content
             .lines
             .iter()
@@ -578,9 +704,9 @@ mod tests {
     #[test]
     fn puts_analysis_info_after_diff_and_replacement_reason() {
         let mut state = state_for_change(change(), &[]);
-        let collapsed = detail_content(&state.list, &state.detail, false, 120, Instant::now());
+        let collapsed = detail_content(&state.list, &state.detail, false, Instant::now());
         state.toggle_analysis_info(120, 60, Instant::now());
-        let expanded = detail_content(&state.list, &state.detail, true, 120, Instant::now());
+        let expanded = detail_content(&state.list, &state.detail, true, Instant::now());
 
         let collapsed_diff = collapsed
             .lines
@@ -627,7 +753,7 @@ mod tests {
     }
 
     #[test]
-    fn first_evidence_summary_stays_on_one_line_at_minimum_width() {
+    fn detail_summary_omits_first_evidence_and_keeps_full_evidence_after_diff() {
         let long_path =
             "modules/production/services/networking/terraform/main/region/ap-northeast-1/main.tf";
         let source = SourceFileAnalysis::new(
@@ -644,15 +770,27 @@ mod tests {
         let changed_line =
             SourceLineChange::new(long_path, SourceSide::After, SourceRange::new(42, 46));
         let state = state_for_change_with_sources(change(), &[changed_line], vec![source]);
-        let text = buffer_text(&render(&state, 48, 30));
-        let lines = text.lines().collect::<Vec<_>>();
-        let first = lines
+        let lines = detail_content(&state.list, &state.detail, false, Instant::now())
+            .lines
             .iter()
-            .position(|line| line.contains("First evidence:"))
-            .unwrap_or_else(|| panic!("first evidence summary should be rendered: {text}"));
+            .map(Line::to_string)
+            .collect::<Vec<_>>();
+        let text = lines.join("\n");
+        let summary = lines
+            .iter()
+            .position(|line| line.contains("Git: direct (1 evidence)"))
+            .expect("Git summary should be rendered");
+        let diff = lines
+            .iter()
+            .position(|line| line.contains("Diff:"))
+            .expect("Diff heading should be rendered");
+        let evidence = lines
+            .iter()
+            .position(|line| line.contains("Git evidence:"))
+            .expect("full Git evidence should be rendered");
 
-        assert!(lines[first].contains("..."), "{text}");
-        assert!(!lines[first + 1].contains("First evidence:"), "{text}");
-        assert!(lines[first + 2].contains("Diff:"), "{text}");
+        assert!(!text.contains("First evidence:"), "{text}");
+        assert!(diff > summary, "{text}");
+        assert!(evidence > diff, "{text}");
     }
 }

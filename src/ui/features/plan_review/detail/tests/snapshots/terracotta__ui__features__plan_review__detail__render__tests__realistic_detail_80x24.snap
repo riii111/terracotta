@@ -5,10 +5,9 @@ expression: "buffer_text(&render(&state, 80, 24))"
 Terracotta | repo / environments/development/main           branch: feature/ui07
 Git: working tree vs HEAD
 ┌Resource 1/1 | Filter: All────────────────────────────────────────────────────┐
-│~ aws_instance.api (of 1 total)                                               │
+│~ aws_instance.api                                                            │
 │                                                                              │
 │Git: direct (1 evidence)                                                      │
-│  First evidence: environments/development/main...vice.tf:12-16 (working tree)│
 │                                                                              │
 │Diff:                                                                         │
 │> instance_type                                                               │
@@ -22,7 +21,8 @@ Git: working tree vs HEAD
 │    + <sensitive>                                                             │
 │  private_ip                                                                  │
 │    - null                                                                    │
-│    + <unknown>                                                               │
+│    + (known after apply)                                                     │
+│  [>] tags: 1 changed attribute hidden  [Enter expand]                        │
 └──────────────────────────────────────────────────────────────────────────────┘
-q quit | Esc back | PgUp/PgDn scroll | s analysis info | y resource | Y plan
-↑/↓ select | Enter expand
+Esc back | q quit | ↑/↓ select | Enter expand | PgUp/PgDn scroll
+s analysis info | y copy resource | Y copy plan

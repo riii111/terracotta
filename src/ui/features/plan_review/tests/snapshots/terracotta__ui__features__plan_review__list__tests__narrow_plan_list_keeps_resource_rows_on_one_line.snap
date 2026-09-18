@@ -8,13 +8,13 @@ Git: working tree vs HEAD
 │+1 create  ~1 update  R1 replace  -1 delete               │
 │Needs review: 2/4   Filter: All (f)                       │
 │──────────────────────────────────────────────────────────│
+│! no direct match | ? analysis incomplete                 │
 │Unshown changes: output (1)                               │
-│    ACTION  RESOURCE / GIT                                │
-│>   ~       aws_instance.api                              │
-│            direct: main.tf:42-46                         │
-│    +       aws_s3_bucket.logs_with_a_very_long_resourc...│
-│            direct: storage.tf:8-10                       │
-│                                                          │
+│     ACTION  RESOURCE                                     │
+│>    ~       aws_instance.api                             │
+│     +       aws_s3_bucket.logs_with_a_very_long_reso...  │
+│  !? R       aws_instance.worker                          │
+│  !  -       aws_security_group.old                       │
 └──────────────────────────────────────────────────────────┘
-q quit | j/k/↑/↓ select | Enter details | f change filter
+q quit | Enter details | j/k/↑/↓ select | f change filter
 / edit search

@@ -105,12 +105,22 @@ pub(super) fn render_resource_detail_at(
     let content_area = shell_layout::render_content_block(
         frame,
         layout.shell.content(),
-        format!(
-            "Resource {}/{} | Filter: {}",
-            detail.index() + 1,
-            detail.total(),
-            filter_label(list.filter())
-        ),
+        if detail.total() == list.items().len() {
+            format!(
+                "Resource {}/{} | Filter: {}",
+                detail.index() + 1,
+                detail.total(),
+                filter_label(list.filter())
+            )
+        } else {
+            format!(
+                "Resource {}/{} (of {} total) | Filter: {}",
+                detail.index() + 1,
+                detail.total(),
+                list.items().len(),
+                filter_label(list.filter())
+            )
+        },
     );
     debug_assert_eq!(content_area, layout.shell.content_inner());
 
@@ -131,13 +141,7 @@ pub(super) fn render_resource_detail_at(
         );
     }
 
-    let content = super::rows::detail_content(
-        list,
-        detail,
-        view.analysis_info_expanded(),
-        chunks[1].width,
-        now,
-    );
+    let content = super::rows::detail_content(list, detail, view.analysis_info_expanded(), now);
     let scroll = view.scroll().min(super::viewport::max_scroll(
         &content,
         chunks[1].width,
@@ -176,38 +180,28 @@ fn footer_lines(
     now: Instant,
     width: u16,
 ) -> Vec<Line<'static>> {
-    let mut items = vec![
-        footer::hint(&["q"], "quit"),
-        footer::hint(&["Esc"], "back"),
-        footer::hint(&["PgUp", "PgDn"], "scroll"),
-    ];
+    let mut items = vec![footer::hint(&["Esc"], "back"), footer::hint(&["q"], "quit")];
     if detail.is_revealed_at(now) {
         items.push(footer::hint(&["r"], "mask now"));
-    } else if detail.can_reveal_selected() {
-        items.push(footer::hint(&["r"], "reveal 10s"));
     }
-    items.push(footer::hint(&["s"], "analysis info"));
-    match (
-        list.can_copy(CopyTarget::Resource),
-        list.can_copy(CopyTarget::Plan),
-    ) {
-        (true, true) => {
-            items.push(footer::hint(&["y"], "resource"));
-            items.push(footer::hint(&["Y"], "plan"));
-        }
-        (true, false) => items.push(footer::hint(&["y"], "resource")),
-        (false, true) => items.push(footer::hint(&["Y"], "plan")),
-        (false, false) => {}
-    }
-    items.extend([
-        footer::hint(&["↑", "↓"], "select"),
-        footer::hint(&["Enter"], "expand"),
-    ]);
+    items.push(footer::hint(&["↑", "↓"], "select"));
+    items.push(footer::hint(&["Enter"], "expand"));
     if detail.can_navigate(ResourceNavigation::Previous) {
         items.push(footer::hint(&["[", "←", "Ctrl+B"], "prev"));
     }
     if detail.can_navigate(ResourceNavigation::Next) {
         items.push(footer::hint(&["]", "→", "Ctrl+F"], "next"));
+    }
+    items.push(footer::hint(&["PgUp", "PgDn"], "scroll"));
+    if !detail.is_revealed_at(now) && detail.can_reveal_selected() {
+        items.push(footer::hint(&["r"], "reveal 10s"));
+    }
+    items.push(footer::hint(&["s"], "analysis info"));
+    if list.can_copy(CopyTarget::Resource) {
+        items.push(footer::hint(&["y"], "copy resource"));
+    }
+    if list.can_copy(CopyTarget::Plan) {
+        items.push(footer::hint(&["Y"], "copy plan"));
     }
     footer::layout(items, width)
 }
@@ -217,14 +211,12 @@ fn required_footer_lines(
     now: Instant,
     width: u16,
 ) -> Vec<Line<'static>> {
-    let mut items = vec![
-        footer::hint(&["q"], "quit"),
-        footer::hint(&["Esc"], "back"),
-        footer::hint(&["PgUp", "PgDn"], "scroll"),
-    ];
+    let mut items = vec![footer::hint(&["Esc"], "back"), footer::hint(&["q"], "quit")];
     if detail.is_revealed_at(now) {
         items.push(footer::hint(&["r"], "mask now"));
-    } else if detail.can_reveal_selected() {
+    }
+    items.push(footer::hint(&["PgUp", "PgDn"], "scroll"));
+    if !detail.is_revealed_at(now) && detail.can_reveal_selected() {
         items.push(footer::hint(&["r"], "reveal 10s"));
     }
     items.push(footer::hint(&["s"], "analysis info"));

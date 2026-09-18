@@ -1,7 +1,7 @@
 use crate::ui::test_support::REPRESENTATIVE_TERMINAL_SIZE;
 
 #[test]
-fn plan_list_shows_actions_selection_and_git_evidence() {
+fn plan_list_shows_actions_selection_and_attention_legend() {
     let state = synthetic_state();
 
     insta::assert_snapshot!(buffer_text(&render_to_buffer(
@@ -12,7 +12,7 @@ fn plan_list_shows_actions_selection_and_git_evidence() {
 }
 
 #[test]
-fn narrow_plan_list_wraps_git_evidence() {
+fn narrow_plan_list_keeps_resource_rows_on_one_line() {
     let state = synthetic_state();
 
     insta::assert_snapshot!(buffer_text(&render_to_buffer(&state, 60, 16)));

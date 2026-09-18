@@ -338,7 +338,7 @@ try:
         send_key(b"q")
         exit_code = wait_exit()
     elif scenario == "git_failure":
-        wait_new("incomplete", "git_failure")
+        wait_parts(["?", "analysis incomplete"], "git_failure")
         send_key(b"q")
         exit_code = wait_exit()
     elif scenario == "interrupt":

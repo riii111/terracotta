@@ -202,13 +202,8 @@ mod tests {
                 })
                 .collect(),
         );
-        let collapsed = super::super::rows::detail_content(
-            &state.list,
-            &state.detail,
-            false,
-            78,
-            Instant::now(),
-        );
+        let collapsed =
+            super::super::rows::detail_content(&state.list, &state.detail, false, Instant::now());
         let collapsed_diff = collapsed
             .lines
             .iter()
@@ -216,13 +211,8 @@ mod tests {
             .expect("diff heading should be present");
 
         state.toggle_analysis_info(80, 20, Instant::now());
-        let expanded = super::super::rows::detail_content(
-            &state.list,
-            &state.detail,
-            true,
-            78,
-            Instant::now(),
-        );
+        let expanded =
+            super::super::rows::detail_content(&state.list, &state.detail, true, Instant::now());
         let expanded_diff = expanded
             .lines
             .iter()
