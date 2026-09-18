@@ -4,8 +4,8 @@ use ratatui::buffer::Buffer;
 use serde_json::{Value, json};
 
 use crate::app::attribution::{
-    ResourceAddress, ResourceSourceLocation, SourceFileAnalysis, SourceLineChange, SourceRange,
-    SourceSide, attribute_changes,
+    ResourceAddress, ResourceSourceLocation, SourceFileAnalysis, SourceIssue, SourceIssueKind,
+    SourceLineChange, SourceRange, SourceSide, attribute_changes,
 };
 use crate::app::plan::{
     Plan, PlanAction, PlanSummary, PlanValue, ReplacePathSegment, ResourceChange,
@@ -39,7 +39,12 @@ impl DetailFixture {
             action,
             DetailAction::SelectPrevious | DetailAction::SelectNext | DetailAction::ToggleExpansion
         ) {
-            let content = super::rows::detail_content(&self.list, &self.detail, now);
+            let content = super::rows::detail_content(
+                &self.list,
+                &self.detail,
+                self.view.sources_expanded(),
+                now,
+            );
             super::viewport::ensure_selected_visible(&mut self.view, &content, width, height);
         }
     }
@@ -51,7 +56,12 @@ impl DetailFixture {
         height: u16,
         now: std::time::Instant,
     ) {
-        let content = super::rows::detail_content(&self.list, &self.detail, now);
+        let content = super::rows::detail_content(
+            &self.list,
+            &self.detail,
+            self.view.sources_expanded(),
+            now,
+        );
         super::viewport::apply_scroll(&mut self.view, scroll, &content, width, height);
     }
 
@@ -61,6 +71,18 @@ impl DetailFixture {
 
     pub(super) fn set_copy_notice(&mut self, notice: CopyNotice) {
         self.copy_notice = Some(notice);
+    }
+
+    pub(super) fn toggle_sources(&mut self, width: u16, height: u16, now: Instant) {
+        self.view.toggle_sources();
+        super::super::clamp_detail_scroll(
+            &mut self.view,
+            &self.list,
+            &self.detail,
+            self.copy_notice,
+            now,
+            Rect::new(0, 0, width, height),
+        );
     }
 }
 
@@ -118,21 +140,36 @@ pub(super) fn state_with_changed_lines(changed_lines: &[SourceLineChange]) -> De
     state_for_change(change(), changed_lines)
 }
 
+pub(super) fn state_with_sources(source_files: Vec<SourceFileAnalysis>) -> DetailFixture {
+    state_for_change_with_sources(change(), &[], source_files)
+}
+
 pub(super) fn state_for_change(
     change: ResourceChange,
     changed_lines: &[SourceLineChange],
 ) -> DetailFixture {
-    let source_files = vec![SourceFileAnalysis::new(
-        PathBuf::from("main.tf"),
-        SourceSide::After,
-        vec![ResourceSourceLocation::new(
-            ResourceAddress::new("aws_instance", "api"),
+    state_for_change_with_sources(
+        change,
+        changed_lines,
+        vec![SourceFileAnalysis::new(
             PathBuf::from("main.tf"),
             SourceSide::After,
-            SourceRange::new(42, 46),
+            vec![ResourceSourceLocation::new(
+                ResourceAddress::new("aws_instance", "api"),
+                PathBuf::from("main.tf"),
+                SourceSide::After,
+                SourceRange::new(42, 46),
+            )],
+            Vec::new(),
         )],
-        Vec::new(),
-    )];
+    )
+}
+
+pub(super) fn state_for_change_with_sources(
+    change: ResourceChange,
+    changed_lines: &[SourceLineChange],
+    source_files: Vec<SourceFileAnalysis>,
+) -> DetailFixture {
     let attribution =
         attribute_changes(std::slice::from_ref(&change), &source_files, changed_lines)
             .pop()
@@ -168,6 +205,25 @@ pub(super) fn state_for_change(
         view: DetailViewState::default(),
         copy_notice: None,
     }
+}
+
+pub(super) fn source_file(
+    path: impl Into<PathBuf>,
+    side: SourceSide,
+    issues: Vec<SourceIssue>,
+) -> SourceFileAnalysis {
+    SourceFileAnalysis::new(path.into(), side, Vec::new(), issues)
+}
+
+pub(super) fn incomplete_source_file(path: impl Into<PathBuf>) -> SourceFileAnalysis {
+    source_file(
+        path,
+        SourceSide::After,
+        vec![SourceIssue::new(
+            SourceIssueKind::SyntaxError,
+            "syntax error in analyzed source",
+        )],
+    )
 }
 
 pub(super) fn expansion_change() -> ResourceChange {

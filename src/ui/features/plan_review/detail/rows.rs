@@ -18,6 +18,7 @@ pub(crate) struct DetailContent {
 pub(super) fn detail_content(
     list: &PlanListState,
     detail: &ReviewDetailState,
+    sources_expanded: bool,
     now: std::time::Instant,
 ) -> DetailContent {
     let item = list
@@ -35,7 +36,12 @@ pub(super) fn detail_content(
         Span::raw(item.address().to_owned()),
     ]));
     lines.push(Line::default());
-    append_attribution(&mut lines, item.attribution(), list.source_files());
+    append_attribution(
+        &mut lines,
+        item.attribution(),
+        list.source_files(),
+        sources_expanded,
+    );
     lines.push(Line::default());
     lines.push(Line::from("Diff:"));
 
@@ -71,6 +77,9 @@ pub(super) fn detail_content(
     }
 
     append_replacement(&mut lines, attributes);
+    if sources_expanded && !list.source_files().is_empty() {
+        append_source_files(&mut lines, list.source_files());
+    }
 
     DetailContent {
         lines,
@@ -82,6 +91,7 @@ fn append_attribution(
     lines: &mut Vec<Line<'static>>,
     attribution: &ResourceAttribution,
     source_files: &[SourceFileAnalysis],
+    sources_expanded: bool,
 ) {
     lines.push(Line::from(format!(
         "Git: {}",
@@ -118,22 +128,31 @@ fn append_attribution(
         }
     }
 
-    lines.push(Line::from("  Analyzed sources:"));
+    let action = if sources_expanded { "hide" } else { "show" };
     if source_files.is_empty() {
-        lines.push(Line::from("    none"));
+        lines.push(Line::from("  Analyzed sources: none"));
     } else {
-        for source in source_files {
-            let suffix = if source.is_complete() {
-                String::new()
-            } else {
-                " [incomplete]".to_owned()
-            };
-            lines.push(Line::from(format!(
-                "    {} ({}){suffix}",
-                source.path().display(),
-                source_side_label(source.side())
-            )));
-        }
+        lines.push(Line::from(format!(
+            "  Analyzed sources: {} (s {action})",
+            source_files.len()
+        )));
+    }
+}
+
+fn append_source_files(lines: &mut Vec<Line<'static>>, source_files: &[SourceFileAnalysis]) {
+    lines.push(Line::default());
+    lines.push(Line::from("Analyzed sources:"));
+    for source in source_files {
+        let suffix = if source.is_complete() {
+            String::new()
+        } else {
+            " [incomplete]".to_owned()
+        };
+        lines.push(Line::from(format!(
+            "  {} ({}){suffix}",
+            source.path().display(),
+            source_side_label(source.side())
+        )));
     }
 }
 
@@ -328,5 +347,92 @@ mod tests {
         assert!(text.contains("<sensitive>"), "{text}");
         assert!(!text.contains("old-secret"), "{text}");
         assert!(!text.contains("new-secret"), "{text}");
+    }
+
+    #[test]
+    fn summarizes_empty_and_incomplete_sources_with_side_and_toggle_state() {
+        let empty = state_for_change_with_sources(change(), &[], Vec::new());
+        let empty_text = buffer_text(&render(&empty, 100, 60));
+        assert!(
+            empty_text.contains("No direct match in analyzed sources."),
+            "{empty_text}"
+        );
+        assert!(
+            empty_text.contains("Analyzed sources: none"),
+            "{empty_text}"
+        );
+        assert!(!empty_text.contains("s sources"), "{empty_text}");
+
+        let long_path =
+            "modules/production/services/networking/terraform/main/region/ap-northeast-1/main.tf";
+        let mut state = state_for_change_with_sources(
+            change(),
+            &[],
+            vec![
+                source_file(long_path, SourceSide::Before, Vec::new()),
+                incomplete_source_file(long_path),
+            ],
+        );
+        let collapsed = buffer_text(&render(&state, 120, 60));
+        assert!(
+            collapsed.contains("Analyzed sources: 2 (s show)"),
+            "{collapsed}"
+        );
+        assert!(collapsed.contains("Analysis incomplete:"), "{collapsed}");
+        assert!(!collapsed.contains("(before)"), "{collapsed}");
+
+        state.toggle_sources(120, 60, Instant::now());
+        let expanded = buffer_text(&render(&state, 120, 60));
+        assert!(
+            expanded.contains("Analyzed sources: 2 (s hide)"),
+            "{expanded}"
+        );
+        let content = detail_content(&state.list, &state.detail, true, Instant::now());
+        assert!(
+            content
+                .lines
+                .iter()
+                .any(|line| { line.to_string() == format!("  {long_path} (before)") })
+        );
+        assert!(
+            content
+                .lines
+                .iter()
+                .any(|line| { line.to_string() == format!("  {long_path} (after) [incomplete]") })
+        );
+    }
+
+    #[test]
+    fn puts_expanded_sources_after_diff_and_replacement_reason() {
+        let mut state = state_for_change(change(), &[]);
+        let collapsed = detail_content(&state.list, &state.detail, false, Instant::now());
+        state.toggle_sources(120, 60, Instant::now());
+        let expanded = detail_content(&state.list, &state.detail, true, Instant::now());
+
+        let collapsed_diff = collapsed
+            .lines
+            .iter()
+            .position(|line| line.to_string() == "Diff:")
+            .expect("diff heading should be present");
+        let expanded_diff = expanded
+            .lines
+            .iter()
+            .position(|line| line.to_string() == "Diff:")
+            .expect("diff heading should be present");
+        assert_eq!(collapsed_diff, expanded_diff);
+
+        let replacement = expanded
+            .lines
+            .iter()
+            .position(|line| {
+                line.to_string() == "Replacement reason: replace_because_cannot_update"
+            })
+            .expect("replacement reason should be present");
+        let sources = expanded
+            .lines
+            .iter()
+            .position(|line| line.to_string() == "Analyzed sources:")
+            .expect("expanded source heading should be present");
+        assert!(sources > replacement);
     }
 }

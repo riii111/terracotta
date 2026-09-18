@@ -145,7 +145,7 @@ pub(super) fn render_resource_detail_at(
     );
     frame.render_widget(separator::render(chunks[3].width), chunks[3]);
 
-    let content = super::detail_content(list, detail, now);
+    let content = super::detail_content(list, detail, view.sources_expanded(), now);
     let scroll = view.scroll().min(super::viewport::max_scroll(
         &content,
         chunks[4].width,
@@ -196,6 +196,9 @@ fn footer_lines(
         Line::from("Enter expand"),
         Line::from("[/] prev/next"),
     ]);
+    if !list.source_files().is_empty() {
+        items.push(Line::from("s sources"));
+    }
     footer::layout(items, width)
 }
 
@@ -290,5 +293,26 @@ mod tests {
         .body();
 
         assert_eq!(body.height, 3);
+    }
+
+    #[test]
+    fn keeps_source_toggle_operation_in_body_when_footer_is_narrow() {
+        let state = state();
+        let text = buffer_text(&render(&state, 48, 30));
+
+        assert!(text.contains("Analyzed sources: 1 (s show)"), "{text}");
+        assert!(text.contains("s sources"), "{text}");
+    }
+
+    #[test]
+    fn resetting_detail_view_closes_sources() {
+        let mut state = state();
+        state.toggle_sources(100, 40, Instant::now());
+        assert!(state.view.sources_expanded());
+
+        state.view.reset();
+
+        assert!(!state.view.sources_expanded());
+        assert_eq!(state.scroll(), 0);
     }
 }

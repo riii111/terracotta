@@ -165,6 +165,26 @@ pub(crate) fn run_connected(
                             Some(plan_review::DetailInput::Copy(target)) => {
                                 Some(Action::Copy(target))
                             }
+                            Some(plan_review::DetailInput::ToggleSources) => {
+                                if let Some(review) = state.review()
+                                    && !review.list().source_files().is_empty()
+                                    && let Some(view) = detail_view.as_mut()
+                                {
+                                    view.toggle_sources();
+                                    let size = terminal.size()?;
+                                    if let Some(detail) = review.detail() {
+                                        plan_review::clamp_detail_scroll(
+                                            view,
+                                            review.list(),
+                                            detail,
+                                            review.copy_notice(),
+                                            now,
+                                            Rect::new(0, 0, size.width, size.height),
+                                        );
+                                    }
+                                }
+                                None
+                            }
                             Some(plan_review::DetailInput::Scroll(scroll)) => {
                                 if let Some(view) = detail_view.as_mut() {
                                     let size = terminal.size()?;
