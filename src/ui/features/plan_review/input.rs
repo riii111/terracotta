@@ -4,7 +4,15 @@ use crate::app::copy::CopyTarget;
 use crate::app::review::{PlanListAction, PlanListState};
 use crate::ui::input::normalize_key;
 
-use super::list::ListInput;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ListInput {
+    Selection(PlanListAction),
+    Copy(CopyTarget),
+    OpenDetail,
+    OpenDiagnostics,
+    StartSearch,
+    Quit,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SearchInput {
