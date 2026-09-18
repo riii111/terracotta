@@ -4,7 +4,7 @@ use std::{
 };
 
 use super::{
-    attribution::{AnalysisIssue, ResourceAttribution, SourceFileAnalysis},
+    attribution::{AnalysisIssue, ResourceAttribution, SourceFileAnalysis, SourceSide},
     execution::ExecutionEvent,
     plan::Plan,
 };
@@ -25,6 +25,17 @@ pub(crate) use list::{PlanListAction, PlanListFilter, PlanListState};
 pub(crate) enum ReviewComparisonBasis {
     WorkingTreeVsHead,
     HeadVsMergeBase,
+}
+
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "UI05 uses the semantic source-side mapping")
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReviewComparisonSource {
+    Head,
+    WorkingTree,
+    MergeBase,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +88,26 @@ impl ReviewComparison {
     #[must_use]
     pub(crate) fn compare_ref(&self) -> Option<&str> {
         self.compare_ref.as_deref()
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "UI05 uses the semantic source-side mapping")
+    )]
+    #[must_use]
+    pub(crate) const fn source_for(&self, side: SourceSide) -> ReviewComparisonSource {
+        match (self.basis, side) {
+            (ReviewComparisonBasis::WorkingTreeVsHead, SourceSide::Before)
+            | (ReviewComparisonBasis::HeadVsMergeBase, SourceSide::After) => {
+                ReviewComparisonSource::Head
+            }
+            (ReviewComparisonBasis::WorkingTreeVsHead, SourceSide::After) => {
+                ReviewComparisonSource::WorkingTree
+            }
+            (ReviewComparisonBasis::HeadVsMergeBase, SourceSide::Before) => {
+                ReviewComparisonSource::MergeBase
+            }
+        }
     }
 
     #[cfg(test)]
@@ -219,6 +250,38 @@ impl PlanReview {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn maps_working_tree_source_sides() {
+        let comparison = ReviewComparison::working_tree();
+
+        assert_eq!(
+            comparison.source_for(SourceSide::Before),
+            ReviewComparisonSource::Head
+        );
+        assert_eq!(
+            comparison.source_for(SourceSide::After),
+            ReviewComparisonSource::WorkingTree
+        );
+    }
+
+    #[test]
+    fn maps_compare_ref_source_sides() {
+        let comparison = ReviewComparison::new(
+            ReviewComparisonBasis::HeadVsMergeBase,
+            Some("main".to_owned()),
+            ReviewComparisonStatus::Complete,
+        );
+
+        assert_eq!(
+            comparison.source_for(SourceSide::Before),
+            ReviewComparisonSource::MergeBase
+        );
+        assert_eq!(
+            comparison.source_for(SourceSide::After),
+            ReviewComparisonSource::Head
+        );
+    }
 
     impl ReviewComparisonStatus {
         pub(crate) const fn is_complete(&self) -> bool {

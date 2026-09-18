@@ -185,7 +185,7 @@ impl ExecutionState {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use super::context::ExecutionContextValue;
     use super::*;
@@ -335,11 +335,16 @@ mod tests {
             state.context.repository_root(),
             &ExecutionContextValue::Known("/repo".to_owned())
         );
+        assert_eq!(
+            state.context.repository_root_path(),
+            Some(Path::new("/repo"))
+        );
 
         state.record(event(started_at, ExecutionEventKind::RepositoryRoot(None)));
         assert_eq!(
             state.context.repository_root(),
             &ExecutionContextValue::Unavailable
         );
+        assert_eq!(state.context.repository_root_path(), None);
     }
 }

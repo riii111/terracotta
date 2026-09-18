@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ExecutionContextValue {
@@ -22,6 +22,7 @@ impl ExecutionContextValue {
 pub(crate) struct ExecutionContext {
     cwd: ExecutionContextValue,
     repository_root: ExecutionContextValue,
+    repository_root_path: Option<PathBuf>,
     workspace: ExecutionContextValue,
     git: ExecutionContextValue,
     comparison: ExecutionContextValue,
@@ -38,6 +39,7 @@ impl ExecutionContext {
         Self {
             cwd: ExecutionContextValue::Known(cwd.into()),
             repository_root: ExecutionContextValue::Unavailable,
+            repository_root_path: None,
             workspace: ExecutionContextValue::Known(workspace.into()),
             git: ExecutionContextValue::Known(git.into()),
             comparison: ExecutionContextValue::Known(comparison.into()),
@@ -48,6 +50,7 @@ impl ExecutionContext {
         Self {
             cwd: ExecutionContextValue::Known(cwd.into()),
             repository_root: ExecutionContextValue::Loading,
+            repository_root_path: None,
             workspace: ExecutionContextValue::Loading,
             git: ExecutionContextValue::Loading,
             comparison: ExecutionContextValue::Known(comparison.into()),
@@ -55,6 +58,7 @@ impl ExecutionContext {
     }
 
     pub(crate) fn with_repository_root(mut self, repository_root: Option<PathBuf>) -> Self {
+        self.repository_root_path.clone_from(&repository_root);
         self.repository_root = repository_root.map_or(ExecutionContextValue::Unavailable, |path| {
             ExecutionContextValue::Known(path.display().to_string())
         });
@@ -84,10 +88,22 @@ impl ExecutionContext {
         &self.workspace
     }
 
-    #[cfg(test)]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "UI03 consumes the semantic repository-root state")
+    )]
     #[must_use]
     pub(crate) const fn repository_root(&self) -> &ExecutionContextValue {
         &self.repository_root
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "UI03 consumes the original repository-root path")
+    )]
+    #[must_use]
+    pub(crate) fn repository_root_path(&self) -> Option<&Path> {
+        self.repository_root_path.as_deref()
     }
 
     #[must_use]

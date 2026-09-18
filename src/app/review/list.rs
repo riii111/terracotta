@@ -415,6 +415,15 @@ impl PlanListContext {
         &self.root
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "UI03 and UI05 consume the repository-root path")
+    )]
+    #[must_use]
+    pub(crate) fn repository_root(&self) -> Option<&Path> {
+        self.repository_root.as_deref()
+    }
+
     #[must_use]
     pub(crate) fn workspace(&self) -> &str {
         &self.workspace
@@ -829,8 +838,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            list.context()
-                .and_then(|context| context.repository_root.as_deref()),
+            list.context().and_then(PlanListContext::repository_root),
             Some(Path::new("/repo"))
         );
     }
