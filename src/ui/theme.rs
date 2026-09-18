@@ -14,6 +14,22 @@ pub(crate) fn footer_text_style() -> Style {
     Style::default().fg(Color::Rgb(0xc0, 0xb8, 0xb8))
 }
 
+pub(crate) fn body_style() -> Style {
+    Style::default().fg(Color::Rgb(0xe9, 0xdb, 0xdb))
+}
+
+pub(crate) fn secondary_style() -> Style {
+    Style::default().fg(Color::Rgb(0xc0, 0xb8, 0xb8))
+}
+
+pub(crate) fn frame_style() -> Style {
+    Style::default().fg(Color::Rgb(0x76, 0x7a, 0x84))
+}
+
+pub(crate) fn selection_style() -> Style {
+    Style::default().bg(Color::Rgb(0x30, 0x32, 0x3b))
+}
+
 pub(crate) fn diff_style(kind: AttributeChangeKind, after: bool) -> Style {
     if kind == AttributeChangeKind::Changed {
         Style::default().fg(if after {
@@ -81,6 +97,14 @@ mod tests {
             Some(Color::Rgb(0x90, 0x90, 0x90))
         );
         assert_eq!(footer_text_style().fg, Some(Color::Rgb(0xc0, 0xb8, 0xb8)));
+    }
+
+    #[test]
+    fn shell_styles_use_the_fixed_rgb_palette() {
+        assert_eq!(body_style().fg, Some(Color::Rgb(0xe9, 0xdb, 0xdb)));
+        assert_eq!(secondary_style().fg, Some(Color::Rgb(0xc0, 0xb8, 0xb8)));
+        assert_eq!(frame_style().fg, Some(Color::Rgb(0x76, 0x7a, 0x84)));
+        assert_eq!(selection_style().bg, Some(Color::Rgb(0x30, 0x32, 0x3b)));
     }
 
     #[test]

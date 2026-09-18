@@ -19,7 +19,7 @@ pub(crate) use detail::{
 };
 pub(crate) use diagnostics::ReviewDiagnosticsState;
 pub(crate) use item::PlanListItem;
-pub(crate) use list::{PlanListAction, PlanListFilter, PlanListState};
+pub(crate) use list::{PlanListAction, PlanListContext, PlanListFilter, PlanListState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReviewComparisonBasis {

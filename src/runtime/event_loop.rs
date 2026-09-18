@@ -405,7 +405,12 @@ fn draw(
             if review.diagnostics().is_open() {
                 if let Some(view) = diagnostics_view {
                     terminal.draw(|frame| {
-                        plan_review::render_diagnostics(frame, review.diagnostics(), *view);
+                        plan_review::render_diagnostics(
+                            frame,
+                            review.list(),
+                            review.diagnostics(),
+                            *view,
+                        );
                     })?;
                 }
             } else if let Some(view) = detail_view {

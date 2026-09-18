@@ -84,23 +84,23 @@ impl ExecutionContext {
     }
 
     #[must_use]
+    pub(crate) fn cwd_path(&self) -> &Path {
+        match &self.cwd {
+            ExecutionContextValue::Known(value) => Path::new(value),
+            ExecutionContextValue::Loading | ExecutionContextValue::Unavailable => Path::new(""),
+        }
+    }
+
+    #[must_use]
     pub(crate) const fn workspace(&self) -> &ExecutionContextValue {
         &self.workspace
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "UI03 consumes the semantic repository-root state")
-    )]
     #[must_use]
     pub(crate) const fn repository_root(&self) -> &ExecutionContextValue {
         &self.repository_root
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "UI03 consumes the original repository-root path")
-    )]
     #[must_use]
     pub(crate) fn repository_root_path(&self) -> Option<&Path> {
         self.repository_root_path.as_deref()

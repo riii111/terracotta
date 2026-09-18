@@ -6,13 +6,6 @@ mod context;
 mod event;
 mod progress;
 
-#[cfg_attr(
-    not(test),
-    expect(
-        unused_imports,
-        reason = "UI03 imports the semantic execution context state"
-    )
-)]
 pub(crate) use context::{ExecutionContext, ExecutionContextValue};
 pub(crate) use event::{
     Diagnostic, DiagnosticPoint, DiagnosticPosition, DiagnosticSeverity, DiagnosticSource,

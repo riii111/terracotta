@@ -3,13 +3,12 @@ use std::time::Instant;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::app::copy::{CopyNotice, CopyTarget};
 use crate::app::review::{PlanListState, ReviewDetailState};
-use crate::ui::primitives::atoms::separator;
 use crate::ui::primitives::molecules::terminal_notice;
-use crate::ui::shell::{footer, header};
+use crate::ui::shell::{footer, header, layout as shell_layout};
 use crate::ui::theme;
 
 use super::{DetailViewState, MIN_HEIGHT, MIN_WIDTH};
@@ -25,13 +24,13 @@ pub(crate) fn render_resource_detail(
 }
 
 pub(crate) struct ResourceDetailLayout {
+    shell: shell_layout::ShellLayout,
     chunks: Vec<Rect>,
-    footer_lines: Vec<Line<'static>>,
 }
 
 impl ResourceDetailLayout {
     pub(crate) fn body(&self) -> Rect {
-        self.chunks[4]
+        self.chunks[1]
     }
 }
 
@@ -42,34 +41,20 @@ pub(crate) fn resource_detail_layout(
     copy_notice: Option<CopyNotice>,
     now: Instant,
 ) -> ResourceDetailLayout {
-    let block = Block::new().borders(Borders::ALL);
-    let content_area = block.inner(area);
-    let mut footer_lines = footer_lines(list, detail, now, content_area.width);
-    let required_height = usize::from(u16::from(detail.is_revealed_at(now)))
-        + usize::from(u16::from(list.context().is_some()) * 2)
-        + 1
-        + 1
-        + usize::from(u16::from(copy_notice.is_some()));
-    if required_height + footer_lines.len() > usize::from(content_area.height) {
-        footer_lines = required_footer_lines(detail, now, content_area.width);
-    }
+    let footer_lines = footer_lines(list, detail, now, area.width);
+    let required_footer_lines = required_footer_lines(detail, now, area.width);
+    let shell = shell_layout::layout(area, footer_lines, required_footer_lines, 1);
+    let content_area = shell.content_inner();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(u16::from(detail.is_revealed_at(now))),
-            Constraint::Length(u16::from(list.context().is_some()) * 2),
-            Constraint::Length(1),
-            Constraint::Length(1),
             Constraint::Min(1),
             Constraint::Length(u16::from(copy_notice.is_some())),
-            Constraint::Length(u16::try_from(footer_lines.len()).unwrap_or(u16::MAX).max(1)),
         ])
         .split(content_area)
         .to_vec();
-    ResourceDetailLayout {
-        chunks,
-        footer_lines,
-    }
+    ResourceDetailLayout { shell, chunks }
 }
 
 pub(super) fn render_resource_detail_at(
@@ -90,17 +75,9 @@ pub(super) fn render_resource_detail_at(
         return;
     }
 
-    let title = format!(
-        "Terracotta / Resource {}/{}",
-        detail.index() + 1,
-        detail.total()
-    );
-    let block = Block::new().borders(Borders::ALL).title(title);
-    frame.render_widget(block, area);
-
     let layout = resource_detail_layout(area, list, detail, copy_notice, now);
     let chunks = &layout.chunks;
-    if chunks[4].height == 0 {
+    if chunks[1].height == 0 {
         terminal_notice::render(
             frame,
             area,
@@ -108,6 +85,19 @@ pub(super) fn render_resource_detail_at(
         );
         return;
     }
+
+    header::render_review(
+        frame,
+        layout.shell.header(),
+        list.context(),
+        list.comparison(),
+    );
+    let content_area = shell_layout::render_content_block(
+        frame,
+        layout.shell.content(),
+        format!("Resource {}/{}", detail.index() + 1, detail.total()),
+    );
+    debug_assert_eq!(content_area, layout.shell.content_inner());
 
     if detail.is_revealed_at(now) {
         let remaining = detail
@@ -125,42 +115,31 @@ pub(super) fn render_resource_detail_at(
             chunks[0],
         );
     }
-    if let Some(context) = list.context() {
-        header::render(
-            frame,
-            chunks[1],
-            vec![
-                Line::from(format!("cwd {}", context.root().display())),
-                Line::from(format!(
-                    "workspace {}   git {}",
-                    context.workspace(),
-                    context.git()
-                )),
-            ],
-        );
-    }
-    frame.render_widget(
-        Paragraph::new(format!("compare {}", list.comparison())),
-        chunks[2],
-    );
-    frame.render_widget(separator::render(chunks[3].width), chunks[3]);
 
     let content = super::detail_content(list, detail, view.sources_expanded(), now);
     let scroll = view.scroll().min(super::viewport::max_scroll(
         &content,
-        chunks[4].width,
-        chunks[4].height,
+        chunks[1].width,
+        chunks[1].height,
     ));
     frame.render_widget(
         Paragraph::new(content.lines)
+            .style(theme::body_style())
             .scroll((scroll, 0))
             .wrap(Wrap { trim: false }),
-        chunks[4],
+        chunks[1],
     );
     if let Some(notice) = copy_notice {
-        frame.render_widget(Paragraph::new(notice.message()), chunks[5]);
+        frame.render_widget(
+            Paragraph::new(notice.message()).style(theme::body_style()),
+            chunks[2],
+        );
     }
-    footer::render(frame, chunks[6], layout.footer_lines);
+    footer::render(
+        frame,
+        layout.shell.footer(),
+        layout.shell.footer_lines().to_owned(),
+    );
 }
 
 fn footer_lines(
@@ -292,7 +271,7 @@ mod tests {
         )
         .body();
 
-        assert_eq!(body.height, 3);
+        assert_eq!(body.height, 5);
     }
 
     #[test]
@@ -301,7 +280,6 @@ mod tests {
         let text = buffer_text(&render(&state, 48, 30));
 
         assert!(text.contains("Analyzed sources: 1 (s show)"), "{text}");
-        assert!(text.contains("s sources"), "{text}");
     }
 
     #[test]

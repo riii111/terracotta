@@ -4,13 +4,14 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use crate::app::execution::{Diagnostic, DiagnosticSeverity, ResourceEventKind};
 use crate::app::execution::{ExecutionStage, ExecutionState};
 use crate::ui::primitives::atoms::separator;
 use crate::ui::primitives::molecules::terminal_notice;
-use crate::ui::shell::{footer, header};
+use crate::ui::shell::{footer, header, layout as shell_layout};
+use crate::ui::theme;
 
 use super::ExecutionViewState;
 
@@ -37,25 +38,19 @@ pub(crate) fn render_execution_with_view(
         return;
     }
 
-    let block = Block::new()
-        .borders(Borders::ALL)
-        .title(format!("Terracotta / {}", state.stage().title()));
-    frame.render_widget(block, area);
-
+    header::render_execution(frame, layout.shell.header(), state.context());
+    let content_area =
+        shell_layout::render_content_block(frame, layout.shell.content(), state.stage().title());
+    debug_assert_eq!(content_area, layout.shell.content_inner());
     let chunks = &layout.chunks;
 
-    header::render(
-        frame,
-        chunks[0],
-        wrapped_lines(&context_lines(state), chunks[0].width),
-    );
     frame.render_widget(
-        Paragraph::new(status_lines_with_view(state, view, now)),
-        chunks[1],
+        Paragraph::new(status_lines_with_view(state, view, now)).style(theme::body_style()),
+        chunks[0],
     );
 
-    let lines = wrapped_lines(&execution_lines(state), chunks[2].width);
-    let visible_height = usize::from(chunks[2].height);
+    let lines = wrapped_lines(&execution_lines(state), chunks[1].width);
+    let visible_height = usize::from(chunks[1].height);
     let max_scroll = lines.len().saturating_sub(visible_height);
     let max_scroll = u16::try_from(max_scroll).unwrap_or(u16::MAX);
     let scroll = if view.follows_latest() {
@@ -63,65 +58,50 @@ pub(crate) fn render_execution_with_view(
     } else {
         view.scroll().min(max_scroll)
     };
-    let paragraph = Paragraph::new(lines);
-    frame.render_widget(paragraph.scroll((scroll, 0)), chunks[2]);
-    frame.render_widget(separator::render(chunks[3].width), chunks[3]);
+    let paragraph = Paragraph::new(lines).style(theme::body_style());
+    frame.render_widget(paragraph.scroll((scroll, 0)), chunks[1]);
+    frame.render_widget(separator::render(chunks[2].width), chunks[2]);
     if let Some(notice) = state.copy_notice() {
-        frame.render_widget(Paragraph::new(notice.message()), chunks[4]);
+        frame.render_widget(
+            Paragraph::new(notice.message()).style(theme::body_style()),
+            chunks[3],
+        );
     }
-    footer::render(frame, chunks[5], layout.footer_lines);
+    footer::render(
+        frame,
+        layout.shell.footer(),
+        layout.shell.footer_lines().to_owned(),
+    );
 }
 
 pub(crate) struct ExecutionLayout {
+    shell: shell_layout::ShellLayout,
     chunks: Vec<Rect>,
-    footer_lines: Vec<Line<'static>>,
 }
 
 impl ExecutionLayout {
     pub(crate) fn body(&self) -> Rect {
-        self.chunks[2]
+        self.chunks[1]
     }
 }
 
 pub(crate) fn execution_layout(area: Rect, state: &ExecutionState) -> ExecutionLayout {
-    let content_area = Block::new().borders(Borders::ALL).inner(area);
-    let mut footer_lines = footer_lines(state, content_area.width);
-    let context_height =
-        u16::try_from(wrapped_lines(&context_lines(state), content_area.width).len())
-            .unwrap_or(u16::MAX)
-            .max(1);
+    let footer_lines = footer_lines(state, area.width);
+    let required_footer_lines = required_footer_lines(state, area.width);
+    let shell = shell_layout::layout(area, footer_lines, required_footer_lines, 1);
+    let content_area = shell.content_inner();
     let copy_notice_height = u16::from(state.copy_notice().is_some());
-    let required_height = usize::from(context_height)
-        + usize::from(STATUS_HEIGHT)
-        + 1
-        + usize::from(SEPARATOR_HEIGHT)
-        + usize::from(copy_notice_height);
-    if required_height + footer_lines.len() > usize::from(content_area.height) {
-        footer_lines = required_footer_lines(state, content_area.width);
-    }
-    let split = |footer_height: usize| {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(context_height),
-                Constraint::Length(STATUS_HEIGHT),
-                Constraint::Min(1),
-                Constraint::Length(SEPARATOR_HEIGHT),
-                Constraint::Length(copy_notice_height),
-                Constraint::Length(u16::try_from(footer_height).unwrap_or(u16::MAX).max(1)),
-            ])
-            .split(content_area)
-            .to_vec()
-    };
-    let mut chunks = split(footer_lines.len());
-    if chunks[2].height == 0 {
-        footer_lines = required_footer_lines(state, content_area.width);
-        chunks = split(footer_lines.len());
-    }
-    ExecutionLayout {
-        chunks,
-        footer_lines,
-    }
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(STATUS_HEIGHT),
+            Constraint::Min(1),
+            Constraint::Length(SEPARATOR_HEIGHT),
+            Constraint::Length(copy_notice_height),
+        ])
+        .split(content_area)
+        .to_vec();
+    ExecutionLayout { shell, chunks }
 }
 
 pub(crate) fn execution_scroll_position_with_view(
@@ -180,21 +160,6 @@ fn status_lines_with_view(
         ]),
         Line::from(waiting),
         Line::from(format!("Elapsed {}", format_elapsed(state.elapsed_at(now)))),
-    ]
-}
-
-fn context_lines(state: &ExecutionState) -> Vec<String> {
-    vec![
-        format!(
-            "cwd {}   workspace {}",
-            state.context().cwd().as_str(),
-            state.context().workspace().as_str(),
-        ),
-        format!(
-            "git {}   compare {}",
-            state.context().git().as_str(),
-            state.context().comparison().as_str(),
-        ),
     ]
 }
 
@@ -456,7 +421,10 @@ mod tests {
             20,
         ));
 
-        assert!(text.contains("Terracotta / Planning"), "{text}");
+        assert!(
+            text.contains("Terracotta | loading... (Git loading)"),
+            "{text}"
+        );
         assert!(text.contains("| Processing"), "{text}");
         assert!(text.contains("Waiting for Terraform... 2s"), "{text}");
         assert!(text.contains("Elapsed 5.0s"), "{text}");
@@ -479,10 +447,14 @@ mod tests {
         );
         let text = buffer_text(&render_to_buffer(&state, started_at, 80, 16));
 
-        assert!(text.contains("cwd infra/prod"), "{text}");
-        assert!(text.contains("workspace default"), "{text}");
-        assert!(text.contains("git feature/plan-ui"), "{text}");
-        assert!(text.contains("compare working tree vs HEAD"), "{text}");
+        assert!(
+            text.contains("Terracotta | prod (Git unavailable)"),
+            "{text}"
+        );
+        assert!(
+            text.contains("Git: working tree vs HEAD [branch: feature/plan-ui]"),
+            "{text}"
+        );
 
         let long_context = ExecutionState::with_context(
             started_at,
@@ -495,23 +467,15 @@ mod tests {
         );
         let long_context_text = buffer_text(&render_to_buffer(&long_context, started_at, 80, 30));
         assert!(
-            long_context_text.contains("cwd /Users/example/terraform"),
+            long_context_text.contains("networking (Git unavailable)"),
             "{long_context_text}"
         );
         assert!(
-            long_context_text.contains("workspace-with-a-long-name"),
+            long_context_text.contains("Git: release/2026-09-17 vs working tree"),
             "{long_context_text}"
         );
         assert!(
-            long_context_text.contains("feature/long-running-execution-screen"),
-            "{long_context_text}"
-        );
-        assert!(
-            long_context_text.contains("compare release/2026-09-17 vs work"),
-            "{long_context_text}"
-        );
-        assert!(
-            long_context_text.contains("ing tree"),
+            long_context_text.contains("workspac...ong-name"),
             "{long_context_text}"
         );
         assert!(
@@ -535,11 +499,11 @@ mod tests {
         );
         let unavailable_text = buffer_text(&render_to_buffer(&unavailable, started_at, 80, 16));
         assert!(
-            unavailable_text.contains("cwd infra/prod"),
+            unavailable_text.contains("Terracotta | prod (Git unavailable)"),
             "{unavailable_text}"
         );
         assert!(
-            unavailable_text.contains("git unavailable"),
+            unavailable_text.contains("Git: working tree vs HEAD"),
             "{unavailable_text}"
         );
     }
@@ -695,7 +659,10 @@ mod tests {
             30,
         ));
 
-        assert!(text.contains("Terracotta / Failed"), "{text}");
+        assert!(
+            text.contains("Terracotta | loading... (Git loading)"),
+            "{text}"
+        );
         assert!(text.contains("Terraform plan failed."), "{text}");
         assert!(text.contains("Terraform initialization required"), "{text}");
         let compact = text.replace(' ', "");

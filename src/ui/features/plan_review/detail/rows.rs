@@ -6,7 +6,10 @@ use crate::app::plan::{
     AttributeChangeKind, AttributeDiff, AttributeDiffs, AttributeValue, format_attribute_path,
     format_replace_path,
 };
-use crate::app::review::{AttributeGroup, DetailRow, PlanListState, ReviewDetailState};
+use crate::app::review::{
+    AttributeGroup, DetailRow, PlanListContext, PlanListState, ReviewDetailState,
+};
+use crate::ui::shell::context::display_path;
 use crate::ui::theme;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,6 +29,8 @@ pub(super) fn detail_content(
         .expect("open detail should retain a selected resource");
     let mut lines = Vec::new();
     let mut selected_line = None;
+    let repository_root = list.context().and_then(|context| context.repository_root());
+    let execution_root = list.context().map(PlanListContext::root);
 
     lines.push(Line::from(vec![
         Span::styled(
@@ -41,6 +46,8 @@ pub(super) fn detail_content(
         item.attribution(),
         list.source_files(),
         sources_expanded,
+        repository_root,
+        execution_root,
     );
     lines.push(Line::default());
     lines.push(Line::from("Diff:"));
@@ -78,7 +85,12 @@ pub(super) fn detail_content(
 
     append_replacement(&mut lines, attributes);
     if sources_expanded && !list.source_files().is_empty() {
-        append_source_files(&mut lines, list.source_files());
+        append_source_files(
+            &mut lines,
+            list.source_files(),
+            repository_root,
+            execution_root,
+        );
     }
 
     DetailContent {
@@ -92,6 +104,8 @@ fn append_attribution(
     attribution: &ResourceAttribution,
     source_files: &[SourceFileAnalysis],
     sources_expanded: bool,
+    repository_root: Option<&std::path::Path>,
+    execution_root: Option<&std::path::Path>,
 ) {
     lines.push(Line::from(format!(
         "Git: {}",
@@ -104,11 +118,15 @@ fn append_attribution(
     for evidence in attribution.evidence() {
         let range = evidence.range();
         let location = if range.start_line() == range.end_line() {
-            format!("{}:{}", evidence.path().display(), range.start_line())
+            format!(
+                "{}:{}",
+                display_path(evidence.path(), repository_root, execution_root),
+                range.start_line()
+            )
         } else {
             format!(
                 "{}:{}-{}",
-                evidence.path().display(),
+                display_path(evidence.path(), repository_root, execution_root),
                 range.start_line(),
                 range.end_line()
             )
@@ -139,7 +157,12 @@ fn append_attribution(
     }
 }
 
-fn append_source_files(lines: &mut Vec<Line<'static>>, source_files: &[SourceFileAnalysis]) {
+fn append_source_files(
+    lines: &mut Vec<Line<'static>>,
+    source_files: &[SourceFileAnalysis],
+    repository_root: Option<&std::path::Path>,
+    execution_root: Option<&std::path::Path>,
+) {
     lines.push(Line::default());
     lines.push(Line::from("Analyzed sources:"));
     for source in source_files {
@@ -150,7 +173,7 @@ fn append_source_files(lines: &mut Vec<Line<'static>>, source_files: &[SourceFil
         };
         lines.push(Line::from(format!(
             "  {} ({}){suffix}",
-            source.path().display(),
+            display_path(source.path(), repository_root, execution_root),
             source_side_label(source.side())
         )));
     }

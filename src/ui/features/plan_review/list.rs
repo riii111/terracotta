@@ -1,20 +1,20 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph};
 
 use crate::app::copy::{CopyNotice, CopyTarget};
 use crate::app::plan::ResourceChangeKind;
 use crate::app::review::{PlanListFilter, PlanListItem, PlanListState, ReviewDiagnosticsState};
 use crate::ui::primitives::atoms::separator;
 use crate::ui::primitives::molecules::terminal_notice;
-use crate::ui::shell::{footer, header};
+use crate::ui::shell::{footer, header, layout as shell_layout};
 use crate::ui::theme;
 
 use super::text::{display_width, truncate_end};
 
-const MIN_HEIGHT: u16 = 11;
+const MIN_HEIGHT: u16 = 12;
 const MIN_CONTENT_HEIGHT: u16 = MIN_HEIGHT - 2;
 const MIN_WIDTH: u16 = 48;
 const ANALYSIS_PREFIX: &str = "Analysis incomplete: ";
@@ -36,12 +36,20 @@ pub(crate) fn render_plan_list_with_diagnostics(
         return;
     }
 
-    let block = Block::new()
-        .borders(Borders::ALL)
-        .title("Terracotta / Plan");
-    let content_area = block.inner(area);
-    frame.render_widget(block, area);
+    let footer_lines = footer_lines(state, diagnostics, area.width);
+    let required_footer_lines = required_footer_lines(state, area.width);
+    let shell = shell_layout::layout(area, footer_lines, required_footer_lines, 6);
+    if shell.content_inner().height == 0 {
+        terminal_notice::render(
+            frame,
+            area,
+            "Terminal too small. Resize or press q to quit.",
+        );
+        return;
+    }
 
+    header::render_review(frame, shell.header(), state.context(), state.comparison());
+    let content_area = shell_layout::render_content_block(frame, shell.content(), "Plan");
     let has_search = state.searching() || !state.search().is_empty();
     let compact_layout = has_search && content_area.height <= MIN_CONTENT_HEIGHT;
     let notices = notice_lines(
@@ -53,21 +61,18 @@ pub(crate) fn render_plan_list_with_diagnostics(
     let summary = summary_lines(state);
     let search_height = u16::from(has_search);
     let notice_height = u16::try_from(notices.len()).unwrap_or(u16::MAX);
-    let context_height = u16::from(state.context().is_some()) * 2;
-    let separator_height = u16::from(!compact_layout && notice_height < 2);
+    let separator_height =
+        u16::from(!compact_layout && notice_height < 2 && content_area.width > MIN_WIDTH);
     let copy_notice_height = u16::from(copy_notice.is_some());
-    let (chunks, footer_lines) = list_layout(
+    let chunks = list_layout(
         content_area,
-        state,
-        diagnostics,
-        context_height,
         search_height,
         separator_height,
         notice_height,
         copy_notice_height,
     );
 
-    if chunks[7].height == 0 {
+    if chunks[5].height == 0 {
         terminal_notice::render(
             frame,
             area,
@@ -75,97 +80,59 @@ pub(crate) fn render_plan_list_with_diagnostics(
         );
         return;
     }
-
-    if let Some(context) = state.context() {
-        header::render(
-            frame,
-            chunks[0],
-            vec![
-                Line::from(format!("cwd {}", context.root().display())),
-                Line::from(format!(
-                    "workspace {}   git {}",
-                    context.workspace(),
-                    context.git()
-                )),
-            ],
-        );
-    }
-
     frame.render_widget(
-        Paragraph::new(Line::from(format!("compare {}", state.comparison()))),
-        chunks[1],
+        Paragraph::new(summary).style(theme::body_style()),
+        chunks[0],
     );
-    frame.render_widget(Paragraph::new(summary), chunks[2]);
     if has_search {
         let search_line = if state.searching() {
             format!("/ {}_", state.search())
         } else {
             format!("Search: {}", state.search())
         };
-        frame.render_widget(Paragraph::new(search_line), chunks[3]);
+        frame.render_widget(
+            Paragraph::new(search_line).style(theme::body_style()),
+            chunks[1],
+        );
     }
-    frame.render_widget(separator::render(chunks[4].width), chunks[4]);
+    frame.render_widget(separator::render(chunks[2].width), chunks[2]);
 
     if !notices.is_empty() {
-        frame.render_widget(Paragraph::new(notices), chunks[5]);
+        frame.render_widget(
+            Paragraph::new(notices).style(theme::body_style()),
+            chunks[3],
+        );
     }
 
     if let Some(notice) = copy_notice {
-        frame.render_widget(Paragraph::new(notice.message()), chunks[6]);
+        frame.render_widget(
+            Paragraph::new(notice.message()).style(theme::body_style()),
+            chunks[4],
+        );
     }
-    render_rows(frame, state, chunks[7], list_state);
-    footer::render(frame, chunks[8], footer_lines);
+    render_rows(frame, state, chunks[5], list_state);
+    footer::render(frame, shell.footer(), shell.footer_lines().to_owned());
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the layout keeps the existing R8 row budget explicit"
-)]
 fn list_layout(
     content_area: Rect,
-    state: &PlanListState,
-    diagnostics: &ReviewDiagnosticsState,
-    context_height: u16,
     search_height: u16,
     separator_height: u16,
     notice_height: u16,
     copy_notice_height: u16,
-) -> (Vec<Rect>, Vec<Line<'static>>) {
-    let mut footer_lines = footer_lines(state, diagnostics, content_area.width);
-    let required_height = usize::from(context_height)
-        + 1
-        + 2
-        + usize::from(search_height)
-        + usize::from(separator_height)
-        + usize::from(notice_height)
-        + usize::from(copy_notice_height)
-        + 3;
-    if required_height + footer_lines.len() > usize::from(content_area.height) {
-        footer_lines = required_footer_lines(state, content_area.width);
-    }
-
-    let split = |footer_height: usize| {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(context_height),
-                Constraint::Length(1),
-                Constraint::Length(2),
-                Constraint::Length(search_height),
-                Constraint::Length(separator_height),
-                Constraint::Length(notice_height),
-                Constraint::Length(copy_notice_height),
-                Constraint::Min(1),
-                Constraint::Length(u16::try_from(footer_height).unwrap_or(u16::MAX).max(1)),
-            ])
-            .split(content_area)
-    };
-    let mut chunks = split(footer_lines.len());
-    if chunks[7].height == 0 {
-        footer_lines = required_footer_lines(state, content_area.width);
-        chunks = split(footer_lines.len());
-    }
-    (chunks.to_vec(), footer_lines)
+) -> Vec<Rect> {
+    Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Length(search_height),
+            Constraint::Length(separator_height),
+            Constraint::Length(notice_height),
+            Constraint::Length(copy_notice_height),
+            Constraint::Min(1),
+        ])
+        .split(content_area)
+        .to_vec()
 }
 
 fn notice_lines(
@@ -281,12 +248,9 @@ fn render_rows(
         .collect::<Vec<_>>();
     let list = List::new(items)
         .block(Block::new().title(header))
+        .style(theme::body_style())
         .highlight_symbol("> ")
-        .highlight_style(
-            Style::default()
-                .bg(Color::DarkGray)
-                .add_modifier(Modifier::UNDERLINED),
-        );
+        .highlight_style(theme::selection_style());
     *list_state.selected_mut() = state.selected();
     frame.render_stateful_widget(list, area, list_state);
 }
@@ -461,6 +425,8 @@ fn required_footer_lines(state: &PlanListState, width: u16) -> Vec<Line<'static>
 
 #[cfg(test)]
 mod tests {
+    use ratatui::style::Color;
+
     use crate::app::attribution::{
         ResourceAddress, ResourceSourceLocation, SourceFileAnalysis,
         SourceLineChange as AttributionSourceLineChange, SourceRange, SourceSide,
@@ -765,7 +731,7 @@ mod tests {
         let buffer = render_to_buffer(&state, 120, 20);
         let text = buffer_text(&buffer);
 
-        assert!(text.contains("compare working tree vs HEAD"));
+        assert!(text.contains("Git: working tree vs HEAD"));
         assert!(text.contains("+1 create  ~1 update  R1 replace  -1 delete"));
         assert!(text.contains("Needs review: 2 / 4"), "{text}");
         assert!(text.contains("main.tf:42-46"));
@@ -792,8 +758,8 @@ mod tests {
             .iter()
             .find(|cell| cell.symbol() == ">")
             .expect("selected row should be rendered");
-        assert_eq!(selected_cell.bg, Color::DarkGray);
-        assert!(selected_cell.modifier.contains(Modifier::UNDERLINED));
+        assert_eq!(selected_cell.bg, Color::Rgb(0x30, 0x32, 0x3b));
+        assert!(!selected_cell.modifier.contains(Modifier::UNDERLINED));
     }
 
     #[test]
@@ -853,9 +819,11 @@ mod tests {
         let state = connected_state();
         let text = buffer_text(&render_to_buffer(&state, MIN_WIDTH, MIN_HEIGHT));
 
-        assert!(text.contains("cwd /infra/prod"), "{text}");
-        assert!(text.contains("workspace default"), "{text}");
-        assert!(text.contains("git feature/review"), "{text}");
+        assert!(
+            text.contains("Terracotta | prod (Git unavailable)"),
+            "{text}"
+        );
+        assert!(text.contains("Git: working tree vs HEAD"), "{text}");
         assert!(text.contains("Needs review: 1 / 1"), "{text}");
         assert!(text.contains("Analysis incomplete"), "{text}");
         assert!(text.contains("(+2 more)"), "{text}");
@@ -1081,15 +1049,15 @@ mod tests {
         state.apply(PlanListAction::SelectResource(2));
         let mut list_state = ListState::default();
 
-        render_to_buffer_with_state(&state, 80, 11, &mut list_state);
+        render_to_buffer_with_state(&state, 80, MIN_HEIGHT + 1, &mut list_state);
         let original_offset = list_state.offset();
         assert!(original_offset > 0);
 
-        render_to_buffer_with_state(&state, 80, 11, &mut list_state);
+        render_to_buffer_with_state(&state, 80, MIN_HEIGHT + 1, &mut list_state);
         assert_eq!(list_state.offset(), original_offset);
 
         state.apply(PlanListAction::SelectResource(0));
-        render_to_buffer_with_state(&state, 80, 11, &mut list_state);
+        render_to_buffer_with_state(&state, 80, MIN_HEIGHT + 1, &mut list_state);
         assert!(list_state.offset() < original_offset);
     }
 
@@ -1359,7 +1327,7 @@ mod tests {
         let expected_fg = if highlighted {
             Color::Rgb(0xeb, 0xcb, 0x8b)
         } else {
-            Color::Reset
+            Color::Rgb(0xe9, 0xdb, 0xdb)
         };
 
         for offset in 0..label.chars().count() {

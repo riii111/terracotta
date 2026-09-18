@@ -2,8 +2,9 @@
 source: src/ui/features/plan_review/tests/render_snapshots.rs
 expression: "buffer_text(&render_to_buffer(&state, 60, 16))"
 ---
-┌Terracotta / Plan─────────────────────────────────────────┐
-│compare working tree vs HEAD                              │
+Terracotta | Target unavailable
+Git: working tree vs HEAD
+┌Plan──────────────────────────────────────────────────────┐
 │+1 create  ~1 update  R1 replace  -1 delete               │
 │Needs review: 2 / 4   Filter: All                         │
 │──────────────────────────────────────────────────────────│
@@ -13,8 +14,7 @@ expression: "buffer_text(&render_to_buffer(&state, 60, 16))"
 │            direct: main.tf:42-46                         │
 │    +       aws_s3_bucket.logs_with_a_very_long_resourc...│
 │            direct: storage.tf:8-10                       │
-│  ! R       aws_instance.worker                           │
-│            incomplete                                    │
-│q quit | j/k/↑/↓ select | Enter details | f filter        │
-│/ search                                                  │
+│                                                          │
 └──────────────────────────────────────────────────────────┘
+q quit | j/k/↑/↓ select | Enter details | f filter
+/ search
