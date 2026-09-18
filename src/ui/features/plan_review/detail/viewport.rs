@@ -83,6 +83,8 @@ fn wrapped_line_count(content: &super::rows::DetailContent, viewport_width: u16)
 mod tests {
     use super::super::test_support::*;
     use super::super::*;
+    use crate::app::attribution::SourceSide;
+    use crate::app::copy::CopyTarget;
     use crate::app::plan::AttributeChangeKind;
     use crate::app::plan::AttributePathSegment;
     use crate::app::review::{AttributeGroup, DetailAction, DetailRow};
@@ -172,5 +174,70 @@ mod tests {
 
         assert_eq!(state.detail.selected(), selected);
         assert!(state.scroll() < 100);
+    }
+
+    #[test]
+    fn reaches_the_last_of_one_hundred_expanded_sources_with_page_scroll() {
+        let mut state = state_with_sources(
+            (0..100)
+                .map(|index| {
+                    source_file(
+                        format!("sources/source-{index:03}.tf"),
+                        SourceSide::After,
+                        Vec::new(),
+                    )
+                })
+                .collect(),
+        );
+        let collapsed =
+            super::super::rows::detail_content(&state.list, &state.detail, false, Instant::now());
+        let collapsed_diff = collapsed
+            .lines
+            .iter()
+            .position(|line| line.to_string() == "Diff:")
+            .expect("diff heading should be present");
+
+        state.toggle_sources(80, 20, Instant::now());
+        let expanded =
+            super::super::rows::detail_content(&state.list, &state.detail, true, Instant::now());
+        let expanded_diff = expanded
+            .lines
+            .iter()
+            .position(|line| line.to_string() == "Diff:")
+            .expect("diff heading should be present");
+        assert_eq!(collapsed_diff, expanded_diff);
+
+        for _ in 0..100 {
+            state.apply_scroll(DetailScroll::PageDown, 78, 4, Instant::now());
+        }
+        let text = buffer_text(&render(&state, 80, 20));
+        assert!(text.contains("source-099.tf (after)"), "{text}");
+    }
+
+    #[test]
+    fn toggling_sources_preserves_selection_reveal_and_copy_state() {
+        let mut state = sensitive_sibling_state();
+        select_attribute(&mut state, "password");
+        let now = Instant::now();
+        state.detail.apply(DetailAction::Reveal, now);
+        state.set_copy_notice(CopyNotice::Copied {
+            target: CopyTarget::Resource,
+            resource_count: 1,
+        });
+        let detail_before = state.detail.clone();
+        let list_before = state.list.clone();
+        let notice_before = state.copy_notice;
+
+        state.toggle_sources(100, 40, now);
+        let expanded = buffer_text(&render_at(&state, 100, 40, now));
+        assert!(expanded.contains("old-secret"), "{expanded}");
+        assert_eq!(state.detail, detail_before);
+        assert_eq!(state.list, list_before);
+        assert_eq!(state.copy_notice, notice_before);
+
+        state.toggle_sources(100, 40, now);
+        assert_eq!(state.detail, detail_before);
+        assert_eq!(state.list, list_before);
+        assert_eq!(state.copy_notice, notice_before);
     }
 }

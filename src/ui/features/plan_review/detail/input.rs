@@ -8,6 +8,7 @@ use crate::ui::input::normalize_key;
 pub(crate) enum DetailInput {
     Action(DetailAction),
     Scroll(DetailScroll),
+    ToggleSources,
     Navigate(ResourceNavigation),
     Copy(CopyTarget),
     Back,
@@ -35,6 +36,7 @@ pub(crate) fn key_to_input(key: KeyEvent) -> Option<DetailInput> {
         match key.code {
             KeyCode::Char('y') => return Some(DetailInput::Copy(CopyTarget::Resource)),
             KeyCode::Char('Y') => return Some(DetailInput::Copy(CopyTarget::Plan)),
+            KeyCode::Char('s') => return Some(DetailInput::ToggleSources),
             _ => {}
         }
     }
@@ -127,6 +129,16 @@ mod tests {
                 "copy_plan_with_redundant_shift",
                 key_with_modifiers(KeyCode::Char('Y'), KeyModifiers::SHIFT),
                 Some(DetailInput::Copy(CopyTarget::Plan)),
+            ),
+            (
+                "toggle_sources",
+                key(KeyCode::Char('s')),
+                Some(DetailInput::ToggleSources),
+            ),
+            (
+                "control_s_does_not_toggle_sources",
+                key_with_modifiers(KeyCode::Char('s'), KeyModifiers::CONTROL),
+                None,
             ),
             (
                 "expand",
