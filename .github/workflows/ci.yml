@@ -43,12 +43,8 @@ jobs:
       - run: cargo machete
 
   test:
-    name: Test (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    name: Test
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -57,18 +53,6 @@ jobs:
         with:
           toolchain: '1.98.1'
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - name: Limit crate debug information
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          # Avoid Windows PDB cost; limited debug is enough for CI backtraces.
-          New-Item -ItemType Directory -Path .cargo -Force | Out-Null
-          @'
-          [profile.dev.package.terracotta]
-          debug = 1
-          [profile.test.package.terracotta]
-          debug = 1
-          '@ | Set-Content -Path .cargo/config.toml -Encoding utf8
       - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375
         with:
           tool: nextest,cargo-insta
@@ -79,7 +63,25 @@ jobs:
         run: cargo insta test --test-runner nextest --disable-nextest-doctest --unreferenced=reject --all-targets --all-features
       - name: Build release binary
         run: cargo build --locked --release
-      - run: cargo run --locked -- --version
+      - run: cargo run --locked --release -- --version
+
+  portability:
+    name: Build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+        with:
+          toolchain: '1.98.1'
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo build --locked --release
+      - run: cargo run --locked --release -- --version
 
   audit:
     name: Dependency audit
