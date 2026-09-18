@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    fmt::{self, Display, Formatter},
+    path::{Path, PathBuf},
+};
 
 use super::{
     attribution::{AnalysisIssue, ResourceAttribution, SourceFileAnalysis},
@@ -67,10 +70,30 @@ impl ReviewComparison {
     }
 
     #[must_use]
+    pub(crate) const fn basis(&self) -> ReviewComparisonBasis {
+        self.basis
+    }
+
+    #[must_use]
+    pub(crate) fn compare_ref(&self) -> Option<&str> {
+        self.compare_ref.as_deref()
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) const fn working_tree() -> Self {
+        Self::new(
+            ReviewComparisonBasis::WorkingTreeVsHead,
+            None,
+            ReviewComparisonStatus::Complete,
+        )
+    }
+
+    #[must_use]
     pub(crate) fn label(&self) -> String {
-        match self.basis {
+        match self.basis() {
             ReviewComparisonBasis::WorkingTreeVsHead => "working tree vs HEAD".to_owned(),
-            ReviewComparisonBasis::HeadVsMergeBase => self.compare_ref.as_deref().map_or_else(
+            ReviewComparisonBasis::HeadVsMergeBase => self.compare_ref().map_or_else(
                 || "HEAD vs merge-base".to_owned(),
                 |compare_ref| format!("HEAD vs merge-base({compare_ref})"),
             ),
@@ -78,9 +101,16 @@ impl ReviewComparison {
     }
 }
 
+impl Display for ReviewComparison {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.label())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PlanReview {
     root: PathBuf,
+    repository_root: Option<PathBuf>,
     workspace: String,
     git: String,
     plan: Plan,
@@ -110,6 +140,7 @@ impl PlanReview {
     ) -> Self {
         Self {
             root,
+            repository_root: None,
             workspace,
             git: "unavailable".to_owned(),
             plan,
@@ -125,9 +156,20 @@ impl PlanReview {
         self
     }
 
+    pub(crate) fn with_repository_root(mut self, repository_root: Option<PathBuf>) -> Self {
+        self.repository_root = repository_root;
+        self
+    }
+
     #[must_use]
     pub(crate) fn root(&self) -> &Path {
         &self.root
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn repository_root(&self) -> Option<&Path> {
+        self.repository_root.as_deref()
     }
 
     #[must_use]
@@ -181,12 +223,6 @@ mod tests {
     impl ReviewComparisonStatus {
         pub(crate) const fn is_complete(&self) -> bool {
             matches!(self, Self::Complete)
-        }
-    }
-
-    impl ReviewComparison {
-        pub(crate) const fn basis(&self) -> ReviewComparisonBasis {
-            self.basis
         }
     }
 }

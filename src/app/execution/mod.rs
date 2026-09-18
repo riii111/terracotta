@@ -78,6 +78,12 @@ impl ExecutionState {
             ExecutionEventKind::Phase(ExecutionPhase::Matching) => {
                 self.stage = ExecutionStage::Matching;
             }
+            ExecutionEventKind::RepositoryRoot(repository_root) => {
+                self.context = self
+                    .context
+                    .clone()
+                    .with_repository_root(repository_root.clone());
+            }
             ExecutionEventKind::Workspace(workspace) => {
                 self.context = self.context.clone().with_workspace(workspace.clone());
             }
@@ -179,6 +185,8 @@ impl ExecutionState {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::context::ExecutionContextValue;
     use super::*;
 
@@ -186,7 +194,7 @@ mod tests {
         pub(crate) fn new(started_at: Instant) -> Self {
             Self::with_context(
                 started_at,
-                ExecutionContext::known("loading...", "loading...", "loading...", "loading..."),
+                ExecutionContext::loading("loading...", "loading..."),
             )
         }
     }
@@ -307,5 +315,31 @@ mod tests {
             ExecutionEventKind::Phase(ExecutionPhase::Matching),
         ));
         assert_eq!(state.stage(), ExecutionStage::Matching);
+    }
+
+    #[test]
+    fn repository_root_moves_from_loading_to_known_or_unavailable() {
+        let started_at = Instant::now();
+        let mut state = ExecutionState::new(started_at);
+
+        assert_eq!(
+            state.context.repository_root(),
+            &ExecutionContextValue::Loading
+        );
+
+        state.record(event(
+            started_at,
+            ExecutionEventKind::RepositoryRoot(Some(PathBuf::from("/repo"))),
+        ));
+        assert_eq!(
+            state.context.repository_root(),
+            &ExecutionContextValue::Known("/repo".to_owned())
+        );
+
+        state.record(event(started_at, ExecutionEventKind::RepositoryRoot(None)));
+        assert_eq!(
+            state.context.repository_root(),
+            &ExecutionContextValue::Unavailable
+        );
     }
 }

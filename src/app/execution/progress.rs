@@ -32,6 +32,7 @@ impl ExecutionProgress {
             ExecutionEventKind::Diagnostic(diagnostic) => self.diagnostics.push(diagnostic),
             ExecutionEventKind::Summary(_)
             | ExecutionEventKind::Phase(_)
+            | ExecutionEventKind::RepositoryRoot(_)
             | ExecutionEventKind::Workspace(_)
             | ExecutionEventKind::Git(_)
             | ExecutionEventKind::Informational { .. } => {}

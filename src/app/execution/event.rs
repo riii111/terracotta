@@ -1,5 +1,8 @@
-use std::fmt::{Debug, Formatter};
 use std::time::Instant;
+use std::{
+    fmt::{Debug, Formatter},
+    path::PathBuf,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EventStream {
@@ -134,6 +137,7 @@ pub(crate) enum ExecutionEventKind {
     Summary(ExecutionSummary),
     Diagnostic(Diagnostic),
     Phase(ExecutionPhase),
+    RepositoryRoot(Option<PathBuf>),
     Workspace(String),
     Git(Option<String>),
     Informational {
@@ -159,6 +163,7 @@ impl Debug for ExecutionEventKind {
                 .field(diagnostic)
                 .finish(),
             Self::Phase(phase) => formatter.debug_tuple("Phase").field(phase).finish(),
+            Self::RepositoryRoot(_) => formatter.write_str("RepositoryRoot(<redacted>)"),
             Self::Workspace(_) => formatter.write_str("Workspace(<redacted>)"),
             Self::Git(_) => formatter.write_str("Git(<redacted>)"),
             Self::Informational { event_type, .. } => formatter

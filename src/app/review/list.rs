@@ -79,7 +79,7 @@ impl PlanListFilter {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PlanListState {
     context: Option<PlanListContext>,
-    comparison: String,
+    comparison: super::ReviewComparison,
     summary: PlanSummary,
     items: Vec<PlanListItem>,
     source_files: Vec<SourceFileAnalysis>,
@@ -102,6 +102,7 @@ struct SearchBackup {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PlanListContext {
     root: PathBuf,
+    repository_root: Option<PathBuf>,
     workspace: String,
     git: String,
 }
@@ -109,11 +110,11 @@ pub(crate) struct PlanListContext {
 impl PlanListState {
     pub(crate) fn from_review(review: PlanReview) -> Result<Self, PlanListError> {
         let plan_copy_text = copy::plan_text(&review);
-        let comparison = review.comparison();
-        let comparison_label = comparison.label();
+        let comparison = review.comparison().clone();
         let comparison_message = comparison.status().message().map(str::to_owned);
         let PlanReview {
             root,
+            repository_root,
             workspace,
             git,
             plan,
@@ -123,7 +124,7 @@ impl PlanListState {
             analysis_issues,
         } = review;
 
-        let mut state = Self::from_plan(plan, attributions, comparison_label)?;
+        let mut state = Self::from_plan(plan, attributions, comparison.clone())?;
 
         if let Some(message) = comparison_message {
             state.analysis_issues.push(message);
@@ -148,6 +149,7 @@ impl PlanListState {
         state.plan_copy_text = Some(plan_copy_text);
         state.context = Some(PlanListContext {
             root,
+            repository_root,
             workspace,
             git,
         });
@@ -158,7 +160,7 @@ impl PlanListState {
     pub(crate) fn from_plan(
         plan: Plan,
         attributions: Vec<ResourceAttribution>,
-        comparison: impl Into<String>,
+        comparison: super::ReviewComparison,
     ) -> Result<Self, PlanListError> {
         if plan.changes.len() != attributions.len() {
             return Err(PlanListError::AttributionCountMismatch {
@@ -188,7 +190,7 @@ impl PlanListState {
         let selected = (!items.is_empty()).then_some(0);
         Ok(Self {
             context: None,
-            comparison: comparison.into(),
+            comparison,
             summary: plan.summary,
             items,
             source_files: Vec::new(),
@@ -237,7 +239,7 @@ impl PlanListState {
     }
 
     #[must_use]
-    pub(crate) fn comparison(&self) -> &str {
+    pub(crate) const fn comparison(&self) -> &super::ReviewComparison {
         &self.comparison
     }
 
@@ -478,7 +480,7 @@ mod tests {
                 unsupported_changes: Vec::new(),
             },
             vec![attribution],
-            "working tree vs HEAD",
+            ReviewComparison::working_tree(),
         )
         .expect("matching attribution should build a list")
     }
@@ -541,7 +543,7 @@ mod tests {
                 unsupported_changes: Vec::new(),
             },
             attributions,
-            "working tree vs HEAD",
+            ReviewComparison::working_tree(),
         )
         .expect("filter fixture should build a list")
     }
@@ -715,7 +717,7 @@ mod tests {
                 unsupported_changes: Vec::new(),
             },
             attributions,
-            "working tree vs HEAD",
+            ReviewComparison::working_tree(),
         )
         .expect("direct-only fixture should build a list")
     }
@@ -742,7 +744,7 @@ mod tests {
                 unsupported_changes: Vec::new(),
             },
             Vec::new(),
-            "working tree vs HEAD",
+            ReviewComparison::working_tree(),
         )
         .expect_err("an attribution without a change must not be hidden");
 
@@ -772,7 +774,7 @@ mod tests {
                 unsupported_changes: Vec::new(),
             },
             vec![wrong_attribution],
-            "working tree vs HEAD",
+            ReviewComparison::working_tree(),
         )
         .expect_err("an attribution for another address must not be hidden");
 
@@ -815,6 +817,7 @@ mod tests {
             vec![AnalysisIssue::git("analysis unavailable")],
         )
         .with_git("feature/review".to_owned());
+        let review = review.with_repository_root(Some(PathBuf::from("/repo")));
 
         let list = PlanListState::from_review(review).expect("review data should build a list");
 
@@ -824,6 +827,11 @@ mod tests {
                 "comparison unavailable".to_owned(),
                 "analysis unavailable".to_owned()
             ]
+        );
+        assert_eq!(
+            list.context()
+                .and_then(|context| context.repository_root.as_deref()),
+            Some(Path::new("/repo"))
         );
     }
 }

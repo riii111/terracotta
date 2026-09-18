@@ -156,12 +156,7 @@ where
 }
 
 fn initial_execution_context(root: &Path, compare_ref: Option<&str>) -> ExecutionContext {
-    ExecutionContext::known(
-        root.display().to_string(),
-        "loading...",
-        "loading...",
-        comparison_label(compare_ref),
-    )
+    ExecutionContext::loading(root.display().to_string(), comparison_label(compare_ref))
 }
 
 fn comparison_label(compare_ref: Option<&str>) -> String {

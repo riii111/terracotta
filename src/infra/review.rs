@@ -87,6 +87,14 @@ fn run_review_with_dependencies(
         return Err(ReviewError::Interrupted);
     }
     let execution_root = git_diff.root().to_owned();
+    let repository_root = git_diff.repository_root().map(Path::to_owned);
+    event_sink(ExecutionEvent {
+        received_at: std::time::Instant::now(),
+        kind: ExecutionEventKind::RepositoryRoot(repository_root.clone()),
+    });
+    if cancellation.is_cancelled() {
+        return Err(ReviewError::Interrupted);
+    }
     let configuration_before =
         git::capture_working_tree_configuration_with_cancellation(&execution_root, cancellation)?;
     if cancellation.is_cancelled() {
@@ -191,6 +199,7 @@ fn run_review_with_dependencies(
         review_comparison(&git_diff),
         analysis_issues,
     )
+    .with_repository_root(repository_root)
     .with_git(git_branch.unwrap_or_else(|| "unavailable".to_owned())))
 }
 
@@ -528,6 +537,80 @@ mod tests {
         );
 
         assert!(matches!(result, Err(ReviewError::Interrupted)));
+    }
+
+    #[test]
+    fn forwards_repository_root_before_branch_and_workspace() {
+        let repository = TestRepository::new();
+        repository.write(
+            "main.tf",
+            "resource \"terraform_data\" \"value\" {\n  input = \"before\"\n}\n",
+        );
+        repository.commit("initial");
+        repository.write(
+            "main.tf",
+            "resource \"terraform_data\" \"value\" {\n  input = \"after\"\n}\n",
+        );
+        let expected_repository_root =
+            fs::canonicalize(&repository.path).expect("repository root should be canonicalized");
+
+        let mut events = Vec::new();
+        let review = run_review_with_dependencies(
+            &repository.path,
+            None,
+            &CancellationToken::new(),
+            &FakeRunner::new(plan_output(None), None),
+            None,
+            &mut |event| events.push(event),
+            &mut |_| {},
+        )
+        .expect("fake Terraform review should succeed");
+
+        assert_eq!(
+            review.repository_root(),
+            Some(expected_repository_root.as_path())
+        );
+        assert!(matches!(
+            events.first().map(|event| &event.kind),
+            Some(ExecutionEventKind::RepositoryRoot(Some(root)))
+                if root == &expected_repository_root
+        ));
+        assert!(matches!(
+            events.get(1).map(|event| &event.kind),
+            Some(ExecutionEventKind::Git(_))
+        ));
+        assert!(matches!(
+            events.get(2).map(|event| &event.kind),
+            Some(ExecutionEventKind::Workspace(_))
+        ));
+    }
+
+    #[test]
+    fn forwards_unavailable_repository_root_after_git_discovery_failure() {
+        let root = std::env::temp_dir().join(format!(
+            "terracotta-review-event-outside-{}",
+            NEXT_REPOSITORY.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).expect("outside root should be created");
+        let mut events = Vec::new();
+
+        let review = run_review_with_dependencies(
+            &root,
+            None,
+            &CancellationToken::new(),
+            &FakeRunner::new(plan_output(None), None),
+            None,
+            &mut |event| events.push(event),
+            &mut |_| {},
+        )
+        .expect("review should preserve plan data outside Git");
+
+        assert_eq!(review.repository_root(), None);
+        assert!(matches!(
+            events.first().map(|event| &event.kind),
+            Some(ExecutionEventKind::RepositoryRoot(None))
+        ));
+        fs::remove_dir(&root).expect("outside root should be removed");
     }
 
     #[test]

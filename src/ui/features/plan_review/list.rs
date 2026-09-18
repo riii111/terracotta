@@ -524,7 +524,7 @@ mod tests {
                 }],
             },
             attributions,
-            "working tree vs HEAD",
+            ReviewComparison::working_tree(),
         )
         .expect("synthetic changes and attributions should align")
     }
@@ -700,7 +700,7 @@ mod tests {
                 unsupported_changes: Vec::new(),
             },
             Vec::new(),
-            "working tree vs HEAD",
+            ReviewComparison::working_tree(),
         )
         .expect("empty plan should build a list")
     }
@@ -1246,7 +1246,7 @@ mod tests {
                 unsupported_changes: Vec::new(),
             },
             attributions,
-            "working tree vs HEAD",
+            ReviewComparison::working_tree(),
         )
         .expect("direct-only fixture should build a list")
     }
@@ -1285,7 +1285,7 @@ mod tests {
                 unsupported_changes: Vec::new(),
             },
             attributions,
-            "working tree vs HEAD",
+            ReviewComparison::working_tree(),
         )
         .expect("Unicode synthetic change should produce a list")
     }
@@ -1397,7 +1397,7 @@ mod tests {
                 }],
             },
             Vec::new(),
-            "working tree vs HEAD",
+            ReviewComparison::working_tree(),
         )
         .expect("unsupported changes do not require list rows");
         let text = buffer_text(&render_to_buffer(&state, 80, 12));
