@@ -36,16 +36,14 @@ fn planning_shows_resource_progress_and_waiting_time() {
 fn narrow_failure_wraps_diagnostic_and_preserves_quit_hint() {
     let started_at = Instant::now();
     let mut state = ExecutionState::new(started_at);
-    state.apply(ExecutionAction::SetStage(ExecutionStage::Failed));
+    let diagnostic_detail =
+        "Run terraform init to install the providers required by this configuration.".to_owned();
     state.record(event(
         started_at + Duration::from_secs(1),
         ExecutionEventKind::Diagnostic(Diagnostic {
             severity: DiagnosticSeverity::Error,
             summary: "Terraform initialization required".to_owned(),
-            detail: Some(
-                "Run terraform init to install the providers required by this configuration."
-                    .to_owned(),
-            ),
+            detail: Some(diagnostic_detail.clone()),
             position: Some(DiagnosticPosition {
                 filename: "infra/prod/main.tf".to_owned(),
                 start: DiagnosticPoint {
@@ -63,6 +61,22 @@ fn narrow_failure_wraps_diagnostic_and_preserves_quit_hint() {
             raw: None,
         }),
     ));
+    state.record(event(
+        started_at + Duration::from_secs(2),
+        ExecutionEventKind::Terminated(ProcessTermination {
+            status: ProcessExitStatus::Exited(1),
+            interrupted: false,
+        }),
+    ));
+    assert_eq!(state.progress().diagnostics().len(), 1);
+    assert_eq!(
+        state.progress().diagnostics()[0].summary,
+        "Terraform initialization required"
+    );
+    assert_eq!(
+        state.progress().diagnostics()[0].detail.as_deref(),
+        Some(diagnostic_detail.as_str())
+    );
 
     insta::assert_snapshot!(buffer_text(&render_to_buffer(
         &state,
