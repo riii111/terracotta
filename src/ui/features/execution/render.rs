@@ -124,10 +124,6 @@ pub(crate) fn execution_layout(area: Rect, state: &ExecutionState) -> ExecutionL
     }
 }
 
-pub(crate) fn execution_chunks(area: Rect, state: &ExecutionState) -> Vec<Rect> {
-    execution_layout(area, state).chunks
-}
-
 pub(crate) fn execution_scroll_position_with_view(
     state: &ExecutionState,
     view: ExecutionViewState,
@@ -765,7 +761,7 @@ mod tests {
         }
 
         let area = Rect::new(0, 0, 80, 16);
-        let body = execution_chunks(area, &state)[2];
+        let body = execution_layout(area, &state).body();
         let mut view = ExecutionViewState::from_state(&state);
         let (current_offset, max_offset) = execution_scroll_position_with_view(&state, view, body);
         assert!(current_offset > 0);
@@ -781,13 +777,13 @@ mod tests {
             "aws_instance.new",
             ResourceEventKind::RefreshStart,
         ));
-        let body = execution_chunks(area, &state)[2];
+        let body = execution_layout(area, &state).body();
         let (new_offset, new_max_offset) = execution_scroll_position_with_view(&state, view, body);
         assert_eq!(new_offset, stopped_offset);
         assert!(new_max_offset > max_offset);
 
         view.end();
-        let body = execution_chunks(area, &state)[2];
+        let body = execution_layout(area, &state).body();
         let (follow_offset, follow_max_offset) =
             execution_scroll_position_with_view(&state, view, body);
         assert!(view.follows_latest());
