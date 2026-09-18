@@ -12,7 +12,7 @@ use crate::ui::primitives::molecules::terminal_notice;
 use crate::ui::shell::{footer, header};
 use crate::ui::theme;
 
-use super::text::truncate_end;
+use super::text::{display_width, truncate_end};
 
 #[cfg(test)]
 use crate::app::attribution::{
@@ -187,8 +187,8 @@ fn notice_lines(state: &PlanListState, width: usize, compact: bool) -> Vec<Line<
             count => format!(" (+{} more)", count - 1),
         };
         let issue_width = width
-            .saturating_sub(Line::from(ANALYSIS_PREFIX).width())
-            .saturating_sub(Line::from(suffix.as_str()).width());
+            .saturating_sub(display_width(ANALYSIS_PREFIX))
+            .saturating_sub(display_width(suffix.as_str()));
         format!(
             "{ANALYSIS_PREFIX}{}{}",
             truncate_end(first, issue_width),
@@ -270,15 +270,15 @@ fn list_item(item: &PlanListItem, width: usize) -> ListItem<'static> {
     let git = item.git_label();
     let inline_separator = "  ";
     let address_width = width
-        .saturating_sub(Line::from(prefix.as_str()).width())
-        .saturating_sub(Line::from(inline_separator).width())
-        .saturating_sub(Line::from(git.as_str()).width());
+        .saturating_sub(display_width(prefix.as_str()))
+        .saturating_sub(display_width(inline_separator))
+        .saturating_sub(display_width(git.as_str()));
 
     let action_style = theme::action_style(item.kind());
     let review_style = theme::review_style(item.needs_review());
     let git_style = theme::git_style(item.needs_review());
 
-    if address_width >= 12 && Line::from(item.address()).width() <= address_width {
+    if address_width >= 12 && display_width(item.address()) <= address_width {
         return ListItem::new(Line::from(vec![
             Span::styled(marker.to_owned(), review_style),
             Span::raw(" "),
@@ -290,9 +290,9 @@ fn list_item(item: &PlanListItem, width: usize) -> ListItem<'static> {
         ]));
     }
 
-    let address_width = width.saturating_sub(Line::from(prefix.as_str()).width());
+    let address_width = width.saturating_sub(display_width(prefix.as_str()));
     let address = truncate_end(item.address(), address_width);
-    let evidence_width = width.saturating_sub(Line::from("    ").width());
+    let evidence_width = width.saturating_sub(display_width("    "));
     ListItem::new(vec![
         Line::from(vec![
             Span::styled(marker.to_owned(), review_style),

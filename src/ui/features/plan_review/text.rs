@@ -2,9 +2,16 @@ use ratatui::buffer::CellWidth;
 use ratatui::style::Style;
 use ratatui::text::Line;
 
+pub(super) fn display_width(value: &str) -> usize {
+    Line::from(value)
+        .styled_graphemes(Style::default())
+        .map(|grapheme| usize::from(grapheme.symbol.cell_width()))
+        .sum()
+}
+
 pub(super) fn truncate_end(value: &str, max_width: usize) -> String {
     let line = Line::from(value);
-    if line.width() <= max_width {
+    if display_width(value) <= max_width {
         return value.to_owned();
     }
     if max_width <= 3 {
@@ -81,6 +88,12 @@ mod tests {
                 input: "e\u{301}clair",
                 width: 4,
                 expected: "e\u{301}...",
+            },
+            TruncationCase {
+                name: "halfwidth_sound_mark_uses_terminal_width",
+                input: "ｶﾞabcdef",
+                width: 7,
+                expected: "ｶﾞab...",
             },
             TruncationCase {
                 name: "zwj_sequence_stays_together",
