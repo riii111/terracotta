@@ -169,7 +169,7 @@ fn add_configuration_issues(
                 AnalysisIssue::configuration_unavailable(None, message.clone()),
             );
         }
-        for path in comparison.changed_paths() {
+        for path in working_tree_comparison.changed_paths() {
             push_unique(issues, AnalysisIssue::configuration_differs_from_head(path));
         }
     }
@@ -686,5 +686,41 @@ mod tests {
                 && issue.path().is_some_and(|path| path.ends_with("main.tf"))
         }));
         assert!(review.attributions()[0].needs_review());
+    }
+
+    #[test]
+    fn compares_clean_head_and_dirty_non_native_settings_against_the_correct_snapshots() {
+        let repository = TestRepository::new();
+        repository.write(
+            "main.tf",
+            "resource \"terraform_data\" \"value\" {\n  input = \"base\"\n}\n",
+        );
+        repository.commit("base");
+        git(&repository.path, &["branch", "compare"]);
+        repository.write(
+            "main.tf",
+            "resource \"terraform_data\" \"value\" {\n  input = \"head\"\n}\n",
+        );
+        repository.commit("head");
+        repository.write("values.tfvars", "value = \"dirty\"\n");
+
+        let review = run_fake_review(
+            &repository.path,
+            Some("compare"),
+            plan_output(Some("terraform_data.value")),
+            None,
+        );
+
+        assert!(!review.analysis_issues().iter().any(|issue| {
+            issue.message().contains("differs from HEAD")
+                && issue.path().is_some_and(|path| path.ends_with("main.tf"))
+        }));
+        assert!(review.analysis_issues().iter().any(|issue| {
+            issue.kind() == AnalysisIssueKind::ConfigurationChanged
+                && issue
+                    .path()
+                    .is_some_and(|path| path.ends_with("values.tfvars"))
+                && issue.message().contains("differs from HEAD")
+        }));
     }
 }
