@@ -15,112 +15,33 @@ pub(crate) fn run_review(
     root: &Path,
     compare_ref: Option<&str>,
     cancellation: &CancellationToken,
-) -> Result<PlanReview, TerraformExecutionError> {
-    let mut ignore_event = |_| {};
-    run_review_with_events(root, compare_ref, cancellation, &mut ignore_event)
-}
-
-pub(crate) fn run_review_with_events(
-    root: &Path,
-    compare_ref: Option<&str>,
-    cancellation: &CancellationToken,
-    event_sink: &mut dyn FnMut(ExecutionEvent),
-) -> Result<PlanReview, TerraformExecutionError> {
-    let mut ignore_phase = |_| {};
-    run_review_with_events_and_phases(
-        root,
-        compare_ref,
-        cancellation,
-        event_sink,
-        &mut ignore_phase,
-    )
-}
-
-pub(crate) fn run_review_with_events_and_phases(
-    root: &Path,
-    compare_ref: Option<&str>,
-    cancellation: &CancellationToken,
     event_sink: &mut dyn FnMut(ExecutionEvent),
     phase_sink: &mut dyn FnMut(ExecutionPhase),
 ) -> Result<PlanReview, TerraformExecutionError> {
-    run_review_with_events_with_runner_and_phases(
+    run_review_with_dependencies(
         root,
         compare_ref,
         cancellation,
         &terraform::SystemProcessRunner,
+        None,
         event_sink,
         phase_sink,
     )
 }
 
-pub(crate) fn run_review_with_events_with_runner(
+fn run_review_with_dependencies(
     root: &Path,
     compare_ref: Option<&str>,
     cancellation: &CancellationToken,
     runner: &dyn terraform::ProcessRunner,
+    after_git_diff: Option<&mut dyn FnMut()>,
     event_sink: &mut dyn FnMut(ExecutionEvent),
-) -> Result<PlanReview, TerraformExecutionError> {
-    let mut ignore_phase = |_| {};
-    run_review_with_events_with_runner_and_phases(
-        root,
-        compare_ref,
-        cancellation,
-        runner,
-        event_sink,
-        &mut ignore_phase,
-    )
-}
-
-pub(crate) fn run_review_with_events_with_runner_and_phases(
-    root: &Path,
-    compare_ref: Option<&str>,
-    cancellation: &CancellationToken,
-    runner: &dyn terraform::ProcessRunner,
-    event_sink: &mut dyn FnMut(ExecutionEvent),
-    phase_sink: &mut dyn FnMut(ExecutionPhase),
-) -> Result<PlanReview, TerraformExecutionError> {
-    let mut no_op = || {};
-    run_review_with_events_with_runner_and_hook_and_phases(
-        root,
-        compare_ref,
-        cancellation,
-        runner,
-        event_sink,
-        &mut no_op,
-        phase_sink,
-    )
-}
-
-fn run_review_with_events_with_runner_and_hook(
-    root: &Path,
-    compare_ref: Option<&str>,
-    cancellation: &CancellationToken,
-    runner: &dyn terraform::ProcessRunner,
-    event_sink: &mut dyn FnMut(ExecutionEvent),
-    after_git_diff: &mut dyn FnMut(),
-) -> Result<PlanReview, TerraformExecutionError> {
-    run_review_with_events_with_runner_and_hook_and_phases(
-        root,
-        compare_ref,
-        cancellation,
-        runner,
-        event_sink,
-        after_git_diff,
-        &mut |_| {},
-    )
-}
-
-fn run_review_with_events_with_runner_and_hook_and_phases(
-    root: &Path,
-    compare_ref: Option<&str>,
-    cancellation: &CancellationToken,
-    runner: &dyn terraform::ProcessRunner,
-    event_sink: &mut dyn FnMut(ExecutionEvent),
-    after_git_diff: &mut dyn FnMut(),
     phase_sink: &mut dyn FnMut(ExecutionPhase),
 ) -> Result<PlanReview, TerraformExecutionError> {
     let git_diff = collect_git_diff(root, compare_ref);
-    after_git_diff();
+    if let Some(after_git_diff) = after_git_diff {
+        after_git_diff();
+    }
     let execution_root = git_diff.root().to_owned();
     let configuration_before = git::capture_working_tree_configuration(&execution_root);
     let git_branch = git::current_branch(&execution_root);
@@ -134,7 +55,7 @@ fn run_review_with_events_with_runner_and_hook_and_phases(
         received_at: std::time::Instant::now(),
         kind: ExecutionEventKind::Workspace(workspace.clone()),
     });
-    let execution = terraform::run_plan_with_events_with_runner_and_phase(
+    let execution = terraform::run_plan(
         &execution_root,
         cancellation,
         runner,
@@ -459,11 +380,13 @@ mod tests {
         mutate_on_plan: Option<(PathBuf, String)>,
     ) -> PlanReview {
         let runner = FakeRunner::new(plan, mutate_on_plan);
-        run_review_with_events_with_runner(
+        run_review_with_dependencies(
             root,
             compare_ref,
             &CancellationToken::new(),
             &runner,
+            None,
+            &mut |_| {},
             &mut |_| {},
         )
         .expect("fake Terraform review should succeed")
@@ -476,17 +399,19 @@ mod tests {
     ) -> PlanReview {
         let runner = FakeRunner::new(plan, None);
         let mut mutate_after_git_diff = Some(mutate_after_git_diff);
-        run_review_with_events_with_runner_and_hook(
+        let mut after_git_diff = || {
+            mutate_after_git_diff
+                .take()
+                .expect("Git diff hook should run once")();
+        };
+        run_review_with_dependencies(
             root,
             None,
             &CancellationToken::new(),
             &runner,
+            Some(&mut after_git_diff),
             &mut |_| {},
-            &mut || {
-                mutate_after_git_diff
-                    .take()
-                    .expect("Git diff hook should run once")();
-            },
+            &mut |_| {},
         )
         .expect("fake Terraform review should succeed")
     }
@@ -512,7 +437,15 @@ mod tests {
                 .trim(),
         );
 
-        let result = run_review(&directory, None, &CancellationToken::new());
+        let mut ignore_event = |_| {};
+        let mut ignore_phase = |_| {};
+        let result = run_review(
+            &directory,
+            None,
+            &CancellationToken::new(),
+            &mut ignore_event,
+            &mut ignore_phase,
+        );
         let cleanup = Command::new("python3")
             .args([
                 concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/basic/scenario.py"),
