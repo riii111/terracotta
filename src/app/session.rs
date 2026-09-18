@@ -703,6 +703,28 @@ mod tests {
                 resource_count: 1,
             })
         );
+
+        update(&mut state, Action::OpenDetail, started_at);
+        let review = state.review().expect("review state");
+        assert!(review.detail().is_some());
+        assert_eq!(
+            review.copy_notice(),
+            Some(CopyNotice::Copied {
+                target: CopyTarget::Resource,
+                resource_count: 1,
+            })
+        );
+
+        update(&mut state, Action::CloseDetail, started_at);
+        let review = state.review().expect("review state");
+        assert!(review.detail().is_none());
+        assert_eq!(
+            review.copy_notice(),
+            Some(CopyNotice::Copied {
+                target: CopyTarget::Resource,
+                resource_count: 1,
+            })
+        );
     }
 
     #[test]
@@ -783,6 +805,16 @@ mod tests {
         let review = state.review().expect("review state");
         assert_eq!(review.list().selected(), selected_before);
         assert_eq!(review.detail(), detail_before.as_ref());
+        assert_eq!(review.copy_notice(), Some(CopyNotice::Failed));
+
+        update(&mut state, Action::CloseDetail, started_at);
+        let review = state.review().expect("review state");
+        assert!(review.detail().is_none());
+        assert_eq!(review.copy_notice(), Some(CopyNotice::Failed));
+
+        update(&mut state, Action::OpenDetail, started_at);
+        let review = state.review().expect("review state");
+        assert!(review.detail().is_some());
         assert_eq!(review.copy_notice(), Some(CopyNotice::Failed));
     }
 
