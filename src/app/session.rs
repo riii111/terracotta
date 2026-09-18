@@ -6,7 +6,7 @@ use super::{
     execution::{ExecutionAction, ExecutionEvent, ExecutionStage, ExecutionState},
     review::{
         DetailAction, PlanListAction, PlanListState, PlanReview, PlanReviewMessage,
-        ResourceNavigation, ReviewDetailState,
+        ResourceNavigation, ReviewDetailState, ReviewDiagnosticsState,
     },
 };
 
@@ -30,6 +30,7 @@ pub(crate) enum SessionState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ReviewSessionState {
     list: PlanListState,
+    diagnostics: ReviewDiagnosticsState,
     detail: Option<ReviewDetailState>,
     copy_notice: Option<CopyNotice>,
 }
@@ -43,6 +44,11 @@ impl ReviewSessionState {
     #[must_use]
     pub(crate) const fn detail(&self) -> Option<&ReviewDetailState> {
         self.detail.as_ref()
+    }
+
+    #[must_use]
+    pub(crate) const fn diagnostics(&self) -> &ReviewDiagnosticsState {
+        &self.diagnostics
     }
 
     #[must_use]
@@ -62,6 +68,8 @@ pub(crate) enum Action {
     },
     WorkerDisconnected,
     List(PlanListAction),
+    OpenDiagnostics,
+    CloseDiagnostics,
     OpenDetail,
     CloseDetail,
     Detail(DetailAction),
@@ -136,6 +144,10 @@ impl SessionState {
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the session reducer keeps all user and worker action transitions together"
+)]
 pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> Vec<Effect> {
     match action {
         Action::Execution(action) => update_execution_action(state, action),
@@ -157,8 +169,24 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
             }
             Vec::new()
         }
-        Action::OpenDetail => {
+        Action::OpenDiagnostics => {
+            if let SessionState::Review(review) = state
+                && review.detail().is_none()
+            {
+                review.diagnostics.open();
+            }
+            Vec::new()
+        }
+        Action::CloseDiagnostics => {
             if let SessionState::Review(review) = state {
+                review.diagnostics.close();
+            }
+            Vec::new()
+        }
+        Action::OpenDetail => {
+            if let SessionState::Review(review) = state
+                && !review.diagnostics().is_open()
+            {
                 review.detail = ReviewDetailState::from_list(&review.list);
             }
             Vec::new()
@@ -254,24 +282,24 @@ fn update_execution_action(state: &mut SessionState, action: ExecutionAction) ->
 }
 
 fn complete_review(state: &mut SessionState, review: &PlanReview) -> Vec<Effect> {
-    let SessionState::Execution(execution) = state else {
+    let SessionState::Execution(execution) = &mut *state else {
         return Vec::new();
     };
     if execution.cancellation_requested() {
         return vec![Effect::Finish(SessionOutcome::Interrupted)];
     }
 
-    PlanListState::from_review(review).map_or_else(
-        |_| vec![Effect::Finish(SessionOutcome::Failed)],
-        |list| {
-            *state = SessionState::Review(ReviewSessionState {
-                list,
-                detail: None,
-                copy_notice: None,
-            });
-            Vec::new()
-        },
-    )
+    let Ok(list) = PlanListState::from_review(review) else {
+        return vec![Effect::Finish(SessionOutcome::Failed)];
+    };
+    let diagnostics = execution.take_review_diagnostics();
+    *state = SessionState::Review(ReviewSessionState {
+        list,
+        diagnostics: ReviewDiagnosticsState::new(diagnostics),
+        detail: None,
+        copy_notice: None,
+    });
+    Vec::new()
 }
 
 fn fail_review(
@@ -316,7 +344,10 @@ mod tests {
     use std::{collections::BTreeMap, path::PathBuf};
 
     use super::super::attribution::attribute_changes;
-    use super::super::execution::{ExecutionEventKind, ProcessExitStatus, ProcessTermination};
+    use super::super::execution::{
+        Diagnostic, DiagnosticSeverity, DiagnosticSource, ExecutionEventKind, ProcessExitStatus,
+        ProcessTermination,
+    };
     use super::super::plan::{
         Plan, PlanAction, PlanSummary, PlanValue, ResourceChange, ResourceChangeKind, ResourceMode,
     };
@@ -438,6 +469,94 @@ mod tests {
                 .review()
                 .and_then(ReviewSessionState::detail)
                 .is_some_and(|detail| detail.is_revealed_at(at))
+        );
+    }
+
+    fn diagnostic_event(severity: DiagnosticSeverity, summary: &str) -> Action {
+        Action::WorkerEvent(ExecutionEvent {
+            received_at: now(),
+            kind: ExecutionEventKind::Diagnostic(Diagnostic {
+                severity,
+                summary: summary.to_owned(),
+                detail: None,
+                position: None,
+                source: DiagnosticSource::Terraform,
+                raw: None,
+            }),
+        })
+    }
+
+    #[test]
+    fn successful_review_moves_review_diagnostics_in_order_and_keeps_plan_decisions_separate() {
+        let started_at = now();
+        let mut state = SessionState::new(ExecutionState::new(started_at));
+        for (severity, summary) in [
+            (DiagnosticSeverity::Info, "info"),
+            (DiagnosticSeverity::Warning, "warning"),
+            (DiagnosticSeverity::Error, "error"),
+            (DiagnosticSeverity::Unknown, "unknown"),
+        ] {
+            update(&mut state, diagnostic_event(severity, summary), started_at);
+        }
+
+        update(
+            &mut state,
+            Action::ReviewCompleted(review_with_resource()),
+            started_at,
+        );
+
+        let review = state.review().expect("successful review should be visible");
+        assert_eq!(review.diagnostics().count(), 3);
+        assert_eq!(
+            review
+                .diagnostics()
+                .diagnostics()
+                .iter()
+                .map(|diagnostic| diagnostic.summary.as_str())
+                .collect::<Vec<_>>(),
+            vec!["warning", "error", "unknown"]
+        );
+        assert_eq!(review.list().needs_review_count(), 1);
+
+        update(&mut state, Action::OpenDiagnostics, started_at);
+        assert!(
+            state
+                .review()
+                .is_some_and(|review| review.diagnostics().is_open())
+        );
+        update(&mut state, Action::CloseDiagnostics, started_at);
+        assert!(
+            state
+                .review()
+                .is_some_and(|review| !review.diagnostics().is_open())
+        );
+    }
+
+    #[test]
+    fn info_only_success_has_no_diagnostics_panel() {
+        let started_at = now();
+        let mut state = SessionState::new(ExecutionState::new(started_at));
+        update(
+            &mut state,
+            diagnostic_event(DiagnosticSeverity::Info, "informational"),
+            started_at,
+        );
+        update(
+            &mut state,
+            Action::ReviewCompleted(empty_review()),
+            started_at,
+        );
+
+        assert!(
+            state
+                .review()
+                .is_some_and(|review| review.diagnostics().count() == 0)
+        );
+        update(&mut state, Action::OpenDiagnostics, started_at);
+        assert!(
+            state
+                .review()
+                .is_some_and(|review| !review.diagnostics().is_open())
         );
     }
 

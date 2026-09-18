@@ -11,8 +11,8 @@ use crate::app::{
         SourceSide, attribute_changes,
     },
     execution::{
-        ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionState, ResourceEvent,
-        ResourceEventKind,
+        Diagnostic, DiagnosticSeverity, DiagnosticSource, ExecutionContext, ExecutionEvent,
+        ExecutionEventKind, ExecutionState, ResourceEvent, ResourceEventKind,
     },
     plan::{
         Plan, PlanAction, PlanSummary, PlanValue, ResourceChange, ResourceChangeKind, ResourceMode,
@@ -29,6 +29,9 @@ use super::{event_loop, run_terminal};
 
 pub(crate) fn run_synthetic() -> io::Result<()> {
     let (sender, receiver) = mpsc::channel();
+    sender.send(synthetic_diagnostic()).map_err(|error| {
+        io::Error::other(format!("failed to queue synthetic diagnostic: {error}"))
+    })?;
     sender
         .send(PlanReviewMessage::Completed(synthetic_review()))
         .map_err(|error| io::Error::other(format!("failed to queue synthetic review: {error}")))?;
@@ -49,6 +52,20 @@ pub(crate) fn run_synthetic() -> io::Result<()> {
             &mut clipboard,
         )
         .map(|_| ())
+    })
+}
+
+fn synthetic_diagnostic() -> PlanReviewMessage {
+    PlanReviewMessage::Event(ExecutionEvent {
+        received_at: Instant::now(),
+        kind: ExecutionEventKind::Diagnostic(Diagnostic {
+            severity: DiagnosticSeverity::Warning,
+            summary: "Synthetic warning: review this plan".to_owned(),
+            detail: Some("The synthetic plan completed successfully.".to_owned()),
+            position: None,
+            source: DiagnosticSource::Terraform,
+            raw: None,
+        }),
     })
 }
 
