@@ -11,8 +11,6 @@ use super::context::{execution_target, review_target, truncate_middle};
 
 const WORKSPACE_PREFIX: &str = " [workspace: ";
 const WORKSPACE_SUFFIX: &str = "]";
-const BRANCH_PREFIX: &str = " [branch: ";
-const BRANCH_SUFFIX: &str = "]";
 
 pub(crate) fn render(frame: &mut Frame<'_>, area: Rect, lines: Vec<Line<'static>>) {
     frame.render_widget(Paragraph::new(lines).style(theme::secondary_style()), area);
@@ -132,6 +130,8 @@ fn fit_workspace_line(prefix: &str, main: &str, workspace: Option<&str>, width: 
 }
 
 fn fit_comparison_line(prefix: &str, comparison: &str, branch: Option<&str>, width: u16) -> String {
+    const BRANCH_PREFIX: &str = " [branch: ";
+    const BRANCH_SUFFIX: &str = "]";
     let width = usize::from(width);
     let Some(branch) = branch else {
         return format!(
@@ -143,16 +143,8 @@ fn fit_comparison_line(prefix: &str, comparison: &str, branch: Option<&str>, wid
     if display_width(&full) <= width {
         return full;
     }
-    let branch_fixed_width = display_width(BRANCH_PREFIX) + display_width(BRANCH_SUFFIX);
     let available = width.saturating_sub(display_width(prefix));
-    if display_width(comparison) + branch_fixed_width >= available {
-        return format!("{prefix}{}", truncate_middle(comparison, available));
-    }
-    let branch_width = available - display_width(comparison) - branch_fixed_width;
-    format!(
-        "{prefix}{comparison}{BRANCH_PREFIX}{}{BRANCH_SUFFIX}",
-        truncate_middle(branch, branch_width)
-    )
+    format!("{prefix}{}", truncate_middle(comparison, available))
 }
 
 fn display_width(value: &str) -> usize {
@@ -220,5 +212,18 @@ mod tests {
         let line = execution_lines(&context, 48)[0].to_string();
 
         assert!(line.contains("[workspace: prod]"), "{line}");
+    }
+
+    #[test]
+    fn narrow_header_omits_branch_before_comparison() {
+        let context = ExecutionContext::known(
+            "/repo/main",
+            "default",
+            "feature/with-a-very-long-branch-name",
+            "working tree vs HEAD",
+        );
+        let line = execution_lines(&context, 48)[1].to_string();
+
+        assert_eq!(line, "Git: working tree vs HEAD");
     }
 }
