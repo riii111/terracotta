@@ -66,9 +66,11 @@ fn run_review_with_dependencies(
     let configuration_after = git::capture_working_tree_configuration(&execution_root);
 
     let source_files = parse_git_sources(&git_diff);
-    let configuration_comparison = git::compare_configuration(&git_diff, &configuration_before);
+    let configuration_comparisons: git::ConfigurationComparisons =
+        git::compare_configurations(&git_diff, &configuration_before);
     let mut analysis_issues = git_analysis_issues(&git_diff);
-    let current_native_paths = configuration_comparison
+    let current_native_paths = configuration_comparisons
+        .working_tree()
         .changed_paths()
         .iter()
         .filter(|path| is_supported_native_configuration_path(&execution_root, path))
@@ -88,22 +90,13 @@ fn run_review_with_dependencies(
         &mut analysis_issues,
         &configuration_before,
         &configuration_after,
-        &configuration_comparison,
-        git_diff.basis() == ComparisonBasis::HeadVsMergeBase,
+        configuration_comparisons.working_tree(),
+        configuration_comparisons.head_vs_merge_base(),
     );
-    if git_diff.basis() == ComparisonBasis::HeadVsMergeBase {
-        add_unsupported_comparison_changes(
-            &mut analysis_issues,
-            &git_diff,
-            &git::compare_commit_configurations(&git_diff),
-        );
-    } else {
-        add_unsupported_comparison_changes(
-            &mut analysis_issues,
-            &git_diff,
-            &configuration_comparison,
-        );
-    }
+    let unsupported_comparison = configuration_comparisons
+        .head_vs_merge_base()
+        .unwrap_or_else(|| configuration_comparisons.working_tree());
+    add_unsupported_comparison_changes(&mut analysis_issues, &git_diff, unsupported_comparison);
 
     let mut attributions =
         attribute_changes(&plan.changes, &source_files, git_diff.changed_lines());
@@ -148,8 +141,8 @@ fn add_configuration_issues(
     issues: &mut Vec<AnalysisIssue>,
     before: &ConfigurationSnapshot,
     after: &ConfigurationSnapshot,
-    comparison: &ConfigurationComparison,
-    execution_must_match_head: bool,
+    working_tree_comparison: &ConfigurationComparison,
+    head_vs_merge_base: Option<&ConfigurationComparison>,
 ) {
     for path in before.changed_paths(after) {
         push_unique(issues, AnalysisIssue::configuration_changed(&path));
@@ -160,14 +153,20 @@ fn add_configuration_issues(
             AnalysisIssue::configuration_unavailable(None, message.clone()),
         );
     }
-    for message in comparison.issues() {
+    for message in working_tree_comparison.issues() {
         push_unique(
             issues,
             AnalysisIssue::configuration_unavailable(None, message.clone()),
         );
     }
-    if execution_must_match_head {
-        for path in comparison.changed_paths() {
+    if let Some(comparison) = head_vs_merge_base {
+        for message in comparison.issues() {
+            push_unique(
+                issues,
+                AnalysisIssue::configuration_unavailable(None, message.clone()),
+            );
+        }
+        for path in working_tree_comparison.changed_paths() {
             push_unique(issues, AnalysisIssue::configuration_differs_from_head(path));
         }
     }
@@ -684,5 +683,41 @@ mod tests {
                 && issue.path().is_some_and(|path| path.ends_with("main.tf"))
         }));
         assert!(review.attributions()[0].needs_review());
+    }
+
+    #[test]
+    fn compares_clean_head_and_dirty_non_native_settings_against_the_correct_snapshots() {
+        let repository = TestRepository::new();
+        repository.write(
+            "main.tf",
+            "resource \"terraform_data\" \"value\" {\n  input = \"base\"\n}\n",
+        );
+        repository.commit("base");
+        git(&repository.path, &["branch", "compare"]);
+        repository.write(
+            "main.tf",
+            "resource \"terraform_data\" \"value\" {\n  input = \"head\"\n}\n",
+        );
+        repository.commit("head");
+        repository.write("values.tfvars", "value = \"dirty\"\n");
+
+        let review = run_fake_review(
+            &repository.path,
+            Some("compare"),
+            plan_output(Some("terraform_data.value")),
+            None,
+        );
+
+        assert!(!review.analysis_issues().iter().any(|issue| {
+            issue.message().contains("differs from HEAD")
+                && issue.path().is_some_and(|path| path.ends_with("main.tf"))
+        }));
+        assert!(review.analysis_issues().iter().any(|issue| {
+            issue.kind() == AnalysisIssueKind::ConfigurationChanged
+                && issue
+                    .path()
+                    .is_some_and(|path| path.ends_with("values.tfvars"))
+                && issue.message().contains("differs from HEAD")
+        }));
     }
 }
