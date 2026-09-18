@@ -83,3 +83,48 @@ fn narrow_failure_wraps_diagnostic_and_preserves_quit_hint() {
         20,
     )));
 }
+
+#[test]
+fn realistic_execution_120x40() {
+    let started_at = Instant::now();
+    let state = realistic_execution_state(started_at);
+
+    insta::assert_snapshot!(buffer_text(&render_to_buffer(
+        &state,
+        started_at + Duration::from_secs(5),
+        120,
+        40,
+    )));
+}
+
+#[test]
+fn realistic_execution_80x24() {
+    let started_at = Instant::now();
+    let state = realistic_execution_state(started_at);
+
+    insta::assert_snapshot!(buffer_text(&render_to_buffer(
+        &state,
+        started_at + Duration::from_secs(5),
+        80,
+        24,
+    )));
+}
+
+fn realistic_execution_state(started_at: Instant) -> ExecutionState {
+    let mut state = ExecutionState::with_context(
+        started_at,
+        ExecutionContext::known(
+            "/repo/environments/development/main",
+            "default",
+            "feature/ui07",
+            "working tree vs HEAD",
+        )
+        .with_repository_root(Some(std::path::PathBuf::from("/repo"))),
+    );
+    state.record(resource_event(
+        started_at + Duration::from_secs(1),
+        "terraform_data.api",
+        ResourceEventKind::RefreshComplete,
+    ));
+    state
+}

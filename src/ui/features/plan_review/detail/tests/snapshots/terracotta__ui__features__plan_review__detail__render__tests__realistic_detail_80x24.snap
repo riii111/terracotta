@@ -1,0 +1,28 @@
+---
+source: src/ui/features/plan_review/detail/tests/render_snapshots.rs
+expression: "buffer_text(&render(&state, 80, 24))"
+---
+Terracotta | repo / environments/development/main
+Git: working tree vs HEAD [branch: feature/ui07]
+┌Resource 1/1 | Filter: All────────────────────────────────────────────────────┐
+│~ aws_instance.api (of 1 total)                                               │
+│                                                                              │
+│Git: direct (1 evidence)                                                      │
+│  First evidence: environments/development/main...vice.tf:12-16 (working tree)│
+│                                                                              │
+│Diff:                                                                         │
+│> instance_type                                                               │
+│    - "t3.small"                                                              │
+│    + "t3.medium"                                                             │
+│  long_path                                                                   │
+│    - "a-value-that-is-long-enough-to-wrap-across-the-detail-width"           │
+│    + "another-value-that-is-long-enough-to-wrap-across-the-detail-width"     │
+│  password                                                                    │
+│    - <sensitive>                                                             │
+│    + <sensitive>                                                             │
+│  private_ip                                                                  │
+│    - null                                                                    │
+│    + <unknown>                                                               │
+└──────────────────────────────────────────────────────────────────────────────┘
+q quit | Esc back | PgUp/PgDn scroll | s analysis info | y resource | Y plan
+↑/↓ select | Enter expand

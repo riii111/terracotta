@@ -1,0 +1,28 @@
+---
+source: src/ui/features/plan_review/diagnostics/tests/render_snapshots.rs
+expression: "buffer_text(&render_to_buffer((80, 24), |frame|\n{\n    render_diagnostics(frame, &list, &state, DiagnosticsViewState::default());\n}))"
+---
+Terracotta | repo / environments/development/main
+Git: working tree vs HEAD [branch: feature/ui07]
+┌Diagnostics───────────────────────────────────────────────────────────────────┐
+│Warning 1/1                                                                   │
+│Summary: 警 告 🙂                                                                │
+│Detail: long detail with Unicode 日 本 語                                        │
+│Location: main.tf:4:2-4:8                                                     │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+q quit | Esc/w back | ↑/↓/j/k scroll | PgUp/PgDn page

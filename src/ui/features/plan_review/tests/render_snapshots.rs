@@ -24,3 +24,17 @@ fn empty_plan_list_shows_zero_summary() {
 
     insta::assert_snapshot!(buffer_text(&render_to_buffer(&state, 80, 12)));
 }
+
+#[test]
+fn realistic_plan_list_120x40() {
+    let state = realistic_state();
+
+    insta::assert_snapshot!(buffer_text(&render_to_buffer(&state, 120, 40)));
+}
+
+#[test]
+fn realistic_plan_list_80x24() {
+    let state = realistic_state();
+
+    insta::assert_snapshot!(buffer_text(&render_to_buffer(&state, 80, 24)));
+}

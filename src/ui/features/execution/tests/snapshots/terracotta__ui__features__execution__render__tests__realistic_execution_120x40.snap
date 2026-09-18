@@ -1,0 +1,44 @@
+---
+source: src/ui/features/execution/tests/render_snapshots.rs
+expression: "buffer_text(&render_to_buffer(&state, started_at + Duration::from_secs(5),\n120, 40,))"
+---
+Terracotta | repo / environments/development/main
+Git: working tree vs HEAD [branch: feature/ui07]
+┌Planning──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│Planning...                                                                                                           │
+│Waiting for Terraform output... 4s    Follow: On                                                                      │
+│Elapsed 5.0s                                                                                                          │
+│  [done] terraform_data.api                   Refresh complete                                                        │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+Ctrl-C cancel | ↑/↓/PgUp/PgDn scroll | End follow latest

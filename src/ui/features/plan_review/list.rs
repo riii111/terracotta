@@ -625,7 +625,9 @@ mod tests {
         PlanListAction, PlanReview, ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus,
     };
     use crate::ui::test_support::{
-        assert_shell_frame_and_footer, buffer_text, render_to_buffer as render_test_buffer,
+        REALISTIC_COMMON_SOURCE, REALISTIC_DEVELOPMENT_SOURCE, REALISTIC_EXECUTION_ROOT,
+        REALISTIC_PRODUCTION_SOURCE, REALISTIC_REPOSITORY_ROOT, assert_shell_frame_and_footer,
+        buffer_text, render_to_buffer as render_test_buffer,
     };
 
     include!("tests/render_snapshots.rs");
@@ -920,6 +922,77 @@ mod tests {
         )
         .with_git("feature/review".to_owned());
         PlanListState::from_review(review).expect("review data should build a list")
+    }
+
+    fn realistic_state() -> PlanListState {
+        let change = synthetic_change(
+            "terraform_data.api",
+            ResourceChangeKind::Update,
+            PlanAction::Update,
+        );
+        let source_files = vec![
+            SourceFileAnalysis::new(
+                REALISTIC_DEVELOPMENT_SOURCE.into(),
+                SourceSide::After,
+                vec![ResourceSourceLocation::new(
+                    ResourceAddress::new("terraform_data", "api"),
+                    REALISTIC_DEVELOPMENT_SOURCE.into(),
+                    SourceSide::After,
+                    SourceRange::new(12, 16),
+                )],
+                Vec::new(),
+            ),
+            SourceFileAnalysis::new(
+                REALISTIC_PRODUCTION_SOURCE.into(),
+                SourceSide::After,
+                vec![ResourceSourceLocation::new(
+                    ResourceAddress::new("terraform_data", "api"),
+                    REALISTIC_PRODUCTION_SOURCE.into(),
+                    SourceSide::After,
+                    SourceRange::new(12, 16),
+                )],
+                Vec::new(),
+            ),
+            SourceFileAnalysis::new(
+                REALISTIC_COMMON_SOURCE.into(),
+                SourceSide::After,
+                vec![ResourceSourceLocation::new(
+                    ResourceAddress::new("terraform_data", "api"),
+                    REALISTIC_COMMON_SOURCE.into(),
+                    SourceSide::After,
+                    SourceRange::new(4, 8),
+                )],
+                Vec::new(),
+            ),
+        ];
+        let attributions = attribute_changes(
+            std::slice::from_ref(&change),
+            &source_files,
+            &[AttributionSourceLineChange::new(
+                REALISTIC_DEVELOPMENT_SOURCE,
+                SourceSide::After,
+                SourceRange::new(12, 13),
+            )],
+        );
+        let review = PlanReview::new(
+            PathBuf::from(REALISTIC_EXECUTION_ROOT),
+            "default".to_owned(),
+            Plan {
+                changes: vec![change],
+                summary: PlanSummary {
+                    updates: 1,
+                    ..PlanSummary::default()
+                },
+                unsupported_changes: Vec::new(),
+            },
+            source_files,
+            attributions,
+            ReviewComparison::working_tree(),
+            Vec::new(),
+        )
+        .with_git("feature/ui07".to_owned())
+        .with_repository_root(Some(PathBuf::from(REALISTIC_REPOSITORY_ROOT)));
+        PlanListState::from_review(review).expect("realistic review data should build a list")
     }
 
     #[test]

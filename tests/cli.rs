@@ -97,15 +97,30 @@ mod pty_tests {
             let id = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
             let directory =
                 env::temp_dir().join(format!("terracotta-cli-pty-{}-{id}", std::process::id()));
-            let root = directory.join("root with spaces");
+            let repository = directory.join("repository with spaces");
+            let root = repository.join("environments/development/main");
+            let production = repository.join("environments/production/main");
+            let common = repository.join("common/main");
             let bin = directory.join("fake-bin");
             fs::create_dir_all(&root).expect("fixture root should be created");
+            fs::create_dir_all(&production).expect("production fixture should be created");
+            fs::create_dir_all(&common).expect("common fixture should be created");
             fs::create_dir(&bin).expect("fake bin should be created");
             fs::write(
-                root.join("main.tf"),
+                root.join("service.tf"),
                 "resource \"terraform_data\" \"api\" {\n  input = \"old\"\n}\n",
             )
             .expect("fixture configuration should be written");
+            fs::write(
+                production.join("service.tf"),
+                "resource \"terraform_data\" \"api\" {\n  input = \"production\"\n}\n",
+            )
+            .expect("production configuration should be written");
+            fs::write(
+                common.join("service.tf"),
+                "resource \"terraform_data\" \"shared\" {\n  input = \"common\"\n}\n",
+            )
+            .expect("common configuration should be written");
 
             let plan_path_record = directory.join("plan-path");
             let pid_record = directory.join("terraform-pid");
@@ -123,10 +138,10 @@ mod pty_tests {
                 .expect("fake Git should be executable");
 
             if with_git {
-                git(&root, &["init", "--quiet", "--initial-branch=main"]);
-                git(&root, &["add", "main.tf"]);
+                git(&repository, &["init", "--quiet", "--initial-branch=main"]);
+                git(&repository, &["add", "."]);
                 git(
-                    &root,
+                    &repository,
                     &[
                         "-c",
                         "user.name=Terracotta PTY",
@@ -139,7 +154,7 @@ mod pty_tests {
                     ],
                 );
                 fs::write(
-                    root.join("main.tf"),
+                    root.join("service.tf"),
                     "resource \"terraform_data\" \"api\" {\n  input = \"new\"\n}\n",
                 )
                 .expect("fixture change should be written");

@@ -6,7 +6,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::app::copy::{CopyNotice, CopyTarget};
-use crate::app::review::{PlanListState, ResourceNavigation, ReviewDetailState};
+use crate::app::review::{PlanListFilter, PlanListState, ResourceNavigation, ReviewDetailState};
 use crate::ui::primitives::molecules::terminal_notice;
 use crate::ui::shell::{footer, header, layout as shell_layout};
 use crate::ui::theme;
@@ -109,7 +109,7 @@ pub(super) fn render_resource_detail_at(
             "Resource {}/{} | Filter: {}",
             detail.index() + 1,
             detail.total(),
-            list.filter().label()
+            filter_label(list.filter())
         ),
     );
     debug_assert_eq!(content_area, layout.shell.content_inner());
@@ -161,6 +161,13 @@ pub(super) fn render_resource_detail_at(
         layout.shell.footer(),
         layout.shell.footer_lines().to_owned(),
     );
+}
+
+const fn filter_label(filter: PlanListFilter) -> &'static str {
+    match filter {
+        PlanListFilter::All => "All",
+        PlanListFilter::NeedsReview => "Needs review",
+    }
 }
 
 fn footer_lines(
@@ -233,6 +240,8 @@ mod tests {
 
     use super::super::test_support::*;
     use super::*;
+
+    include!("tests/render_snapshots.rs");
 
     #[test]
     fn renders_app_owned_detail_content_and_keeps_render_read_only() {

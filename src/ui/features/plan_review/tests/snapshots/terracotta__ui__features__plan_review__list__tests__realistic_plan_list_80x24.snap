@@ -1,0 +1,28 @@
+---
+source: src/ui/features/plan_review/tests/render_snapshots.rs
+expression: "buffer_text(&render_to_buffer(&state, 80, 24))"
+---
+Terracotta | repo / environments/development/main
+Git: working tree vs HEAD [branch: feature/ui07]
+┌Plan──────────────────────────────────────────────────────────────────────────┐
+│+0 create  ~1 update  R0 replace  -0 delete                                   │
+│Needs review: 0/1   Filter: All (f)                                           │
+│──────────────────────────────────────────────────────────────────────────────│
+│    ACTION  RESOURCE / GIT                                                    │
+│>   ~       terraform_data.api                                                │
+│            direct: environments/development/main/service.tf:12-16            │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+q quit | y resource | Y plan | j/k/↑/↓ select | Enter details | f change filter
+/ edit search

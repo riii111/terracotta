@@ -205,9 +205,14 @@ mod tests {
     use crate::app::execution::{Diagnostic, DiagnosticPoint, DiagnosticSource};
     use crate::app::plan::{Plan, PlanSummary};
     use crate::app::review::{PlanReview, ReviewComparison};
-    use crate::ui::test_support::{assert_shell_frame_and_footer, buffer_text, render_to_buffer};
+    use crate::ui::test_support::{
+        REALISTIC_EXECUTION_ROOT, REALISTIC_REPOSITORY_ROOT, assert_shell_frame_and_footer,
+        buffer_text, render_to_buffer,
+    };
 
     use super::*;
+
+    include!("tests/render_snapshots.rs");
 
     fn diagnostics() -> ReviewDiagnosticsState {
         ReviewDiagnosticsState::new(vec![Diagnostic {
@@ -352,5 +357,24 @@ mod tests {
             ReviewComparison::working_tree(),
         )
         .expect("empty plan should create a list state")
+    }
+
+    fn realistic_list() -> PlanListState {
+        let review = PlanReview::new(
+            std::path::PathBuf::from(REALISTIC_EXECUTION_ROOT),
+            "default".to_owned(),
+            Plan {
+                changes: Vec::new(),
+                summary: PlanSummary::default(),
+                unsupported_changes: Vec::new(),
+            },
+            Vec::new(),
+            Vec::new(),
+            ReviewComparison::working_tree(),
+            Vec::new(),
+        )
+        .with_git("feature/ui07".to_owned())
+        .with_repository_root(Some(std::path::PathBuf::from(REALISTIC_REPOSITORY_ROOT)));
+        PlanListState::from_review(review).expect("realistic review should build a list")
     }
 }

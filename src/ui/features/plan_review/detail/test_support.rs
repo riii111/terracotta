@@ -12,7 +12,10 @@ use crate::app::plan::{
     ResourceChangeKind, ResourceMode, format_attribute_path,
 };
 use crate::app::review::{AttributeGroup, DetailAction, DetailRow, PlanReview, ReviewComparison};
-use crate::ui::test_support::render_to_buffer;
+use crate::ui::test_support::{
+    REALISTIC_COMMON_SOURCE, REALISTIC_DEVELOPMENT_SOURCE, REALISTIC_EXECUTION_ROOT,
+    REALISTIC_PRODUCTION_SOURCE, REALISTIC_REPOSITORY_ROOT, render_to_buffer,
+};
 
 use super::*;
 
@@ -167,6 +170,63 @@ pub(super) fn state_with_changed_lines(changed_lines: &[SourceLineChange]) -> De
 
 pub(super) fn state_with_sources(source_files: Vec<SourceFileAnalysis>) -> DetailFixture {
     state_for_change_with_sources(change(), &[], source_files)
+}
+
+pub(super) fn realistic_state() -> DetailFixture {
+    let source_files = vec![
+        realistic_source(REALISTIC_DEVELOPMENT_SOURCE, 12, 16),
+        realistic_source(REALISTIC_PRODUCTION_SOURCE, 12, 16),
+        realistic_source(REALISTIC_COMMON_SOURCE, 4, 8),
+    ];
+    let change = change();
+    let changed_lines = [SourceLineChange::new(
+        REALISTIC_DEVELOPMENT_SOURCE,
+        SourceSide::After,
+        SourceRange::new(12, 13),
+    )];
+    let attribution =
+        attribute_changes(std::slice::from_ref(&change), &source_files, &changed_lines)
+            .pop()
+            .expect("realistic source should produce an attribution");
+    let review = PlanReview::new(
+        PathBuf::from(REALISTIC_EXECUTION_ROOT),
+        "default".to_owned(),
+        Plan {
+            changes: vec![change],
+            summary: PlanSummary {
+                updates: 1,
+                ..PlanSummary::default()
+            },
+            unsupported_changes: Vec::new(),
+        },
+        source_files,
+        vec![attribution],
+        ReviewComparison::working_tree(),
+        Vec::new(),
+    )
+    .with_git("feature/ui07".to_owned())
+    .with_repository_root(Some(PathBuf::from(REALISTIC_REPOSITORY_ROOT)));
+    let list = PlanListState::from_review(review).expect("realistic review should build a list");
+    DetailFixture {
+        detail: ReviewDetailState::from_list(&list).expect("selected item should open"),
+        list,
+        view: DetailViewState::default(),
+        copy_notice: None,
+    }
+}
+
+fn realistic_source(path: &str, start_line: usize, end_line: usize) -> SourceFileAnalysis {
+    SourceFileAnalysis::new(
+        PathBuf::from(path),
+        SourceSide::After,
+        vec![ResourceSourceLocation::new(
+            ResourceAddress::new("aws_instance", "api"),
+            PathBuf::from(path),
+            SourceSide::After,
+            SourceRange::new(start_line, end_line),
+        )],
+        Vec::new(),
+    )
 }
 
 pub(super) fn state_for_change(
