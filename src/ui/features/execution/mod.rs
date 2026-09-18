@@ -62,5 +62,5 @@ impl ExecutionViewState {
 
 pub(crate) use input::{ExecutionInput, execution_key_to_input};
 pub(crate) use render::{
-    execution_chunks, execution_scroll_position_with_view, render_execution_with_view,
+    execution_layout, execution_scroll_position_with_view, render_execution_with_view,
 };
