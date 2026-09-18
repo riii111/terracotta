@@ -504,7 +504,7 @@ fn summary_lines(state: &PlanListState, width: usize) -> Vec<Line<'static>> {
         ];
     }
 
-    let filter_label = filter_label(state.filter());
+    let filter_label = state.filter().label();
     let filter_line = Line::from(vec![
         review_count.clone(),
         Span::raw(format!("  Filter: {filter_label}")),
@@ -532,13 +532,6 @@ fn summary_lines(state: &PlanListState, width: usize) -> Vec<Line<'static>> {
 
 fn has_search(state: &PlanListState) -> bool {
     state.searching() || !state.search().is_empty()
-}
-
-const fn filter_label(filter: PlanListFilter) -> &'static str {
-    match filter {
-        PlanListFilter::All => filter.label(),
-        PlanListFilter::NeedsReview => "Needs review (f)",
-    }
 }
 
 fn footer_lines(
@@ -569,7 +562,9 @@ fn footer_lines(
     if state.can_copy(CopyTarget::Plan) {
         items.push(footer::hint(&["Y"], "plan"));
     }
-    items.push(footer::hint(&["j", "k", "↑", "↓"], "select"));
+    if has_visible_items {
+        items.push(footer::hint(&["j", "k", "↑", "↓"], "select"));
+    }
     if has_visible_items {
         items.push(footer::hint(&["Enter"], "details"));
     }
@@ -1027,6 +1022,7 @@ mod tests {
         assert!(!text.contains("/ edit search"), "{text}");
         assert!(!text.contains("Enter details"), "{text}");
         assert!(!text.contains("y resource"), "{text}");
+        assert!(!text.contains("j/k/↑/↓ select"), "{text}");
     }
 
     #[test]
@@ -1062,6 +1058,7 @@ mod tests {
         assert!(text.contains("Needs review: 0/0"));
         assert!(!text.contains("f change filter"), "{text}");
         assert!(!text.contains("/ edit search"), "{text}");
+        assert!(!text.contains("j/k/↑/↓ select"), "{text}");
     }
 
     #[test]
@@ -1318,7 +1315,7 @@ mod tests {
         state.apply(PlanListAction::SetSearch("AWS_S3".to_owned()));
         let text = buffer_text(&render_to_buffer(&state, 100, 16));
 
-        assert!(text.contains("Filter: All  Showing: 1/4"), "{text}");
+        assert!(text.contains("Filter: All (f)  Showing: 1/4"), "{text}");
         assert!(text.contains("/ AWS_S3_"), "{text}");
         assert!(
             text.contains("Enter confirm | Esc cancel | Ctrl-C quit | Type to search"),
