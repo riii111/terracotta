@@ -63,6 +63,11 @@ impl AttributeValue {
     }
 
     #[must_use]
+    pub(crate) const fn is_unmasked_unknown(&self) -> bool {
+        matches!(self.kind, AttributeValueKind::Unknown) && !self.sensitive
+    }
+
+    #[must_use]
     pub(crate) fn revealed_display(&self) -> Option<String> {
         if !self.is_revealable() {
             return None;
@@ -946,6 +951,8 @@ mod tests {
         assert_eq!(new_value.after.kind(), AttributeValueKind::Null);
         assert_eq!(new_value.before.display(), "<absent>");
         assert_eq!(new_value.after.display(), "null");
+        assert!(!new_value.before.is_unmasked_unknown());
+        assert!(!new_value.after.is_unmasked_unknown());
     }
 
     #[test]
@@ -969,6 +976,8 @@ mod tests {
         assert_eq!(credentials.before.kind(), AttributeValueKind::Known);
         assert_eq!(credentials.after.kind(), AttributeValueKind::Known);
         assert!(credentials.before.is_sensitive() && credentials.after.is_sensitive());
+        assert!(!credentials.before.is_unmasked_unknown());
+        assert!(!credentials.after.is_unmasked_unknown());
         assert_eq!(credentials.before.display(), "<sensitive>");
         assert_eq!(
             credentials.after.display(),
@@ -1057,10 +1066,12 @@ mod tests {
 
         assert_eq!(known.after.kind(), AttributeValueKind::Known);
         assert!(known.after.is_sensitive());
+        assert!(!known.after.is_unmasked_unknown());
         assert_eq!(known.after.display(), "<sensitive>");
         assert_eq!(future.before.kind(), AttributeValueKind::Absent);
         assert_eq!(future.after.kind(), AttributeValueKind::Unknown);
         assert!(future.after.is_unknown());
+        assert!(future.after.is_unmasked_unknown());
         assert_eq!(future.after.display(), "<unknown>");
     }
 
@@ -1078,6 +1089,7 @@ mod tests {
 
         assert_eq!(attribute.after.kind(), AttributeValueKind::Unknown);
         assert!(attribute.after.is_sensitive());
+        assert!(!attribute.after.is_unmasked_unknown());
         assert_eq!(attribute.after.display(), "<sensitive>");
         assert_eq!(
             attribute.after.revealed(),

@@ -7,15 +7,10 @@ use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph};
 use crate::app::attribution::AttributionStatus;
 use crate::app::copy::{CopyNotice, CopyTarget};
 use crate::app::plan::ResourceChangeKind;
-use crate::app::review::{
-    PlanListContext, PlanListFilter, PlanListItem, PlanListState, ReviewDiagnosticsState,
-};
+use crate::app::review::{PlanListFilter, PlanListItem, PlanListState, ReviewDiagnosticsState};
 use crate::ui::primitives::atoms::separator;
 use crate::ui::primitives::molecules::terminal_notice;
-use crate::ui::shell::{
-    context::{display_path, truncate_middle},
-    footer, header, layout as shell_layout,
-};
+use crate::ui::shell::{footer, header, layout as shell_layout};
 use crate::ui::theme;
 
 use super::text::{display_width, truncate_end};
@@ -64,9 +59,11 @@ pub(crate) fn render_plan_list_with_diagnostics(
         content_area.width as usize,
         compact_layout,
     );
+    let legend = attention_legend(state);
     let summary = summary_lines(state, content_area.width as usize);
     let summary_height = u16::try_from(summary.len()).unwrap_or(u16::MAX);
     let search_height = u16::from(has_search);
+    let legend_height = u16::from(legend.is_some());
     let notice_height = u16::try_from(notices.len()).unwrap_or(u16::MAX);
     let separator_height =
         u16::from(!compact_layout && notice_height < 2 && content_area.width > MIN_WIDTH);
@@ -75,12 +72,13 @@ pub(crate) fn render_plan_list_with_diagnostics(
         content_area,
         summary_height,
         search_height,
+        legend_height,
         separator_height,
         notice_height,
         copy_notice_height,
     );
 
-    if chunks[5].height == 0 {
+    if chunks[6].height == 0 {
         terminal_notice::render(
             frame,
             area,
@@ -103,22 +101,28 @@ pub(crate) fn render_plan_list_with_diagnostics(
             chunks[1],
         );
     }
-    frame.render_widget(separator::render(chunks[2].width), chunks[2]);
+    if chunks[2].height > 0 {
+        frame.render_widget(separator::render(chunks[2].width), chunks[2]);
+    }
+
+    if let Some(legend) = legend {
+        frame.render_widget(Paragraph::new(legend), chunks[3]);
+    }
 
     if !notices.is_empty() {
         frame.render_widget(
             Paragraph::new(notices).style(theme::body_style()),
-            chunks[3],
+            chunks[4],
         );
     }
 
     if let Some(notice) = copy_notice {
         frame.render_widget(
             Paragraph::new(notice.message()).style(theme::body_style()),
-            chunks[4],
+            chunks[5],
         );
     }
-    render_rows(frame, state, chunks[5], list_state);
+    render_rows(frame, state, chunks[6], list_state);
     footer::render(frame, shell.footer(), shell.footer_lines().to_owned());
 }
 
@@ -126,6 +130,7 @@ fn list_layout(
     content_area: Rect,
     summary_height: u16,
     search_height: u16,
+    legend_height: u16,
     separator_height: u16,
     notice_height: u16,
     copy_notice_height: u16,
@@ -136,6 +141,7 @@ fn list_layout(
             Constraint::Length(summary_height),
             Constraint::Length(search_height),
             Constraint::Length(separator_height),
+            Constraint::Length(legend_height),
             Constraint::Length(notice_height),
             Constraint::Length(copy_notice_height),
             Constraint::Min(1),
@@ -230,23 +236,15 @@ fn render_rows(
 
     let width = area.width.saturating_sub(2) as usize;
     let wide_actions = frame.area().width >= 96;
-    let action_column_width = if wide_actions { 11 } else { 8 };
-    let resource_width = state
-        .visible_items()
-        .map(|item| display_width(item.address()))
-        .max()
-        .unwrap_or(8)
-        .max(8)
-        .min(width.saturating_sub(action_column_width + 28));
-    let inline = area.width >= 80;
-    let heading = if inline {
+    let action_column_width: usize = if wide_actions { 11 } else { 8 };
+    let resource_width = width.saturating_sub(action_column_width + 5).max(1);
+    let heading = if area.height >= 2 {
         format!(
-            "    ACTION{}{:resource_width$}  GIT",
-            " ".repeat(action_column_width - "ACTION".len()),
-            "RESOURCE"
+            "     ACTION{}RESOURCE",
+            " ".repeat(action_column_width - "ACTION".len())
         )
     } else {
-        "    ACTION  RESOURCE / GIT".to_owned()
+        String::new()
     };
     let header = Line::from(Span::styled(
         heading,
@@ -254,93 +252,35 @@ fn render_rows(
     ));
     let items = state
         .visible_items()
-        .map(|item| {
-            list_item(
-                item,
-                width,
-                inline.then_some(resource_width),
-                wide_actions,
-                state.context(),
-            )
-        })
+        .map(|item| list_item(item, resource_width, wide_actions))
         .collect::<Vec<_>>();
-    let list = List::new(items)
-        .block(Block::new().title(header))
+    let mut list = List::new(items)
         .style(theme::body_style())
         .highlight_symbol("> ")
         .highlight_style(theme::selection_style());
+    if area.height >= 2 {
+        list = list.block(Block::new().title(header));
+    }
     *list_state.selected_mut() = state.selected();
     frame.render_stateful_widget(list, area, list_state);
 }
 
-fn list_item(
-    item: &PlanListItem,
-    width: usize,
-    resource_width: Option<usize>,
-    wide_actions: bool,
-    context: Option<&PlanListContext>,
-) -> ListItem<'static> {
-    let marker = if item.needs_review() { "!" } else { " " };
-
+fn list_item(item: &PlanListItem, resource_width: usize, wide_actions: bool) -> ListItem<'static> {
+    let marker = attention_marker(item);
     let action_style = theme::action_style(item.kind());
-    let review_style = theme::review_style(item.needs_review());
-    let git_style = theme::git_style(item.needs_review());
+    let review_style = theme::review_style(!marker.trim().is_empty());
+    let address = truncate_end(item.address(), resource_width);
+    let action = action_label(item.kind(), wide_actions);
+    let action_column_width: usize = if wide_actions { 11 } else { 8 };
+    let action_padding = " ".repeat(action_column_width.saturating_sub(display_width(&action)));
 
-    if let Some(address_width) = resource_width {
-        let address = truncate_end(item.address(), address_width);
-        let padding = " ".repeat(address_width.saturating_sub(display_width(&address)) + 2);
-        let action = action_label(item.kind(), wide_actions);
-        let action_text_width: usize = if wide_actions { 9 } else { 1 };
-        let action_column_width: usize = if wide_actions { 11 } else { 8 };
-        let action_padding = " ".repeat(
-            action_text_width.saturating_sub(display_width(&action))
-                + if wide_actions { 2 } else { 0 },
-        );
-        let git_width = width.saturating_sub(address_width + action_column_width + 4);
-        let git_lines = git_evidence_lines(item, context, git_width);
-        let git_offset = 2 + action_column_width + address_width + 2;
-        let first_git_line = git_lines.first().map(String::as_str).unwrap_or_default();
-        let mut lines = vec![Line::from(vec![
-            Span::styled(marker.to_owned(), review_style),
-            Span::raw(" "),
-            Span::styled(action, action_style),
-            Span::raw(action_padding),
-            Span::raw(address),
-            Span::raw(padding),
-            Span::styled(first_git_line.to_owned(), git_style),
-        ])];
-        lines.extend(git_lines.into_iter().skip(1).map(|line| {
-            Line::from(vec![
-                Span::raw(" ".repeat(git_offset)),
-                Span::styled(line, git_style),
-            ])
-        }));
-        return ListItem::new(lines);
-    }
-
-    let address_width = width.saturating_sub(10);
-    let address = truncate_end(item.address(), address_width);
-    let evidence_width = width.saturating_sub(10);
-    let git_lines = git_evidence_lines(item, context, evidence_width);
-    let mut lines = vec![Line::from(vec![
-        Span::raw("          "),
-        Span::styled(git_lines.first().cloned().unwrap_or_default(), git_style),
-    ])];
-    lines.extend(
-        git_lines
-            .into_iter()
-            .skip(1)
-            .map(|line| Line::from(vec![Span::raw("          "), Span::styled(line, git_style)])),
-    );
-    let mut row_lines = vec![Line::from(vec![
+    ListItem::new(Line::from(vec![
         Span::styled(marker.to_owned(), review_style),
         Span::raw(" "),
-        Span::styled(action_label(item.kind(), false), action_style),
-        Span::raw("       "),
+        Span::styled(action, action_style),
+        Span::raw(action_padding),
         Span::raw(address),
-    ])];
-    row_lines.extend(lines);
-    ListItem::new(row_lines)
+    ]))
 }
 
 fn action_label(kind: ResourceChangeKind, wide: bool) -> String {
@@ -360,121 +300,57 @@ const fn kind_label(kind: ResourceChangeKind) -> &'static str {
     }
 }
 
-fn git_evidence_lines(
-    item: &PlanListItem,
-    context: Option<&PlanListContext>,
-    max_width: usize,
-) -> Vec<String> {
-    let repository_root = context.and_then(PlanListContext::repository_root);
-    let execution_root = context.map(PlanListContext::root);
-    let incomplete = !item.attribution().analysis().is_complete();
-    let status = if incomplete {
-        Some("review: analysis incomplete")
-    } else if matches!(item.attribution().status(), AttributionStatus::NoMatch) {
-        Some("review: no match")
-    } else {
-        None
-    };
-
-    if let Some(evidence) = item.attribution().evidence().first() {
-        let path = display_path(evidence.path(), repository_root, execution_root);
-        let range = evidence.range();
-        let location_suffix = if range.start_line() == range.end_line() {
-            format!(":{}", range.start_line())
-        } else {
-            format!(":{}-{}", range.start_line(), range.end_line())
-        };
-        let evidence_count = item.attribution().evidence().len();
-        let count = if evidence_count > 1 {
-            format!(" [{evidence_count} evidence]")
-        } else {
-            String::new()
-        };
-        let prefix = "direct: ";
-        let status_suffix = status.map_or_else(String::new, |status| format!(" | {status}"));
-        let path_width = max_width.saturating_sub(
-            display_width(prefix)
-                + display_width(&location_suffix)
-                + display_width(&count)
-                + display_width(&status_suffix),
-        );
-        let direct = format!(
-            "{prefix}{}{location_suffix}{count}",
-            truncate_middle(&path, path_width)
-        );
-
-        if status_suffix.is_empty() {
-            if display_width(&direct) <= max_width {
-                return vec![direct];
-            }
-            let path_line = format!(
-                "{prefix}{}",
-                truncate_middle(&path, max_width.saturating_sub(display_width(prefix)))
-            );
-            let mut lines = vec![path_line];
-            lines.extend(wrap_label(&format!("{location_suffix}{count}"), max_width));
-            return lines;
-        }
-
-        let combined = format!("{direct}{status_suffix}");
-        if display_width(&combined) <= max_width {
-            return vec![combined];
-        }
-
-        let path_line = format!(
-            "{prefix}{}",
-            truncate_middle(&path, max_width.saturating_sub(display_width(prefix)))
-        );
-        let mut lines = vec![path_line];
-        lines.extend(wrap_label(&format!("{location_suffix}{count}"), max_width));
-        lines.extend(wrap_label(
-            status.expect("status suffix should have a status"),
-            max_width,
-        ));
-        return lines;
+const fn attention_marker(item: &PlanListItem) -> &'static str {
+    match (
+        matches!(item.attribution().status(), AttributionStatus::NoMatch),
+        !item.attribution().analysis().is_complete(),
+    ) {
+        (true, true) => "!?",
+        (true, false) => "! ",
+        (false, true) => "? ",
+        (false, false) => "  ",
     }
-
-    status.map_or_else(
-        || vec![String::new()],
-        |status| wrap_label(status, max_width),
-    )
 }
 
-fn wrap_label(value: &str, max_width: usize) -> Vec<String> {
-    if max_width == 0 || display_width(value) <= max_width {
-        return vec![value.to_owned()];
+fn attention_legend(state: &PlanListState) -> Option<Line<'static>> {
+    let has_no_match = state
+        .items()
+        .iter()
+        .any(|item| matches!(item.attribution().status(), AttributionStatus::NoMatch));
+    let has_incomplete = state
+        .items()
+        .iter()
+        .any(|item| !item.attribution().analysis().is_complete());
+    if !has_no_match && !has_incomplete {
+        return None;
     }
 
-    let mut lines = Vec::new();
-    let mut current = String::new();
-    for word in value.split_whitespace() {
-        let candidate = if current.is_empty() {
-            word.to_owned()
-        } else {
-            format!("{current} {word}")
-        };
-        if !current.is_empty() && display_width(&candidate) > max_width {
-            lines.push(std::mem::take(&mut current));
-            word.clone_into(&mut current);
-        } else {
-            current = candidate;
+    let mut spans = Vec::new();
+    if has_no_match {
+        spans.push(Span::styled("!", theme::review_style(true)));
+        spans.push(Span::styled(" no direct match", theme::secondary_style()));
+    }
+    if has_incomplete {
+        if has_no_match {
+            spans.push(Span::styled(" | ", theme::secondary_style()));
         }
+        spans.push(Span::styled("?", theme::review_style(true)));
+        spans.push(Span::styled(
+            " analysis incomplete",
+            theme::secondary_style(),
+        ));
     }
-    if !current.is_empty() {
-        lines.push(current);
-    }
-    lines
+    Some(Line::from(spans))
 }
 
 fn summary_lines(state: &PlanListState, width: usize) -> Vec<Line<'static>> {
     let summary = state.summary();
-    let needs_review = state.needs_review_count() > 0;
     let review_text = format!(
         "Needs review: {}/{}",
         state.needs_review_count(),
         state.items().len()
     );
-    let review_count = Span::styled(review_text, theme::review_style(needs_review));
+    let review_count = Span::styled(review_text, theme::body_style());
 
     let action_line = Line::from(vec![
         Span::styled(
@@ -508,6 +384,20 @@ fn summary_lines(state: &PlanListState, width: usize) -> Vec<Line<'static>> {
     }
 
     let filter_label = filter_label(state.filter());
+    if has_search(state) && width < 60 {
+        return vec![
+            action_line,
+            Line::from(vec![
+                review_count,
+                Span::raw(format!(
+                    "  Showing: {}/{}",
+                    state.visible_count(),
+                    state.items().len()
+                )),
+            ]),
+        ];
+    }
+
     let filter_line = Line::from(vec![
         review_count.clone(),
         Span::raw(format!("  Filter: {filter_label}")),
@@ -563,26 +453,24 @@ fn footer_lines(
 
     let has_visible_items = state.visible_count() > 0;
     let mut items = vec![footer::hint(&["q"], "quit")];
-    if diagnostics.count() > 0 {
-        items.push(footer::hint(&["w"], "diagnostics"));
-    }
-    if has_visible_items && state.can_copy(CopyTarget::Resource) {
-        items.push(footer::hint(&["y"], "resource"));
-    }
-    if state.can_copy(CopyTarget::Plan) {
-        items.push(footer::hint(&["Y"], "plan"));
-    }
-    if has_visible_items {
-        items.push(footer::hint(&["j", "k", "↑", "↓"], "select"));
-    }
     if has_visible_items {
         items.push(footer::hint(&["Enter"], "details"));
+        items.push(footer::hint(&["j", "k", "↑", "↓"], "select"));
     }
     if has_visible_items || (!state.items().is_empty() && state.filter() != PlanListFilter::All) {
         items.push(footer::hint(&["f"], "change filter"));
     }
     if has_visible_items || (!state.items().is_empty() && has_search(state)) {
         items.push(footer::hint(&["/"], "edit search"));
+    }
+    if diagnostics.count() > 0 {
+        items.push(footer::hint(&["w"], "diagnostics"));
+    }
+    if has_visible_items && state.can_copy(CopyTarget::Resource) {
+        items.push(footer::hint(&["y"], "copy resource"));
+    }
+    if state.can_copy(CopyTarget::Plan) {
+        items.push(footer::hint(&["Y"], "copy plan"));
     }
     footer::layout(items, width)
 }
@@ -857,6 +745,25 @@ mod tests {
         })
     }
 
+    fn render_to_buffer_with_diagnostics_and_notice(
+        state: &PlanListState,
+        diagnostics: &ReviewDiagnosticsState,
+        copy_notice: Option<CopyNotice>,
+        width: u16,
+        height: u16,
+    ) -> Buffer {
+        let mut list_state = ListState::default();
+        render_test_buffer((width, height), |frame| {
+            render_plan_list_with_diagnostics(
+                frame,
+                state,
+                diagnostics,
+                copy_notice,
+                &mut list_state,
+            );
+        })
+    }
+
     fn empty_state() -> PlanListState {
         PlanListState::from_plan(
             Plan {
@@ -996,7 +903,7 @@ mod tests {
     }
 
     #[test]
-    fn renders_summary_selection_and_git_evidence() {
+    fn renders_summary_selection_and_attention_legend() {
         let state = synthetic_state();
         let buffer = render_to_buffer(&state, 120, 20);
         let text = buffer_text(&buffer);
@@ -1004,9 +911,10 @@ mod tests {
         assert!(text.contains("Git: working tree vs HEAD"));
         assert!(text.contains("+1 create  ~1 update  R1 replace  -1 delete"));
         assert!(text.contains("Needs review: 2/4"), "{text}");
-        assert!(text.contains("main.tf:42-46"));
-        assert!(text.contains("incomplete"));
-        assert!(text.contains("no match"));
+        assert!(text.contains("! no direct match | ? analysis incomplete"));
+        assert!(text.contains("!? R replace"));
+        assert!(!text.contains("direct:"));
+        assert!(!text.contains("main.tf:42-46"));
         assert!(text.contains("q quit"), "{text}");
         assert!(text.contains("j/k/↑/↓ select"), "{text}");
         assert!(text.contains("/ edit search"), "{text}");
@@ -1014,7 +922,6 @@ mod tests {
             text.contains("aws_s3_bucket.logs_with_a_very_long_resource_address"),
             "{text}"
         );
-        assert!(text.contains("..."), "{text}");
 
         let delete_cell = buffer
             .content()
@@ -1033,21 +940,21 @@ mod tests {
     }
 
     #[test]
-    fn resource_and_git_columns_align_with_headers_across_rows() {
+    fn attention_markers_stay_separate_from_actions_and_resources() {
         let state = synthetic_state();
         let text = buffer_text(&render_to_buffer(&state, 165, 30));
         let header = text.lines().find(|line| line.contains("ACTION")).unwrap();
         let resource_column = header.find("RESOURCE").unwrap();
-        let git_column = header.find("GIT").unwrap();
+        assert!(!header.contains("GIT"));
 
-        for (address, label) in [
-            ("aws_instance.api", "direct:"),
-            ("aws_instance.worker", "review: analysis incomplete"),
-            ("aws_security_group.old", "review: no match"),
+        for (address, marker) in [
+            ("aws_instance.api", "  ~ update"),
+            ("aws_instance.worker", "!? R replace"),
+            ("aws_security_group.old", "!  - delete"),
         ] {
             let row = text.lines().find(|line| line.contains(address)).unwrap();
             assert_eq!(row.find(address), Some(resource_column), "{row}");
-            assert_eq!(row.find(label), Some(git_column), "{row}");
+            assert!(row.contains(marker), "{row}");
         }
     }
 
@@ -1067,28 +974,25 @@ mod tests {
     }
 
     #[test]
-    fn git_column_uses_repository_relative_first_evidence_and_total_count() {
+    fn list_hides_evidence_details_and_keeps_resource_rows_single_line() {
         let state = multiple_evidence_state();
         let text = buffer_text(&render_to_buffer(&state, 120, 16));
 
-        assert!(
-            text.contains("direct: environments/prod/main.tf:10-12 [2 evidence]"),
-            "{text}"
-        );
+        assert!(text.lines().any(|line| line.contains("aws_instance.api")));
+        assert!(!text.contains("direct:"), "{text}");
+        assert!(!text.contains("[2 evidence]"), "{text}");
         assert!(!text.contains("/repo/environments/prod"), "{text}");
     }
 
     #[test]
-    fn git_column_keeps_path_location_count_and_incomplete_status_when_narrow() {
+    fn narrow_list_keeps_attention_marker_and_resource_on_one_line() {
         let state = long_evidence_incomplete_state();
         let text = buffer_text(&render_to_buffer(&state, 96, 20));
         let single_line = text.replace('\n', " ");
 
-        assert!(single_line.contains("direct:"), "{text}");
-        assert!(single_line.contains(":10-12 [2 evidence]"), "{text}");
-        assert!(single_line.contains("review: analysis"), "{text}");
-        assert!(single_line.contains("incomplete"), "{text}");
-        assert!(single_line.contains("..."), "{text}");
+        assert!(single_line.contains("?  ~ update"), "{text}");
+        assert!(!single_line.contains("direct:"), "{text}");
+        assert!(!single_line.contains(":10-12 [2 evidence]"), "{text}");
     }
 
     #[test]
@@ -1122,12 +1026,7 @@ mod tests {
                 let state = state_for_review_count(has_review, view);
                 let buffer = render_to_buffer(&state, 100, 20);
 
-                assert_review_count_style(
-                    &buffer,
-                    &state,
-                    has_review,
-                    &format!("{state_name}_{view_name}"),
-                );
+                assert_review_count_style(&buffer, &state, &format!("{state_name}_{view_name}"));
             }
         }
     }
@@ -1213,23 +1112,19 @@ mod tests {
     }
 
     #[test]
-    fn narrow_list_moves_git_evidence_to_the_next_line() {
+    fn narrow_list_keeps_resource_rows_on_one_line() {
         let state = synthetic_state();
         let text = buffer_text(&render_to_buffer(&state, 60, 16));
 
+        assert!(!text.lines().any(|line| line.contains("direct:")), "{text}");
         assert!(
-            text.lines()
-                .any(|line| line.contains("      direct: storage.tf:8-10")),
-            "{text}"
-        );
-        assert!(
-            text.contains("aws_s3_bucket.logs_with_a_very_long_resourc..."),
+            text.contains("aws_s3_bucket.logs_with_a_very_long_reso..."),
             "{text}"
         );
     }
 
     #[test]
-    fn unicode_rows_fit_the_allocated_cells_in_one_or_two_lines() {
+    fn unicode_rows_fit_the_allocated_cells_on_one_line() {
         let state = unicode_state();
         let wide_buffer = render_to_buffer(&state, 120, 16);
         let wide_text = buffer_text(&wide_buffer);
@@ -1239,7 +1134,7 @@ mod tests {
             .position(|line| line.contains("aws_instance."))
             .expect("wide resource row should be rendered");
         let wide_row = wide_lines[wide_row_index];
-        assert!(wide_row.contains("direct: 証 拠 /東 京 /very_long_source_file.tf:12-18"));
+        assert!(!wide_row.contains("direct:"));
         assert_eq!(
             wide_buffer
                 .cell((
@@ -1260,22 +1155,19 @@ mod tests {
             .expect("narrow resource row should be rendered");
         let evidence_line = narrow_lines
             .iter()
-            .position(|line| line.contains("direct:"))
-            .expect("Git evidence should be rendered");
-        assert_eq!(evidence_line, address_line + 1);
+            .position(|line| line.contains("direct:"));
+        assert!(evidence_line.is_none());
         assert!(narrow_lines[address_line].contains("..."));
-        for line_index in address_line..=evidence_line {
-            assert_eq!(
-                narrow_buffer
-                    .cell((
-                        narrow_buffer.area().right() - 1,
-                        u16::try_from(line_index).expect("buffer row should fit in u16"),
-                    ))
-                    .expect("narrow row should have a right border")
-                    .symbol(),
-                "│"
-            );
-        }
+        assert_eq!(
+            narrow_buffer
+                .cell((
+                    narrow_buffer.area().right() - 1,
+                    u16::try_from(address_line).expect("buffer row should fit in u16"),
+                ))
+                .expect("narrow row should have a right border")
+                .symbol(),
+            "│"
+        );
         assert_eq!(
             state.items()[0].address(),
             "aws_instance.東京_東京_東京_東京_東京_東京_東京"
@@ -1301,11 +1193,11 @@ mod tests {
         let text = buffer_text(&render_to_buffer(&state, MIN_WIDTH, MIN_HEIGHT));
 
         assert!(text.contains("Unshown changes: output (1)"), "{text}");
+        assert!(text.contains("aws_s3_bucket.logs_with_a_ve..."), "{text}");
         assert!(
-            text.contains("aws_s3_bucket.logs_with_a_very_..."),
+            text.contains("! no direct match | ? analysis incomplete"),
             "{text}"
         );
-        assert!(text.contains("direct: storage.tf:8-10"), "{text}");
     }
 
     #[test]
@@ -1342,6 +1234,22 @@ mod tests {
                 assert!(notice_line < footer_line, "width: {width}\n{text}");
             }
         }
+    }
+
+    #[test]
+    fn minimum_height_keeps_resource_row_visible_with_notice() {
+        let state = direct_only_state();
+        let text = buffer_text(&render_to_buffer_with_diagnostics_and_notice(
+            &state,
+            &warning_diagnostics(),
+            Some(CopyNotice::Failed),
+            MIN_WIDTH,
+            MIN_HEIGHT,
+        ));
+
+        assert!(text.contains("Diagnostics: 1"), "{text}");
+        assert!(text.contains("Copy failed"), "{text}");
+        assert!(text.contains("aws_instance.direct"), "{text}");
     }
 
     #[test]
@@ -1760,12 +1668,7 @@ mod tests {
         state
     }
 
-    fn assert_review_count_style(
-        buffer: &Buffer,
-        state: &PlanListState,
-        highlighted: bool,
-        case: &str,
-    ) {
+    fn assert_review_count_style(buffer: &Buffer, state: &PlanListState, case: &str) {
         let label = format!(
             "Needs review: {}/{}",
             state.needs_review_count(),
@@ -1786,12 +1689,6 @@ mod tests {
                 })
             })
             .unwrap_or_else(|| panic!("summary label not found for {case}: {label}"));
-        let expected_fg = if highlighted {
-            Color::Rgb(0xeb, 0xcb, 0x8b)
-        } else {
-            Color::Rgb(0xe9, 0xdb, 0xdb)
-        };
-
         for offset in 0..label.chars().count() {
             let cell = buffer
                 .cell((
@@ -1802,12 +1699,12 @@ mod tests {
             if cell.symbol() == " " {
                 continue;
             }
-            assert_eq!(cell.fg, expected_fg, "foreground for {case} at {offset}");
             assert_eq!(
-                cell.modifier.contains(Modifier::BOLD),
-                highlighted,
-                "bold modifier for {case} at {offset}"
+                cell.fg,
+                Color::Rgb(0xe9, 0xdb, 0xdb),
+                "foreground for {case} at {offset}"
             );
+            assert!(!cell.modifier.contains(Modifier::BOLD));
         }
     }
 

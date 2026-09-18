@@ -18,7 +18,7 @@ fn realistic_detail_80x24() {
 fn realistic_analysis_info_contains_all_source_paths() {
     let mut state = realistic_state();
     state.toggle_analysis_info(120, 40, Instant::now());
-    let content = detail_content(&state.list, &state.detail, true, 120, Instant::now());
+    let content = detail_content(&state.list, &state.detail, true, Instant::now());
     let text = content
         .lines
         .iter()

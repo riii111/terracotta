@@ -8,9 +8,9 @@ Git: working tree vs HEAD
 │+0 create  ~1 update  R0 replace  -0 delete                                   │
 │Needs review: 0/1   Filter: All (f)                                           │
 │──────────────────────────────────────────────────────────────────────────────│
-│    ACTION  RESOURCE / GIT                                                    │
-│>   ~       terraform_data.api                                                │
-│            direct: environments/development/main/service.tf:12-16            │
+│     ACTION  RESOURCE                                                         │
+│>    ~       terraform_data.api                                               │
+│                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │
@@ -24,5 +24,5 @@ Git: working tree vs HEAD
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
-q quit | y resource | Y plan | j/k/↑/↓ select | Enter details | f change filter
-/ edit search
+q quit | Enter details | j/k/↑/↓ select | f change filter | / edit search
+y copy resource | Y copy plan

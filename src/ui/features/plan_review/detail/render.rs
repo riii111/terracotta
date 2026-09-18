@@ -131,13 +131,7 @@ pub(super) fn render_resource_detail_at(
         );
     }
 
-    let content = super::rows::detail_content(
-        list,
-        detail,
-        view.analysis_info_expanded(),
-        chunks[1].width,
-        now,
-    );
+    let content = super::rows::detail_content(list, detail, view.analysis_info_expanded(), now);
     let scroll = view.scroll().min(super::viewport::max_scroll(
         &content,
         chunks[1].width,
@@ -176,38 +170,28 @@ fn footer_lines(
     now: Instant,
     width: u16,
 ) -> Vec<Line<'static>> {
-    let mut items = vec![
-        footer::hint(&["q"], "quit"),
-        footer::hint(&["Esc"], "back"),
-        footer::hint(&["PgUp", "PgDn"], "scroll"),
-    ];
+    let mut items = vec![footer::hint(&["Esc"], "back"), footer::hint(&["q"], "quit")];
     if detail.is_revealed_at(now) {
         items.push(footer::hint(&["r"], "mask now"));
-    } else if detail.can_reveal_selected() {
-        items.push(footer::hint(&["r"], "reveal 10s"));
     }
-    items.push(footer::hint(&["s"], "analysis info"));
-    match (
-        list.can_copy(CopyTarget::Resource),
-        list.can_copy(CopyTarget::Plan),
-    ) {
-        (true, true) => {
-            items.push(footer::hint(&["y"], "resource"));
-            items.push(footer::hint(&["Y"], "plan"));
-        }
-        (true, false) => items.push(footer::hint(&["y"], "resource")),
-        (false, true) => items.push(footer::hint(&["Y"], "plan")),
-        (false, false) => {}
-    }
-    items.extend([
-        footer::hint(&["↑", "↓"], "select"),
-        footer::hint(&["Enter"], "expand"),
-    ]);
+    items.push(footer::hint(&["↑", "↓"], "select"));
+    items.push(footer::hint(&["Enter"], "expand"));
     if detail.can_navigate(ResourceNavigation::Previous) {
         items.push(footer::hint(&["[", "←", "Ctrl+B"], "prev"));
     }
     if detail.can_navigate(ResourceNavigation::Next) {
         items.push(footer::hint(&["]", "→", "Ctrl+F"], "next"));
+    }
+    items.push(footer::hint(&["PgUp", "PgDn"], "scroll"));
+    if !detail.is_revealed_at(now) && detail.can_reveal_selected() {
+        items.push(footer::hint(&["r"], "reveal 10s"));
+    }
+    items.push(footer::hint(&["s"], "analysis info"));
+    if list.can_copy(CopyTarget::Resource) {
+        items.push(footer::hint(&["y"], "copy resource"));
+    }
+    if list.can_copy(CopyTarget::Plan) {
+        items.push(footer::hint(&["Y"], "copy plan"));
     }
     footer::layout(items, width)
 }
@@ -217,14 +201,12 @@ fn required_footer_lines(
     now: Instant,
     width: u16,
 ) -> Vec<Line<'static>> {
-    let mut items = vec![
-        footer::hint(&["q"], "quit"),
-        footer::hint(&["Esc"], "back"),
-        footer::hint(&["PgUp", "PgDn"], "scroll"),
-    ];
+    let mut items = vec![footer::hint(&["Esc"], "back"), footer::hint(&["q"], "quit")];
     if detail.is_revealed_at(now) {
         items.push(footer::hint(&["r"], "mask now"));
-    } else if detail.can_reveal_selected() {
+    }
+    items.push(footer::hint(&["PgUp", "PgDn"], "scroll"));
+    if !detail.is_revealed_at(now) && detail.can_reveal_selected() {
         items.push(footer::hint(&["r"], "reveal 10s"));
     }
     items.push(footer::hint(&["s"], "analysis info"));
@@ -233,10 +215,13 @@ fn required_footer_lines(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     use std::time::Duration;
 
-    use crate::app::review::DetailAction;
-    use crate::ui::test_support::{assert_shell_frame_and_footer, buffer_text};
+    use crate::app::attribution::attribute_changes;
+    use crate::app::plan::{Plan, PlanSummary};
+    use crate::app::review::{DetailAction, PlanListAction, PlanReview, ReviewComparison};
+    use crate::ui::test_support::{assert_shell_frame_and_footer, buffer_text, render_to_buffer};
 
     use super::super::rows::detail_content;
     use super::super::test_support::*;
@@ -290,6 +275,53 @@ mod tests {
         assert!(text.contains("<sensitive>"), "{text}");
         assert!(!text.contains("not-known-yet"), "{text}");
         assert!(state.detail.reveal().is_none());
+    }
+
+    #[test]
+    fn filtered_detail_keeps_total_count_on_resource_name_only() {
+        let mut changes = vec![change(), change()];
+        changes[1].address = "aws_instance.worker".to_owned();
+        let attributions = attribute_changes(&changes, &[], &[]);
+        let review = PlanReview::new(
+            PathBuf::from("/infra/prod"),
+            "default".to_owned(),
+            Plan {
+                changes,
+                summary: PlanSummary {
+                    updates: 2,
+                    ..PlanSummary::default()
+                },
+                unsupported_changes: Vec::new(),
+            },
+            Vec::new(),
+            attributions,
+            ReviewComparison::working_tree(),
+            Vec::new(),
+        );
+        let mut list = PlanListState::from_review(review).expect("review should build");
+        list.apply(PlanListAction::BeginSearch);
+        list.apply(PlanListAction::SetSearch("worker".to_owned()));
+        list.apply(PlanListAction::ConfirmSearch);
+        let detail = ReviewDetailState::from_list(&list).expect("filtered detail should open");
+
+        let text = buffer_text(&render_to_buffer((100, 30), |frame| {
+            render_resource_detail_at(
+                frame,
+                &list,
+                &detail,
+                None,
+                &DetailViewState::default(),
+                Instant::now(),
+            );
+        }));
+        let title = text
+            .lines()
+            .find(|line| line.contains("Resource 1/1"))
+            .expect("detail title should be rendered");
+
+        assert!(title.contains("Resource 1/1 | Filter: All"), "{title}");
+        assert!(!title.contains("of 2 total"), "{title}");
+        assert!(text.contains("aws_instance.worker (of 2 total)"), "{text}");
     }
 
     #[test]

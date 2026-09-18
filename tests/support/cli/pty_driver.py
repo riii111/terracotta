@@ -212,6 +212,16 @@ def wait_parts(markers, name, timeout=20):
     wait_screen(lambda current: all(marker in current for marker in markers), name, markers, timeout)
 
 
+def wait_parts_without(required, forbidden, name, timeout=20):
+    wait_screen(
+        lambda current: all(marker in current for marker in required)
+        and all(marker not in current for marker in forbidden),
+        name,
+        (required, forbidden),
+        timeout,
+    )
+
+
 def wait_any(markers, name, timeout=20):
     wait_screen(lambda current: any(marker in current for marker in markers), name, markers, timeout)
 
@@ -311,6 +321,49 @@ try:
         wait_new("Filter:", "back")
         send_key(b"q")
         exit_code = wait_exit()
+    elif scenario == "ui11":
+        wait_parts(
+            ["terraform_data.api", "terraform_data.new", "terraform_data.old"],
+            "ui11_list",
+        )
+        send_key(b"f")
+        wait_parts(["Filter: Needs review", "Showing: 2/3"], "ui11_filter")
+        send_key(b"\r")
+        wait_parts_without(
+            ["Resource 1/2", "terraform_data.new", '+ "created"'],
+            ["- <absent>"],
+            "ui11_create_detail",
+        )
+        send_key(b"]")
+        wait_parts_without(
+            ["Resource 2/2", "terraform_data.old", '- "old"'],
+            ['+ <absent>'],
+            "ui11_delete_detail",
+        )
+        send_key(b"[")
+        wait_new("terraform_data.new", "ui11_previous")
+        send_key(b"\x1b")
+        wait_new("Filter: Needs review", "ui11_filtered_back")
+        send_key(b"f")
+        wait_new("Filter: All", "ui11_all")
+        send_key(b"k")
+        send_key(b"\r")
+        wait_parts(
+            ["Resource 1/3", "terraform_data.api", '- "old"', '+ "new"'],
+            "ui11_update_detail",
+        )
+        send_key(b"s")
+        wait_new("Analysis info", "ui11_analysis_open")
+        send_key(b"s")
+        wait_parts_without(
+            ["Resource 1/3", "terraform_data.api"],
+            ["Analysis info"],
+            "ui11_analysis_closed",
+        )
+        send_key(b"\x1b")
+        wait_new("Filter: All", "ui11_detail_back")
+        send_key(b"q")
+        exit_code = wait_exit()
     elif scenario == "basic_workflow":
         wait_new("Needs review: 1/5", "list")
         send_key(b"f")
@@ -338,7 +391,7 @@ try:
         send_key(b"q")
         exit_code = wait_exit()
     elif scenario == "git_failure":
-        wait_new("incomplete", "git_failure")
+        wait_parts(["?", "analysis incomplete"], "git_failure")
         send_key(b"q")
         exit_code = wait_exit()
     elif scenario == "interrupt":

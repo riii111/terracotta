@@ -71,14 +71,6 @@ pub(crate) fn review_style(needs_review: bool) -> Style {
     }
 }
 
-pub(crate) fn git_style(needs_review: bool) -> Style {
-    if needs_review {
-        Style::default()
-    } else {
-        Style::default().fg(Color::Rgb(0x97, 0xc9, 0xc3))
-    }
-}
-
 pub(crate) fn warning_style() -> Style {
     Style::default()
         .fg(Color::Rgb(0xeb, 0xcb, 0x8b))
@@ -155,7 +147,7 @@ mod tests {
     }
 
     #[test]
-    fn review_and_git_styles_keep_status_and_evidence_distinct() {
+    fn review_style_uses_attention_color_only_for_review_markers() {
         assert_eq!(review_style(false), Style::default());
         assert_eq!(
             review_style(true),
@@ -163,8 +155,6 @@ mod tests {
                 .fg(Color::Rgb(0xeb, 0xcb, 0x8b))
                 .add_modifier(Modifier::BOLD)
         );
-        assert_eq!(git_style(true), Style::default());
-        assert_eq!(git_style(false).fg, Some(Color::Rgb(0x97, 0xc9, 0xc3)));
     }
 
     #[test]
