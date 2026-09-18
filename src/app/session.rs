@@ -420,6 +420,27 @@ mod tests {
         )
     }
 
+    fn opened_detail_state() -> (SessionState, Instant) {
+        let started_at = now();
+        let mut state = SessionState::new(ExecutionState::new(started_at));
+        update(
+            &mut state,
+            Action::ReviewCompleted(review_with_resources()),
+            started_at,
+        );
+        update(&mut state, Action::OpenDetail, started_at);
+        (state, started_at)
+    }
+
+    fn assert_revealed_at(state: &SessionState, at: Instant) {
+        assert!(
+            state
+                .review()
+                .and_then(ReviewSessionState::detail)
+                .is_some_and(|detail| detail.is_revealed_at(at))
+        );
+    }
+
     #[test]
     fn cancellation_effect_is_emitted_once_and_late_completion_finishes_interrupted() {
         let started_at = now();
@@ -686,41 +707,6 @@ mod tests {
             Some(0)
         );
 
-        update(&mut state, Action::CloseDetail, started_at);
-        assert!(
-            state
-                .review()
-                .is_some_and(|review| review.detail().is_none())
-        );
-        update(&mut state, Action::OpenDetail, started_at);
-        assert_eq!(
-            state
-                .review()
-                .and_then(|review| review.detail())
-                .map(ReviewDetailState::selected),
-            Some(0)
-        );
-    }
-
-    #[test]
-    fn reveal_expires_or_masks_on_relevant_session_actions() {
-        let started_at = now();
-        let mut state = SessionState::new(ExecutionState::new(started_at));
-        update(
-            &mut state,
-            Action::ReviewCompleted(review_with_resources()),
-            started_at,
-        );
-        update(&mut state, Action::OpenDetail, started_at);
-
-        update(&mut state, Action::Detail(DetailAction::Reveal), started_at);
-        assert!(
-            state
-                .review()
-                .and_then(ReviewSessionState::detail)
-                .is_some_and(|detail| detail.is_revealed_at(started_at))
-        );
-
         update(
             &mut state,
             Action::Detail(DetailAction::Reveal),
@@ -730,44 +716,97 @@ mod tests {
             state
                 .review()
                 .and_then(ReviewSessionState::detail)
-                .is_some_and(|detail| detail.reveal().is_none())
+                .is_some_and(
+                    |detail| detail.is_revealed_at(started_at + std::time::Duration::from_secs(1))
+                )
         );
 
         update(
             &mut state,
-            Action::Detail(DetailAction::SelectNext),
+            Action::CloseDetail,
             started_at + std::time::Duration::from_secs(2),
         );
         assert!(
             state
                 .review()
-                .and_then(ReviewSessionState::detail)
-                .is_some_and(|detail| detail.reveal().is_none())
+                .is_some_and(|review| review.detail().is_none())
         );
-
         update(
             &mut state,
-            Action::Detail(DetailAction::SelectPrevious),
+            Action::OpenDetail,
             started_at + std::time::Duration::from_secs(3),
         );
+        assert_eq!(
+            state
+                .review()
+                .and_then(|review| review.detail())
+                .map(ReviewDetailState::selected),
+            Some(0)
+        );
+        assert_eq!(
+            state
+                .review()
+                .and_then(ReviewSessionState::detail)
+                .and_then(ReviewDetailState::reveal),
+            None
+        );
+    }
+
+    #[test]
+    fn detail_reveal_repress_masks_the_current_value() {
+        let (mut state, started_at) = opened_detail_state();
+        update(&mut state, Action::Detail(DetailAction::Reveal), started_at);
+        assert_revealed_at(&state, started_at);
+
+        let pressed_again = started_at + std::time::Duration::from_secs(1);
         update(
             &mut state,
             Action::Detail(DetailAction::Reveal),
-            started_at + std::time::Duration::from_secs(4),
+            pressed_again,
         );
         assert!(
             state
                 .review()
                 .and_then(ReviewSessionState::detail)
-                .is_some_and(
-                    |detail| detail.is_revealed_at(started_at + std::time::Duration::from_secs(4))
-                )
+                .is_some_and(|detail| detail.reveal().is_none())
         );
+    }
+
+    #[test]
+    fn detail_selection_change_masks_an_active_reveal() {
+        let (mut state, started_at) = opened_detail_state();
+        update(&mut state, Action::Detail(DetailAction::Reveal), started_at);
+        assert_revealed_at(&state, started_at);
+
+        let changed_at = started_at + std::time::Duration::from_secs(1);
+        update(
+            &mut state,
+            Action::Detail(DetailAction::SelectNext),
+            changed_at,
+        );
+        assert!(
+            state
+                .review()
+                .and_then(ReviewSessionState::detail)
+                .is_some_and(|detail| detail.reveal().is_none())
+        );
+    }
+
+    #[test]
+    fn detail_time_update_masks_an_expired_reveal() {
+        let (mut state, started_at) = opened_detail_state();
+        let revealed_at = started_at + std::time::Duration::from_secs(1);
+        update(
+            &mut state,
+            Action::Detail(DetailAction::Reveal),
+            revealed_at,
+        );
+        assert_revealed_at(&state, revealed_at);
 
         update(
             &mut state,
             Action::TimeUpdated,
-            started_at + std::time::Duration::from_secs(14),
+            started_at + std::time::Duration::from_secs(11),
         );
         assert!(
             state
@@ -775,24 +814,23 @@ mod tests {
                 .and_then(ReviewSessionState::detail)
                 .is_some_and(|detail| detail.reveal().is_none())
         );
+    }
 
+    #[test]
+    fn detail_area_too_small_masks_an_active_reveal() {
+        let (mut state, started_at) = opened_detail_state();
+        let revealed_at = started_at + std::time::Duration::from_secs(1);
         update(
             &mut state,
             Action::Detail(DetailAction::Reveal),
-            started_at + std::time::Duration::from_secs(15),
+            revealed_at,
         );
-        assert!(
-            state
-                .review()
-                .and_then(ReviewSessionState::detail)
-                .is_some_and(
-                    |detail| detail.is_revealed_at(started_at + std::time::Duration::from_secs(15))
-                )
-        );
+        assert_revealed_at(&state, revealed_at);
+
         update(
             &mut state,
             Action::DetailAreaTooSmall,
-            started_at + std::time::Duration::from_secs(16),
+            started_at + std::time::Duration::from_secs(2),
         );
         assert!(
             state
