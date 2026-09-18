@@ -346,16 +346,16 @@ fn format_elapsed(elapsed: Duration) -> String {
 fn footer_lines(state: &ExecutionState, width: u16) -> Vec<Line<'static>> {
     let items = if state.stage() == ExecutionStage::Failed {
         vec![
-            Line::from("q quit"),
-            Line::from("↑/↓ PgUp/PgDn scroll"),
-            Line::from("y diagnostic"),
-            Line::from("Y result"),
+            footer::hint("q", "quit"),
+            footer::hint("↑/↓ PgUp/PgDn", "scroll"),
+            footer::hint("y", "diagnostic"),
+            footer::hint("Y", "result"),
         ]
     } else {
         vec![
-            Line::from("Ctrl-C cancel"),
-            Line::from("↑/↓ PgUp/PgDn scroll"),
-            Line::from("End follow latest"),
+            footer::hint("Ctrl-C", "cancel"),
+            footer::hint("↑/↓ PgUp/PgDn", "scroll"),
+            footer::hint("End", "follow latest"),
         ]
     };
     footer::layout(items, width)
@@ -363,11 +363,14 @@ fn footer_lines(state: &ExecutionState, width: u16) -> Vec<Line<'static>> {
 
 fn required_footer_lines(state: &ExecutionState, width: u16) -> Vec<Line<'static>> {
     let items = if state.stage() == ExecutionStage::Failed {
-        vec![Line::from("q quit"), Line::from("↑/↓ PgUp/PgDn scroll")]
+        vec![
+            footer::hint("q", "quit"),
+            footer::hint("↑/↓ PgUp/PgDn", "scroll"),
+        ]
     } else {
         vec![
-            Line::from("Ctrl-C cancel"),
-            Line::from("↑/↓ PgUp/PgDn scroll"),
+            footer::hint("Ctrl-C", "cancel"),
+            footer::hint("↑/↓ PgUp/PgDn", "scroll"),
         ]
     };
     footer::layout(items, width)

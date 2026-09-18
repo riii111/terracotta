@@ -33,10 +33,10 @@ pub(crate) fn diagnostics_layout(area: Rect) -> DiagnosticsLayout {
     let content = Block::new().borders(Borders::ALL).inner(area);
     let footer_lines = footer::layout(
         vec![
-            Line::from("q quit"),
-            Line::from("Esc/w back"),
-            Line::from("↑/↓/j/k scroll"),
-            Line::from("PgUp/PgDn page"),
+            footer::hint("q", "quit"),
+            footer::hint("Esc/w", "back"),
+            footer::hint("↑/↓/j/k", "scroll"),
+            footer::hint("PgUp/PgDn", "page"),
         ],
         content.width,
     );

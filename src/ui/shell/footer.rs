@@ -1,14 +1,23 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
+
+use crate::ui::theme;
 
 const SEPARATOR: &str = " | ";
 const MAX_ROWS: usize = 2;
 
+pub(crate) fn hint(key: &'static str, description: &'static str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(key, theme::footer_key_style()),
+        Span::styled(format!(" {description}"), theme::footer_text_style()),
+    ])
+}
+
 pub(crate) fn layout(items: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
     let width = usize::from(width);
-    let mut rows = vec![String::new()];
+    let mut rows = vec![Line::default()];
     let mut row_widths = vec![0usize];
 
     for item in items {
@@ -19,12 +28,12 @@ pub(crate) fn layout(items: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>
 
         let row_index = rows.len() - 1;
         let row = &mut rows[row_index];
-        let separator_width = usize::from(!row.is_empty()) * SEPARATOR.len();
+        let separator_width = usize::from(!row.spans.is_empty()) * SEPARATOR.len();
         if row_widths[row_index] + separator_width + item_width <= width {
-            if !row.is_empty() {
-                row.push_str(SEPARATOR);
+            if !row.spans.is_empty() {
+                row.push_span(Span::styled(SEPARATOR, theme::footer_text_style()));
             }
-            row.push_str(item.to_string().as_str());
+            row.extend(item.spans);
             row_widths[row_index] += separator_width + item_width;
             continue;
         }
@@ -33,18 +42,20 @@ pub(crate) fn layout(items: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>
             continue;
         }
 
-        rows.push(item.to_string());
+        rows.push(item);
         row_widths.push(item_width);
     }
 
     rows.into_iter()
-        .filter(|row| !row.is_empty())
-        .map(Line::from)
+        .filter(|row| !row.spans.is_empty())
         .collect()
 }
 
 pub(crate) fn render(frame: &mut Frame<'_>, area: Rect, lines: Vec<Line<'static>>) {
-    frame.render_widget(Paragraph::new(lines), area);
+    frame.render_widget(
+        Paragraph::new(lines).style(theme::footer_text_style()),
+        area,
+    );
 }
 
 #[cfg(test)]
@@ -52,6 +63,27 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    #[rstest]
+    #[case::single_row(80)]
+    #[case::wrapped_rows(16)]
+    fn key_and_description_colors_survive_layout(#[case] width: u16) {
+        let rows = layout(vec![hint("[/]", "prev/next"), hint("/", "search")], width);
+        let spans = rows.iter().flat_map(|line| &line.spans).collect::<Vec<_>>();
+
+        for key in ["[/]", "/"] {
+            let span = spans.iter().find(|span| span.content == key).unwrap();
+            assert_eq!(span.style, theme::footer_key_style());
+        }
+        for description in [" prev/next", " search"] {
+            let span = spans
+                .iter()
+                .find(|span| span.content == description)
+                .unwrap();
+            assert_eq!(span.style, theme::footer_text_style());
+        }
+        assert_ne!(theme::footer_key_style().fg, theme::footer_text_style().fg);
+    }
 
     #[rstest]
     #[case::single_line(40, vec!["q quit", "Esc back"], vec!["q quit | Esc back"])]

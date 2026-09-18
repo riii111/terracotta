@@ -424,36 +424,36 @@ fn footer_lines(
     if state.searching() {
         return footer::layout(
             vec![
-                Line::from("Enter confirm"),
-                Line::from("Esc cancel"),
-                Line::from("Ctrl-C quit"),
+                footer::hint("Enter", "confirm"),
+                footer::hint("Esc", "cancel"),
+                footer::hint("Ctrl-C", "quit"),
                 Line::from("Type to search"),
             ],
             width,
         );
     }
 
-    let mut items = vec![Line::from("q quit")];
+    let mut items = vec![footer::hint("q", "quit")];
     if diagnostics.count() > 0 {
-        items.push(Line::from("w diagnostics"));
+        items.push(footer::hint("w", "diagnostics"));
     }
     match (
         state.can_copy(CopyTarget::Resource),
         state.can_copy(CopyTarget::Plan),
     ) {
         (true, true) => {
-            items.push(Line::from("y resource"));
-            items.push(Line::from("Y plan"));
+            items.push(footer::hint("y", "resource"));
+            items.push(footer::hint("Y", "plan"));
         }
-        (true, false) => items.push(Line::from("y resource")),
-        (false, true) => items.push(Line::from("Y plan")),
+        (true, false) => items.push(footer::hint("y", "resource")),
+        (false, true) => items.push(footer::hint("Y", "plan")),
         (false, false) => {}
     }
     items.extend([
-        Line::from("j/k/↑↓ select"),
-        Line::from("Enter details"),
-        Line::from("f filter"),
-        Line::from("/ search"),
+        footer::hint("j/k/↑↓", "select"),
+        footer::hint("Enter", "details"),
+        footer::hint("f", "filter"),
+        footer::hint("/", "search"),
     ]);
     footer::layout(items, width)
 }
@@ -461,12 +461,12 @@ fn footer_lines(
 fn required_footer_lines(state: &PlanListState, width: u16) -> Vec<Line<'static>> {
     let items = if state.searching() {
         vec![
-            Line::from("Enter confirm"),
-            Line::from("Esc cancel"),
-            Line::from("Ctrl-C quit"),
+            footer::hint("Enter", "confirm"),
+            footer::hint("Esc", "cancel"),
+            footer::hint("Ctrl-C", "quit"),
         ]
     } else {
-        vec![Line::from("q quit")]
+        vec![footer::hint("q", "quit")]
     };
     footer::layout(items, width)
 }

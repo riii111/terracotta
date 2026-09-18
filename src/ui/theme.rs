@@ -2,6 +2,14 @@ use ratatui::style::{Color, Modifier, Style};
 
 use crate::app::plan::{AttributeChangeKind, ResourceChangeKind};
 
+pub(crate) fn footer_key_style() -> Style {
+    Style::default().fg(Color::Cyan)
+}
+
+pub(crate) fn footer_text_style() -> Style {
+    Style::default().fg(Color::Gray)
+}
+
 pub(crate) fn diff_style(kind: AttributeChangeKind, after: bool) -> Style {
     if kind == AttributeChangeKind::Changed {
         Style::default().fg(if after { Color::Green } else { Color::Red })
