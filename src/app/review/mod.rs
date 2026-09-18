@@ -7,12 +7,14 @@ use super::{
 };
 
 mod detail;
+mod diagnostics;
 mod item;
 mod list;
 
 pub(crate) use detail::{
     AttributeGroup, DetailAction, DetailRow, ResourceNavigation, ReviewDetailState,
 };
+pub(crate) use diagnostics::ReviewDiagnosticsState;
 pub(crate) use item::PlanListItem;
 pub(crate) use list::{PlanListAction, PlanListFilter, PlanListState};
 

@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use super::event::{
-    Diagnostic, ExecutionEvent, ExecutionEventKind, ExecutionSummary, ProcessTermination,
-    ResourceEventKind,
+    Diagnostic, DiagnosticSeverity, ExecutionEvent, ExecutionEventKind, ExecutionSummary,
+    ProcessTermination, ResourceEventKind,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +79,20 @@ impl ExecutionProgress {
         &self.diagnostics
     }
 
+    pub(crate) fn take_review_diagnostics(&mut self) -> Vec<Diagnostic> {
+        std::mem::take(&mut self.diagnostics)
+            .into_iter()
+            .filter(|diagnostic| {
+                matches!(
+                    diagnostic.severity,
+                    DiagnosticSeverity::Warning
+                        | DiagnosticSeverity::Error
+                        | DiagnosticSeverity::Unknown
+                )
+            })
+            .collect()
+    }
+
     #[must_use]
     pub(crate) const fn last_event_at(&self) -> Option<Instant> {
         self.last_event_at
@@ -97,9 +111,7 @@ impl ExecutionProgress {
 
 #[cfg(test)]
 mod tests {
-    use super::super::event::{
-        DiagnosticSeverity, DiagnosticSource, ProcessExitStatus, ResourceEvent,
-    };
+    use super::super::event::{DiagnosticSource, ProcessExitStatus, ResourceEvent};
     use super::*;
 
     fn event(kind: ExecutionEventKind) -> ExecutionEvent {
@@ -265,5 +277,36 @@ mod tests {
             })
         );
         assert_eq!(progress.last_event_at(), Some(termination_at));
+    }
+
+    #[test]
+    fn takes_review_diagnostics_in_receive_order_and_discards_info() {
+        let mut progress = ExecutionProgress::default();
+        for (severity, summary) in [
+            (DiagnosticSeverity::Info, "info"),
+            (DiagnosticSeverity::Warning, "warning"),
+            (DiagnosticSeverity::Error, "error"),
+            (DiagnosticSeverity::Unknown, "unknown"),
+        ] {
+            progress.record(event(ExecutionEventKind::Diagnostic(Diagnostic {
+                severity,
+                summary: summary.to_owned(),
+                detail: None,
+                position: None,
+                source: DiagnosticSource::Terraform,
+                raw: None,
+            })));
+        }
+
+        let diagnostics = progress.take_review_diagnostics();
+
+        assert_eq!(
+            diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.summary.as_str())
+                .collect::<Vec<_>>(),
+            vec!["warning", "error", "unknown"]
+        );
+        assert!(progress.diagnostics().is_empty());
     }
 }

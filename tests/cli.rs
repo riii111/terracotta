@@ -102,6 +102,9 @@ case "$1" in
       printf '%s\n' '{"type":"diagnostic","diagnostic":{"severity":"error","summary":"synthetic plan failure","detail":"fake Terraform failed"}}'
       exit 1
     fi
+    if [ "${TERRACOTTA_FAKE_MODE:-success}" = diagnostic_success ]; then
+      printf '%s\n' '{"type":"diagnostic","diagnostic":{"severity":"warning","summary":"synthetic plan warning","detail":"fake Terraform completed with a warning"}}'
+    fi
     printf '%s\n' '{"type":"planned_change","change":{"resource":{"addr":"terraform_data.api"}}}'
     ;;
   show)
@@ -443,6 +446,14 @@ try:
         wait_new("Filter:", "back")
         send_key(b"q")
         exit_code = wait_exit()
+    elif scenario == "diagnostic_success":
+        wait_new("Diagnostics: 1 (w)", "diagnostic_notice")
+        send_key(b"w")
+        wait_parts(["Diagnostics (1)", "warning", "synthetic plan warning"], "diagnostics")
+        send_key(b"\x1b")
+        wait_new("Diagnostics: 1 (w)", "diagnostics_back")
+        send_key(b"q")
+        exit_code = wait_exit()
     elif scenario == "failure":
         wait_new("Failed", "failed")
         send_key(b"y")
@@ -768,6 +779,25 @@ except BaseException as error:
         result.assert_restored();
         result.observed("failed");
         result.observed("failure_copy");
+        fixture.assert_temporary_plan_removed();
+    }
+
+    #[test]
+    fn pty_success_keeps_plan_diagnostic_available_in_review() {
+        let fixture = Fixture::new(true);
+        let result = fixture.run(
+            "diagnostic_success",
+            100,
+            24,
+            Path::new(env!("CARGO_BIN_EXE_terracotta")),
+            &["plan"],
+        );
+
+        assert_eq!(result.exit_code, 0);
+        result.assert_restored();
+        for event in ["diagnostic_notice", "diagnostics", "diagnostics_back"] {
+            result.observed(event);
+        }
         fixture.assert_temporary_plan_removed();
     }
 

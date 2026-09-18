@@ -6,7 +6,9 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
 use crate::app::copy::CopyTarget;
 use crate::app::plan::ResourceChangeKind;
-use crate::app::review::{PlanListAction, PlanListFilter, PlanListItem, PlanListState};
+use crate::app::review::{
+    PlanListAction, PlanListFilter, PlanListItem, PlanListState, ReviewDiagnosticsState,
+};
 use crate::ui::primitives::atoms::separator;
 use crate::ui::primitives::molecules::terminal_notice;
 use crate::ui::shell::{footer, header};
@@ -35,13 +37,24 @@ pub(crate) enum ListInput {
     Selection(PlanListAction),
     Copy(CopyTarget),
     OpenDetail,
+    OpenDiagnostics,
     StartSearch,
     Quit,
 }
 
+#[cfg(test)]
 pub(crate) fn render_plan_list_with_state(
     frame: &mut Frame<'_>,
     state: &PlanListState,
+    list_state: &mut ListState,
+) {
+    render_plan_list_with_diagnostics(frame, state, &ReviewDiagnosticsState::default(), list_state);
+}
+
+pub(crate) fn render_plan_list_with_diagnostics(
+    frame: &mut Frame<'_>,
+    state: &PlanListState,
+    diagnostics: &ReviewDiagnosticsState,
     list_state: &mut ListState,
 ) {
     let area = frame.area();
@@ -62,20 +75,22 @@ pub(crate) fn render_plan_list_with_state(
 
     let has_search = state.searching() || !state.search().is_empty();
     let compact_layout = has_search && content_area.height <= MIN_CONTENT_HEIGHT;
-    let notices = notice_lines(state, content_area.width as usize, compact_layout);
+    let notices = notice_lines(
+        state,
+        diagnostics,
+        content_area.width as usize,
+        compact_layout,
+    );
     let summary = summary_lines(state);
     let search_height = u16::from(has_search);
-    let notice_height = match notices.len() {
-        0 => 0,
-        1 => 1,
-        _ => 2,
-    };
+    let notice_height = u16::try_from(notices.len()).unwrap_or(u16::MAX);
     let context_height = u16::from(state.context().is_some()) * 2;
     let separator_height = u16::from(!compact_layout && notice_height < 2);
     let copy_notice_height = u16::from(state.copy_notice().is_some());
     let (chunks, footer_lines) = list_layout(
         content_area,
         state,
+        diagnostics,
         context_height,
         search_height,
         separator_height,
@@ -133,16 +148,21 @@ pub(crate) fn render_plan_list_with_state(
     footer::render(frame, chunks[8], footer_lines);
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the layout keeps the existing R8 row budget explicit"
+)]
 fn list_layout(
     content_area: Rect,
     state: &PlanListState,
+    diagnostics: &ReviewDiagnosticsState,
     context_height: u16,
     search_height: u16,
     separator_height: u16,
     notice_height: u16,
     copy_notice_height: u16,
 ) -> (Vec<Rect>, Vec<Line<'static>>) {
-    let mut footer_lines = footer_lines(state, content_area.width);
+    let mut footer_lines = footer_lines(state, diagnostics, content_area.width);
     let required_height = usize::from(context_height)
         + 1
         + 2
@@ -179,7 +199,12 @@ fn list_layout(
     (chunks.to_vec(), footer_lines)
 }
 
-fn notice_lines(state: &PlanListState, width: usize, compact: bool) -> Vec<Line<'static>> {
+fn notice_lines(
+    state: &PlanListState,
+    diagnostics: &ReviewDiagnosticsState,
+    width: usize,
+    compact: bool,
+) -> Vec<Line<'static>> {
     let unsupported = state.unsupported_summary();
     let analysis = state.analysis_issues().first().map(|first| {
         let suffix = match state.analysis_issues().len() {
@@ -204,12 +229,20 @@ fn notice_lines(state: &PlanListState, width: usize, compact: bool) -> Vec<Line<
             ),
             (Some(summary), None) => summary.to_owned(),
             (None, Some(analysis)) => analysis.to_owned(),
-            (None, None) => return Vec::new(),
+            (None, None) => String::new(),
         };
-        return vec![Line::from(truncate_end(&message, width))];
+        let mut lines = if message.is_empty() {
+            Vec::new()
+        } else {
+            vec![Line::from(truncate_end(&message, width))]
+        };
+        if diagnostics.count() > 0 {
+            lines.push(diagnostics_line(diagnostics, state.searching()));
+        }
+        return lines;
     }
 
-    match (unsupported, analysis) {
+    let mut lines = match (unsupported, analysis) {
         (Some(summary), Some(analysis)) => vec![
             Line::from(truncate_end(&summary, width)),
             Line::from(analysis),
@@ -217,7 +250,19 @@ fn notice_lines(state: &PlanListState, width: usize, compact: bool) -> Vec<Line<
         (Some(summary), None) => vec![Line::from(truncate_end(&summary, width))],
         (None, Some(analysis)) => vec![Line::from(analysis)],
         (None, None) => Vec::new(),
+    };
+    if diagnostics.count() > 0 {
+        lines.push(diagnostics_line(diagnostics, state.searching()));
     }
+    lines
+}
+
+fn diagnostics_line(diagnostics: &ReviewDiagnosticsState, searching: bool) -> Line<'static> {
+    let suffix = if searching { "" } else { " (w)" };
+    Line::from(Span::styled(
+        format!("Diagnostics: {}{suffix}", diagnostics.count()),
+        theme::warning_style(),
+    ))
 }
 
 fn render_rows(
@@ -374,7 +419,11 @@ fn has_search(state: &PlanListState) -> bool {
     state.searching() || !state.search().is_empty()
 }
 
-fn footer_lines(state: &PlanListState, width: u16) -> Vec<Line<'static>> {
+fn footer_lines(
+    state: &PlanListState,
+    diagnostics: &ReviewDiagnosticsState,
+    width: u16,
+) -> Vec<Line<'static>> {
     if state.searching() {
         return footer::layout(
             vec![
@@ -388,6 +437,9 @@ fn footer_lines(state: &PlanListState, width: u16) -> Vec<Line<'static>> {
     }
 
     let mut items = vec![Line::from("q quit")];
+    if diagnostics.count() > 0 {
+        items.push(Line::from("w diagnostics"));
+    }
     match (
         state.can_copy(CopyTarget::Resource),
         state.can_copy(CopyTarget::Plan),
@@ -553,6 +605,7 @@ mod tests {
     use super::*;
     use crate::app::attribution::AnalysisIssue;
     use crate::app::copy::CopyNotice;
+    use crate::app::execution::{Diagnostic, DiagnosticSeverity, DiagnosticSource};
     use crate::app::review::{
         PlanReview, ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus,
     };
@@ -574,6 +627,29 @@ mod tests {
         render_test_buffer((width, height), |frame| {
             render_plan_list_with_state(frame, state, list_state);
         })
+    }
+
+    fn render_to_buffer_with_diagnostics(
+        state: &PlanListState,
+        diagnostics: &ReviewDiagnosticsState,
+        width: u16,
+        height: u16,
+    ) -> Buffer {
+        let mut list_state = ListState::default();
+        render_test_buffer((width, height), |frame| {
+            render_plan_list_with_diagnostics(frame, state, diagnostics, &mut list_state);
+        })
+    }
+
+    fn warning_diagnostics() -> ReviewDiagnosticsState {
+        ReviewDiagnosticsState::new(vec![Diagnostic {
+            severity: DiagnosticSeverity::Warning,
+            summary: "warning".to_owned(),
+            detail: None,
+            position: None,
+            source: DiagnosticSource::Terraform,
+            raw: None,
+        }])
     }
 
     fn connected_state() -> PlanListState {
@@ -721,6 +797,35 @@ mod tests {
         assert!(text.contains("(+2 more)"), "{text}");
         assert!(text.contains("Needs review: 1 / 1"), "{text}");
         assert!(text.contains("q quit"), "{text}");
+    }
+
+    #[test]
+    fn diagnostics_notice_has_open_hint_and_keeps_count_during_empty_search() {
+        let mut state = synthetic_state();
+        let diagnostics = warning_diagnostics();
+        let text = buffer_text(&render_to_buffer_with_diagnostics(
+            &state,
+            &diagnostics,
+            80,
+            16,
+        ));
+
+        assert!(text.contains("Diagnostics: 1 (w)"), "{text}");
+        assert!(text.contains("w diagnostics"), "{text}");
+
+        state.apply(PlanListAction::BeginSearch);
+        state.apply(PlanListAction::SetSearch("missing".to_owned()));
+        let text = buffer_text(&render_to_buffer_with_diagnostics(
+            &state,
+            &diagnostics,
+            80,
+            16,
+        ));
+
+        assert!(text.contains("Diagnostics: 1"), "{text}");
+        assert!(!text.contains("Diagnostics: 1 (w)"), "{text}");
+        assert!(text.contains("Showing 0/4"), "{text}");
+        assert!(!text.contains("w diagnostics"), "{text}");
     }
 
     #[test]

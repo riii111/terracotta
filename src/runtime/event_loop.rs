@@ -34,6 +34,7 @@ pub(crate) fn run_connected(
     let mut state = SessionState::new(execution);
     let mut list_view = ListState::default();
     let mut detail_view = None;
+    let mut diagnostics_view = None;
     let mut worker_disconnected = false;
     let mut dirty = true;
 
@@ -65,10 +66,30 @@ pub(crate) fn run_connected(
         }
         dirty |= reveal_present;
 
+        let diagnostics_is_open = state
+            .review()
+            .is_some_and(|review| review.diagnostics().is_open());
         let detail_is_open = state
             .review()
             .is_some_and(|review| review.detail().is_some());
-        if detail_is_open {
+        if diagnostics_is_open {
+            detail_view = None;
+            if diagnostics_view.is_none() {
+                diagnostics_view = Some(plan_review::DiagnosticsViewState::default());
+            }
+            if dirty
+                && let Some(review) = state.review()
+                && let Some(view) = diagnostics_view.as_mut()
+            {
+                let size = terminal.size()?;
+                plan_review::clamp_diagnostics_scroll(
+                    view,
+                    review.diagnostics(),
+                    Rect::new(0, 0, size.width, size.height),
+                );
+            }
+        } else if detail_is_open {
+            diagnostics_view = None;
             let size = terminal.size()?;
             if (size.width < 48 || size.height < 8)
                 && let Some(outcome) = dispatch(
@@ -101,6 +122,7 @@ pub(crate) fn run_connected(
             }
         } else if dirty {
             detail_view = None;
+            diagnostics_view = None;
         }
 
         if dirty || state.execution().is_some() {
@@ -109,6 +131,7 @@ pub(crate) fn run_connected(
                 terminal,
                 &mut list_view,
                 detail_view.as_ref(),
+                diagnostics_view.as_ref(),
                 execution_view,
             )?;
             dirty = false;
@@ -146,6 +169,32 @@ pub(crate) fn run_connected(
                             }
                             Some(execution::ExecutionInput::Copy(target)) => {
                                 Some(Action::Copy(target))
+                            }
+                            None => None,
+                        }
+                    } else if state
+                        .review()
+                        .is_some_and(|review| review.diagnostics().is_open())
+                    {
+                        match plan_review::key_to_diagnostics_input(key) {
+                            Some(plan_review::DiagnosticsInput::Back) => {
+                                diagnostics_view = None;
+                                Some(Action::CloseDiagnostics)
+                            }
+                            Some(plan_review::DiagnosticsInput::Quit) => Some(Action::Quit),
+                            Some(plan_review::DiagnosticsInput::Scroll(scroll)) => {
+                                if let Some(view) = diagnostics_view.as_mut()
+                                    && let Some(review) = state.review()
+                                {
+                                    let size = terminal.size()?;
+                                    plan_review::apply_diagnostics_scroll(
+                                        view,
+                                        scroll,
+                                        review.diagnostics(),
+                                        Rect::new(0, 0, size.width, size.height),
+                                    );
+                                }
+                                None
                             }
                             None => None,
                         }
@@ -236,6 +285,12 @@ pub(crate) fn run_connected(
                                 Some(plan_review::ListInput::OpenDetail) => {
                                     Some(Action::OpenDetail)
                                 }
+                                Some(plan_review::ListInput::OpenDiagnostics) => {
+                                    diagnostics_view
+                                        .get_or_insert_with(Default::default)
+                                        .reset();
+                                    Some(Action::OpenDiagnostics)
+                                }
                                 Some(plan_review::ListInput::StartSearch) => {
                                     Some(Action::List(PlanListAction::BeginSearch))
                                 }
@@ -264,6 +319,7 @@ fn draw(
     terminal: &mut DefaultTerminal,
     list_view: &mut ListState,
     detail_view: Option<&plan_review::DetailViewState>,
+    diagnostics_view: Option<&plan_review::DiagnosticsViewState>,
     execution_view: execution::ExecutionViewState,
 ) -> io::Result<()> {
     match state {
@@ -278,7 +334,13 @@ fn draw(
             })?;
         }
         SessionState::Review(review) => {
-            if let Some(view) = detail_view {
+            if review.diagnostics().is_open() {
+                if let Some(view) = diagnostics_view {
+                    terminal.draw(|frame| {
+                        plan_review::render_diagnostics(frame, review.diagnostics(), *view);
+                    })?;
+                }
+            } else if let Some(view) = detail_view {
                 if let Some(detail) = review.detail() {
                     terminal.draw(|frame| {
                         plan_review::render_resource_detail(
@@ -292,7 +354,12 @@ fn draw(
                 }
             } else {
                 terminal.draw(|frame| {
-                    plan_review::render_plan_list_with_state(frame, review.list(), list_view);
+                    plan_review::render_plan_list_with_diagnostics(
+                        frame,
+                        review.list(),
+                        review.diagnostics(),
+                        list_view,
+                    );
                 })?;
             }
         }

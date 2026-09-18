@@ -162,6 +162,10 @@ impl ExecutionState {
         &self.progress
     }
 
+    pub(crate) fn take_review_diagnostics(&mut self) -> Vec<Diagnostic> {
+        self.progress.take_review_diagnostics()
+    }
+
     #[must_use]
     pub(crate) fn elapsed_at(&self, now: Instant) -> Duration {
         now.saturating_duration_since(self.started_at)

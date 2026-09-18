@@ -27,6 +27,7 @@ pub(crate) fn key_to_list_input(key: KeyEvent) -> Option<ListInput> {
         match key.code {
             KeyCode::Char('y') => return Some(ListInput::Copy(CopyTarget::Resource)),
             KeyCode::Char('Y') => return Some(ListInput::Copy(CopyTarget::Plan)),
+            KeyCode::Char('w') => return Some(ListInput::OpenDiagnostics),
             _ => {}
         }
     }
@@ -154,6 +155,11 @@ mod tests {
                 "copy_plan",
                 key(KeyCode::Char('Y'), KeyModifiers::NONE),
                 Some(ListInput::Copy(CopyTarget::Plan)),
+            ),
+            (
+                "open_diagnostics",
+                key(KeyCode::Char('w'), KeyModifiers::NONE),
+                Some(ListInput::OpenDiagnostics),
             ),
             (
                 "copy_plan_with_redundant_shift",
