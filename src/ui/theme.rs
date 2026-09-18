@@ -1,6 +1,14 @@
 use ratatui::style::{Color, Modifier, Style};
 
-use crate::app::plan::ResourceChangeKind;
+use crate::app::plan::{AttributeChangeKind, ResourceChangeKind};
+
+pub(crate) fn diff_style(kind: AttributeChangeKind, after: bool) -> Style {
+    if kind == AttributeChangeKind::Changed {
+        Style::default().fg(if after { Color::Green } else { Color::Red })
+    } else {
+        Style::default().add_modifier(Modifier::DIM)
+    }
+}
 
 pub(crate) const fn action_symbol(kind: ResourceChangeKind) -> &'static str {
     match kind {

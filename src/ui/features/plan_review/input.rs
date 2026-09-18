@@ -89,6 +89,23 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn emacs_keys_navigate_without_toggling_filter_or_typing_into_search() {
+        for (character, expected) in [
+            ('n', Some(ListInput::Selection(PlanListAction::SelectNext))),
+            (
+                'p',
+                Some(ListInput::Selection(PlanListAction::SelectPrevious)),
+            ),
+            ('f', None),
+            ('b', None),
+        ] {
+            let input = key(KeyCode::Char(character), KeyModifiers::CONTROL);
+            assert_eq!(key_to_list_input(input), expected, "Ctrl+{character}");
+            assert_eq!(search_key_to_input(input), None, "Ctrl+{character}");
+        }
+    }
+
     fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
         KeyEvent {
             code,

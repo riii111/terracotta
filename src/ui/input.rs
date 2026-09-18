@@ -1,6 +1,19 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 pub(super) fn normalize_key(mut key: KeyEvent) -> KeyEvent {
+    if key.modifiers == KeyModifiers::CONTROL {
+        let code = match key.code {
+            KeyCode::Char('n') => Some(KeyCode::Down),
+            KeyCode::Char('p') => Some(KeyCode::Up),
+            KeyCode::Char('f') => Some(KeyCode::Right),
+            KeyCode::Char('b') => Some(KeyCode::Left),
+            _ => None,
+        };
+        if let Some(code) = code {
+            key.code = code;
+            key.modifiers = KeyModifiers::NONE;
+        }
+    }
     if let KeyCode::Char(character) = key.code
         && character.is_ascii_uppercase()
         && key.modifiers.contains(KeyModifiers::SHIFT)
@@ -15,6 +28,25 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    #[test]
+    fn emacs_navigation_matches_arrow_keys() {
+        for (character, arrow) in [
+            ('n', KeyCode::Down),
+            ('p', KeyCode::Up),
+            ('f', KeyCode::Right),
+            ('b', KeyCode::Left),
+        ] {
+            assert_eq!(
+                normalize_key(KeyEvent::new(
+                    KeyCode::Char(character),
+                    KeyModifiers::CONTROL
+                )),
+                KeyEvent::new(arrow, KeyModifiers::NONE),
+                "Ctrl+{character}"
+            );
+        }
+    }
 
     #[rstest]
     #[case::uppercase_without_shift(KeyModifiers::NONE)]

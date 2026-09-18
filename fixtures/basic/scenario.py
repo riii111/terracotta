@@ -25,12 +25,15 @@ def main():
     parser = argparse.ArgumentParser(description="Create an isolated local Terraform scenario.")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("setup", help="Create a fresh temporary Git repository and plan")
+    commands.add_parser("demo", help="Build and open the local scenario, then clean up")
     cleanup = commands.add_parser("clean", help="Remove a scenario created by this script")
     cleanup.add_argument("directory", type=Path)
     args = parser.parse_args()
 
     if args.command == "setup":
-        setup()
+        print(setup())
+    elif args.command == "demo":
+        sys.exit(demo())
     else:
         clean(args.directory)
 
@@ -80,7 +83,31 @@ def setup():
         raise
 
     print("Verified: create 1 / update 2 / replace 1 / delete 1", file=sys.stderr)
-    print(directory)
+    return directory
+
+
+def demo():
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        raise RuntimeError("The demo requires an interactive terminal")
+    repository = FIXTURES.parent.parent
+    directory = setup()
+    try:
+        with tempfile.TemporaryDirectory(prefix="terracotta-demo-build-") as target:
+            environment = isolated_environment(directory)
+            environment["RUSTC_WRAPPER"] = ""
+            build = subprocess.run(
+                ["cargo", "build", "--locked", "--target-dir", target],
+                cwd=repository, env=environment,
+            )
+            if build.returncode:
+                return build.returncode
+            executable = "terracotta.exe" if os.name == "nt" else "terracotta"
+            return subprocess.run(
+                [str(Path(target) / "debug" / executable), "plan"],
+                cwd=directory, env=environment,
+            ).returncode
+    finally:
+        clean(directory)
 
 
 def isolated_environment(directory):

@@ -167,14 +167,20 @@ fn append_attribute(
         Span::raw(marker),
         Span::raw(format_attribute_path(&attribute.path)),
     ]));
-    lines.push(Line::from(format!(
-        "    - {}",
-        display_attribute_value(&attribute.before, reveal)
-    )));
-    lines.push(Line::from(format!(
-        "    + {}",
-        display_attribute_value(&attribute.after, reveal)
-    )));
+    lines.push(Line::styled(
+        format!(
+            "    - {}",
+            display_attribute_value(&attribute.before, reveal)
+        ),
+        theme::diff_style(attribute.kind, false),
+    ));
+    lines.push(Line::styled(
+        format!(
+            "    + {}",
+            display_attribute_value(&attribute.after, reveal)
+        ),
+        theme::diff_style(attribute.kind, true),
+    ));
 }
 
 fn display_attribute_value(value: &AttributeValue, reveal: bool) -> String {
@@ -278,6 +284,25 @@ mod tests {
     use super::super::test_support::*;
     use super::super::*;
     use super::*;
+
+    #[test]
+    fn changed_values_use_red_and_green_while_unchanged_values_stay_dim() {
+        use ratatui::style::{Color, Modifier};
+
+        let state = state_for_change(expansion_change(), &[]);
+        let attributes = state.detail.attributes();
+        for attribute in &attributes.attributes {
+            let mut lines = Vec::new();
+            append_attribute(&mut lines, attribute, false, false);
+            if attribute.kind == AttributeChangeKind::Changed {
+                assert_eq!(lines[1].style.fg, Some(Color::Red));
+                assert_eq!(lines[2].style.fg, Some(Color::Green));
+            } else {
+                assert!(lines[1].style.add_modifier.contains(Modifier::DIM));
+                assert!(lines[2].style.add_modifier.contains(Modifier::DIM));
+            }
+        }
+    }
 
     #[test]
     fn expands_unchanged_group_and_keeps_selection_on_group_row() {

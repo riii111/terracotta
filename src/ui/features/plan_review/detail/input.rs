@@ -44,8 +44,12 @@ pub(crate) fn key_to_input(key: KeyEvent) -> Option<DetailInput> {
     let action = match key.code {
         KeyCode::Up | KeyCode::Char('k') => DetailAction::SelectPrevious,
         KeyCode::Down | KeyCode::Char('j') => DetailAction::SelectNext,
-        KeyCode::Char('[') => return Some(DetailInput::Navigate(ResourceNavigation::Previous)),
-        KeyCode::Char(']') => return Some(DetailInput::Navigate(ResourceNavigation::Next)),
+        KeyCode::Left | KeyCode::Char('[') => {
+            return Some(DetailInput::Navigate(ResourceNavigation::Previous));
+        }
+        KeyCode::Right | KeyCode::Char(']') => {
+            return Some(DetailInput::Navigate(ResourceNavigation::Next));
+        }
         KeyCode::Char('r') if key.modifiers == KeyModifiers::NONE => DetailAction::Reveal,
         KeyCode::Enter => DetailAction::ToggleExpansion,
         KeyCode::PageUp => return Some(DetailInput::Scroll(DetailScroll::PageUp)),
@@ -61,6 +65,25 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    #[test]
+    fn emacs_keys_select_attributes_and_navigate_resources() {
+        for (character, expected) in [
+            ('n', DetailInput::Action(DetailAction::SelectNext)),
+            ('p', DetailInput::Action(DetailAction::SelectPrevious)),
+            ('f', DetailInput::Navigate(ResourceNavigation::Next)),
+            ('b', DetailInput::Navigate(ResourceNavigation::Previous)),
+        ] {
+            assert_eq!(
+                key_to_input(KeyEvent::new(
+                    KeyCode::Char(character),
+                    KeyModifiers::CONTROL
+                )),
+                Some(expected),
+                "Ctrl+{character}"
+            );
+        }
+    }
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent {

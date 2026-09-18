@@ -269,14 +269,27 @@ fn render_rows(
         return;
     }
 
-    let header = Line::from(vec![
-        Span::styled("ACTION", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw("  RESOURCE"),
-        Span::raw("  GIT"),
-    ]);
+    let width = area.width.saturating_sub(2) as usize;
+    let resource_width = state
+        .visible_items()
+        .map(|item| display_width(item.address()))
+        .max()
+        .unwrap_or(8)
+        .max(8)
+        .min(width.saturating_sub(36));
+    let inline = area.width >= 80;
+    let heading = if inline {
+        format!("    ACTION  {:resource_width$}  GIT", "RESOURCE")
+    } else {
+        "    ACTION  RESOURCE / GIT".to_owned()
+    };
+    let header = Line::from(Span::styled(
+        heading,
+        Style::default().add_modifier(Modifier::BOLD),
+    ));
     let items = state
         .visible_items()
-        .map(|item| list_item(item, area.width.saturating_sub(2) as usize))
+        .map(|item| list_item(item, width, inline.then_some(resource_width)))
         .collect::<Vec<_>>();
     let list = List::new(items)
         .block(Block::new().title(header))
@@ -290,45 +303,48 @@ fn render_rows(
     frame.render_stateful_widget(list, area, list_state);
 }
 
-fn list_item(item: &PlanListItem, width: usize) -> ListItem<'static> {
+fn list_item(
+    item: &PlanListItem,
+    width: usize,
+    resource_width: Option<usize>,
+) -> ListItem<'static> {
     let marker = if item.needs_review() { "!" } else { " " };
-    let prefix = format!("{marker} {} ", theme::action_symbol(item.kind()));
     let git = item.git_label();
-    let inline_separator = "  ";
-    let address_width = width
-        .saturating_sub(display_width(prefix.as_str()))
-        .saturating_sub(display_width(inline_separator))
-        .saturating_sub(display_width(git.as_str()));
 
     let action_style = theme::action_style(item.kind());
     let review_style = theme::review_style(item.needs_review());
     let git_style = theme::git_style(item.needs_review());
 
-    if address_width >= 12 && display_width(item.address()) <= address_width {
+    if let Some(address_width) = resource_width {
+        let address = truncate_end(item.address(), address_width);
+        let padding = " ".repeat(address_width.saturating_sub(display_width(&address)) + 2);
         return ListItem::new(Line::from(vec![
             Span::styled(marker.to_owned(), review_style),
             Span::raw(" "),
             Span::styled(theme::action_symbol(item.kind()), action_style),
-            Span::raw(" "),
-            Span::raw(truncate_end(item.address(), address_width)),
-            Span::raw(inline_separator),
-            Span::styled(git, git_style),
+            Span::raw("       "),
+            Span::raw(address),
+            Span::raw(padding),
+            Span::styled(
+                truncate_end(&git, width.saturating_sub(address_width + 12)),
+                git_style,
+            ),
         ]));
     }
 
-    let address_width = width.saturating_sub(display_width(prefix.as_str()));
+    let address_width = width.saturating_sub(10);
     let address = truncate_end(item.address(), address_width);
-    let evidence_width = width.saturating_sub(display_width("    "));
+    let evidence_width = width.saturating_sub(10);
     ListItem::new(vec![
         Line::from(vec![
             Span::styled(marker.to_owned(), review_style),
             Span::raw(" "),
             Span::styled(theme::action_symbol(item.kind()), action_style),
-            Span::raw(" "),
+            Span::raw("       "),
             Span::raw(address),
         ]),
         Line::from(vec![
-            Span::raw("    "),
+            Span::raw("          "),
             Span::styled(truncate_end(&git, evidence_width), git_style),
         ]),
     ])
@@ -771,11 +787,10 @@ mod tests {
         assert!(text.contains("j/k/↑↓ select"), "{text}");
         assert!(text.contains("/ search"), "{text}");
         assert!(
-            text.contains(
-                "aws_s3_bucket.logs_with_a_very_long_resource_address_that_needs_truncation_for_narrow_terminal",
-            ),
+            text.contains("aws_s3_bucket.logs_with_a_very_long_resource_address"),
             "{text}"
         );
+        assert!(text.contains("..."), "{text}");
 
         let delete_cell = buffer
             .content()
@@ -791,6 +806,25 @@ mod tests {
             .expect("selected row should be rendered");
         assert_eq!(selected_cell.bg, Color::DarkGray);
         assert!(selected_cell.modifier.contains(Modifier::UNDERLINED));
+    }
+
+    #[test]
+    fn resource_and_git_columns_align_with_headers_across_rows() {
+        let state = synthetic_state();
+        let text = buffer_text(&render_to_buffer(&state, 165, 30));
+        let header = text.lines().find(|line| line.contains("ACTION")).unwrap();
+        let resource_column = header.find("RESOURCE").unwrap();
+        let git_column = header.find("GIT").unwrap();
+
+        for (address, label) in [
+            ("aws_instance.api", "direct:"),
+            ("aws_instance.worker", "incomplete"),
+            ("aws_security_group.old", "no match"),
+        ] {
+            let row = text.lines().find(|line| line.contains(address)).unwrap();
+            assert_eq!(row.find(address), Some(resource_column), "{row}");
+            assert_eq!(row.find(label), Some(git_column), "{row}");
+        }
     }
 
     #[test]
@@ -903,7 +937,10 @@ mod tests {
                 .any(|line| line.contains("      direct: storage.tf:8-10")),
             "{text}"
         );
-        assert!(text.contains("aws_s3_bucket.logs_with_a_very_long_resource_addr..."));
+        assert!(
+            text.contains("aws_s3_bucket.logs_with_a_very_long_resourc..."),
+            "{text}"
+        );
     }
 
     #[test]
@@ -980,7 +1017,7 @@ mod tests {
 
         assert!(text.contains("Unshown changes: output (1)"), "{text}");
         assert!(
-            text.contains("aws_s3_bucket.logs_with_a_very_long_r..."),
+            text.contains("aws_s3_bucket.logs_with_a_very_..."),
             "{text}"
         );
         assert!(text.contains("direct: storage.tf:8-10"), "{text}");
@@ -1060,7 +1097,6 @@ mod tests {
         let original_offset = list_state.offset();
         assert!(original_offset > 0);
 
-        state.apply(PlanListAction::SelectResource(3));
         render_to_buffer_with_state(&state, 80, 11, &mut list_state);
         assert_eq!(list_state.offset(), original_offset);
 

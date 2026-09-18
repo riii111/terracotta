@@ -20,8 +20,6 @@ terracotta plan
 terracotta plan --compare-ref main
 ```
 
-一覧では`f`で要確認だけに絞り込み、`/`でresource addressを検索する。`Enter`で詳細を開き、`Enter`で省略属性を展開する。`y`は選択resource、`Y`はplan全体をマスク済みでコピーする。`q`または`Ctrl-C`で終了する。
-
 Terraformのplan失敗時はdiagnosticを表示して終了を待つ。Gitの取得・解析だけが失敗した場合は、planを閲覧できる状態を保ったまま「解析不完全」と表示する。
 
 `plan`はクラウド接続を隠す機能ではない。対象rootのTerraform設定、state、認証情報など、通常の`terraform plan`に必要な環境を用意する。
