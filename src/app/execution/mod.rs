@@ -52,11 +52,6 @@ pub(crate) struct ExecutionState {
 
 impl ExecutionState {
     #[must_use]
-    pub(crate) fn new(started_at: Instant) -> Self {
-        Self::with_context(started_at, ExecutionContext::loading())
-    }
-
-    #[must_use]
     pub(crate) fn with_context(started_at: Instant, context: ExecutionContext) -> Self {
         Self {
             stage: ExecutionStage::Planning,
@@ -148,11 +143,6 @@ impl ExecutionState {
     }
 
     #[must_use]
-    pub(crate) const fn started_at(&self) -> Instant {
-        self.started_at
-    }
-
-    #[must_use]
     pub(crate) const fn context(&self) -> &ExecutionContext {
         &self.context
     }
@@ -192,6 +182,15 @@ impl ExecutionState {
 mod tests {
     use super::context::ExecutionContextValue;
     use super::*;
+
+    impl ExecutionState {
+        pub(crate) fn new(started_at: Instant) -> Self {
+            Self::with_context(
+                started_at,
+                ExecutionContext::known("loading...", "loading...", "loading...", "loading..."),
+            )
+        }
+    }
 
     fn event(received_at: Instant, kind: ExecutionEventKind) -> ExecutionEvent {
         ExecutionEvent { received_at, kind }

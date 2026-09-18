@@ -138,11 +138,6 @@ impl ConfigurationComparisons {
     }
 }
 
-pub(crate) fn capture_working_tree_configuration(root: &Path) -> ConfigurationSnapshot {
-    capture_working_tree_configuration_with_cancellation(root, &CancellationToken::new())
-        .expect("working tree configuration should not be interrupted without cancellation")
-}
-
 pub(crate) fn capture_working_tree_configuration_with_cancellation(
     root: &Path,
     cancellation: &CancellationToken,
@@ -183,20 +178,6 @@ pub(crate) fn capture_working_tree_configuration_with_cancellation(
         }
     }
     Ok(snapshot)
-}
-
-pub(crate) fn capture_revision_configuration(
-    repository_root: &Path,
-    root: &Path,
-    revision: &str,
-) -> ConfigurationSnapshot {
-    capture_revision_configuration_with_cancellation(
-        repository_root,
-        root,
-        revision,
-        &CancellationToken::new(),
-    )
-    .expect("Git configuration should not be interrupted without cancellation")
 }
 
 pub(crate) fn capture_revision_configuration_with_cancellation(
@@ -296,14 +277,6 @@ pub(crate) fn capture_revision_configuration_with_cancellation(
     Ok(snapshot)
 }
 
-pub(crate) fn compare_configurations(
-    diff: &GitDiff,
-    working_tree: &ConfigurationSnapshot,
-) -> ConfigurationComparisons {
-    compare_configurations_with_cancellation(diff, working_tree, &CancellationToken::new())
-        .expect("Git configuration should not be interrupted without cancellation")
-}
-
 pub(crate) fn compare_configurations_with_cancellation(
     diff: &GitDiff,
     working_tree: &ConfigurationSnapshot,
@@ -319,16 +292,6 @@ pub(crate) fn compare_configurations_with_cancellation(
         )
     };
     compare_configurations_with_capture_cancellable(diff, working_tree, &mut capture_revision)
-}
-
-fn compare_configurations_with_capture(
-    diff: &GitDiff,
-    working_tree: &ConfigurationSnapshot,
-    capture_revision: &mut dyn FnMut(&str) -> ConfigurationSnapshot,
-) -> ConfigurationComparisons {
-    let mut capture_revision = |revision: &str| Ok(capture_revision(revision));
-    compare_configurations_with_capture_cancellable(diff, working_tree, &mut capture_revision)
-        .expect("test Git configuration capture should not be interrupted")
 }
 
 fn compare_configurations_with_capture_cancellable(
@@ -418,10 +381,60 @@ mod tests {
         sync::atomic::{AtomicU64, Ordering},
     };
 
-    use super::super::diff::{collect_diff, collect_diff_against_ref};
     use super::*;
 
     static NEXT_REPOSITORY: AtomicU64 = AtomicU64::new(0);
+
+    fn collect_diff(root: &Path) -> GitDiff {
+        super::super::diff::collect_diff_with_cancellation(root, &CancellationToken::new())
+            .expect("Git diff should not be interrupted")
+    }
+
+    fn collect_diff_against_ref(root: &Path, compare_ref: &str) -> GitDiff {
+        super::super::diff::collect_diff_against_ref_with_cancellation(
+            root,
+            compare_ref,
+            &CancellationToken::new(),
+        )
+        .expect("Git diff should not be interrupted")
+    }
+
+    fn capture_working_tree_configuration(root: &Path) -> ConfigurationSnapshot {
+        capture_working_tree_configuration_with_cancellation(root, &CancellationToken::new())
+            .expect("working tree configuration should not be interrupted")
+    }
+
+    fn capture_revision_configuration(
+        repository_root: &Path,
+        root: &Path,
+        revision: &str,
+    ) -> ConfigurationSnapshot {
+        capture_revision_configuration_with_cancellation(
+            repository_root,
+            root,
+            revision,
+            &CancellationToken::new(),
+        )
+        .expect("Git configuration should not be interrupted")
+    }
+
+    fn compare_configurations(
+        diff: &GitDiff,
+        working_tree: &ConfigurationSnapshot,
+    ) -> ConfigurationComparisons {
+        compare_configurations_with_cancellation(diff, working_tree, &CancellationToken::new())
+            .expect("Git configuration should not be interrupted")
+    }
+
+    fn compare_configurations_with_capture(
+        diff: &GitDiff,
+        working_tree: &ConfigurationSnapshot,
+        capture_revision: &mut dyn FnMut(&str) -> ConfigurationSnapshot,
+    ) -> ConfigurationComparisons {
+        let mut capture_revision = |revision: &str| Ok(capture_revision(revision));
+        compare_configurations_with_capture_cancellable(diff, working_tree, &mut capture_revision)
+            .expect("test Git configuration capture should not be interrupted")
+    }
 
     struct TestRepository {
         path: PathBuf,

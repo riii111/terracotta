@@ -48,21 +48,6 @@ impl Debug for AttributeValue {
 
 impl AttributeValue {
     #[must_use]
-    pub(crate) const fn kind(&self) -> AttributeValueKind {
-        self.kind
-    }
-
-    #[must_use]
-    pub(crate) const fn is_sensitive(&self) -> bool {
-        self.sensitive
-    }
-
-    #[must_use]
-    pub(crate) const fn is_unknown(&self) -> bool {
-        matches!(self.kind, AttributeValueKind::Unknown)
-    }
-
-    #[must_use]
     pub(crate) fn display(&self) -> String {
         self.display.clone()
     }
@@ -83,11 +68,6 @@ impl AttributeValue {
             return None;
         }
         self.original.as_ref().map(display_plan_value)
-    }
-
-    #[must_use]
-    pub(crate) const fn revealed(&self) -> Option<&PlanValue> {
-        self.original.as_ref()
     }
 }
 
@@ -112,13 +92,6 @@ pub(crate) struct AttributeDiffs {
     pub(crate) unchanged_count: usize,
     pub(crate) replace_paths: Option<Vec<Vec<ReplacePathSegment>>>,
     pub(crate) action_reason: Option<String>,
-}
-
-impl AttributeDiffs {
-    #[must_use]
-    pub(crate) const fn total_count(&self) -> usize {
-        self.changed_count + self.unchanged_count
-    }
 }
 
 pub(crate) fn diff_resource_attributes(change: &ResourceChange) -> AttributeDiffs {
@@ -774,6 +747,30 @@ mod tests {
 
     use super::*;
     use crate::app::plan::{PlanAction, ResourceMode};
+
+    impl AttributeValue {
+        fn kind(&self) -> AttributeValueKind {
+            self.kind
+        }
+
+        fn is_sensitive(&self) -> bool {
+            self.sensitive
+        }
+
+        fn is_unknown(&self) -> bool {
+            matches!(self.kind, AttributeValueKind::Unknown)
+        }
+
+        fn revealed(&self) -> Option<&PlanValue> {
+            self.original.as_ref()
+        }
+    }
+
+    impl AttributeDiffs {
+        fn total_count(&self) -> usize {
+            self.changed_count + self.unchanged_count
+        }
+    }
 
     fn plan_value(value: Value) -> PlanValue {
         match value {

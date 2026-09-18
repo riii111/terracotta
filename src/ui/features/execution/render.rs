@@ -523,7 +523,10 @@ mod tests {
             "{long_context_text}"
         );
 
-        let unavailable = ExecutionState::with_context(started_at, ExecutionContext::unavailable());
+        let unavailable = ExecutionState::with_context(
+            started_at,
+            ExecutionContext::known("unavailable", "unavailable", "unavailable", "unavailable"),
+        );
         let unavailable_text = buffer_text(&render_to_buffer(&unavailable, started_at, 80, 16));
         assert!(
             unavailable_text.contains("cwd unavailable"),

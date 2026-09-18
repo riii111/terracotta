@@ -641,6 +641,19 @@ mod tests {
         })
     }
 
+    fn empty_state() -> PlanListState {
+        PlanListState::from_plan(
+            Plan {
+                changes: Vec::new(),
+                summary: PlanSummary::default(),
+                unsupported_changes: Vec::new(),
+            },
+            Vec::new(),
+            "working tree vs HEAD",
+        )
+        .expect("empty plan should build a list")
+    }
+
     fn warning_diagnostics() -> ReviewDiagnosticsState {
         ReviewDiagnosticsState::new(vec![Diagnostic {
             severity: DiagnosticSeverity::Warning,
@@ -763,7 +776,7 @@ mod tests {
 
     #[test]
     fn empty_state_explains_that_there_are_no_resource_changes() {
-        let state = PlanListState::empty("working tree vs HEAD");
+        let state = empty_state();
         let text = buffer_text(&render_to_buffer(&state, 80, 12));
 
         assert!(text.contains("No resource changes."), "{text}");
@@ -973,7 +986,7 @@ mod tests {
 
     #[test]
     fn empty_plan_disables_resource_copy() {
-        let state = PlanListState::empty("working tree vs HEAD");
+        let state = empty_state();
 
         assert!(!state.can_copy(CopyTarget::Resource));
     }

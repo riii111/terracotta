@@ -74,14 +74,6 @@ impl CopyEffect {
     pub(crate) fn text(&self) -> &str {
         &self.text
     }
-
-    #[must_use]
-    pub(crate) const fn success_notice(&self) -> CopyNotice {
-        CopyNotice::Copied {
-            target: self.target,
-            resource_count: self.resource_count,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

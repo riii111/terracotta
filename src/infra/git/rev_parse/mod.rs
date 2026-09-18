@@ -79,20 +79,6 @@ pub(super) fn resolve_compare_ref(
     resolve_compare_ref_with_env_and_cancellation(repository_root, compare_ref, &[], cancellation)
 }
 
-pub(super) fn resolve_compare_ref_with_env(
-    repository_root: &Path,
-    compare_ref: &str,
-    environment: &[(&str, &str)],
-) -> Result<String, CompareRefError> {
-    let cancellation = CancellationToken::new();
-    resolve_compare_ref_with_env_and_cancellation(
-        repository_root,
-        compare_ref,
-        environment,
-        &cancellation,
-    )
-}
-
 fn resolve_compare_ref_with_env_and_cancellation(
     repository_root: &Path,
     compare_ref: &str,

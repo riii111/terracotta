@@ -197,24 +197,6 @@ impl PlanListState {
         })
     }
 
-    pub(crate) fn empty(comparison: impl Into<String>) -> Self {
-        Self {
-            context: None,
-            comparison: comparison.into(),
-            summary: PlanSummary::default(),
-            items: Vec::new(),
-            source_files: Vec::new(),
-            unsupported: Vec::new(),
-            analysis_issues: Vec::new(),
-            filter: PlanListFilter::All,
-            search: String::new(),
-            search_backup: None,
-            selected: None,
-            plan_copy_text: None,
-            copy_notice: None,
-        }
-    }
-
     pub(crate) fn apply(&mut self, action: PlanListAction) {
         match action {
             PlanListAction::SelectPrevious => {

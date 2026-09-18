@@ -45,17 +45,6 @@ impl Display for PlanParseError {
 
 impl std::error::Error for PlanParseError {}
 
-/// Parses the JSON document emitted by `terraform show -json`.
-///
-/// # Errors
-///
-/// Returns an error when the JSON is malformed, does not have the required
-/// plan shape, or uses an unsupported format major version.
-pub(crate) fn parse_plan_json(input: &str) -> Result<Plan, PlanParseError> {
-    let document = serde_json::from_str::<Value>(input).map_err(|_| PlanParseError::InvalidJson)?;
-    parse_plan_document(&document)
-}
-
 /// Parses bytes containing the JSON document emitted by `terraform show -json`.
 ///
 /// # Errors
@@ -580,6 +569,28 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    impl PlanSummary {
+        pub(crate) fn total(self) -> usize {
+            self.creates + self.updates + self.replaces + self.deletes
+        }
+    }
+
+    impl Plan {
+        fn has_changes(&self) -> bool {
+            !self.changes.is_empty() || !self.unsupported_changes.is_empty()
+        }
+
+        fn unsupported_change_count(&self) -> usize {
+            self.unsupported_changes.len()
+        }
+    }
+
+    fn parse_plan_json(input: &str) -> Result<Plan, PlanParseError> {
+        let document =
+            serde_json::from_str::<Value>(input).map_err(|_| PlanParseError::InvalidJson)?;
+        parse_plan_document(&document)
+    }
 
     fn plan_with_resources(resources: Value) -> String {
         let mut document = Map::new();

@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    fs, io,
     path::{Path, PathBuf},
 };
 
@@ -16,7 +15,6 @@ pub(crate) struct HclSourceFile {
     path: PathBuf,
     source: String,
     side: SourceSide,
-    read_error: Option<String>,
 }
 
 impl HclSourceFile {
@@ -30,13 +28,7 @@ impl HclSourceFile {
             path: path.into(),
             source: source.into(),
             side,
-            read_error: None,
         }
-    }
-
-    fn with_read_error(mut self, error: &io::Error) -> Self {
-        self.read_error = Some(error.to_string());
-        self
     }
 
     #[must_use]
@@ -47,11 +39,6 @@ impl HclSourceFile {
     #[must_use]
     pub(crate) fn source(&self) -> &str {
         &self.source
-    }
-
-    #[must_use]
-    pub(crate) const fn side(&self) -> SourceSide {
-        self.side
     }
 }
 
@@ -66,24 +53,8 @@ impl HclParseResult {
     }
 
     #[must_use]
-    pub(crate) fn is_complete(&self) -> bool {
-        self.files.iter().all(SourceFileAnalysis::is_complete)
-    }
-
-    pub(crate) fn resources(&self) -> impl Iterator<Item = &ResourceSourceLocation> {
-        self.files.iter().flat_map(|file| file.resources().iter())
-    }
-
-    #[must_use]
     pub(crate) fn files(&self) -> &[SourceFileAnalysis] {
         &self.files
-    }
-
-    #[must_use]
-    pub(crate) fn file(&self, path: &Path, side: SourceSide) -> Option<&SourceFileAnalysis> {
-        self.files
-            .iter()
-            .find(|file| file.path() == path && file.side() == side)
     }
 }
 
@@ -126,45 +97,6 @@ where
     let mut result = HclParseResult::new(inputs.into_iter().map(parse_source).collect());
     mark_duplicate_resources(&mut result);
     result
-}
-
-/// Parses native Terraform files directly under `root`.
-///
-/// `.tf.json` files are included in the result as unsupported inputs so that
-/// callers can report an incomplete analysis instead of silently ignoring them.
-///
-/// # Errors
-///
-/// Returns an error when `root` cannot be read as a directory. Errors reading
-/// individual files are retained in the corresponding file analysis.
-pub(crate) fn parse_root(root: &Path, side: SourceSide) -> io::Result<HclParseResult> {
-    let mut paths = fs::read_dir(root)?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| is_native_hcl_path(path) || is_json_hcl_path(path))
-        .collect::<Vec<_>>();
-    paths.sort();
-
-    let mut result = HclParseResult::new(
-        paths
-            .into_iter()
-            .map(|path| match fs::read_to_string(&path) {
-                Ok(source) => HclSourceFile::new(path, source, side),
-                Err(error) => HclSourceFile::new(path, String::new(), side).with_read_error(&error),
-            })
-            .map(|input| match input.read_error {
-                Some(error) => SourceFileAnalysis::new(
-                    input.path,
-                    input.side,
-                    Vec::new(),
-                    vec![SourceIssue::new(SourceIssueKind::ReadError, error)],
-                ),
-                None => parse_source(input),
-            })
-            .collect(),
-    );
-    mark_duplicate_resources(&mut result);
-    Ok(result)
 }
 
 fn parse_hcl(source: &str) -> (Vec<ResourceAddress>, Vec<SourceIssue>) {
@@ -344,12 +276,6 @@ fn mark_duplicate_resources(result: &mut HclParseResult) {
 
 fn is_native_hcl_path(path: &Path) -> bool {
     path.extension().is_some_and(|extension| extension == "tf")
-}
-
-fn is_json_hcl_path(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.ends_with(".tf.json"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -658,6 +584,28 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    impl HclParseResult {
+        fn is_complete(&self) -> bool {
+            self.files.iter().all(SourceFileAnalysis::is_complete)
+        }
+
+        fn resources(&self) -> impl Iterator<Item = &ResourceSourceLocation> {
+            self.files.iter().flat_map(|file| file.resources().iter())
+        }
+
+        fn file(&self, path: &Path, side: SourceSide) -> Option<&SourceFileAnalysis> {
+            self.files
+                .iter()
+                .find(|file| file.path() == path && file.side() == side)
+        }
+    }
+
+    impl SourceFileAnalysis {
+        fn has_issue(&self, kind: SourceIssueKind) -> bool {
+            self.issues().iter().any(|issue| issue.kind() == kind)
+        }
+    }
 
     fn after(source: &str) -> HclSourceFile {
         HclSourceFile::new("main.tf", source, SourceSide::After)

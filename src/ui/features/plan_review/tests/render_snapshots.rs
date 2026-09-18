@@ -20,7 +20,7 @@ fn narrow_plan_list_wraps_git_evidence() {
 
 #[test]
 fn empty_plan_list_shows_zero_summary() {
-    let state = PlanListState::empty("working tree vs HEAD");
+    let state = empty_state();
 
     insta::assert_snapshot!(buffer_text(&render_to_buffer(&state, 80, 12)));
 }

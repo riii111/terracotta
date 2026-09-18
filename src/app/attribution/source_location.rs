@@ -122,7 +122,6 @@ pub(crate) enum SourceIssueKind {
     SyntaxError,
     UnsupportedInput,
     DuplicateResource,
-    ReadError,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,10 +202,5 @@ impl SourceFileAnalysis {
     #[must_use]
     pub(crate) const fn is_complete(&self) -> bool {
         self.issues.is_empty()
-    }
-
-    #[must_use]
-    pub(crate) fn has_issue(&self, kind: SourceIssueKind) -> bool {
-        self.issues.iter().any(|issue| issue.kind() == kind)
     }
 }
