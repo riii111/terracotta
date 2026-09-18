@@ -12,7 +12,7 @@ pub(crate) use event::{
     EventStream, ExecutionEvent, ExecutionEventKind, ExecutionPhase, ExecutionSummary,
     ProcessExitStatus, ProcessTermination, ResourceEvent, ResourceEventKind,
 };
-pub(crate) use progress::ExecutionProgress;
+pub(crate) use progress::{ExecutionProgress, ResourceProgress};
 
 const PAGE_SCROLL: u16 = 8;
 
@@ -323,21 +323,20 @@ mod tests {
     fn nonzero_termination_enters_failed_stage() {
         let started_at = Instant::now();
         let mut state = ExecutionState::new(started_at);
+        let termination_at = started_at + Duration::from_secs(1);
+        let termination = ProcessTermination {
+            status: ProcessExitStatus::Exited(1),
+            interrupted: false,
+        };
 
         state.record(event(
-            started_at + Duration::from_secs(1),
-            ExecutionEventKind::Terminated(ProcessTermination {
-                status: ProcessExitStatus::Exited(1),
-                interrupted: false,
-            }),
+            termination_at,
+            ExecutionEventKind::Terminated(termination),
         ));
 
         assert_eq!(state.stage(), ExecutionStage::Failed);
-        assert_eq!(state.progress().events().len(), 1);
-        assert!(matches!(
-            state.progress().events()[0].kind,
-            ExecutionEventKind::Terminated(ProcessTermination { .. })
-        ));
+        assert_eq!(state.progress().termination(), Some(termination));
+        assert_eq!(state.progress().last_event_at(), Some(termination_at));
     }
 
     #[test]
