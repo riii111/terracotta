@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crossterm::event::{self, Event};
+use crossterm::event::{self, Event, KeyEvent};
 use ratatui::DefaultTerminal;
 use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
@@ -13,7 +13,7 @@ use crate::{
     app::{
         execution::{ExecutionAction, ExecutionState},
         review::{DetailAction, PlanListAction, PlanReviewMessage},
-        session::{self, Action, Effect, SessionOutcome, SessionState},
+        session::{self, Action, Effect, ReviewSessionState, SessionOutcome, SessionState},
     },
     infra::{CancellationToken, ClipboardExecutor},
     ui::features::{execution, plan_review},
@@ -143,194 +143,242 @@ pub(crate) fn run_connected(
                 Event::Key(key) if key.is_press() => {
                     dirty = true;
                     let now = Instant::now();
-                    let action = if let Some(execution) = state.execution() {
-                        match execution::execution_key_to_input(key, execution.stage()) {
-                            Some(execution::ExecutionInput::Quit) => Some(Action::Quit),
-                            Some(execution::ExecutionInput::Action(
-                                ExecutionAction::RequestCancellation,
-                            )) => Some(Action::Execution(ExecutionAction::RequestCancellation)),
-                            Some(execution::ExecutionInput::End) => {
-                                execution_view.end();
-                                None
-                            }
-                            Some(execution::ExecutionInput::Scroll(scroll)) => {
-                                let size = terminal.size()?;
-                                let body = execution::execution_chunks(
-                                    Rect::new(0, 0, size.width, size.height),
-                                    execution,
-                                )[2];
-                                let (current, max) = execution::execution_scroll_position_with_view(
-                                    execution,
-                                    execution_view,
-                                    body,
-                                );
-                                execution_view.apply_scroll(scroll, current, max, body.height);
-                                None
-                            }
-                            Some(execution::ExecutionInput::Copy(target)) => {
-                                Some(Action::Copy(target))
-                            }
-                            None => None,
-                        }
+                    let outcome = if let Some(execution) = state.execution() {
+                        handle_execution_key(key, execution, &mut execution_view, terminal)?
+                            .and_then(|action| {
+                                dispatch(&mut state, action, now, cancellation, clipboard)
+                            })
                     } else if state
                         .review()
                         .is_some_and(|review| review.diagnostics().is_open())
                     {
-                        match plan_review::key_to_diagnostics_input(key) {
-                            Some(plan_review::DiagnosticsInput::Back) => {
-                                diagnostics_view = None;
-                                Some(Action::CloseDiagnostics)
-                            }
-                            Some(plan_review::DiagnosticsInput::Quit) => Some(Action::Quit),
-                            Some(plan_review::DiagnosticsInput::Scroll(scroll)) => {
-                                if let Some(view) = diagnostics_view.as_mut()
-                                    && let Some(review) = state.review()
-                                {
-                                    let size = terminal.size()?;
-                                    plan_review::apply_diagnostics_scroll(
-                                        view,
-                                        scroll,
-                                        review.diagnostics(),
-                                        Rect::new(0, 0, size.width, size.height),
-                                    );
-                                }
-                                None
-                            }
-                            None => None,
-                        }
+                        handle_diagnostics_key(key, &state, &mut diagnostics_view, terminal)?
+                            .and_then(|action| {
+                                dispatch(&mut state, action, now, cancellation, clipboard)
+                            })
                     } else if state
                         .review()
                         .is_some_and(|review| review.detail().is_some())
                     {
-                        match plan_review::key_to_detail_input(key) {
-                            Some(plan_review::DetailInput::Back) => Some(Action::CloseDetail),
-                            Some(plan_review::DetailInput::Quit) => Some(Action::Quit),
-                            Some(plan_review::DetailInput::Navigate(navigation)) => {
-                                if let Some(view) = detail_view.as_mut() {
-                                    view.reset();
-                                }
-                                Some(Action::Navigate(navigation))
-                            }
-                            Some(plan_review::DetailInput::Copy(target)) => {
-                                Some(Action::Copy(target))
-                            }
-                            Some(plan_review::DetailInput::ToggleSources) => {
-                                if let Some(review) = state.review()
-                                    && !review.list().source_files().is_empty()
-                                    && let Some(view) = detail_view.as_mut()
-                                {
-                                    view.toggle_sources();
-                                    let size = terminal.size()?;
-                                    if let Some(detail) = review.detail() {
-                                        plan_review::clamp_detail_scroll(
-                                            view,
-                                            review.list(),
-                                            detail,
-                                            review.copy_notice(),
-                                            now,
-                                            Rect::new(0, 0, size.width, size.height),
-                                        );
-                                    }
-                                }
-                                None
-                            }
-                            Some(plan_review::DetailInput::Scroll(scroll)) => {
-                                if let Some(view) = detail_view.as_mut() {
-                                    let size = terminal.size()?;
-                                    if let Some(review) = state.review()
-                                        && let Some(detail) = review.detail()
-                                    {
-                                        plan_review::apply_detail_scroll(
-                                            view,
-                                            scroll,
-                                            review.list(),
-                                            detail,
-                                            review.copy_notice(),
-                                            now,
-                                            Rect::new(0, 0, size.width, size.height),
-                                        );
-                                    }
-                                }
-                                None
-                            }
-                            Some(plan_review::DetailInput::Action(action)) => {
-                                if let Some(outcome) = dispatch(
-                                    &mut state,
-                                    Action::Detail(action),
-                                    now,
-                                    cancellation,
-                                    clipboard,
-                                ) {
-                                    return Ok(outcome);
-                                }
-                                if matches!(
-                                    action,
-                                    DetailAction::SelectPrevious
-                                        | DetailAction::SelectNext
-                                        | DetailAction::ToggleExpansion
-                                ) && let Some(review) = state.review()
-                                    && let Some(detail) = review.detail()
-                                    && let Some(view) = detail_view.as_mut()
-                                {
-                                    let size = terminal.size()?;
-                                    plan_review::ensure_detail_selection_visible(
-                                        view,
-                                        review.list(),
-                                        detail,
-                                        review.copy_notice(),
-                                        now,
-                                        Rect::new(0, 0, size.width, size.height),
-                                    );
-                                }
-                                None
-                            }
-                            None => None,
+                        if let Some(view) = detail_view.as_mut() {
+                            handle_detail_key(
+                                key,
+                                &mut state,
+                                view,
+                                terminal,
+                                cancellation,
+                                clipboard,
+                                now,
+                            )?
+                        } else {
+                            None
                         }
                     } else if let Some(review) = state.review() {
-                        if review.list().searching() {
-                            match plan_review::search_key_to_input(key) {
-                                Some(plan_review::SearchInput::Quit) => Some(Action::Quit),
-                                _ => plan_review::search_key_to_action(review.list(), key)
-                                    .map(Action::List),
-                            }
-                        } else {
-                            match plan_review::key_to_list_input(key) {
-                                Some(plan_review::ListInput::Quit) => Some(Action::Quit),
-                                Some(plan_review::ListInput::Selection(action)) => {
-                                    Some(Action::List(action))
-                                }
-                                Some(plan_review::ListInput::Copy(target)) => {
-                                    Some(Action::Copy(target))
-                                }
-                                Some(plan_review::ListInput::OpenDetail) => {
-                                    Some(Action::OpenDetail)
-                                }
-                                Some(plan_review::ListInput::OpenDiagnostics) => {
-                                    diagnostics_view
-                                        .get_or_insert_with(Default::default)
-                                        .reset();
-                                    Some(Action::OpenDiagnostics)
-                                }
-                                Some(plan_review::ListInput::StartSearch) => {
-                                    Some(Action::List(PlanListAction::BeginSearch))
-                                }
-                                None => None,
-                            }
-                        }
+                        handle_list_key(key, review, &mut diagnostics_view).and_then(|action| {
+                            dispatch(&mut state, action, now, cancellation, clipboard)
+                        })
                     } else {
                         None
                     };
 
-                    if let Some(action) = action
-                        && let Some(outcome) =
-                            dispatch(&mut state, action, now, cancellation, clipboard)
-                    {
+                    if let Some(outcome) = outcome {
                         return Ok(outcome);
                     }
                 }
                 _ => {}
             }
         }
+    }
+}
+
+fn handle_execution_key(
+    key: KeyEvent,
+    state: &ExecutionState,
+    view: &mut execution::ExecutionViewState,
+    terminal: &DefaultTerminal,
+) -> io::Result<Option<Action>> {
+    match execution::execution_key_to_input(key, state.stage()) {
+        Some(execution::ExecutionInput::Quit) => Ok(Some(Action::Quit)),
+        Some(execution::ExecutionInput::Action(ExecutionAction::RequestCancellation)) => Ok(Some(
+            Action::Execution(ExecutionAction::RequestCancellation),
+        )),
+        Some(execution::ExecutionInput::End) => {
+            view.end();
+            Ok(None)
+        }
+        Some(execution::ExecutionInput::Scroll(scroll)) => {
+            let size = terminal.size()?;
+            let body =
+                execution::execution_layout(Rect::new(0, 0, size.width, size.height), state).body();
+            let (current, max) = execution::execution_scroll_position_with_view(state, *view, body);
+            view.apply_scroll(scroll, current, max, body.height);
+            Ok(None)
+        }
+        Some(execution::ExecutionInput::Copy(target)) => Ok(Some(Action::Copy(target))),
+        None => Ok(None),
+    }
+}
+
+fn handle_diagnostics_key(
+    key: KeyEvent,
+    state: &SessionState,
+    view: &mut Option<plan_review::DiagnosticsViewState>,
+    terminal: &DefaultTerminal,
+) -> io::Result<Option<Action>> {
+    match plan_review::key_to_diagnostics_input(key) {
+        Some(plan_review::DiagnosticsInput::Back) => {
+            *view = None;
+            Ok(Some(Action::CloseDiagnostics))
+        }
+        Some(plan_review::DiagnosticsInput::Quit) => Ok(Some(Action::Quit)),
+        Some(plan_review::DiagnosticsInput::Scroll(scroll)) => {
+            if let Some(view) = view.as_mut()
+                && let Some(review) = state.review()
+            {
+                let size = terminal.size()?;
+                plan_review::apply_diagnostics_scroll(
+                    view,
+                    scroll,
+                    review.diagnostics(),
+                    Rect::new(0, 0, size.width, size.height),
+                );
+            }
+            Ok(None)
+        }
+        None => Ok(None),
+    }
+}
+
+fn handle_detail_key(
+    key: KeyEvent,
+    state: &mut SessionState,
+    view: &mut plan_review::DetailViewState,
+    terminal: &DefaultTerminal,
+    cancellation: &CancellationToken,
+    clipboard: &mut ClipboardExecutor,
+    now: Instant,
+) -> io::Result<Option<SessionOutcome>> {
+    match plan_review::key_to_detail_input(key) {
+        Some(plan_review::DetailInput::Back) => Ok(dispatch(
+            state,
+            Action::CloseDetail,
+            now,
+            cancellation,
+            clipboard,
+        )),
+        Some(plan_review::DetailInput::Quit) => {
+            Ok(dispatch(state, Action::Quit, now, cancellation, clipboard))
+        }
+        Some(plan_review::DetailInput::Navigate(navigation)) => {
+            view.reset();
+            Ok(dispatch(
+                state,
+                Action::Navigate(navigation),
+                now,
+                cancellation,
+                clipboard,
+            ))
+        }
+        Some(plan_review::DetailInput::Copy(target)) => Ok(dispatch(
+            state,
+            Action::Copy(target),
+            now,
+            cancellation,
+            clipboard,
+        )),
+        Some(plan_review::DetailInput::ToggleSources) => {
+            if let Some(review) = state.review()
+                && !review.list().source_files().is_empty()
+            {
+                view.toggle_sources();
+                let size = terminal.size()?;
+                if let Some(detail) = review.detail() {
+                    plan_review::clamp_detail_scroll(
+                        view,
+                        review.list(),
+                        detail,
+                        review.copy_notice(),
+                        now,
+                        Rect::new(0, 0, size.width, size.height),
+                    );
+                }
+            }
+            Ok(None)
+        }
+        Some(plan_review::DetailInput::Scroll(scroll)) => {
+            let size = terminal.size()?;
+            if let Some(review) = state.review()
+                && let Some(detail) = review.detail()
+            {
+                plan_review::apply_detail_scroll(
+                    view,
+                    scroll,
+                    review.list(),
+                    detail,
+                    review.copy_notice(),
+                    now,
+                    Rect::new(0, 0, size.width, size.height),
+                );
+            }
+            Ok(None)
+        }
+        Some(plan_review::DetailInput::Action(action)) => {
+            if let Some(outcome) =
+                dispatch(state, Action::Detail(action), now, cancellation, clipboard)
+            {
+                return Ok(Some(outcome));
+            }
+            if matches!(
+                action,
+                DetailAction::SelectPrevious
+                    | DetailAction::SelectNext
+                    | DetailAction::ToggleExpansion
+            ) && let Some(review) = state.review()
+                && let Some(detail) = review.detail()
+            {
+                let size = terminal.size()?;
+                plan_review::ensure_detail_selection_visible(
+                    view,
+                    review.list(),
+                    detail,
+                    review.copy_notice(),
+                    now,
+                    Rect::new(0, 0, size.width, size.height),
+                );
+            }
+            Ok(None)
+        }
+        None => Ok(None),
+    }
+}
+
+fn handle_list_key(
+    key: KeyEvent,
+    review: &ReviewSessionState,
+    diagnostics_view: &mut Option<plan_review::DiagnosticsViewState>,
+) -> Option<Action> {
+    if review.list().searching() {
+        return match plan_review::search_key_to_input(key) {
+            Some(plan_review::SearchInput::Quit) => Some(Action::Quit),
+            _ => plan_review::search_key_to_action(review.list(), key).map(Action::List),
+        };
+    }
+
+    match plan_review::key_to_list_input(key) {
+        Some(plan_review::ListInput::Quit) => Some(Action::Quit),
+        Some(plan_review::ListInput::Selection(action)) => Some(Action::List(action)),
+        Some(plan_review::ListInput::Copy(target)) => Some(Action::Copy(target)),
+        Some(plan_review::ListInput::OpenDetail) => Some(Action::OpenDetail),
+        Some(plan_review::ListInput::OpenDiagnostics) => {
+            diagnostics_view
+                .get_or_insert_with(Default::default)
+                .reset();
+            Some(Action::OpenDiagnostics)
+        }
+        Some(plan_review::ListInput::StartSearch) => {
+            Some(Action::List(PlanListAction::BeginSearch))
+        }
+        None => None,
     }
 }
 
