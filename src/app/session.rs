@@ -309,7 +309,7 @@ fn copy_effect(state: &SessionState, target: CopyTarget) -> Option<CopyEffect> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{collections::BTreeMap, path::PathBuf};
 
     use super::super::attribution::attribute_changes;
     use super::super::execution::{ExecutionEventKind, ProcessExitStatus, ProcessTermination};
@@ -352,10 +352,22 @@ mod tests {
             mode: ResourceMode::Managed,
             actions: vec![PlanAction::Update],
             kind: ResourceChangeKind::Update,
-            before: Some(PlanValue::String("before".to_owned())),
-            after: Some(PlanValue::String("after".to_owned())),
-            before_sensitive: None,
-            after_sensitive: None,
+            before: Some(PlanValue::Object(BTreeMap::from([(
+                "password".to_owned(),
+                PlanValue::String("before-secret".to_owned()),
+            )]))),
+            after: Some(PlanValue::Object(BTreeMap::from([(
+                "password".to_owned(),
+                PlanValue::String("after-secret".to_owned()),
+            )]))),
+            before_sensitive: Some(PlanValue::Object(BTreeMap::from([(
+                "password".to_owned(),
+                PlanValue::Bool(true),
+            )]))),
+            after_sensitive: Some(PlanValue::Object(BTreeMap::from([(
+                "password".to_owned(),
+                PlanValue::Bool(true),
+            )]))),
             after_unknown: None,
             replace_paths: None,
             action_reason: None,
@@ -482,6 +494,13 @@ mod tests {
         assert_eq!(effect.target(), CopyTarget::Resource);
         assert_eq!(effect.resource_count(), 1);
         assert!(effect.text().contains("aws_instance.api"));
+        assert!(effect.text().contains("<sensitive>"));
+        assert!(!effect.text().contains("before-secret"));
+        assert!(!effect.text().contains("after-secret"));
+        assert_eq!(
+            state.review().and_then(ReviewSessionState::copy_notice),
+            None
+        );
 
         update(
             &mut state,
@@ -505,5 +524,54 @@ mod tests {
                 .and_then(|review| review.list().copy_notice())
                 .is_some()
         );
+    }
+
+    #[test]
+    fn failed_copy_preserves_detail_and_selection_while_notifying_failure() {
+        let started_at = now();
+        let mut state = SessionState::new(ExecutionState::new(started_at));
+        update(
+            &mut state,
+            Action::ReviewCompleted(review_with_resource()),
+            started_at,
+        );
+        update(&mut state, Action::OpenDetail, started_at);
+        update(&mut state, Action::Detail(DetailAction::Reveal), started_at);
+        assert!(
+            state
+                .review()
+                .and_then(ReviewSessionState::detail)
+                .is_some_and(|detail| detail.is_revealed_at(started_at))
+        );
+
+        let selected_before = state.review().expect("review state").list().selected();
+        let detail_before = state.review().and_then(ReviewSessionState::detail).cloned();
+
+        let effects = update(&mut state, Action::Copy(CopyTarget::Resource), started_at);
+        let [Effect::WriteClipboard(effect)] = effects.as_slice() else {
+            panic!("resource copy should produce a clipboard effect");
+        };
+        assert!(!effect.text().contains("before-secret"));
+        assert!(!effect.text().contains("after-secret"));
+        assert_eq!(
+            state.review().and_then(ReviewSessionState::copy_notice),
+            None
+        );
+
+        update(
+            &mut state,
+            Action::CopyCompleted {
+                target: CopyTarget::Resource,
+                resource_count: 1,
+                result: CopyResult::Failed,
+            },
+            started_at,
+        );
+
+        let review = state.review().expect("review state");
+        assert_eq!(review.list().selected(), selected_before);
+        assert_eq!(review.detail(), detail_before.as_ref());
+        assert_eq!(review.copy_notice(), Some(CopyNotice::Failed));
+        assert_eq!(review.list().copy_notice(), Some(CopyNotice::Failed));
     }
 }

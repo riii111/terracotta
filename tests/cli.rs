@@ -473,7 +473,6 @@ except BaseException as error:
         plan_path_record: PathBuf,
         pid_record: PathBuf,
         show_json: PathBuf,
-        clipboard_path: PathBuf,
     }
 
     impl Fixture {
@@ -494,7 +493,6 @@ except BaseException as error:
             let plan_path_record = directory.join("plan-path");
             let pid_record = directory.join("terraform-pid");
             let show_json = directory.join("show.json");
-            let clipboard_path = directory.join("clipboard");
             fs::write(&show_json, PLAN_JSON).expect("fake show JSON should be written");
             let terraform = bin.join("terraform");
             fs::write(&terraform, FAKE_TERRAFORM).expect("fake Terraform should be written");
@@ -531,7 +529,6 @@ except BaseException as error:
                 plan_path_record,
                 pid_record,
                 show_json,
-                clipboard_path,
             }
         }
 
@@ -562,14 +559,6 @@ except BaseException as error:
                 .env("TERRACOTTA_FAKE_PLAN_PATH", &self.plan_path_record)
                 .env("TERRACOTTA_FAKE_PID_PATH", &self.pid_record)
                 .env("TERRACOTTA_FAKE_SHOW_JSON", &self.show_json)
-                .env(
-                    "TERRACOTTA_TEST_CLIPBOARD",
-                    if scenario == "failure" {
-                        std::ffi::OsString::from("unavailable")
-                    } else {
-                        self.clipboard_path.clone().into_os_string()
-                    },
-                )
                 .env("GIT_CONFIG_NOSYSTEM", "1")
                 .env("GIT_CONFIG_GLOBAL", "/dev/null")
                 .env("GIT_TERMINAL_PROMPT", "0")
@@ -601,12 +590,6 @@ except BaseException as error:
                 "temporary plan remains: {}",
                 path.trim()
             );
-        }
-
-        fn assert_clipboard_recorded(&self) {
-            let copied = fs::read_to_string(&self.clipboard_path)
-                .expect("fake clipboard should record copied text");
-            assert!(copied.contains("Resource ~ terraform_data.api"));
         }
     }
 
@@ -694,7 +677,6 @@ except BaseException as error:
             result.observed(event);
         }
         fixture.assert_temporary_plan_removed();
-        fixture.assert_clipboard_recorded();
     }
 
     #[test]
