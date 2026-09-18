@@ -3,10 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::app::{
-    attribution::SourceLineChange,
-    source_location::{SourceRange, SourceSide},
-};
+use crate::app::attribution::{SourceLineChange, SourceRange, SourceSide};
 
 use crate::infra::terraform::hcl::HclSourceFile;
 

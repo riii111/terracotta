@@ -1,14 +1,13 @@
 use std::fmt::Write;
 
-use super::{
-    attribute_diff::{AttributeChangeKind, AttributePathSegment, diff_resource_attributes},
-    attribution::{AttributionStatus, ResourceAttribution},
-    execution::ExecutionContext,
+use crate::app::{
+    attribution::{AnalysisIssue, AttributionStatus, ResourceAttribution, SourceRange, SourceSide},
+    execution::{Diagnostic, DiagnosticSeverity, ExecutionContext},
     plan::{
-        PlanAction, ReplacePathSegment, ResourceChange, ResourceChangeKind, ResourceMode,
-        UnsupportedChange, UnsupportedChangeKind,
+        AttributeChangeKind, AttributeDiff, AttributePathSegment, PlanAction, ReplacePathSegment,
+        ResourceChange, ResourceChangeKind, ResourceMode, UnsupportedChange, UnsupportedChangeKind,
+        diff_resource_attributes,
     },
-    progress::{Diagnostic, DiagnosticSeverity},
     review::{PlanReview, ReviewComparison},
 };
 
@@ -270,7 +269,7 @@ fn append_attribution(text: &mut String, attribution: &ResourceAttribution) {
 
 fn append_attribute_diffs(
     text: &mut String,
-    attributes: &[super::attribute_diff::AttributeDiff],
+    attributes: &[AttributeDiff],
     changed_count: usize,
     unchanged_count: usize,
 ) {
@@ -450,10 +449,7 @@ fn is_simple_path_key(key: &str) -> bool {
             .all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
-fn format_source_location(
-    path: &std::path::Path,
-    range: super::source_location::SourceRange,
-) -> String {
+fn format_source_location(path: &std::path::Path, range: SourceRange) -> String {
     if range.start_line() == range.end_line() {
         format!("{}:{}", path.display(), range.start_line())
     } else {
@@ -466,7 +462,7 @@ fn format_source_location(
     }
 }
 
-fn format_analysis_issue(issue: &super::attribution::AnalysisIssue) -> String {
+fn format_analysis_issue(issue: &AnalysisIssue) -> String {
     match (issue.side(), issue.path()) {
         (Some(side), Some(path)) => format!(
             "{} {}: {}",
@@ -496,10 +492,10 @@ const fn resource_mode(mode: ResourceMode) -> &'static str {
     }
 }
 
-const fn source_side(side: super::source_location::SourceSide) -> &'static str {
+const fn source_side(side: SourceSide) -> &'static str {
     match side {
-        super::source_location::SourceSide::Before => "before",
-        super::source_location::SourceSide::After => "after",
+        SourceSide::Before => "before",
+        SourceSide::After => "after",
     }
 }
 
@@ -537,13 +533,16 @@ fn line(text: &mut String, arguments: std::fmt::Arguments<'_>) {
 mod tests {
     use std::path::PathBuf;
 
-    use super::super::{
-        attribution::{AnalysisIssue, attribute_changes, mark_analysis_incomplete},
-        plan::{Plan, PlanSummary, PlanValue},
-        review::{ReviewComparisonBasis, ReviewComparisonStatus},
-        source_location::{SourceFileAnalysis, SourceIssue, SourceIssueKind, SourceSide},
-    };
     use super::*;
+    use crate::app::{
+        attribution::{
+            SourceFileAnalysis, SourceIssue, SourceIssueKind, attribute_changes,
+            mark_analysis_incomplete,
+        },
+        execution::{DiagnosticPoint, DiagnosticPosition, DiagnosticSource},
+        plan::{Plan, PlanSummary, PlanValue, UnsupportedChangeScope},
+        review::{ReviewComparisonBasis, ReviewComparisonStatus},
+    };
 
     fn plan_value(value: serde_json::Value) -> PlanValue {
         match value {
@@ -748,7 +747,7 @@ mod tests {
                 changes: Vec::new(),
                 summary: PlanSummary::default(),
                 unsupported_changes: vec![UnsupportedChange {
-                    scope: super::super::plan::UnsupportedChangeScope::Output,
+                    scope: UnsupportedChangeScope::Output,
                     address: "module.app.output".to_owned(),
                     actions: vec![PlanAction::Update],
                     kind: UnsupportedChangeKind::Output,
@@ -830,20 +829,20 @@ mod tests {
             severity: DiagnosticSeverity::Error,
             summary: "Terraform initialization required.".to_owned(),
             detail: Some("Run terraform init, then try again.".to_owned()),
-            position: Some(super::super::progress::DiagnosticPosition {
+            position: Some(DiagnosticPosition {
                 filename: "main.tf".to_owned(),
-                start: super::super::progress::DiagnosticPoint {
+                start: DiagnosticPoint {
                     line: 3,
                     column: 4,
                     byte: None,
                 },
-                end: super::super::progress::DiagnosticPoint {
+                end: DiagnosticPoint {
                     line: 3,
                     column: 8,
                     byte: None,
                 },
             }),
-            source: super::super::progress::DiagnosticSource::Terraform,
+            source: DiagnosticSource::Terraform,
             raw: Some("secret raw payload".to_owned()),
         };
 

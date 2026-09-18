@@ -8,14 +8,14 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
-use crate::app::attribute_diff::{
+use crate::app::attribution::{AttributionStatus, ResourceAttribution};
+use crate::app::attribution::{SourceFileAnalysis, SourceSide};
+use crate::app::copy::{CopyEffect, CopyNotice, CopyTarget};
+use crate::app::plan::{
     AttributeChangeKind, AttributeDiff, AttributeDiffs, AttributePathSegment, AttributeValue,
 };
-use crate::app::attribution::{AttributionStatus, ResourceAttribution};
-use crate::app::copy::{CopyEffect, CopyNotice, CopyTarget};
 use crate::app::plan::{ReplacePathSegment, ResourceChangeKind};
-use crate::app::plan_list::{PlanListAction, PlanListContext, PlanListItem, PlanListState};
-use crate::app::source_location::{SourceFileAnalysis, SourceSide};
+use crate::app::review::{PlanListAction, PlanListContext, PlanListItem, PlanListState};
 
 const MIN_HEIGHT: u16 = 8;
 const MIN_WIDTH: u16 = 48;
@@ -1017,6 +1017,7 @@ mod tests {
     use rstest::rstest;
     use serde_json::{Value, json};
 
+    use crate::app::attribution::{ResourceAddress, ResourceSourceLocation, SourceRange};
     use crate::app::attribution::{SourceLineChange, attribute_changes};
     use crate::app::plan::{
         Plan, PlanAction, PlanSummary, PlanValue, ResourceChange, ResourceMode,
@@ -1024,7 +1025,6 @@ mod tests {
     use crate::app::review::{
         PlanReview, ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus,
     };
-    use crate::app::source_location::{ResourceAddress, ResourceSourceLocation, SourceRange};
     use crate::ui::test_support::{buffer_text, render_to_buffer};
 
     use super::*;

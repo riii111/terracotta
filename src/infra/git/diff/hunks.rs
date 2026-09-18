@@ -6,7 +6,7 @@ use std::{
 use crate::{
     app::{
         attribution::SourceLineChange,
-        source_location::{SourceRange, SourceSide},
+        attribution::{SourceRange, SourceSide},
     },
     infra::terraform::hcl::HclSourceFile,
 };

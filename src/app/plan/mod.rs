@@ -1,6 +1,13 @@
 use std::collections::BTreeMap;
 use std::fmt::{Debug, Formatter};
 
+mod attribute_diff;
+
+pub(crate) use attribute_diff::{
+    AttributeChangeKind, AttributeDiff, AttributeDiffs, AttributePathSegment, AttributeValue,
+    diff_resource_attributes,
+};
+
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum PlanValue {
     Null,

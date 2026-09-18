@@ -1,108 +1,20 @@
 use std::time::{Duration, Instant};
 
-use super::progress::{
-    Diagnostic, DiagnosticSource, ExecutionEvent, ExecutionEventKind, ExecutionPhase,
-    ExecutionProgress, ProcessExitStatus,
+use super::copy;
+
+mod context;
+mod event;
+mod progress;
+
+pub(crate) use context::ExecutionContext;
+pub(crate) use event::{
+    Diagnostic, DiagnosticPoint, DiagnosticPosition, DiagnosticSeverity, DiagnosticSource,
+    EventStream, ExecutionEvent, ExecutionEventKind, ExecutionPhase, ExecutionSummary,
+    ProcessExitStatus, ProcessTermination, ResourceEvent, ResourceEventKind,
 };
-use super::{copy, copy_text};
+pub(crate) use progress::ExecutionProgress;
 
 const PAGE_SCROLL: u16 = 8;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ExecutionContextValue {
-    Loading,
-    Unavailable,
-    Known(String),
-}
-
-impl ExecutionContextValue {
-    #[must_use]
-    pub(crate) fn as_str(&self) -> &str {
-        match self {
-            Self::Loading => "loading...",
-            Self::Unavailable => "unavailable",
-            Self::Known(value) => value,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ExecutionContext {
-    cwd: ExecutionContextValue,
-    workspace: ExecutionContextValue,
-    git: ExecutionContextValue,
-    comparison: ExecutionContextValue,
-}
-
-impl ExecutionContext {
-    #[must_use]
-    pub(crate) const fn loading() -> Self {
-        Self {
-            cwd: ExecutionContextValue::Loading,
-            workspace: ExecutionContextValue::Loading,
-            git: ExecutionContextValue::Loading,
-            comparison: ExecutionContextValue::Loading,
-        }
-    }
-
-    #[must_use]
-    pub(crate) const fn unavailable() -> Self {
-        Self {
-            cwd: ExecutionContextValue::Unavailable,
-            workspace: ExecutionContextValue::Unavailable,
-            git: ExecutionContextValue::Unavailable,
-            comparison: ExecutionContextValue::Unavailable,
-        }
-    }
-
-    #[must_use]
-    pub(crate) fn known(
-        cwd: impl Into<String>,
-        workspace: impl Into<String>,
-        git: impl Into<String>,
-        comparison: impl Into<String>,
-    ) -> Self {
-        Self {
-            cwd: ExecutionContextValue::Known(cwd.into()),
-            workspace: ExecutionContextValue::Known(workspace.into()),
-            git: ExecutionContextValue::Known(git.into()),
-            comparison: ExecutionContextValue::Known(comparison.into()),
-        }
-    }
-
-    pub(crate) fn with_workspace(mut self, workspace: impl Into<String>) -> Self {
-        self.workspace = ExecutionContextValue::Known(workspace.into());
-        self
-    }
-
-    pub(crate) fn with_git(mut self, git: Option<String>) -> Self {
-        self.git = git.map_or(
-            ExecutionContextValue::Unavailable,
-            ExecutionContextValue::Known,
-        );
-        self
-    }
-
-    #[must_use]
-    pub(crate) const fn cwd(&self) -> &ExecutionContextValue {
-        &self.cwd
-    }
-
-    #[must_use]
-    pub(crate) const fn workspace(&self) -> &ExecutionContextValue {
-        &self.workspace
-    }
-
-    #[must_use]
-    pub(crate) const fn git(&self) -> &ExecutionContextValue {
-        &self.git
-    }
-
-    #[must_use]
-    pub(crate) const fn comparison(&self) -> &ExecutionContextValue {
-        &self.comparison
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ExecutionStage {
@@ -231,7 +143,7 @@ impl ExecutionState {
         self.record(ExecutionEvent {
             received_at,
             kind: ExecutionEventKind::Diagnostic(Diagnostic {
-                severity: super::progress::DiagnosticSeverity::Error,
+                severity: DiagnosticSeverity::Error,
                 summary: message,
                 detail: None,
                 position: None,
@@ -244,11 +156,11 @@ impl ExecutionState {
     #[must_use]
     pub(crate) fn copy_effect(&self, target: copy::CopyTarget) -> Option<copy::CopyEffect> {
         let text = match target {
-            copy::CopyTarget::Diagnostic => copy_text::failed_diagnostic_text(
+            copy::CopyTarget::Diagnostic => copy::failed_diagnostic_text(
                 self.failure_message.as_deref(),
                 self.progress.diagnostics(),
             ),
-            copy::CopyTarget::Result => copy_text::failed_text(
+            copy::CopyTarget::Result => copy::failed_text(
                 self.context(),
                 self.failure_message.as_deref(),
                 self.progress.diagnostics(),
@@ -321,7 +233,7 @@ impl ExecutionState {
 
 #[cfg(test)]
 mod tests {
-    use super::super::progress::ProcessTermination;
+    use super::context::ExecutionContextValue;
     use super::*;
 
     fn event(received_at: Instant, kind: ExecutionEventKind) -> ExecutionEvent {
