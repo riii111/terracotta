@@ -310,15 +310,22 @@ fn list_item(item: &PlanListItem, width: usize) -> ListItem<'static> {
 
 fn summary_lines(state: &PlanListState) -> Vec<Line<'static>> {
     let summary = state.summary();
-    let needs_review = Span::styled(
-        format!(
-            "Needs review: {} / {}",
-            state.needs_review_count(),
-            state.items().len()
-        ),
-        Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::BOLD),
+    let needs_review = state.needs_review_count() > 0;
+    let review_count = Span::styled(
+        if state.filter() == PlanListFilter::All {
+            format!(
+                "Needs review: {} / {}",
+                state.needs_review_count(),
+                state.items().len()
+            )
+        } else {
+            format!(
+                "Review {}/{}",
+                state.needs_review_count(),
+                state.items().len()
+            )
+        },
+        theme::review_style(needs_review),
     );
 
     let action_line = Line::from(vec![
@@ -345,32 +352,21 @@ fn summary_lines(state: &PlanListState) -> Vec<Line<'static>> {
     if state.filter() == PlanListFilter::All && !has_search(state) {
         return vec![
             action_line,
-            Line::from(vec![needs_review, Span::raw("   Filter: All")]),
+            Line::from(vec![review_count, Span::raw("   Filter: All")]),
         ];
     }
 
-    let showing = if state.filter() == PlanListFilter::All {
-        format!(
-            "Needs review: {} / {}",
-            state.needs_review_count(),
-            state.items().len()
-        )
-    } else {
-        format!(
-            "Review {}/{}",
-            state.needs_review_count(),
-            state.items().len()
-        )
-    };
     vec![
         action_line,
-        Line::from(format!(
-            "{}  Filter: {}  Showing {}/{}",
-            showing,
-            state.filter().label(),
-            state.visible_count(),
-            state.items().len()
-        )),
+        Line::from(vec![
+            review_count,
+            Span::raw(format!("  Filter: {}", state.filter().label())),
+            Span::raw(format!(
+                "  Showing {}/{}",
+                state.visible_count(),
+                state.items().len()
+            )),
+        ]),
     ]
 }
 
@@ -654,6 +650,38 @@ mod tests {
             .find(|cell| cell.symbol() == "-")
             .expect("delete symbol should be rendered");
         assert_eq!(delete_cell.fg, Color::Red);
+
+        let selected_cell = buffer
+            .content()
+            .iter()
+            .find(|cell| cell.symbol() == ">")
+            .expect("selected row should be rendered");
+        assert_eq!(selected_cell.bg, Color::DarkGray);
+        assert!(selected_cell.modifier.contains(Modifier::UNDERLINED));
+    }
+
+    #[test]
+    fn review_count_style_uses_full_plan_count_in_every_list_view() {
+        let views = [
+            ("normal", SummaryView::Normal),
+            ("search_input", SummaryView::SearchInput),
+            ("search_confirmed", SummaryView::SearchConfirmed),
+            ("needs_review_filter", SummaryView::NeedsReviewFilter),
+        ];
+
+        for (state_name, has_review) in [("zero", false), ("nonzero", true)] {
+            for (view_name, view) in views {
+                let state = state_for_review_count(has_review, view);
+                let buffer = render_to_buffer(&state, 100, 20);
+
+                assert_review_count_style(
+                    &buffer,
+                    &state,
+                    has_review,
+                    &format!("{state_name}_{view_name}"),
+                );
+            }
+        }
     }
 
     #[test]
@@ -1070,6 +1098,97 @@ mod tests {
             "working tree vs HEAD",
         )
         .expect("Unicode synthetic change should produce a list")
+    }
+
+    #[derive(Clone, Copy)]
+    enum SummaryView {
+        Normal,
+        SearchInput,
+        SearchConfirmed,
+        NeedsReviewFilter,
+    }
+
+    fn state_for_review_count(has_review: bool, view: SummaryView) -> PlanListState {
+        let mut state = if has_review {
+            synthetic_state()
+        } else {
+            direct_only_state()
+        };
+
+        match view {
+            SummaryView::Normal => {}
+            SummaryView::SearchInput => {
+                state.apply(PlanListAction::BeginSearch);
+                state.apply(PlanListAction::SetSearch("aws".to_owned()));
+            }
+            SummaryView::SearchConfirmed => {
+                state.apply(PlanListAction::BeginSearch);
+                state.apply(PlanListAction::SetSearch("aws".to_owned()));
+                state.apply(PlanListAction::ConfirmSearch);
+            }
+            SummaryView::NeedsReviewFilter => state.apply(PlanListAction::ToggleFilter),
+        }
+
+        state
+    }
+
+    fn assert_review_count_style(
+        buffer: &Buffer,
+        state: &PlanListState,
+        highlighted: bool,
+        case: &str,
+    ) {
+        let label = if state.filter() == PlanListFilter::All {
+            format!(
+                "Needs review: {} / {}",
+                state.needs_review_count(),
+                state.items().len()
+            )
+        } else {
+            format!(
+                "Review {}/{}",
+                state.needs_review_count(),
+                state.items().len()
+            )
+        };
+        let area = buffer.area();
+        let (x, y) = (area.y..area.bottom())
+            .find_map(|y| {
+                let line = (area.x..area.right())
+                    .filter_map(|x| buffer.cell((x, y)))
+                    .map(ratatui::buffer::Cell::symbol)
+                    .collect::<String>();
+                line.find(&label).map(|start| {
+                    (
+                        area.x + u16::try_from(start).expect("summary offset fits in terminal"),
+                        y,
+                    )
+                })
+            })
+            .unwrap_or_else(|| panic!("summary label not found for {case}: {label}"));
+        let expected_fg = if highlighted {
+            Color::Yellow
+        } else {
+            Color::Reset
+        };
+
+        for offset in 0..label.chars().count() {
+            let cell = buffer
+                .cell((
+                    x + u16::try_from(offset).expect("summary width fits in terminal"),
+                    y,
+                ))
+                .expect("summary cell should exist");
+            if cell.symbol() == " " {
+                continue;
+            }
+            assert_eq!(cell.fg, expected_fg, "foreground for {case} at {offset}");
+            assert_eq!(
+                cell.modifier.contains(Modifier::BOLD),
+                highlighted,
+                "bold modifier for {case} at {offset}"
+            );
+        }
     }
 
     #[test]
