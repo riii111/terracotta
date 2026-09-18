@@ -137,7 +137,7 @@ pub(crate) fn run_connected(
                                     execution_view,
                                     body,
                                 );
-                                execution_view.apply_scroll(scroll, current, max);
+                                execution_view.apply_scroll(scroll, current, max, body.height);
                                 None
                             }
                             Some(execution::ExecutionInput::Copy(target)) => {
@@ -166,24 +166,26 @@ pub(crate) fn run_connected(
                             )) => {
                                 if let Some(view) = detail_view.as_mut() {
                                     let size = terminal.size()?;
-                                    view.apply_at(
-                                        action,
-                                        size.width.saturating_sub(2),
-                                        size.height.saturating_sub(7),
+                                    let body = plan_review::resource_detail_layout(
+                                        Rect::new(0, 0, size.width, size.height),
+                                        view,
                                         now,
-                                    );
+                                    )
+                                    .body();
+                                    view.apply_at(action, body.width, body.height, now);
                                 }
                                 None
                             }
                             Some(plan_review::DetailInput::Action(action)) => {
                                 if let Some(view) = detail_view.as_mut() {
                                     let size = terminal.size()?;
-                                    view.apply_at(
-                                        action,
-                                        size.width.saturating_sub(2),
-                                        size.height.saturating_sub(7),
+                                    let body = plan_review::resource_detail_layout(
+                                        Rect::new(0, 0, size.width, size.height),
+                                        view,
                                         now,
-                                    );
+                                    )
+                                    .body();
+                                    view.apply_at(action, body.width, body.height, now);
                                 }
                                 Some(Action::Detail(action))
                             }
