@@ -735,18 +735,8 @@ mod tests {
 
         update(
             &mut state,
-            Action::Detail(DetailAction::SelectPrevious),
-            started_at + std::time::Duration::from_secs(3),
-        );
-        update(
-            &mut state,
-            Action::Detail(DetailAction::Reveal),
-            started_at + std::time::Duration::from_secs(2),
-        );
-        update(
-            &mut state,
             Action::Detail(DetailAction::SelectNext),
-            started_at + std::time::Duration::from_secs(3),
+            started_at + std::time::Duration::from_secs(2),
         );
         assert!(
             state
@@ -757,9 +747,23 @@ mod tests {
 
         update(
             &mut state,
+            Action::Detail(DetailAction::SelectPrevious),
+            started_at + std::time::Duration::from_secs(3),
+        );
+        update(
+            &mut state,
             Action::Detail(DetailAction::Reveal),
             started_at + std::time::Duration::from_secs(4),
         );
+        assert!(
+            state
+                .review()
+                .and_then(ReviewSessionState::detail)
+                .is_some_and(
+                    |detail| detail.is_revealed_at(started_at + std::time::Duration::from_secs(4))
+                )
+        );
+
         update(
             &mut state,
             Action::TimeUpdated,
@@ -776,6 +780,14 @@ mod tests {
             &mut state,
             Action::Detail(DetailAction::Reveal),
             started_at + std::time::Duration::from_secs(15),
+        );
+        assert!(
+            state
+                .review()
+                .and_then(ReviewSessionState::detail)
+                .is_some_and(
+                    |detail| detail.is_revealed_at(started_at + std::time::Duration::from_secs(15))
+                )
         );
         update(
             &mut state,
