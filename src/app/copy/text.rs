@@ -4,9 +4,9 @@ use crate::app::{
     attribution::{AnalysisIssue, AttributionStatus, ResourceAttribution, SourceRange, SourceSide},
     execution::{Diagnostic, DiagnosticSeverity, ExecutionContext},
     plan::{
-        AttributeChangeKind, AttributeDiff, AttributePathSegment, PlanAction, ReplacePathSegment,
-        ResourceChange, ResourceChangeKind, ResourceMode, UnsupportedChange, UnsupportedChangeKind,
-        diff_resource_attributes,
+        AttributeChangeKind, AttributeDiff, PlanAction, ReplacePathSegment, ResourceChange,
+        ResourceChangeKind, ResourceMode, UnsupportedChange, UnsupportedChangeKind,
+        diff_resource_attributes, format_attribute_path, format_replace_path,
     },
     review::{PlanReview, ReviewComparison},
 };
@@ -386,67 +386,12 @@ fn format_actions(actions: &[PlanAction]) -> String {
         .join(", ")
 }
 
-fn format_attribute_path(path: &[AttributePathSegment]) -> String {
-    if path.is_empty() {
-        return "<resource>".to_owned();
-    }
-
-    let mut formatted = String::new();
-    for segment in path {
-        match segment {
-            AttributePathSegment::Key(key) => append_key_path(&mut formatted, key),
-            AttributePathSegment::Index(index) => {
-                formatted.push('[');
-                formatted.push_str(&index.to_string());
-                formatted.push(']');
-            }
-        }
-    }
-    formatted
-}
-
 fn format_replace_paths(paths: &[Vec<ReplacePathSegment>]) -> String {
     paths
         .iter()
-        .map(|path| {
-            let mut formatted = String::new();
-            for segment in path {
-                match segment {
-                    ReplacePathSegment::Attribute(attribute) => {
-                        append_key_path(&mut formatted, attribute);
-                    }
-                    ReplacePathSegment::Index(index) => {
-                        formatted.push('[');
-                        formatted.push_str(&index.to_string());
-                        formatted.push(']');
-                    }
-                }
-            }
-            formatted
-        })
+        .map(|path| format_replace_path(path))
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-fn append_key_path(formatted: &mut String, key: &str) {
-    if is_simple_path_key(key) {
-        if !formatted.is_empty() {
-            formatted.push('.');
-        }
-        formatted.push_str(key);
-        return;
-    }
-
-    formatted.push('[');
-    write!(formatted, "{key:?}").expect("writing attribute path should not fail");
-    formatted.push(']');
-}
-
-fn is_simple_path_key(key: &str) -> bool {
-    !key.is_empty()
-        && key
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
 fn format_source_location(path: &std::path::Path, range: SourceRange) -> String {
@@ -685,22 +630,29 @@ mod tests {
 
     #[test]
     fn resource_text_keeps_special_attribute_keys_unambiguous() {
-        let api_change = change(
+        let mut api_change = change(
             "aws_instance.api",
             ResourceChangeKind::Update,
             serde_json::json!({
                 "tags": {
-                    "service.name": "old",
+                    "service.name": "old-secret",
                     "service": {"name": "nested-old"}
                 }
             }),
             serde_json::json!({
                 "tags": {
-                    "service.name": "new",
+                    "service.name": "new-secret",
                     "service": {"name": "nested-new"}
                 }
             }),
         );
+
+        api_change.before_sensitive = Some(plan_value(
+            serde_json::json!({"tags": {"service.name": true}}),
+        ));
+        api_change.after_sensitive = Some(plan_value(
+            serde_json::json!({"tags": {"service.name": true}}),
+        ));
 
         let output = resource_text(
             &api_change,
@@ -710,6 +662,9 @@ mod tests {
 
         assert!(output.contains("tags[\"service.name\"]"));
         assert!(output.contains("tags.service.name"));
+        assert!(!output.contains("old-secret"));
+        assert!(!output.contains("new-secret"));
+        assert!(output.contains("<sensitive>"));
     }
 
     #[test]
