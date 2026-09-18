@@ -25,7 +25,7 @@ def main():
     parser = argparse.ArgumentParser(description="Create an isolated local Terraform scenario.")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("setup", help="Create a fresh temporary Git repository and plan")
-    commands.add_parser("demo", help="Build and open the local scenario, then clean up")
+    commands.add_parser("demo", help="Build with a checkout-local cache and open a temporary scenario")
     cleanup = commands.add_parser("clean", help="Remove a scenario created by this script")
     cleanup.add_argument("directory", type=Path)
     args = parser.parse_args()
@@ -92,25 +92,25 @@ def demo():
     print("Starting Terracotta demo. No additional Enter is needed. Ctrl-C to cancel.",
           file=sys.stderr, flush=True)
     repository = FIXTURES.parent.parent
+    target = repository / "target" / "demo"
     print("[1/3] Preparing local Terraform scenario...", file=sys.stderr, flush=True)
     directory = setup()
     try:
-        with tempfile.TemporaryDirectory(prefix="terracotta-demo-build-") as target:
-            environment = isolated_environment(directory)
-            environment["RUSTC_WRAPPER"] = ""
-            print("[2/3] Building Terracotta...", file=sys.stderr, flush=True)
-            build = subprocess.run(
-                ["cargo", "build", "--locked", "--target-dir", target],
-                cwd=repository, env=environment, stdin=subprocess.DEVNULL,
-            )
-            if build.returncode:
-                return build.returncode
-            executable = "terracotta.exe" if os.name == "nt" else "terracotta"
-            print("[3/3] Opening plan review...", file=sys.stderr, flush=True)
-            return subprocess.run(
-                [str(Path(target) / "debug" / executable), "plan"],
-                cwd=directory, env=environment,
-            ).returncode
+        environment = isolated_environment(directory)
+        environment["RUSTC_WRAPPER"] = ""
+        print(f"[2/3] Building Terracotta (cache: {target})...", file=sys.stderr, flush=True)
+        build = subprocess.run(
+            ["cargo", "build", "--locked", "--target-dir", str(target)],
+            cwd=repository, env=environment, stdin=subprocess.DEVNULL,
+        )
+        if build.returncode:
+            return build.returncode
+        executable = "terracotta.exe" if os.name == "nt" else "terracotta"
+        print("[3/3] Opening plan review...", file=sys.stderr, flush=True)
+        return subprocess.run(
+            [str(target / "debug" / executable), "plan"],
+            cwd=directory, env=environment,
+        ).returncode
     finally:
         clean(directory)
 
