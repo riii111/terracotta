@@ -112,3 +112,74 @@ fn wrapped_line_count_for_line(line: &Line<'_>, max_width: u16) -> usize {
 
     count + 1
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::app::plan::AttributeChangeKind;
+    use crate::ui::test_support::buffer_text;
+
+    use super::super::test_support::*;
+    use super::super::*;
+
+    #[test]
+    fn selects_changed_attributes_and_scrolls_without_exposing_values() {
+        let mut state = state();
+        let initial_scroll = state.scroll();
+
+        state.apply_at(DetailAction::SelectNext, 46, 4, Instant::now());
+        assert!(state.scroll() > initial_scroll);
+        state.apply_at(DetailAction::SelectNext, 46, 4, Instant::now());
+        let text = buffer_text(&render(&state, 48, 12));
+        assert!(text.contains("> password"), "{text}");
+
+        state.apply_at(DetailAction::PageDown, 46, 4, Instant::now());
+        let text = buffer_text(&render(&state, 48, 12));
+        assert!(!text.contains("synthetic-secret"), "{text}");
+    }
+
+    #[test]
+    fn expanding_deep_group_keeps_child_selection_and_scrolls_to_it() {
+        let mut state = state_for_change(expansion_change(), &[]);
+        let group = AttributeGroup::Nested {
+            kind: AttributeChangeKind::Changed,
+            path: vec![AttributePathSegment::Key("group_a".to_owned())],
+        };
+        select_group(&mut state, &group);
+
+        state.apply_at(DetailAction::ToggleExpansion, 36, 4, Instant::now());
+        state.apply_at(DetailAction::SelectNext, 36, 4, Instant::now());
+        state.apply_at(DetailAction::SelectNext, 36, 4, Instant::now());
+        assert!(state.scroll() > 0);
+
+        let nested_group = AttributeGroup::Nested {
+            kind: AttributeChangeKind::Changed,
+            path: vec![
+                AttributePathSegment::Key("group_a".to_owned()),
+                AttributePathSegment::Key("nested".to_owned()),
+            ],
+        };
+        assert_eq!(
+            detail_rows(&state)
+                .get(state.selected)
+                .and_then(DetailRow::group),
+            Some(&nested_group)
+        );
+        state.apply_at(DetailAction::ToggleExpansion, 36, 4, Instant::now());
+        state.apply_at(DetailAction::SelectNext, 36, 4, Instant::now());
+        let text = buffer_text(&render(&state, 48, 12));
+        assert!(text.contains("> group_a.nested.value"), "{text}");
+    }
+
+    #[test]
+    fn page_down_stops_at_the_last_wrapped_line() {
+        let mut state = state();
+
+        for _ in 0..100 {
+            state.apply_at(DetailAction::PageDown, 46, 4, Instant::now());
+        }
+        let last_scroll = state.scroll();
+        state.apply_at(DetailAction::PageDown, 46, 4, Instant::now());
+
+        assert_eq!(state.scroll(), last_scroll);
+    }
+}

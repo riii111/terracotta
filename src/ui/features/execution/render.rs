@@ -38,7 +38,7 @@ pub(crate) fn render_execution_with_view(
         } else {
             "Terminal too small. Resize or press Ctrl-C to cancel."
         };
-        terminal_notice::render(frame, area, message);
+        terminal_notice::render_wrapped(frame, area, message);
         return;
     }
 

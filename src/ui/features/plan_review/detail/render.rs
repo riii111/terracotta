@@ -16,7 +16,7 @@ pub(crate) fn render_resource_detail(frame: &mut Frame<'_>, state: &mut Resource
     render_resource_detail_at(frame, state, Instant::now());
 }
 
-pub(crate) fn render_resource_detail_at(
+pub(super) fn render_resource_detail_at(
     frame: &mut Frame<'_>,
     state: &mut ResourceDetailState,
     now: Instant,
@@ -164,288 +164,12 @@ fn footer_line(state: &ResourceDetailState, now: Instant, width: u16) -> String 
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use crate::app::attribution::{SourceLineChange, SourceRange, SourceSide};
+    use crate::app::plan::{AttributeChangeKind, ReplacePathSegment};
+    use crate::ui::test_support::buffer_text;
 
-    use ratatui::buffer::Buffer;
-    use serde_json::{Value, json};
-
-    use crate::app::attribution::{
-        ResourceAddress, ResourceSourceLocation, SourceRange, SourceSide,
-    };
-    use crate::app::attribution::{SourceLineChange, attribute_changes};
-    use crate::app::plan::{
-        AttributeChangeKind, Plan, PlanAction, PlanSummary, PlanValue, ReplacePathSegment,
-        ResourceChange, ResourceChangeKind, ResourceMode, format_attribute_path,
-    };
-    use crate::app::review::{
-        PlanReview, ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus,
-    };
-    use crate::ui::test_support::{buffer_text, render_to_buffer};
-
+    use super::super::test_support::*;
     use super::super::*;
-
-    fn plan_value(value: Value) -> PlanValue {
-        match value {
-            Value::Null => PlanValue::Null,
-            Value::Bool(value) => PlanValue::Bool(value),
-            Value::Number(value) => PlanValue::Number(value.to_string()),
-            Value::String(value) => PlanValue::String(value),
-            Value::Array(values) => PlanValue::Array(values.into_iter().map(plan_value).collect()),
-            Value::Object(values) => PlanValue::Object(
-                values
-                    .into_iter()
-                    .map(|(key, value)| (key, plan_value(value)))
-                    .collect(),
-            ),
-        }
-    }
-
-    fn change() -> ResourceChange {
-        ResourceChange {
-            address: "aws_instance.api".to_owned(),
-            mode: ResourceMode::Managed,
-            actions: vec![PlanAction::Update],
-            kind: ResourceChangeKind::Update,
-            before: Some(plan_value(json!({
-                "instance_type": "t3.small",
-                "private_ip": null,
-                "password": "old-secret",
-                "tags": {"environment": "old"},
-                "long_path": "a-value-that-is-long-enough-to-wrap-across-the-detail-width"
-            }))),
-            after: Some(plan_value(json!({
-                "instance_type": "t3.medium",
-                "private_ip": null,
-                "password": "new-secret",
-                "tags": {"environment": "new"},
-                "long_path": "another-value-that-is-long-enough-to-wrap-across-the-detail-width"
-            }))),
-            before_sensitive: Some(plan_value(json!({"password": true}))),
-            after_sensitive: Some(plan_value(json!({"password": true}))),
-            after_unknown: Some(plan_value(json!({"private_ip": true}))),
-            replace_paths: Some(vec![vec![ReplacePathSegment::Attribute(
-                "instance_type".to_owned(),
-            )]]),
-            action_reason: Some("replace_because_cannot_update".to_owned()),
-        }
-    }
-
-    fn state() -> ResourceDetailState {
-        state_with_changed_lines(&[])
-    }
-
-    fn state_with_changed_lines(changed_lines: &[SourceLineChange]) -> ResourceDetailState {
-        state_for_change(change(), changed_lines)
-    }
-
-    fn state_for_change(
-        change: ResourceChange,
-        changed_lines: &[SourceLineChange],
-    ) -> ResourceDetailState {
-        let source_files = vec![SourceFileAnalysis::new(
-            PathBuf::from("main.tf"),
-            SourceSide::After,
-            vec![ResourceSourceLocation::new(
-                ResourceAddress::new("aws_instance", "api"),
-                PathBuf::from("main.tf"),
-                SourceSide::After,
-                SourceRange::new(42, 46),
-            )],
-            Vec::new(),
-        )];
-        let attribution =
-            attribute_changes(std::slice::from_ref(&change), &source_files, changed_lines)
-                .pop()
-                .expect("one change should produce one attribution");
-        let review = PlanReview::new(
-            PathBuf::from("/infra/prod"),
-            "default".to_owned(),
-            Plan {
-                changes: vec![change],
-                summary: PlanSummary {
-                    updates: 1,
-                    ..PlanSummary::default()
-                },
-                unsupported_changes: Vec::new(),
-            },
-            source_files,
-            vec![attribution],
-            ReviewComparison::new(
-                ReviewComparisonBasis::WorkingTreeVsHead,
-                None,
-                None,
-                None,
-                None,
-                ReviewComparisonStatus::Complete,
-            ),
-            Vec::new(),
-        )
-        .with_git("feature/resize".to_owned());
-        let list = PlanListState::from_review(&review).expect("review should build a list");
-        ResourceDetailState::from_list(&list).expect("selected item should open")
-    }
-
-    fn filtered_review_list() -> PlanListState {
-        let mut worker = change();
-        worker.address = "aws_instance.worker".to_owned();
-        let changes = vec![change(), worker];
-        let attributions = attribute_changes(&changes, &[], &[]);
-        let review = PlanReview::new(
-            PathBuf::from("/infra/prod"),
-            "default".to_owned(),
-            Plan {
-                changes,
-                summary: PlanSummary {
-                    updates: 2,
-                    ..PlanSummary::default()
-                },
-                unsupported_changes: Vec::new(),
-            },
-            Vec::new(),
-            attributions,
-            ReviewComparison::new(
-                ReviewComparisonBasis::WorkingTreeVsHead,
-                None,
-                None,
-                None,
-                None,
-                ReviewComparisonStatus::Complete,
-            ),
-            Vec::new(),
-        )
-        .with_git("feature/resize".to_owned());
-        PlanListState::from_review(&review).expect("review should build a list")
-    }
-
-    fn navigation_list() -> PlanListState {
-        let mut worker = change();
-        worker.address = "aws_instance.worker".to_owned();
-        let mut bucket = change();
-        bucket.address = "aws_s3_bucket.logs".to_owned();
-        let changes = vec![change(), worker, bucket];
-        let attributions = attribute_changes(&changes, &[], &[]);
-        PlanListState::from_plan(
-            Plan {
-                changes,
-                summary: PlanSummary {
-                    updates: 3,
-                    ..PlanSummary::default()
-                },
-                unsupported_changes: Vec::new(),
-            },
-            attributions,
-            "working tree vs HEAD",
-        )
-        .expect("navigation fixture should build a list")
-    }
-
-    fn expansion_change() -> ResourceChange {
-        ResourceChange {
-            address: "aws_instance.api".to_owned(),
-            mode: ResourceMode::Managed,
-            actions: vec![PlanAction::Update],
-            kind: ResourceChangeKind::Update,
-            before: Some(plan_value(json!({
-                "group_a": {
-                    "changed": "old",
-                    "unchanged": "same",
-                    "nested": {"value": "old"}
-                },
-                "group_b": {"secret": "old-secret"},
-                "root_changed": "old",
-                "root_unchanged": "same"
-            }))),
-            after: Some(plan_value(json!({
-                "group_a": {
-                    "changed": "new",
-                    "unchanged": "same",
-                    "nested": {"value": "new"}
-                },
-                "group_b": {"secret": "new-secret"},
-                "root_changed": "new",
-                "root_unchanged": "same"
-            }))),
-            before_sensitive: Some(plan_value(json!({"group_b": {"secret": true}}))),
-            after_sensitive: Some(plan_value(json!({"group_b": {"secret": true}}))),
-            after_unknown: Some(plan_value(json!({}))),
-            replace_paths: None,
-            action_reason: None,
-        }
-    }
-
-    fn select_group(state: &mut ResourceDetailState, target: &AttributeGroup) {
-        for _ in 0..detail_rows(state).len() {
-            if detail_rows(state)
-                .get(state.selected)
-                .and_then(DetailRow::group)
-                == Some(target)
-            {
-                return;
-            }
-            state.apply_at(DetailAction::SelectNext, 96, 40, Instant::now());
-        }
-        panic!("group should be selectable");
-    }
-
-    fn select_attribute(state: &mut ResourceDetailState, target: &str) {
-        for _ in 0..detail_rows(state).len() {
-            if let Some(DetailRow::Attribute(index)) = detail_rows(state).get(state.selected)
-                && format_attribute_path(&state.attributes.attributes[*index].path) == target
-            {
-                return;
-            }
-            state.apply_at(DetailAction::SelectNext, 96, 40, Instant::now());
-        }
-        panic!("attribute {target} should be selectable");
-    }
-
-    fn sensitive_sibling_state() -> ResourceDetailState {
-        let mut change = change();
-        change.before = Some(plan_value(json!({
-            "password": "old-secret",
-            "api_token": "old-token",
-            "public": "old-public"
-        })));
-        change.after = Some(plan_value(json!({
-            "password": "new-secret",
-            "api_token": "new-token",
-            "public": "new-public"
-        })));
-        change.before_sensitive = Some(plan_value(json!({
-            "password": true,
-            "api_token": true
-        })));
-        change.after_sensitive = Some(plan_value(json!({
-            "password": true,
-            "api_token": true
-        })));
-        state_for_change(change, &[])
-    }
-
-    fn unknown_sensitive_state() -> ResourceDetailState {
-        let mut change = change();
-        change.kind = ResourceChangeKind::Create;
-        change.actions = vec![PlanAction::Create];
-        change.before = Some(PlanValue::Null);
-        change.after = Some(plan_value(json!({"future_secret": "not-known-yet"})));
-        change.before_sensitive = Some(plan_value(json!(false)));
-        change.after_sensitive = Some(plan_value(json!({"future_secret": true})));
-        change.after_unknown = Some(plan_value(json!({"future_secret": true})));
-        state_for_change(change, &[])
-    }
-
-    fn render(state: &ResourceDetailState, width: u16, height: u16) -> Buffer {
-        let mut state = state.clone();
-        render_to_buffer((width, height), |frame| {
-            render_resource_detail(frame, &mut state);
-        })
-    }
-
-    fn render_at(state: &mut ResourceDetailState, width: u16, height: u16, now: Instant) -> Buffer {
-        render_to_buffer((width, height), |frame| {
-            super::render_resource_detail_at(frame, state, now);
-        })
-    }
 
     #[test]
     fn renders_diff_evidence_masks_special_values_and_omits_future_controls() {
@@ -502,46 +226,6 @@ mod tests {
     }
 
     #[test]
-    fn copying_revealed_resource_keeps_sensitive_values_masked() {
-        let mut state = sensitive_sibling_state();
-        select_attribute(&mut state, "password");
-        let now = Instant::now();
-        state.apply_at(DetailAction::Reveal, 96, 40, now);
-
-        let effect = state
-            .copy_effect(CopyTarget::Resource)
-            .expect("resource copy should be available");
-        let copied_text = effect.text().to_owned();
-
-        assert_eq!(effect.target(), CopyTarget::Resource);
-        assert!(copied_text.contains("Resource ~ aws_instance.api"));
-        assert!(copied_text.contains("<sensitive>"));
-        assert!(!copied_text.contains("old-secret"));
-        assert!(!copied_text.contains("new-secret"));
-    }
-
-    #[test]
-    fn plan_copy_notice_counts_resources_outside_search_scope() {
-        let mut list = filtered_review_list();
-        list.apply(PlanListAction::BeginSearch);
-        list.apply(PlanListAction::SetSearch("api".to_owned()));
-        list.apply(PlanListAction::ConfirmSearch);
-
-        let detail = ResourceDetailState::from_list(&list).expect("filtered item should open");
-        assert_eq!(detail.total_items(), 1);
-        assert_eq!(
-            detail
-                .copy_effect(CopyTarget::Plan)
-                .expect("plan copy should be available")
-                .success_notice(),
-            CopyNotice::Copied {
-                target: CopyTarget::Plan,
-                resource_count: 2,
-            }
-        );
-    }
-
-    #[test]
     fn copy_notice_gets_its_own_row_while_reveal_is_active() {
         let mut state = sensitive_sibling_state();
         select_attribute(&mut state, "password");
@@ -556,17 +240,6 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("r mask now"), "{text}");
-    }
-
-    #[test]
-    fn viewport_height_accounts_for_copy_notice_row() {
-        let mut state = state();
-        let now = Instant::now();
-        let without_notice = state.viewport_height_at(20, now);
-
-        state.set_copy_notice(CopyNotice::Failed);
-
-        assert_eq!(state.viewport_height_at(20, now), without_notice - 1);
     }
 
     #[test]
@@ -600,44 +273,6 @@ mod tests {
         assert!(!expired.contains("old-secret"), "{expired}");
         assert!(!expired.contains("Sensitive value revealed"), "{expired}");
         assert!(state.reveal.is_none());
-    }
-
-    #[test]
-    fn pressing_reveal_again_masks_immediately_and_selection_masks_previous_value() {
-        let mut state = sensitive_sibling_state();
-        select_attribute(&mut state, "password");
-        let now = Instant::now();
-        state.apply_at(DetailAction::Reveal, 96, 40, now);
-        assert!(buffer_text(&render_at(&mut state, 100, 40, now)).contains("old-secret"));
-
-        state.apply_at(DetailAction::Reveal, 96, 40, now + Duration::from_secs(1));
-        let remasked = buffer_text(&render_at(
-            &mut state,
-            100,
-            40,
-            now + Duration::from_secs(1),
-        ));
-        assert!(!remasked.contains("old-secret"), "{remasked}");
-        assert!(state.reveal.is_none());
-
-        state.apply_at(DetailAction::Reveal, 96, 40, now + Duration::from_secs(2));
-        state.apply_at(
-            DetailAction::SelectNext,
-            96,
-            40,
-            now + Duration::from_secs(3),
-        );
-        assert!(state.reveal.is_none());
-        let changed_selection = buffer_text(&render_at(
-            &mut state,
-            100,
-            40,
-            now + Duration::from_secs(3),
-        ));
-        assert!(
-            !changed_selection.contains("old-secret"),
-            "{changed_selection}"
-        );
     }
 
     #[test]
@@ -676,6 +311,15 @@ mod tests {
     }
 
     #[test]
+    fn narrow_terminal_keeps_resize_notice_unwrapped() {
+        let mut state = state();
+        let text = buffer_text(&render_at(&mut state, 45, 7, Instant::now()));
+
+        assert!(text.contains("Terminal too small. Resize or press q to"));
+        assert!(!text.contains("quit."));
+    }
+
+    #[test]
     fn renders_direct_evidence_with_its_source_side_and_range() {
         let state = state_with_changed_lines(&[SourceLineChange::new(
             "main.tf",
@@ -691,136 +335,6 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains("No direct match"), "{text}");
-    }
-
-    #[test]
-    fn selects_changed_attributes_and_scrolls_without_exposing_values() {
-        let mut state = state();
-        let initial_scroll = state.scroll();
-
-        state.apply_at(DetailAction::SelectNext, 46, 4, Instant::now());
-        assert!(state.scroll() > initial_scroll);
-        state.apply_at(DetailAction::SelectNext, 46, 4, Instant::now());
-        let text = buffer_text(&render(&state, 48, 12));
-        assert!(text.contains("> password"), "{text}");
-
-        state.apply_at(DetailAction::PageDown, 46, 4, Instant::now());
-        let text = buffer_text(&render(&state, 48, 12));
-        assert!(!text.contains("synthetic-secret"), "{text}");
-    }
-
-    #[test]
-    fn resource_navigation_follows_search_order_and_resets_detail_state() {
-        let mut list = navigation_list();
-        list.apply(PlanListAction::BeginSearch);
-        list.apply(PlanListAction::SetSearch("aws_instance".to_owned()));
-        list.apply(PlanListAction::ConfirmSearch);
-
-        let mut detail = ResourceDetailState::from_list(&list).expect("resource should open");
-        select_attribute(&mut detail, "password");
-        detail.apply_at(DetailAction::Reveal, 96, 40, Instant::now());
-        assert!(detail.reveal.is_some());
-        detail.selected = 1;
-        detail.scroll = 3;
-        detail.expanded_groups.push(AttributeGroup::Unchanged);
-
-        detail.navigate(ResourceNavigation::Next, &mut list);
-
-        assert_eq!(detail.item.address(), "aws_instance.worker");
-        assert_eq!(detail.item_index(), 1);
-        assert_eq!(detail.total_items(), 2);
-        assert_eq!(detail.selected, 0);
-        assert_eq!(detail.scroll(), 0);
-        assert!(detail.expanded_groups.is_empty());
-        assert!(detail.reveal.is_none());
-        assert_eq!(list.selected(), Some(1));
-
-        detail.navigate(ResourceNavigation::Next, &mut list);
-        assert_eq!(detail.item.address(), "aws_instance.worker");
-        assert_eq!(list.selected(), Some(1));
-
-        detail.navigate(ResourceNavigation::Previous, &mut list);
-        assert_eq!(detail.item.address(), "aws_instance.api");
-        assert_eq!(list.selected(), Some(0));
-    }
-
-    #[test]
-    fn resource_navigation_stops_when_search_has_one_item() {
-        let mut list = navigation_list();
-        list.apply(PlanListAction::BeginSearch);
-        list.apply(PlanListAction::SetSearch("worker".to_owned()));
-        list.apply(PlanListAction::ConfirmSearch);
-        let mut detail = ResourceDetailState::from_list(&list).expect("resource should open");
-
-        detail.navigate(ResourceNavigation::Previous, &mut list);
-        detail.navigate(ResourceNavigation::Next, &mut list);
-
-        assert_eq!(detail.item.address(), "aws_instance.worker");
-        assert_eq!(detail.item_index(), 0);
-        assert_eq!(detail.total_items(), 1);
-        assert_eq!(list.selected(), Some(0));
-    }
-
-    #[test]
-    fn expands_unchanged_group_and_keeps_selection_on_group_row() {
-        let mut state = state_for_change(expansion_change(), &[]);
-        let unchanged = AttributeGroup::Unchanged;
-        select_group(&mut state, &unchanged);
-        let group_index = state.selected;
-
-        state.apply_at(DetailAction::ToggleExpansion, 96, 40, Instant::now());
-
-        assert_eq!(state.selected, group_index);
-        let text = buffer_text(&render(&state, 100, 60));
-        assert!(
-            text.contains("> [v] 2 unchanged attributes  [Enter collapse]"),
-            "{text}"
-        );
-        assert!(text.contains("root_unchanged"), "{text}");
-
-        state.apply_at(DetailAction::SelectNext, 96, 40, Instant::now());
-        assert!(matches!(
-            detail_rows(&state).get(state.selected),
-            Some(DetailRow::Group {
-                group: AttributeGroup::Nested {
-                    kind: AttributeChangeKind::Unchanged,
-                    ..
-                },
-                ..
-            })
-        ));
-
-        state.apply_at(DetailAction::SelectPrevious, 96, 40, Instant::now());
-        state.apply_at(DetailAction::ToggleExpansion, 96, 40, Instant::now());
-        assert_eq!(state.selected, group_index);
-        let text = buffer_text(&render(&state, 100, 60));
-        assert!(
-            text.contains("> [>] 2 unchanged attributes hidden  [Enter expand]"),
-            "{text}"
-        );
-        assert!(!text.contains("root_unchanged"), "{text}");
-    }
-
-    #[test]
-    fn expands_nested_group_and_masks_sensitive_children() {
-        let mut state = state_for_change(expansion_change(), &[]);
-        let group = AttributeGroup::Nested {
-            kind: AttributeChangeKind::Changed,
-            path: vec![AttributePathSegment::Key("group_b".to_owned())],
-        };
-        select_group(&mut state, &group);
-
-        state.apply_at(DetailAction::ToggleExpansion, 96, 40, Instant::now());
-        let text = buffer_text(&render(&state, 100, 60));
-
-        assert!(
-            text.contains("> [v] group_b: 1 changed attribute  [Enter collapse]"),
-            "{text}"
-        );
-        assert!(text.contains("group_b.secret"), "{text}");
-        assert!(text.contains("<sensitive>"), "{text}");
-        assert!(!text.contains("old-secret"), "{text}");
-        assert!(!text.contains("new-secret"), "{text}");
     }
 
     #[test]
@@ -841,52 +355,6 @@ mod tests {
         assert!(text.contains("old-secret"), "{text}");
         assert!(text.contains("new-secret"), "{text}");
         assert!(text.contains("Sensitive value revealed"), "{text}");
-    }
-
-    #[test]
-    fn expanding_deep_group_keeps_child_selection_and_scrolls_to_it() {
-        let mut state = state_for_change(expansion_change(), &[]);
-        let group = AttributeGroup::Nested {
-            kind: AttributeChangeKind::Changed,
-            path: vec![AttributePathSegment::Key("group_a".to_owned())],
-        };
-        select_group(&mut state, &group);
-
-        state.apply_at(DetailAction::ToggleExpansion, 36, 4, Instant::now());
-        state.apply_at(DetailAction::SelectNext, 36, 4, Instant::now());
-        state.apply_at(DetailAction::SelectNext, 36, 4, Instant::now());
-        assert!(state.scroll() > 0);
-
-        let nested_group = AttributeGroup::Nested {
-            kind: AttributeChangeKind::Changed,
-            path: vec![
-                AttributePathSegment::Key("group_a".to_owned()),
-                AttributePathSegment::Key("nested".to_owned()),
-            ],
-        };
-        assert_eq!(
-            detail_rows(&state)
-                .get(state.selected)
-                .and_then(DetailRow::group),
-            Some(&nested_group)
-        );
-        state.apply_at(DetailAction::ToggleExpansion, 36, 4, Instant::now());
-        state.apply_at(DetailAction::SelectNext, 36, 4, Instant::now());
-        let text = buffer_text(&render(&state, 48, 12));
-        assert!(text.contains("> group_a.nested.value"), "{text}");
-    }
-
-    #[test]
-    fn page_down_stops_at_the_last_wrapped_line() {
-        let mut state = state();
-
-        for _ in 0..100 {
-            state.apply_at(DetailAction::PageDown, 46, 4, Instant::now());
-        }
-        let last_scroll = state.scroll();
-        state.apply_at(DetailAction::PageDown, 46, 4, Instant::now());
-
-        assert_eq!(state.scroll(), last_scroll);
     }
 
     #[test]

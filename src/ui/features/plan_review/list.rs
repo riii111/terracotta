@@ -636,9 +636,10 @@ mod tests {
     #[test]
     fn narrow_terminal_shows_resize_message() {
         let state = synthetic_state();
-        let text = buffer_text(&render_to_buffer(&state, MIN_WIDTH - 1, MIN_HEIGHT));
+        let text = buffer_text(&render_to_buffer(&state, MIN_WIDTH - 3, MIN_HEIGHT));
 
-        assert!(text.contains("Terminal too small. Resize or press q to quit."));
+        assert!(text.contains("Terminal too small. Resize or press q to"));
+        assert!(!text.contains("quit."));
     }
 
     #[test]

@@ -304,3 +304,155 @@ impl ResourceDetailState {
         self.reveal = None;
     }
 }
+
+#[cfg(test)]
+mod test_support;
+
+#[cfg(test)]
+mod tests {
+    use crate::ui::test_support::buffer_text;
+
+    use super::test_support::*;
+    use super::*;
+
+    #[test]
+    fn copying_revealed_resource_keeps_sensitive_values_masked() {
+        let mut state = sensitive_sibling_state();
+        select_attribute(&mut state, "password");
+        let now = Instant::now();
+        state.apply_at(DetailAction::Reveal, 96, 40, now);
+
+        let effect = state
+            .copy_effect(CopyTarget::Resource)
+            .expect("resource copy should be available");
+        let copied_text = effect.text().to_owned();
+
+        assert_eq!(effect.target(), CopyTarget::Resource);
+        assert!(copied_text.contains("Resource ~ aws_instance.api"));
+        assert!(copied_text.contains("<sensitive>"));
+        assert!(!copied_text.contains("old-secret"));
+        assert!(!copied_text.contains("new-secret"));
+    }
+
+    #[test]
+    fn plan_copy_notice_counts_resources_outside_search_scope() {
+        let mut list = filtered_review_list();
+        list.apply(PlanListAction::BeginSearch);
+        list.apply(PlanListAction::SetSearch("api".to_owned()));
+        list.apply(PlanListAction::ConfirmSearch);
+
+        let detail = ResourceDetailState::from_list(&list).expect("filtered item should open");
+        assert_eq!(detail.total_items(), 1);
+        assert_eq!(
+            detail
+                .copy_effect(CopyTarget::Plan)
+                .expect("plan copy should be available")
+                .success_notice(),
+            CopyNotice::Copied {
+                target: CopyTarget::Plan,
+                resource_count: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn viewport_height_accounts_for_copy_notice_row() {
+        let mut state = state();
+        let now = Instant::now();
+        let without_notice = state.viewport_height_at(20, now);
+
+        state.set_copy_notice(CopyNotice::Failed);
+
+        assert_eq!(state.viewport_height_at(20, now), without_notice - 1);
+    }
+
+    #[test]
+    fn pressing_reveal_again_masks_immediately_and_selection_masks_previous_value() {
+        let mut state = sensitive_sibling_state();
+        select_attribute(&mut state, "password");
+        let now = Instant::now();
+        state.apply_at(DetailAction::Reveal, 96, 40, now);
+        assert!(buffer_text(&render_at(&mut state, 100, 40, now)).contains("old-secret"));
+
+        state.apply_at(DetailAction::Reveal, 96, 40, now + Duration::from_secs(1));
+        let remasked = buffer_text(&render_at(
+            &mut state,
+            100,
+            40,
+            now + Duration::from_secs(1),
+        ));
+        assert!(!remasked.contains("old-secret"), "{remasked}");
+        assert!(state.reveal.is_none());
+
+        state.apply_at(DetailAction::Reveal, 96, 40, now + Duration::from_secs(2));
+        state.apply_at(
+            DetailAction::SelectNext,
+            96,
+            40,
+            now + Duration::from_secs(3),
+        );
+        assert!(state.reveal.is_none());
+        let changed_selection = buffer_text(&render_at(
+            &mut state,
+            100,
+            40,
+            now + Duration::from_secs(3),
+        ));
+        assert!(
+            !changed_selection.contains("old-secret"),
+            "{changed_selection}"
+        );
+    }
+
+    #[test]
+    fn resource_navigation_follows_search_order_and_resets_detail_state() {
+        let mut list = navigation_list();
+        list.apply(PlanListAction::BeginSearch);
+        list.apply(PlanListAction::SetSearch("aws_instance".to_owned()));
+        list.apply(PlanListAction::ConfirmSearch);
+
+        let mut detail = ResourceDetailState::from_list(&list).expect("resource should open");
+        select_attribute(&mut detail, "password");
+        detail.apply_at(DetailAction::Reveal, 96, 40, Instant::now());
+        assert!(detail.reveal.is_some());
+        detail.selected = 1;
+        detail.scroll = 3;
+        detail.expanded_groups.push(AttributeGroup::Unchanged);
+
+        detail.navigate(ResourceNavigation::Next, &mut list);
+
+        assert_eq!(detail.item.address(), "aws_instance.worker");
+        assert_eq!(detail.item_index(), 1);
+        assert_eq!(detail.total_items(), 2);
+        assert_eq!(detail.selected, 0);
+        assert_eq!(detail.scroll(), 0);
+        assert!(detail.expanded_groups.is_empty());
+        assert!(detail.reveal.is_none());
+        assert_eq!(list.selected(), Some(1));
+
+        detail.navigate(ResourceNavigation::Next, &mut list);
+        assert_eq!(detail.item.address(), "aws_instance.worker");
+        assert_eq!(list.selected(), Some(1));
+
+        detail.navigate(ResourceNavigation::Previous, &mut list);
+        assert_eq!(detail.item.address(), "aws_instance.api");
+        assert_eq!(list.selected(), Some(0));
+    }
+
+    #[test]
+    fn resource_navigation_stops_when_search_has_one_item() {
+        let mut list = navigation_list();
+        list.apply(PlanListAction::BeginSearch);
+        list.apply(PlanListAction::SetSearch("worker".to_owned()));
+        list.apply(PlanListAction::ConfirmSearch);
+        let mut detail = ResourceDetailState::from_list(&list).expect("resource should open");
+
+        detail.navigate(ResourceNavigation::Previous, &mut list);
+        detail.navigate(ResourceNavigation::Next, &mut list);
+
+        assert_eq!(detail.item.address(), "aws_instance.worker");
+        assert_eq!(detail.item_index(), 0);
+        assert_eq!(detail.total_items(), 1);
+        assert_eq!(list.selected(), Some(0));
+    }
+}

@@ -336,3 +336,74 @@ const fn source_side_label(side: SourceSide) -> &'static str {
 const fn pluralize(count: usize, singular: &'static str, plural: &'static str) -> &'static str {
     if count == 1 { singular } else { plural }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::ui::test_support::buffer_text;
+
+    use super::super::test_support::*;
+    use super::super::*;
+    use super::*;
+
+    #[test]
+    fn expands_unchanged_group_and_keeps_selection_on_group_row() {
+        let mut state = state_for_change(expansion_change(), &[]);
+        let unchanged = AttributeGroup::Unchanged;
+        select_group(&mut state, &unchanged);
+        let group_index = state.selected;
+
+        state.apply_at(DetailAction::ToggleExpansion, 96, 40, Instant::now());
+
+        assert_eq!(state.selected, group_index);
+        let text = buffer_text(&render(&state, 100, 60));
+        assert!(
+            text.contains("> [v] 2 unchanged attributes  [Enter collapse]"),
+            "{text}"
+        );
+        assert!(text.contains("root_unchanged"), "{text}");
+
+        state.apply_at(DetailAction::SelectNext, 96, 40, Instant::now());
+        assert!(matches!(
+            detail_rows(&state).get(state.selected),
+            Some(DetailRow::Group {
+                group: AttributeGroup::Nested {
+                    kind: AttributeChangeKind::Unchanged,
+                    ..
+                },
+                ..
+            })
+        ));
+
+        state.apply_at(DetailAction::SelectPrevious, 96, 40, Instant::now());
+        state.apply_at(DetailAction::ToggleExpansion, 96, 40, Instant::now());
+        assert_eq!(state.selected, group_index);
+        let text = buffer_text(&render(&state, 100, 60));
+        assert!(
+            text.contains("> [>] 2 unchanged attributes hidden  [Enter expand]"),
+            "{text}"
+        );
+        assert!(!text.contains("root_unchanged"), "{text}");
+    }
+
+    #[test]
+    fn expands_nested_group_and_masks_sensitive_children() {
+        let mut state = state_for_change(expansion_change(), &[]);
+        let group = AttributeGroup::Nested {
+            kind: AttributeChangeKind::Changed,
+            path: vec![AttributePathSegment::Key("group_b".to_owned())],
+        };
+        select_group(&mut state, &group);
+
+        state.apply_at(DetailAction::ToggleExpansion, 96, 40, Instant::now());
+        let text = buffer_text(&render(&state, 100, 60));
+
+        assert!(
+            text.contains("> [v] group_b: 1 changed attribute  [Enter collapse]"),
+            "{text}"
+        );
+        assert!(text.contains("group_b.secret"), "{text}");
+        assert!(text.contains("<sensitive>"), "{text}");
+        assert!(!text.contains("old-secret"), "{text}");
+        assert!(!text.contains("new-secret"), "{text}");
+    }
+}

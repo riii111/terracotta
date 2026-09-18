@@ -7,8 +7,8 @@ use crate::runtime;
 
 pub(crate) mod features;
 mod input;
-pub(crate) mod primitives;
-pub(crate) mod shell;
+mod primitives;
+mod shell;
 mod theme;
 
 #[cfg(test)]
