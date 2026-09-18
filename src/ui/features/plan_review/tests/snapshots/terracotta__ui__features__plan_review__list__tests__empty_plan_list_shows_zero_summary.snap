@@ -6,7 +6,7 @@ Terracotta | Target unavailable
 Git: working tree vs HEAD
 ┌Plan──────────────────────────────────────────────────────────────────────────┐
 │+0 create  ~0 update  R0 replace  -0 delete                                   │
-│Needs review: 0/0   Filter: All                                               │
+│Needs review: 0/0   Filter: All (f)                                           │
 │──────────────────────────────────────────────────────────────────────────────│
 │No resource changes.                                                          │
 │                                                                              │

@@ -500,11 +500,14 @@ fn summary_lines(state: &PlanListState, width: usize) -> Vec<Line<'static>> {
     if state.filter() == PlanListFilter::All && !has_search(state) {
         return vec![
             action_line,
-            Line::from(vec![review_count, Span::raw("   Filter: All")]),
+            Line::from(vec![
+                review_count,
+                Span::raw(format!("   Filter: {}", filter_label(state.filter()))),
+            ]),
         ];
     }
 
-    let filter_label = state.filter().label();
+    let filter_label = filter_label(state.filter());
     let filter_line = Line::from(vec![
         review_count.clone(),
         Span::raw(format!("  Filter: {filter_label}")),
@@ -532,6 +535,13 @@ fn summary_lines(state: &PlanListState, width: usize) -> Vec<Line<'static>> {
 
 fn has_search(state: &PlanListState) -> bool {
     state.searching() || !state.search().is_empty()
+}
+
+const fn filter_label(filter: PlanListFilter) -> &'static str {
+    match filter {
+        PlanListFilter::All => "All (f)",
+        PlanListFilter::NeedsReview => "Needs review (f)",
+    }
 }
 
 fn footer_lines(

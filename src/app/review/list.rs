@@ -66,16 +66,6 @@ pub(crate) enum PlanListFilter {
     NeedsReview,
 }
 
-impl PlanListFilter {
-    #[must_use]
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::All => "All (f)",
-            Self::NeedsReview => "Needs review (f)",
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PlanListState {
     context: Option<PlanListContext>,
