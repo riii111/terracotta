@@ -6,13 +6,25 @@ use ratatui::widgets::Paragraph;
 use crate::ui::theme;
 
 const SEPARATOR: &str = " | ";
+const KEY_SEPARATOR: &str = "/";
 const MAX_ROWS: usize = 2;
 
-pub(crate) fn hint(key: &'static str, description: &'static str) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(key, theme::footer_key_style()),
-        Span::styled(format!(" {description}"), theme::footer_text_style()),
-    ])
+pub(crate) fn hint(alternative_keys: &[&'static str], description: &'static str) -> Line<'static> {
+    let mut spans = Vec::new();
+    for (index, key) in alternative_keys.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::styled(
+                KEY_SEPARATOR,
+                theme::footer_key_separator_style(),
+            ));
+        }
+        spans.push(Span::styled(*key, theme::footer_key_style()));
+    }
+    spans.push(Span::styled(
+        format!(" {description}"),
+        theme::footer_text_style(),
+    ));
+    Line::from(spans)
 }
 
 pub(crate) fn layout(items: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
@@ -66,14 +78,17 @@ mod tests {
 
     #[test]
     fn rendered_keys_and_descriptions_use_rgb_colors_independent_of_ansi_palette() {
-        let backend = ratatui::backend::TestBackend::new(80, 2);
+        let backend = ratatui::backend::TestBackend::new(16, 2);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         terminal
             .draw(|frame| {
                 render(
                     frame,
                     frame.area(),
-                    layout(vec![hint("q", "quit"), hint("[/]", "prev/next")], 80),
+                    layout(
+                        vec![hint(&["[", "]"], "prev/next"), hint(&["/"], "search")],
+                        16,
+                    ),
                 );
             })
             .unwrap();
@@ -83,8 +98,18 @@ mod tests {
             ratatui::style::Color::Rgb(0xd4, 0xa4, 0x85)
         );
         assert_eq!(
-            buffer[(2, 0)].fg,
+            buffer[(4, 0)].fg,
             ratatui::style::Color::Rgb(0xc0, 0xb8, 0xb8)
+        );
+        assert_eq!(buffer[(1, 0)].symbol(), "/");
+        assert_eq!(
+            buffer[(1, 0)].fg,
+            ratatui::style::Color::Rgb(0x90, 0x90, 0x90)
+        );
+        assert_eq!(buffer[(0, 1)].symbol(), "/");
+        assert_eq!(
+            buffer[(0, 1)].fg,
+            ratatui::style::Color::Rgb(0xd4, 0xa4, 0x85)
         );
     }
 
@@ -92,13 +117,28 @@ mod tests {
     #[case::single_row(80)]
     #[case::wrapped_rows(16)]
     fn key_and_description_colors_survive_layout(#[case] width: u16) {
-        let rows = layout(vec![hint("[/]", "prev/next"), hint("/", "search")], width);
+        let rows = layout(
+            vec![hint(&["[", "]"], "prev/next"), hint(&["/"], "search")],
+            width,
+        );
         let spans = rows.iter().flat_map(|line| &line.spans).collect::<Vec<_>>();
 
-        for key in ["[/]", "/"] {
+        for key in ["[", "]"] {
             let span = spans.iter().find(|span| span.content == key).unwrap();
             assert_eq!(span.style, theme::footer_key_style());
         }
+        let slash_styles = spans
+            .iter()
+            .filter(|span| span.content == "/")
+            .map(|span| span.style)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            slash_styles,
+            vec![
+                theme::footer_key_separator_style(),
+                theme::footer_key_style()
+            ]
+        );
         for description in [" prev/next", " search"] {
             let span = spans
                 .iter()
@@ -107,6 +147,23 @@ mod tests {
             assert_eq!(span.style, theme::footer_text_style());
         }
         assert_ne!(theme::footer_key_style().fg, theme::footer_text_style().fg);
+    }
+
+    #[test]
+    fn alternative_keys_use_the_same_separator() {
+        let cases: &[(&str, &[&str], &str)] = &[
+            ("single", &["Enter"], "Enter confirm"),
+            ("two", &["Enter", "Space"], "Enter/Space confirm"),
+            (
+                "three",
+                &["Enter", "Space", "Ctrl-M"],
+                "Enter/Space/Ctrl-M confirm",
+            ),
+        ];
+
+        for (name, keys, expected) in cases {
+            assert_eq!(hint(keys, "confirm").to_string(), *expected, "case: {name}");
+        }
     }
 
     #[rstest]

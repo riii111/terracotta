@@ -51,5 +51,5 @@ expression: "buffer_text(&render_to_buffer(&state, REPRESENTATIVE_TERMINAL_SIZE.
 │                                                                                                                                                                   │
 │                                                                                                                                                                   │
 │                                                                                                                                                                   │
-│q quit | j/k/↑↓ select | Enter details | f filter | / search                                                                                                       │
+│q quit | j/k/↑/↓ select | Enter details | f filter | / search                                                                                                      │
 └───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

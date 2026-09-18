@@ -170,34 +170,34 @@ fn footer_lines(
     width: u16,
 ) -> Vec<Line<'static>> {
     let mut items = vec![
-        footer::hint("q", "quit"),
-        footer::hint("Esc", "back"),
-        footer::hint("PgUp/PgDn", "scroll"),
+        footer::hint(&["q"], "quit"),
+        footer::hint(&["Esc"], "back"),
+        footer::hint(&["PgUp", "PgDn"], "scroll"),
     ];
     if detail.is_revealed_at(now) {
-        items.push(footer::hint("r", "mask now"));
+        items.push(footer::hint(&["r"], "mask now"));
     } else if detail.can_reveal_selected() {
-        items.push(footer::hint("r", "reveal 10s"));
+        items.push(footer::hint(&["r"], "reveal 10s"));
     }
     match (
         list.can_copy(CopyTarget::Resource),
         list.can_copy(CopyTarget::Plan),
     ) {
         (true, true) => {
-            items.push(footer::hint("y", "resource"));
-            items.push(footer::hint("Y", "plan"));
+            items.push(footer::hint(&["y"], "resource"));
+            items.push(footer::hint(&["Y"], "plan"));
         }
-        (true, false) => items.push(footer::hint("y", "resource")),
-        (false, true) => items.push(footer::hint("Y", "plan")),
+        (true, false) => items.push(footer::hint(&["y"], "resource")),
+        (false, true) => items.push(footer::hint(&["Y"], "plan")),
         (false, false) => {}
     }
     items.extend([
-        footer::hint("↑/↓", "select"),
-        footer::hint("Enter", "expand"),
-        footer::hint("[/]", "prev/next"),
+        footer::hint(&["↑", "↓"], "select"),
+        footer::hint(&["Enter"], "expand"),
+        footer::hint(&["[", "]"], "prev/next"),
     ]);
     if !list.source_files().is_empty() {
-        items.push(footer::hint("s", "sources"));
+        items.push(footer::hint(&["s"], "sources"));
     }
     footer::layout(items, width)
 }
@@ -208,14 +208,14 @@ fn required_footer_lines(
     width: u16,
 ) -> Vec<Line<'static>> {
     let mut items = vec![
-        footer::hint("q", "quit"),
-        footer::hint("Esc", "back"),
-        footer::hint("PgUp/PgDn", "scroll"),
+        footer::hint(&["q"], "quit"),
+        footer::hint(&["Esc"], "back"),
+        footer::hint(&["PgUp", "PgDn"], "scroll"),
     ];
     if detail.is_revealed_at(now) {
-        items.push(footer::hint("r", "mask now"));
+        items.push(footer::hint(&["r"], "mask now"));
     } else if detail.can_reveal_selected() {
-        items.push(footer::hint("r", "reveal 10s"));
+        items.push(footer::hint(&["r"], "reveal 10s"));
     }
     footer::layout(items, width)
 }

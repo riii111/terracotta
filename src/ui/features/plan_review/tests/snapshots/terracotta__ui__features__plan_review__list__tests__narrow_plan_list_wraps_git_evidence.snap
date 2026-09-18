@@ -15,6 +15,6 @@ expression: "buffer_text(&render_to_buffer(&state, 60, 16))"
 │            direct: storage.tf:8-10                       │
 │  ! R       aws_instance.worker                           │
 │            incomplete                                    │
-│q quit | j/k/↑↓ select | Enter details | f filter         │
+│q quit | j/k/↑/↓ select | Enter details | f filter        │
 │/ search                                                  │
 └──────────────────────────────────────────────────────────┘

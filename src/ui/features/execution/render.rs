@@ -342,16 +342,16 @@ fn format_elapsed(elapsed: Duration) -> String {
 fn footer_lines(state: &ExecutionState, width: u16) -> Vec<Line<'static>> {
     let items = if state.stage() == ExecutionStage::Failed {
         vec![
-            footer::hint("q", "quit"),
-            footer::hint("↑/↓ PgUp/PgDn", "scroll"),
-            footer::hint("y", "diagnostic"),
-            footer::hint("Y", "result"),
+            footer::hint(&["q"], "quit"),
+            footer::hint(&["↑", "↓", "PgUp", "PgDn"], "scroll"),
+            footer::hint(&["y"], "diagnostic"),
+            footer::hint(&["Y"], "result"),
         ]
     } else {
         vec![
-            footer::hint("Ctrl-C", "cancel"),
-            footer::hint("↑/↓ PgUp/PgDn", "scroll"),
-            footer::hint("End", "follow latest"),
+            footer::hint(&["Ctrl-C"], "cancel"),
+            footer::hint(&["↑", "↓", "PgUp", "PgDn"], "scroll"),
+            footer::hint(&["End"], "follow latest"),
         ]
     };
     footer::layout(items, width)
@@ -360,13 +360,13 @@ fn footer_lines(state: &ExecutionState, width: u16) -> Vec<Line<'static>> {
 fn required_footer_lines(state: &ExecutionState, width: u16) -> Vec<Line<'static>> {
     let items = if state.stage() == ExecutionStage::Failed {
         vec![
-            footer::hint("q", "quit"),
-            footer::hint("↑/↓ PgUp/PgDn", "scroll"),
+            footer::hint(&["q"], "quit"),
+            footer::hint(&["↑", "↓", "PgUp", "PgDn"], "scroll"),
         ]
     } else {
         vec![
-            footer::hint("Ctrl-C", "cancel"),
-            footer::hint("↑/↓ PgUp/PgDn", "scroll"),
+            footer::hint(&["Ctrl-C"], "cancel"),
+            footer::hint(&["↑", "↓", "PgUp", "PgDn"], "scroll"),
         ]
     };
     footer::layout(items, width)
@@ -585,7 +585,7 @@ mod tests {
             assert!(text.contains(expected), "case: {name}\n{text}");
             assert!(text.contains("Ctrl-C cancel"), "case: {name}\n{text}");
             assert!(
-                text.contains("↑/↓ PgUp/PgDn scroll"),
+                text.contains("↑/↓/PgUp/PgDn scroll"),
                 "case: {name}\n{text}"
             );
         }
@@ -600,7 +600,7 @@ mod tests {
 
             assert!(text.contains("Ctrl-C cancel"), "width: {width}\n{text}");
             assert!(
-                text.contains("↑/↓ PgUp/PgDn scroll"),
+                text.contains("↑/↓/PgUp/PgDn scroll"),
                 "width: {width}\n{text}"
             );
         }

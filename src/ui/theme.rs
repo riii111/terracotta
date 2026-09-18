@@ -6,6 +6,10 @@ pub(crate) fn footer_key_style() -> Style {
     Style::default().fg(Color::Rgb(0xd4, 0xa4, 0x85))
 }
 
+pub(crate) fn footer_key_separator_style() -> Style {
+    Style::default().fg(Color::Rgb(0x90, 0x90, 0x90))
+}
+
 pub(crate) fn footer_text_style() -> Style {
     Style::default().fg(Color::Rgb(0xc0, 0xb8, 0xb8))
 }

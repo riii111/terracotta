@@ -424,36 +424,36 @@ fn footer_lines(
     if state.searching() {
         return footer::layout(
             vec![
-                footer::hint("Enter", "confirm"),
-                footer::hint("Esc", "cancel"),
-                footer::hint("Ctrl-C", "quit"),
+                footer::hint(&["Enter"], "confirm"),
+                footer::hint(&["Esc"], "cancel"),
+                footer::hint(&["Ctrl-C"], "quit"),
                 Line::from("Type to search"),
             ],
             width,
         );
     }
 
-    let mut items = vec![footer::hint("q", "quit")];
+    let mut items = vec![footer::hint(&["q"], "quit")];
     if diagnostics.count() > 0 {
-        items.push(footer::hint("w", "diagnostics"));
+        items.push(footer::hint(&["w"], "diagnostics"));
     }
     match (
         state.can_copy(CopyTarget::Resource),
         state.can_copy(CopyTarget::Plan),
     ) {
         (true, true) => {
-            items.push(footer::hint("y", "resource"));
-            items.push(footer::hint("Y", "plan"));
+            items.push(footer::hint(&["y"], "resource"));
+            items.push(footer::hint(&["Y"], "plan"));
         }
-        (true, false) => items.push(footer::hint("y", "resource")),
-        (false, true) => items.push(footer::hint("Y", "plan")),
+        (true, false) => items.push(footer::hint(&["y"], "resource")),
+        (false, true) => items.push(footer::hint(&["Y"], "plan")),
         (false, false) => {}
     }
     items.extend([
-        footer::hint("j/k/↑↓", "select"),
-        footer::hint("Enter", "details"),
-        footer::hint("f", "filter"),
-        footer::hint("/", "search"),
+        footer::hint(&["j", "k", "↑", "↓"], "select"),
+        footer::hint(&["Enter"], "details"),
+        footer::hint(&["f"], "filter"),
+        footer::hint(&["/"], "search"),
     ]);
     footer::layout(items, width)
 }
@@ -461,12 +461,12 @@ fn footer_lines(
 fn required_footer_lines(state: &PlanListState, width: u16) -> Vec<Line<'static>> {
     let items = if state.searching() {
         vec![
-            footer::hint("Enter", "confirm"),
-            footer::hint("Esc", "cancel"),
-            footer::hint("Ctrl-C", "quit"),
+            footer::hint(&["Enter"], "confirm"),
+            footer::hint(&["Esc"], "cancel"),
+            footer::hint(&["Ctrl-C"], "quit"),
         ]
     } else {
-        vec![footer::hint("q", "quit")]
+        vec![footer::hint(&["q"], "quit")]
     };
     footer::layout(items, width)
 }
@@ -784,7 +784,7 @@ mod tests {
         assert!(text.contains("incomplete"));
         assert!(text.contains("no match"));
         assert!(text.contains("q quit"), "{text}");
-        assert!(text.contains("j/k/↑↓ select"), "{text}");
+        assert!(text.contains("j/k/↑/↓ select"), "{text}");
         assert!(text.contains("/ search"), "{text}");
         assert!(
             text.contains("aws_s3_bucket.logs_with_a_very_long_resource_address"),
