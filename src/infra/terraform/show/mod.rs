@@ -1,8 +1,4 @@
-use std::{
-    ffi::OsString,
-    fmt::{Debug, Formatter},
-    path::Path,
-};
+use std::{ffi::OsString, path::Path};
 
 use crate::app::plan::Plan;
 
@@ -17,40 +13,12 @@ mod json;
 pub(super) use json::PlanParseError;
 use json::parse_plan_json_bytes;
 
-#[derive(Clone, PartialEq, Eq)]
-pub(crate) struct PlanExecution {
-    json: Vec<u8>,
-    plan: Plan,
-}
-
-impl PlanExecution {
-    #[must_use]
-    pub(crate) fn json(&self) -> &[u8] {
-        &self.json
-    }
-
-    #[must_use]
-    pub(crate) const fn plan(&self) -> &Plan {
-        &self.plan
-    }
-}
-
-impl Debug for PlanExecution {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("PlanExecution")
-            .field("json", &"<redacted>")
-            .field("plan", &self.plan)
-            .finish()
-    }
-}
-
 pub(super) fn read_plan(
     root: &Path,
     plan_path: &Path,
     cancellation: &CancellationToken,
     runner: &dyn ProcessRunner,
-) -> Result<PlanExecution, TerraformExecutionError> {
+) -> Result<Plan, TerraformExecutionError> {
     if cancellation.is_cancelled() {
         return Err(TerraformExecutionError::new(
             TerraformExecutionErrorKind::Interrupted {
@@ -81,7 +49,7 @@ pub(super) fn read_plan(
         TerraformExecutionError::new(TerraformExecutionErrorKind::InvalidPlan { source })
     })?;
 
-    Ok(PlanExecution { json, plan })
+    Ok(plan)
 }
 
 fn show_arguments(plan_path: &Path) -> Vec<OsString> {

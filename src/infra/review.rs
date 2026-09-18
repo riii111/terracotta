@@ -55,7 +55,7 @@ fn run_review_with_dependencies(
         received_at: std::time::Instant::now(),
         kind: ExecutionEventKind::Workspace(workspace.clone()),
     });
-    let execution = terraform::run_plan(
+    let plan = terraform::run_plan(
         &execution_root,
         cancellation,
         runner,
@@ -105,17 +105,14 @@ fn run_review_with_dependencies(
         );
     }
 
-    let mut attributions = attribute_changes(
-        &execution.plan().changes,
-        &source_files,
-        git_diff.changed_lines(),
-    );
+    let mut attributions =
+        attribute_changes(&plan.changes, &source_files, git_diff.changed_lines());
     mark_analysis_incomplete(&mut attributions, &analysis_issues);
 
     Ok(PlanReview::new(
         execution_root,
         workspace,
-        execution.plan().clone(),
+        plan,
         source_files,
         attributions,
         review_comparison(&git_diff),
