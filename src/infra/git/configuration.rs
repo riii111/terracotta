@@ -8,7 +8,7 @@ use crate::infra::CancellationToken;
 use crate::infra::terraform::hcl::HclSourceFile;
 
 use super::{
-    command::{GitCommandError, checked_git, nul_fields},
+    command::{GitInterrupted, checked_git, nul_fields},
     diff::{ComparisonBasis, GitDiff},
 };
 
@@ -141,7 +141,7 @@ impl ConfigurationComparisons {
 pub(crate) fn capture_working_tree_configuration_with_cancellation(
     root: &Path,
     cancellation: &CancellationToken,
-) -> Result<ConfigurationSnapshot, GitCommandError> {
+) -> Result<ConfigurationSnapshot, GitInterrupted> {
     let mut snapshot = ConfigurationSnapshot {
         files: Vec::new(),
         issues: Vec::new(),
@@ -165,9 +165,7 @@ pub(crate) fn capture_working_tree_configuration_with_cancellation(
     paths.sort();
     for path in paths {
         if cancellation.is_cancelled() {
-            return Err(GitCommandError::interrupted(
-                "read working tree configuration",
-            ));
+            return Err(GitInterrupted);
         }
         match fs::read(&path) {
             Ok(contents) => snapshot.files.push(ConfigurationFile { path, contents }),
@@ -185,7 +183,7 @@ pub(crate) fn capture_revision_configuration_with_cancellation(
     root: &Path,
     revision: &str,
     cancellation: &CancellationToken,
-) -> Result<ConfigurationSnapshot, GitCommandError> {
+) -> Result<ConfigurationSnapshot, GitInterrupted> {
     let mut snapshot = ConfigurationSnapshot {
         files: Vec::new(),
         issues: Vec::new(),
@@ -225,7 +223,7 @@ pub(crate) fn capture_revision_configuration_with_cancellation(
                 .issues
                 .push(format!("{}: {}", error.operation, error.message));
             if error.is_interrupted() {
-                return Err(error);
+                return Err(GitInterrupted);
             }
             return Ok(snapshot);
         }
@@ -241,9 +239,7 @@ pub(crate) fn capture_revision_configuration_with_cancellation(
     };
     for relative in paths {
         if cancellation.is_cancelled() {
-            return Err(GitCommandError::interrupted(
-                "read Git Terraform configuration",
-            ));
+            return Err(GitInterrupted);
         }
         let relative = PathBuf::from(relative);
         if !is_configuration_file(&relative)
@@ -262,7 +258,7 @@ pub(crate) fn capture_revision_configuration_with_cancellation(
                 path: repository_root.join(&relative),
                 contents: output.stdout,
             }),
-            Err(error) if error.is_interrupted() => return Err(error),
+            Err(error) if error.is_interrupted() => return Err(GitInterrupted),
             Err(error) => snapshot.issues.push(format!(
                 "{} {}: {}",
                 error.operation,
@@ -281,7 +277,7 @@ pub(crate) fn compare_configurations_with_cancellation(
     diff: &GitDiff,
     working_tree: &ConfigurationSnapshot,
     cancellation: &CancellationToken,
-) -> Result<ConfigurationComparisons, GitCommandError> {
+) -> Result<ConfigurationComparisons, GitInterrupted> {
     let mut capture_revision = |revision: &str| {
         capture_revision_configuration_with_cancellation(
             diff.repository_root()
@@ -297,8 +293,8 @@ pub(crate) fn compare_configurations_with_cancellation(
 fn compare_configurations_with_capture_cancellable(
     diff: &GitDiff,
     working_tree: &ConfigurationSnapshot,
-    capture_revision: &mut dyn FnMut(&str) -> Result<ConfigurationSnapshot, GitCommandError>,
-) -> Result<ConfigurationComparisons, GitCommandError> {
+    capture_revision: &mut dyn FnMut(&str) -> Result<ConfigurationSnapshot, GitInterrupted>,
+) -> Result<ConfigurationComparisons, GitInterrupted> {
     let head = match (diff.repository_root(), diff.head_commit()) {
         (Some(_), Some(head_commit)) => Some(capture_revision(head_commit)?),
         _ => None,

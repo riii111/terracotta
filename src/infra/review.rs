@@ -39,6 +39,12 @@ impl From<TerraformExecutionError> for ReviewError {
     }
 }
 
+impl From<git::GitInterrupted> for ReviewError {
+    fn from(_: git::GitInterrupted) -> Self {
+        Self::Interrupted
+    }
+}
+
 pub(crate) fn run_review(
     root: &Path,
     compare_ref: Option<&str>,
@@ -70,8 +76,7 @@ fn run_review_with_dependencies(
     event_sink: &mut dyn FnMut(ExecutionEvent),
     phase_sink: &mut dyn FnMut(ExecutionPhase),
 ) -> Result<PlanReview, ReviewError> {
-    let git_diff =
-        collect_git_diff(root, compare_ref, cancellation).map_err(|()| ReviewError::Interrupted)?;
+    let git_diff = collect_git_diff(root, compare_ref, cancellation)?;
     if cancellation.is_cancelled() {
         return Err(ReviewError::Interrupted);
     }
@@ -83,13 +88,11 @@ fn run_review_with_dependencies(
     }
     let execution_root = git_diff.root().to_owned();
     let configuration_before =
-        git::capture_working_tree_configuration_with_cancellation(&execution_root, cancellation)
-            .map_err(|error| git_review_error(&error))?;
+        git::capture_working_tree_configuration_with_cancellation(&execution_root, cancellation)?;
     if cancellation.is_cancelled() {
         return Err(ReviewError::Interrupted);
     }
-    let git_branch = git::current_branch(&execution_root, cancellation)
-        .map_err(|error| git_review_error(&error))?;
+    let git_branch = git::current_branch(&execution_root, cancellation)?;
     if cancellation.is_cancelled() {
         return Err(ReviewError::Interrupted);
     }
@@ -124,8 +127,7 @@ fn run_review_with_dependencies(
         return Err(ReviewError::Interrupted);
     }
     let configuration_after =
-        git::capture_working_tree_configuration_with_cancellation(&execution_root, cancellation)
-            .map_err(|error| git_review_error(&error))?;
+        git::capture_working_tree_configuration_with_cancellation(&execution_root, cancellation)?;
     if cancellation.is_cancelled() {
         return Err(ReviewError::Interrupted);
     }
@@ -139,8 +141,7 @@ fn run_review_with_dependencies(
             &git_diff,
             &configuration_before,
             cancellation,
-        )
-        .map_err(|error| git_review_error(&error))?;
+        )?;
     if cancellation.is_cancelled() {
         return Err(ReviewError::Interrupted);
     }
@@ -197,15 +198,13 @@ fn collect_git_diff(
     root: &Path,
     compare_ref: Option<&str>,
     cancellation: &CancellationToken,
-) -> Result<GitDiff, ()> {
-    compare_ref
-        .map_or_else(
-            || git::collect_diff_with_cancellation(root, cancellation),
-            |compare_ref| {
-                git::collect_diff_against_ref_with_cancellation(root, compare_ref, cancellation)
-            },
-        )
-        .map_err(|_| ())
+) -> Result<GitDiff, git::GitInterrupted> {
+    compare_ref.map_or_else(
+        || git::collect_diff_with_cancellation(root, cancellation),
+        |compare_ref| {
+            git::collect_diff_against_ref_with_cancellation(root, compare_ref, cancellation)
+        },
+    )
 }
 
 fn parse_git_sources(
@@ -226,14 +225,6 @@ fn parse_git_sources(
         return Err(ReviewError::Interrupted);
     }
     Ok(parsed.files().to_vec())
-}
-
-fn git_review_error(error: &git::GitCommandError) -> ReviewError {
-    if error.is_interrupted() {
-        ReviewError::Interrupted
-    } else {
-        unreachable!("normal Git errors are recorded in review data")
-    }
 }
 
 fn git_analysis_issues(diff: &GitDiff) -> Vec<AnalysisIssue> {

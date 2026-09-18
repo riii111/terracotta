@@ -5,7 +5,7 @@ mod diff;
 mod merge_base;
 mod rev_parse;
 
-pub(crate) use command::GitCommandError;
+pub(crate) use command::GitInterrupted;
 
 pub(crate) use branch::current_branch;
 pub(crate) use configuration::{

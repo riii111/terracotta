@@ -13,7 +13,7 @@ mod name_status;
 mod source;
 
 use super::{
-    command::GitCommandError,
+    command::{GitCommandError, GitInterrupted},
     merge_base::{MergeBaseError, resolve_merge_base},
     rev_parse::{
         CompareRefError, DiscoveryError, HeadError, discover_repository, resolve_compare_ref,
@@ -207,7 +207,7 @@ enum ComparisonResolutionFailure {
 pub(crate) fn collect_diff_with_cancellation(
     root: &Path,
     cancellation: &CancellationToken,
-) -> Result<GitDiff, GitCommandError> {
+) -> Result<GitDiff, GitInterrupted> {
     let root = match fs::canonicalize(root) {
         Ok(root) if root.is_dir() => root,
         Ok(root) => {
@@ -239,7 +239,7 @@ pub(crate) fn collect_diff_with_cancellation(
             ));
         }
         Err(DiscoveryError::Failed(error)) => {
-            return failed_diff_from_error(root, None, error);
+            return failed_diff_from_error(root, None, &error);
         }
     };
 
@@ -268,7 +268,9 @@ pub(crate) fn collect_diff_with_cancellation(
         Err(HeadError::Unavailable(message)) => {
             collect_without_head(root, repository_root, &root_spec, message, cancellation)
         }
-        Err(HeadError::Failed(error)) => failed_diff_from_error(root, Some(repository_root), error),
+        Err(HeadError::Failed(error)) => {
+            failed_diff_from_error(root, Some(repository_root), &error)
+        }
     }
 }
 
@@ -276,7 +278,7 @@ pub(crate) fn collect_diff_against_ref_with_cancellation(
     root: &Path,
     compare_ref: &str,
     cancellation: &CancellationToken,
-) -> Result<GitDiff, GitCommandError> {
+) -> Result<GitDiff, GitInterrupted> {
     let comparison = ComparisonMetadata::for_compare_ref(compare_ref);
     let root = match fs::canonicalize(root) {
         Ok(root) if root.is_dir() => root,
@@ -312,7 +314,7 @@ pub(crate) fn collect_diff_against_ref_with_cancellation(
             ));
         }
         Err(DiscoveryError::Failed(error)) => {
-            return failed_diff_with_comparison_error(root, None, error, comparison);
+            return failed_diff_with_comparison_error(root, None, &error, comparison);
         }
     };
 
@@ -360,7 +362,7 @@ fn collect_commit_diff(
     after_revision: &str,
     comparison: ComparisonMetadata,
     cancellation: &CancellationToken,
-) -> Result<GitDiff, GitCommandError> {
+) -> Result<GitDiff, GitInterrupted> {
     let changed_files = match changed_files_between(
         &repository_root,
         &root,
@@ -374,7 +376,7 @@ fn collect_commit_diff(
             return failed_diff_with_comparison_error(
                 root,
                 Some(repository_root),
-                error,
+                &error,
                 comparison,
             );
         }
@@ -391,7 +393,7 @@ fn collect_commit_diff(
             return failed_diff_with_comparison_error(
                 root,
                 Some(repository_root),
-                error,
+                &error,
                 comparison,
             );
         }
@@ -409,7 +411,7 @@ fn collect_commit_diff(
             return failed_diff_with_comparison_error(
                 root,
                 Some(repository_root),
-                error,
+                &error,
                 comparison,
             );
         }
@@ -439,30 +441,30 @@ fn collect_head_diff(
     root_spec: &Path,
     head_commit: String,
     cancellation: &CancellationToken,
-) -> Result<GitDiff, GitCommandError> {
+) -> Result<GitDiff, GitInterrupted> {
     let changed_files = match changed_files(&repository_root, &root, root_spec, cancellation) {
         Ok(files) => files,
         Err(error) => {
-            return failed_diff_from_error(root, Some(repository_root), error);
+            return failed_diff_from_error(root, Some(repository_root), &error);
         }
     };
     let untracked_files = match untracked_files(&repository_root, &root, root_spec, cancellation) {
         Ok(files) => files,
         Err(error) => {
-            return failed_diff_from_error(root, Some(repository_root), error);
+            return failed_diff_from_error(root, Some(repository_root), &error);
         }
     };
     let changed_files = merge_untracked(changed_files, untracked_files);
     let (before, after) = match load_sources(&repository_root, &changed_files, cancellation) {
         Ok(sources) => sources,
         Err(error) => {
-            return failed_diff_from_error(root, Some(repository_root), error);
+            return failed_diff_from_error(root, Some(repository_root), &error);
         }
     };
     let changed_lines = match changed_lines(&repository_root, &root, root_spec, cancellation) {
         Ok(changed_lines) => changed_lines,
         Err(error) => {
-            return failed_diff_from_error(root, Some(repository_root), error);
+            return failed_diff_from_error(root, Some(repository_root), &error);
         }
     };
     let mut changed_lines = changed_lines;
@@ -497,17 +499,17 @@ fn collect_without_head(
     root_spec: &Path,
     message: String,
     cancellation: &CancellationToken,
-) -> Result<GitDiff, GitCommandError> {
+) -> Result<GitDiff, GitInterrupted> {
     let files = match files_without_head(&repository_root, &root, root_spec, cancellation) {
         Ok(files) => files,
         Err(error) => {
-            return failed_diff_from_error(root, Some(repository_root), error);
+            return failed_diff_from_error(root, Some(repository_root), &error);
         }
     };
     let after = match load_after_sources(&repository_root, &files, cancellation) {
         Ok(after) => after,
         Err(error) => {
-            return failed_diff_from_error(root, Some(repository_root), error);
+            return failed_diff_from_error(root, Some(repository_root), &error);
         }
     };
     let changed_lines = after
@@ -607,7 +609,7 @@ impl ComparisonResolutionError {
         self,
         root: PathBuf,
         repository_root: Option<PathBuf>,
-    ) -> Result<GitDiff, GitCommandError> {
+    ) -> Result<GitDiff, GitInterrupted> {
         let Some(reference) = self.comparison.compare_ref.clone() else {
             return Ok(failed_diff_with_comparison(
                 root,
@@ -625,7 +627,7 @@ impl ComparisonResolutionError {
             | ComparisonResolutionFailure::CompareRefFailed(error)
             | ComparisonResolutionFailure::MergeBaseFailed(error) => {
                 if error.is_interrupted() {
-                    return Err(error);
+                    return Err(GitInterrupted);
                 }
                 GitDiffStatus::Failed {
                     operation: error.operation,
@@ -718,10 +720,10 @@ fn failed_diff(
 fn failed_diff_from_error(
     root: PathBuf,
     repository_root: Option<PathBuf>,
-    error: GitCommandError,
-) -> Result<GitDiff, GitCommandError> {
+    error: &GitCommandError,
+) -> Result<GitDiff, GitInterrupted> {
     if error.is_interrupted() {
-        return Err(error);
+        return Err(GitInterrupted);
     }
     Ok(failed_diff(
         root,
@@ -752,11 +754,11 @@ fn failed_diff_with_comparison(
 fn failed_diff_with_comparison_error(
     root: PathBuf,
     repository_root: Option<PathBuf>,
-    error: GitCommandError,
+    error: &GitCommandError,
     comparison: ComparisonMetadata,
-) -> Result<GitDiff, GitCommandError> {
+) -> Result<GitDiff, GitInterrupted> {
     if error.is_interrupted() {
-        return Err(error);
+        return Err(GitInterrupted);
     }
     Ok(failed_diff_with_comparison(
         root,
