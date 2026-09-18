@@ -750,7 +750,7 @@ mod tests {
     }
 
     #[test]
-    fn key_mapping_cancels_running_but_quits_failed() {
+    fn key_mapping_respects_execution_stage() {
         use crossterm::event::{KeyEventKind, KeyEventState};
 
         let key = |code, modifiers| KeyEvent {
@@ -760,54 +760,57 @@ mod tests {
             state: KeyEventState::NONE,
         };
 
-        assert_eq!(
-            execution_key_to_input(
+        let cases = [
+            (
+                "control_c_cancels_running",
                 key(KeyCode::Char('c'), KeyModifiers::CONTROL),
                 ExecutionStage::Planning,
+                Some(ExecutionInput::Action(ExecutionAction::RequestCancellation)),
             ),
-            Some(ExecutionInput::Action(ExecutionAction::RequestCancellation))
-        );
-        assert_eq!(
-            execution_key_to_input(
+            (
+                "q_is_ignored_while_running",
                 key(KeyCode::Char('q'), KeyModifiers::NONE),
                 ExecutionStage::Planning,
+                None,
             ),
-            None
-        );
-        assert_eq!(
-            execution_key_to_input(
+            (
+                "q_quits_failed",
                 key(KeyCode::Char('q'), KeyModifiers::NONE),
                 ExecutionStage::Failed,
+                Some(ExecutionInput::Quit),
             ),
-            Some(ExecutionInput::Quit)
-        );
-        assert_eq!(
-            execution_key_to_input(
+            (
+                "control_c_quits_failed",
                 key(KeyCode::Char('c'), KeyModifiers::CONTROL),
                 ExecutionStage::Failed,
+                Some(ExecutionInput::Quit),
             ),
-            Some(ExecutionInput::Quit)
-        );
-        assert_eq!(
-            execution_key_to_input(
+            (
+                "y_is_ignored_while_running",
                 key(KeyCode::Char('y'), KeyModifiers::NONE),
                 ExecutionStage::Planning,
+                None,
             ),
-            None
-        );
-        assert_eq!(
-            execution_key_to_input(
+            (
+                "y_copies_diagnostic_after_failure",
                 key(KeyCode::Char('y'), KeyModifiers::NONE),
                 ExecutionStage::Failed,
+                Some(ExecutionInput::Copy(CopyTarget::Diagnostic)),
             ),
-            Some(ExecutionInput::Copy(CopyTarget::Diagnostic))
-        );
-        assert_eq!(
-            execution_key_to_input(
+            (
+                "uppercase_y_copies_result_after_failure",
                 key(KeyCode::Char('Y'), KeyModifiers::NONE),
                 ExecutionStage::Failed,
+                Some(ExecutionInput::Copy(CopyTarget::Result)),
             ),
-            Some(ExecutionInput::Copy(CopyTarget::Result))
-        );
+        ];
+
+        for (name, input, stage, expected) in cases {
+            assert_eq!(
+                execution_key_to_input(input, stage),
+                expected,
+                "case: {name}"
+            );
+        }
     }
 }

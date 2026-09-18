@@ -20,6 +20,7 @@ hcl = { package = "hcl-rs", version = "0.19.8" }
 
 [dev-dependencies]
 insta = "1"
+rstest = "0.26"
 
 [lints.rust]
 redundant_imports = "deny"

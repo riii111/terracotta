@@ -1014,6 +1014,7 @@ mod tests {
 
     use crossterm::event::{KeyEventKind, KeyEventState};
     use ratatui::buffer::Buffer;
+    use rstest::rstest;
     use serde_json::{Value, json};
 
     use crate::app::attribution::{SourceLineChange, attribute_changes};
@@ -1309,6 +1310,83 @@ mod tests {
         }
     }
 
+    #[rstest]
+    #[case::up_arrow(KeyCode::Up)]
+    #[case::up_vim(KeyCode::Char('k'))]
+    fn previous_selection_keys_map_to_previous_action(#[case] code: KeyCode) {
+        assert_eq!(
+            key_to_input(key(code)),
+            Some(DetailInput::Action(DetailAction::SelectPrevious))
+        );
+    }
+
+    #[rstest]
+    #[case::down_arrow(KeyCode::Down)]
+    #[case::down_vim(KeyCode::Char('j'))]
+    fn next_selection_keys_map_to_next_action(#[case] code: KeyCode) {
+        assert_eq!(
+            key_to_input(key(code)),
+            Some(DetailInput::Action(DetailAction::SelectNext))
+        );
+    }
+
+    #[test]
+    fn key_to_input_maps_non_selection_keys() {
+        let cases = [
+            (
+                "page_down",
+                key(KeyCode::PageDown),
+                Some(DetailInput::Action(DetailAction::PageDown)),
+            ),
+            ("back", key(KeyCode::Esc), Some(DetailInput::Back)),
+            ("quit", key(KeyCode::Char('q')), Some(DetailInput::Quit)),
+            (
+                "copy_resource",
+                key(KeyCode::Char('y')),
+                Some(DetailInput::Copy(CopyTarget::Resource)),
+            ),
+            (
+                "copy_plan",
+                key(KeyCode::Char('Y')),
+                Some(DetailInput::Copy(CopyTarget::Plan)),
+            ),
+            (
+                "expand",
+                key(KeyCode::Enter),
+                Some(DetailInput::Action(DetailAction::ToggleExpansion)),
+            ),
+            (
+                "reveal",
+                key(KeyCode::Char('r')),
+                Some(DetailInput::Action(DetailAction::Reveal)),
+            ),
+            (
+                "previous_resource",
+                key(KeyCode::Char('[')),
+                Some(DetailInput::Navigate(ResourceNavigation::Previous)),
+            ),
+            (
+                "next_resource",
+                key(KeyCode::Char(']')),
+                Some(DetailInput::Navigate(ResourceNavigation::Next)),
+            ),
+            (
+                "control_r_does_not_reveal",
+                key_with_modifiers(KeyCode::Char('r'), KeyModifiers::CONTROL),
+                None,
+            ),
+            (
+                "alt_r_does_not_reveal",
+                key_with_modifiers(KeyCode::Char('r'), KeyModifiers::ALT),
+                None,
+            ),
+        ];
+
+        for (name, input, expected) in cases {
+            assert_eq!(key_to_input(input), expected, "case: {name}");
+        }
+    }
+
     #[test]
     fn renders_diff_evidence_masks_special_values_and_omits_future_controls() {
         let state = state();
@@ -1538,10 +1616,6 @@ mod tests {
         let mut state = state();
         let initial_scroll = state.scroll();
 
-        assert_eq!(
-            key_to_input(key(KeyCode::Down)),
-            Some(DetailInput::Action(DetailAction::SelectNext))
-        );
         state.apply_at(DetailAction::SelectNext, 46, 4, Instant::now());
         assert!(state.scroll() > initial_scroll);
         state.apply_at(DetailAction::SelectNext, 46, 4, Instant::now());
@@ -1551,50 +1625,6 @@ mod tests {
         state.apply_at(DetailAction::PageDown, 46, 4, Instant::now());
         let text = buffer_text(&render(&state, 48, 12));
         assert!(!text.contains("synthetic-secret"), "{text}");
-        assert_eq!(
-            key_to_input(key(KeyCode::PageDown)),
-            Some(DetailInput::Action(DetailAction::PageDown))
-        );
-        assert_eq!(key_to_input(key(KeyCode::Esc)), Some(DetailInput::Back));
-        assert_eq!(
-            key_to_input(key(KeyCode::Char('q'))),
-            Some(DetailInput::Quit)
-        );
-        assert_eq!(
-            key_to_input(key(KeyCode::Char('y'))),
-            Some(DetailInput::Copy(CopyTarget::Resource))
-        );
-        assert_eq!(
-            key_to_input(key(KeyCode::Char('Y'))),
-            Some(DetailInput::Copy(CopyTarget::Plan))
-        );
-        assert_eq!(
-            key_to_input(key(KeyCode::Enter)),
-            Some(DetailInput::Action(DetailAction::ToggleExpansion))
-        );
-        assert_eq!(
-            key_to_input(key(KeyCode::Char('r'))),
-            Some(DetailInput::Action(DetailAction::Reveal))
-        );
-        assert_eq!(
-            key_to_input(key_with_modifiers(
-                KeyCode::Char('r'),
-                KeyModifiers::CONTROL,
-            )),
-            None
-        );
-        assert_eq!(
-            key_to_input(key_with_modifiers(KeyCode::Char('r'), KeyModifiers::ALT)),
-            None
-        );
-        assert_eq!(
-            key_to_input(key(KeyCode::Char('['))),
-            Some(DetailInput::Navigate(ResourceNavigation::Previous))
-        );
-        assert_eq!(
-            key_to_input(key(KeyCode::Char(']'))),
-            Some(DetailInput::Navigate(ResourceNavigation::Next))
-        );
     }
 
     #[test]

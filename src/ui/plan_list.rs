@@ -671,6 +671,7 @@ mod tests {
 
     use crossterm::event::{KeyEventKind, KeyEventState};
     use ratatui::buffer::Buffer;
+    use rstest::rstest;
 
     use crate::app::attribution::AnalysisIssue;
     use crate::app::review::{
@@ -696,6 +697,15 @@ mod tests {
         render_test_buffer((width, height), |frame| {
             render_plan_list_with_state(frame, state, list_state);
         })
+    }
+
+    fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
     }
 
     fn connected_state() -> PlanListState {
@@ -858,56 +868,78 @@ mod tests {
         assert!(text.contains("direct: storage.tf:8-10"), "{text}");
     }
 
-    #[test]
-    fn navigation_keys_select_adjacent_items_and_quit_keys_exit() {
-        let mut state = synthetic_state();
-        let key = |code, modifiers| KeyEvent {
-            code,
-            modifiers,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-
+    #[rstest]
+    #[case::up_arrow(KeyCode::Up)]
+    #[case::up_vim(KeyCode::Char('k'))]
+    fn previous_selection_keys_map_to_previous_action(#[case] code: KeyCode) {
         assert_eq!(
-            key_to_action(key(KeyCode::Char('j'), KeyModifiers::NONE)),
-            Some(ListInput::Selection(PlanListAction::SelectNext))
-        );
-        state.apply(PlanListAction::SelectNext);
-        assert_eq!(state.selected(), Some(1));
-        assert_eq!(
-            key_to_action(key(KeyCode::Up, KeyModifiers::NONE)),
+            key_to_action(key(code, KeyModifiers::NONE)),
             Some(ListInput::Selection(PlanListAction::SelectPrevious))
         );
+    }
+
+    #[rstest]
+    #[case::down_arrow(KeyCode::Down)]
+    #[case::down_vim(KeyCode::Char('j'))]
+    fn next_selection_keys_map_to_next_action(#[case] code: KeyCode) {
+        assert_eq!(
+            key_to_action(key(code, KeyModifiers::NONE)),
+            Some(ListInput::Selection(PlanListAction::SelectNext))
+        );
+    }
+
+    #[test]
+    fn selection_actions_select_adjacent_items() {
+        let mut state = synthetic_state();
+        state.apply(PlanListAction::SelectNext);
+        assert_eq!(state.selected(), Some(1));
         state.apply(PlanListAction::SelectPrevious);
         assert_eq!(state.selected(), Some(0));
-        assert_eq!(
-            key_to_action(key(KeyCode::Char('q'), KeyModifiers::NONE)),
-            Some(ListInput::Quit)
-        );
-        assert_eq!(
-            key_to_action(key(KeyCode::Char('c'), KeyModifiers::CONTROL)),
-            Some(ListInput::Quit)
-        );
-        assert_eq!(
-            key_to_action(key(KeyCode::Enter, KeyModifiers::NONE)),
-            Some(ListInput::OpenDetail)
-        );
-        assert_eq!(
-            key_to_action(key(KeyCode::Char('f'), KeyModifiers::NONE)),
-            Some(ListInput::Selection(PlanListAction::ToggleFilter))
-        );
-        assert_eq!(
-            key_to_action(key(KeyCode::Char('/'), KeyModifiers::NONE)),
-            Some(ListInput::StartSearch)
-        );
-        assert_eq!(
-            key_to_action(key(KeyCode::Char('y'), KeyModifiers::NONE)),
-            Some(ListInput::Copy(CopyTarget::Resource))
-        );
-        assert_eq!(
-            key_to_action(key(KeyCode::Char('Y'), KeyModifiers::NONE)),
-            Some(ListInput::Copy(CopyTarget::Plan))
-        );
+    }
+
+    #[test]
+    fn key_to_action_maps_non_selection_keys() {
+        let cases = [
+            (
+                "quit",
+                key(KeyCode::Char('q'), KeyModifiers::NONE),
+                Some(ListInput::Quit),
+            ),
+            (
+                "control_c_quit",
+                key(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                Some(ListInput::Quit),
+            ),
+            (
+                "open_detail",
+                key(KeyCode::Enter, KeyModifiers::NONE),
+                Some(ListInput::OpenDetail),
+            ),
+            (
+                "toggle_filter",
+                key(KeyCode::Char('f'), KeyModifiers::NONE),
+                Some(ListInput::Selection(PlanListAction::ToggleFilter)),
+            ),
+            (
+                "start_search",
+                key(KeyCode::Char('/'), KeyModifiers::NONE),
+                Some(ListInput::StartSearch),
+            ),
+            (
+                "copy_resource",
+                key(KeyCode::Char('y'), KeyModifiers::NONE),
+                Some(ListInput::Copy(CopyTarget::Resource)),
+            ),
+            (
+                "copy_plan",
+                key(KeyCode::Char('Y'), KeyModifiers::NONE),
+                Some(ListInput::Copy(CopyTarget::Plan)),
+            ),
+        ];
+
+        for (name, input, expected) in cases {
+            assert_eq!(key_to_action(input), expected, "case: {name}");
+        }
     }
 
     #[test]

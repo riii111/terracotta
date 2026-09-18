@@ -655,6 +655,8 @@ const fn is_identifier_continue(byte: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
     fn after(source: &str) -> HclSourceFile {
@@ -864,24 +866,14 @@ resource "terraform_data" "directive" {
         assert!(result.is_complete());
     }
 
-    #[test]
-    fn rejects_invalid_hcl_with_balanced_braces() {
-        for source in [
-            "resource \"aws_vpc\" \"main\" {\n  cidr_block =\n}\n",
-            "value = resource \"aws_vpc\" \"main\" {}\n",
-        ] {
-            let result = parse_files([after(source)]);
+    #[rstest]
+    #[case::incomplete_block("resource \"aws_vpc\" \"main\" {\n  cidr_block =\n}\n")]
+    #[case::resource_expression("value = resource \"aws_vpc\" \"main\" {}\n")]
+    #[case::malformed_resource_header("resource \"aws_instance\" {\n}\n")]
+    fn rejects_malformed_hcl_without_resources(#[case] source: &str) {
+        let result = parse_files([after(source)]);
 
-            assert!(!result.is_complete(), "source: {source}");
-            assert!(result.files[0].has_issue(SourceIssueKind::SyntaxError));
-            assert!(result.files[0].resources().is_empty());
-        }
-    }
-
-    #[test]
-    fn reports_malformed_resource_header() {
-        let result = parse_files([after("resource \"aws_instance\" {\n}\n")]);
-
+        assert!(!result.is_complete());
         assert!(result.files[0].has_issue(SourceIssueKind::SyntaxError));
         assert!(result.files[0].resources().is_empty());
     }
