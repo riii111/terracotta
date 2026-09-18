@@ -1,6 +1,7 @@
 ---
-source: src/ui/execution/tests/render_snapshots.rs
-expression: "buffer_text(&render_to_buffer(REPRESENTATIVE_TERMINAL_SIZE, |frame|\nrender_execution(frame, &state, started_at + Duration::from_secs(5)),))"
+source: src/ui/features/execution/tests/render_snapshots.rs
+assertion_line: 26
+expression: "buffer_text(&render_to_buffer(&state, started_at + Duration::from_secs(5),\nREPRESENTATIVE_TERMINAL_SIZE.0, REPRESENTATIVE_TERMINAL_SIZE.1,))"
 ---
 ┌Terracotta / Planning──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │cwd infra/prod   workspace default                                                                                                                                 │

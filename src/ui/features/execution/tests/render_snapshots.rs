@@ -1,4 +1,3 @@
-use super::*;
 use crate::ui::test_support::REPRESENTATIVE_TERMINAL_SIZE;
 
 #[test]

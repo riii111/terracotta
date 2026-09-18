@@ -5,10 +5,11 @@
 
 use crate::runtime;
 
-pub(crate) mod execution;
+pub(crate) mod features;
 mod input;
-pub(crate) mod plan_list;
-pub(crate) mod resource_detail;
+mod primitives;
+mod shell;
+mod theme;
 
 #[cfg(test)]
 mod test_support;

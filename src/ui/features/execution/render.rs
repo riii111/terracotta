@@ -1,122 +1,23 @@
 use std::time::{Duration, Instant};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Paragraph};
 
-use crate::app::copy::CopyTarget;
 use crate::app::execution::{Diagnostic, DiagnosticSeverity, ResourceEventKind, ResourceProgress};
-use crate::app::execution::{ExecutionAction, ExecutionStage, ExecutionState};
+use crate::app::execution::{ExecutionStage, ExecutionState};
+use crate::ui::primitives::atoms::separator;
+use crate::ui::primitives::molecules::terminal_notice;
+use crate::ui::shell::{footer, header};
 
-#[cfg(test)]
-use crate::app::execution::{ExecutionContext, ExecutionEvent, ExecutionEventKind, ResourceEvent};
+use super::ExecutionViewState;
 
 const MIN_HEIGHT: u16 = 11;
 const MIN_WIDTH: u16 = 48;
 const STATUS_HEIGHT: u16 = 3;
 const SEPARATOR_HEIGHT: u16 = 1;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ExecutionScroll {
-    Up,
-    Down,
-    PageUp,
-    PageDown,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct ExecutionViewState {
-    scroll: u16,
-    follow: bool,
-}
-
-impl ExecutionViewState {
-    #[must_use]
-    pub(crate) const fn from_state(_state: &ExecutionState) -> Self {
-        Self {
-            scroll: 0,
-            follow: true,
-        }
-    }
-
-    pub(crate) fn apply_scroll(
-        &mut self,
-        action: ExecutionScroll,
-        current_offset: u16,
-        max_offset: u16,
-    ) {
-        let offset = match action {
-            ExecutionScroll::Up => current_offset.saturating_sub(1),
-            ExecutionScroll::Down => current_offset.saturating_add(1).min(max_offset),
-            ExecutionScroll::PageUp => current_offset.saturating_sub(8),
-            ExecutionScroll::PageDown => current_offset.saturating_add(8).min(max_offset),
-        };
-        self.follow = false;
-        self.scroll = offset;
-    }
-
-    pub(crate) const fn end(&mut self) {
-        self.follow = true;
-        self.scroll = 0;
-    }
-
-    #[must_use]
-    pub(crate) const fn follows_latest(self) -> bool {
-        self.follow
-    }
-
-    #[must_use]
-    pub(crate) const fn scroll(self) -> u16 {
-        self.scroll
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ExecutionInput {
-    Action(ExecutionAction),
-    Scroll(ExecutionScroll),
-    Copy(CopyTarget),
-    End,
-    Quit,
-}
-
-pub(crate) fn execution_key_to_input(
-    key: KeyEvent,
-    stage: ExecutionStage,
-) -> Option<ExecutionInput> {
-    let key = super::input::normalize_key(key);
-
-    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-        return Some(if stage == ExecutionStage::Failed {
-            ExecutionInput::Quit
-        } else {
-            ExecutionInput::Action(ExecutionAction::RequestCancellation)
-        });
-    }
-
-    if stage == ExecutionStage::Failed && key.code == KeyCode::Char('q') {
-        return Some(ExecutionInput::Quit);
-    }
-    if stage == ExecutionStage::Failed && key.modifiers == KeyModifiers::NONE {
-        match key.code {
-            KeyCode::Char('y') => return Some(ExecutionInput::Copy(CopyTarget::Diagnostic)),
-            KeyCode::Char('Y') => return Some(ExecutionInput::Copy(CopyTarget::Result)),
-            _ => {}
-        }
-    }
-
-    match key.code {
-        KeyCode::Up | KeyCode::Char('k') => Some(ExecutionInput::Scroll(ExecutionScroll::Up)),
-        KeyCode::Down | KeyCode::Char('j') => Some(ExecutionInput::Scroll(ExecutionScroll::Down)),
-        KeyCode::PageUp => Some(ExecutionInput::Scroll(ExecutionScroll::PageUp)),
-        KeyCode::PageDown => Some(ExecutionInput::Scroll(ExecutionScroll::PageDown)),
-        KeyCode::End => Some(ExecutionInput::End),
-        _ => None,
-    }
-}
 
 #[cfg(test)]
 pub(crate) fn render_execution(frame: &mut Frame<'_>, state: &ExecutionState, now: Instant) {
@@ -132,7 +33,12 @@ pub(crate) fn render_execution_with_view(
 ) {
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT || !has_execution_space(area, state) {
-        render_too_small(frame, area, state.stage());
+        let message = if state.stage() == ExecutionStage::Failed {
+            "Terminal too small. Resize or press q to quit."
+        } else {
+            "Terminal too small. Resize or press Ctrl-C to cancel."
+        };
+        terminal_notice::render_wrapped(frame, area, message);
         return;
     }
 
@@ -143,9 +49,10 @@ pub(crate) fn render_execution_with_view(
 
     let chunks = execution_chunks(area, state);
 
-    frame.render_widget(
-        Paragraph::new(wrapped_lines(&context_lines(state), chunks[0].width)),
+    header::render(
+        frame,
         chunks[0],
+        wrapped_lines(&context_lines(state), chunks[0].width),
     );
     frame.render_widget(
         Paragraph::new(status_lines_with_view(state, view, now)),
@@ -163,10 +70,11 @@ pub(crate) fn render_execution_with_view(
         view.scroll().min(max_scroll)
     };
     frame.render_widget(paragraph.scroll((scroll, 0)), chunks[2]);
-    frame.render_widget(separator(chunks[3].width), chunks[3]);
-    frame.render_widget(
-        Paragraph::new(wrapped_lines(&[footer_line(state)], chunks[4].width)),
+    frame.render_widget(separator::render(chunks[3].width), chunks[3]);
+    footer::render(
+        frame,
         chunks[4],
+        wrapped_lines(&[footer_line(state)], chunks[4].width),
     );
 }
 
@@ -221,20 +129,6 @@ pub(crate) fn execution_scroll_position_with_view(
         view.scroll().min(max_scroll)
     };
     (current_scroll, max_scroll)
-}
-
-fn render_too_small(frame: &mut Frame<'_>, area: Rect, stage: ExecutionStage) {
-    let message = if stage == ExecutionStage::Failed {
-        "Terminal too small. Resize or press q to quit."
-    } else {
-        "Terminal too small. Resize or press Ctrl-C to cancel."
-    };
-    frame.render_widget(
-        Paragraph::new(message)
-            .wrap(Wrap { trim: false })
-            .style(Style::default().add_modifier(Modifier::BOLD)),
-        area,
-    );
 }
 
 fn status_lines_with_view(
@@ -436,10 +330,6 @@ fn format_elapsed(elapsed: Duration) -> String {
     )
 }
 
-fn separator(width: u16) -> Paragraph<'static> {
-    Paragraph::new("─".repeat(usize::from(width))).style(Style::default().fg(Color::DarkGray))
-}
-
 fn footer_line(state: &ExecutionState) -> String {
     let notice = state
         .copy_notice()
@@ -454,19 +344,22 @@ fn footer_line(state: &ExecutionState) -> String {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::buffer::Buffer;
-    use rstest::rstest;
-
     use crate::ui::test_support::buffer_text;
     use crate::ui::test_support::render_to_buffer as render_test_buffer;
+    use ratatui::buffer::Buffer;
 
-    use super::super::super::app::execution::{
+    use crate::app::execution::{
+        ExecutionAction, ExecutionContext, ExecutionEvent, ExecutionEventKind, ResourceEvent,
+    };
+    use crate::ui::features::execution::ExecutionScroll;
+
+    use super::*;
+    use crate::app::execution::{
         DiagnosticPoint, DiagnosticPosition, DiagnosticSource, ExecutionPhase, ProcessExitStatus,
         ProcessTermination,
     };
-    use super::*;
 
-    mod render_snapshots;
+    include!("tests/render_snapshots.rs");
 
     fn event(received_at: Instant, kind: ExecutionEventKind) -> ExecutionEvent {
         ExecutionEvent { received_at, kind }
@@ -486,10 +379,6 @@ mod tests {
         render_test_buffer((width, height), |frame| {
             render_execution_with_view(frame, state, view, now);
         })
-    }
-
-    fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
-        KeyEvent::new(code, modifiers)
     }
 
     fn resource_event(at: Instant, address: &str, kind: ResourceEventKind) -> ExecutionEvent {
@@ -809,98 +698,6 @@ mod tests {
         assert!(
             failed_text.contains("Resize or press q to quit."),
             "{failed_text}"
-        );
-    }
-
-    #[test]
-    fn key_mapping_respects_execution_stage() {
-        use crossterm::event::{KeyEventKind, KeyEventState};
-
-        let key = |code, modifiers| KeyEvent {
-            code,
-            modifiers,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-
-        let cases = [
-            (
-                "control_c_cancels_running",
-                key(KeyCode::Char('c'), KeyModifiers::CONTROL),
-                ExecutionStage::Planning,
-                Some(ExecutionInput::Action(ExecutionAction::RequestCancellation)),
-            ),
-            (
-                "q_is_ignored_while_running",
-                key(KeyCode::Char('q'), KeyModifiers::NONE),
-                ExecutionStage::Planning,
-                None,
-            ),
-            (
-                "q_quits_failed",
-                key(KeyCode::Char('q'), KeyModifiers::NONE),
-                ExecutionStage::Failed,
-                Some(ExecutionInput::Quit),
-            ),
-            (
-                "control_c_quits_failed",
-                key(KeyCode::Char('c'), KeyModifiers::CONTROL),
-                ExecutionStage::Failed,
-                Some(ExecutionInput::Quit),
-            ),
-            (
-                "y_is_ignored_while_running",
-                key(KeyCode::Char('y'), KeyModifiers::NONE),
-                ExecutionStage::Planning,
-                None,
-            ),
-            (
-                "y_copies_diagnostic_after_failure",
-                key(KeyCode::Char('y'), KeyModifiers::NONE),
-                ExecutionStage::Failed,
-                Some(ExecutionInput::Copy(CopyTarget::Diagnostic)),
-            ),
-        ];
-
-        for (name, input, stage, expected) in cases {
-            assert_eq!(
-                execution_key_to_input(input, stage),
-                expected,
-                "case: {name}"
-            );
-        }
-    }
-
-    #[rstest]
-    #[case::uppercase_without_shift(KeyModifiers::NONE)]
-    #[case::uppercase_with_redundant_shift(KeyModifiers::SHIFT)]
-    fn uppercase_y_copies_result_after_failure(#[case] modifiers: KeyModifiers) {
-        assert_eq!(
-            execution_key_to_input(key(KeyCode::Char('Y'), modifiers), ExecutionStage::Failed,),
-            Some(ExecutionInput::Copy(CopyTarget::Result))
-        );
-    }
-
-    #[rstest]
-    #[case::control(KeyModifiers::CONTROL)]
-    #[case::control_with_redundant_shift(KeyModifiers::CONTROL | KeyModifiers::SHIFT)]
-    #[case::alt(KeyModifiers::ALT)]
-    #[case::alt_with_redundant_shift(KeyModifiers::ALT | KeyModifiers::SHIFT)]
-    fn uppercase_y_with_control_or_alt_does_not_copy(#[case] modifiers: KeyModifiers) {
-        assert_eq!(
-            execution_key_to_input(key(KeyCode::Char('Y'), modifiers), ExecutionStage::Failed,),
-            None
-        );
-    }
-
-    #[rstest]
-    #[case::lowercase(KeyCode::Char('y'), KeyModifiers::NONE)]
-    #[case::uppercase(KeyCode::Char('Y'), KeyModifiers::NONE)]
-    #[case::uppercase_with_redundant_shift(KeyCode::Char('Y'), KeyModifiers::SHIFT)]
-    fn copy_keys_are_ignored_while_running(#[case] code: KeyCode, #[case] modifiers: KeyModifiers) {
-        assert_eq!(
-            execution_key_to_input(key(code, modifiers), ExecutionStage::Planning),
-            None
         );
     }
 }
