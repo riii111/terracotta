@@ -6,7 +6,7 @@ use std::{
 
 use hcl::Structure;
 
-use crate::app::source_location::{
+use crate::app::attribution::{
     ResourceAddress, ResourceSourceLocation, SourceFileAnalysis, SourceIssue, SourceIssueKind,
     SourceRange, SourceSide,
 };

@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::fmt::{Debug, Formatter, Write};
 
-use super::plan::{PlanValue, ReplacePathSegment, ResourceChange, ResourceChangeKind};
+use super::{PlanValue, ReplacePathSegment, ResourceChange, ResourceChangeKind};
 
 const ABSENT_DISPLAY: &str = "<absent>";
 const SENSITIVE_DISPLAY: &str = "<sensitive>";

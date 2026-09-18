@@ -1,3 +1,7 @@
+mod text;
+
+pub(crate) use text::{failed_diagnostic_text, failed_text, plan_text, resource_text};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CopyTarget {
     Resource,

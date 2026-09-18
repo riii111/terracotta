@@ -10,11 +10,11 @@ use ratatui::{DefaultTerminal, Frame};
 
 use crate::app::copy::CopyTarget;
 use crate::app::execution::{
-    ExecutionAction, ExecutionContext, ExecutionScroll, ExecutionStage, ExecutionState,
-};
-use crate::app::progress::{
     Diagnostic, DiagnosticSeverity, ExecutionEvent, ExecutionEventKind, ResourceEvent,
     ResourceEventKind,
+};
+use crate::app::execution::{
+    ExecutionAction, ExecutionContext, ExecutionScroll, ExecutionStage, ExecutionState,
 };
 
 const MIN_HEIGHT: u16 = 11;
@@ -449,7 +449,7 @@ mod tests {
     use crate::ui::test_support::buffer_text;
     use crate::ui::test_support::render_to_buffer as render_test_buffer;
 
-    use super::super::super::app::progress::{
+    use super::super::super::app::execution::{
         DiagnosticPoint, DiagnosticPosition, DiagnosticSource,
     };
     use super::*;

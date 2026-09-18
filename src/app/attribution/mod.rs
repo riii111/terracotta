@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use super::plan::{ResourceChange, ResourceChangeKind, ResourceMode};
-use super::source_location::{
+mod source_location;
+
+pub(crate) use source_location::{
     ResourceAddress, ResourceSourceLocation, SourceFileAnalysis, SourceIssue, SourceIssueKind,
     SourceRange, SourceSide,
 };

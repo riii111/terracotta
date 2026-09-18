@@ -10,8 +10,9 @@ use std::{
 
 use crate::{
     app::{
-        execution::{ExecutionContext, ExecutionState},
-        progress::{ExecutionEvent, ExecutionEventKind, ExecutionPhase},
+        execution::{
+            ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionPhase, ExecutionState,
+        },
         review::PlanReviewMessage,
     },
     infra::{

@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use serde_json::{Map, Value};
 
-use crate::app::progress::{
+use crate::app::execution::{
     Diagnostic, DiagnosticPoint, DiagnosticPosition, DiagnosticSeverity, DiagnosticSource,
     EventStream, ExecutionEvent, ExecutionEventKind, ExecutionSummary, ResourceEvent,
     ResourceEventKind,

@@ -4,13 +4,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::attribute_diff::{AttributeDiffs, diff_resource_attributes};
-use super::attribution::{AttributionStatus, ResourceAttribution};
-use super::copy::{CopyEffect, CopyNotice, CopyTarget};
-use super::copy_text;
-use super::plan::{Plan, PlanSummary, ResourceChange, ResourceChangeKind, UnsupportedChangeKind};
-use super::review::PlanReview;
-use super::source_location::SourceFileAnalysis;
+use crate::app::attribution::{ResourceAttribution, SourceFileAnalysis};
+use crate::app::copy::{self, CopyEffect, CopyNotice, CopyTarget};
+use crate::app::plan::{Plan, PlanSummary, UnsupportedChangeKind};
+use crate::app::review::PlanReview;
+
+use super::PlanListItem;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PlanListError {
@@ -108,13 +107,6 @@ pub(crate) struct PlanListContext {
     git: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PlanListItem {
-    change: ResourceChange,
-    attribution: ResourceAttribution,
-    resource_copy_text: Option<String>,
-}
-
 impl PlanListState {
     pub(crate) fn from_review(review: &PlanReview) -> Result<Self, PlanListError> {
         let mut state = Self::from_plan(
@@ -137,13 +129,13 @@ impl PlanListState {
         }
         state.source_files = review.source_files().to_vec();
         for item in &mut state.items {
-            item.resource_copy_text = Some(copy_text::resource_text(
-                &item.change,
-                &item.attribution,
+            item.set_resource_copy_text(copy::resource_text(
+                item.change(),
+                item.attribution(),
                 review.comparison(),
             ));
         }
-        state.plan_copy_text = Some(copy_text::plan_text(review));
+        state.plan_copy_text = Some(copy::plan_text(review));
         state.context = Some(PlanListContext {
             root: review.root().to_owned(),
             workspace: review.workspace().to_owned(),
@@ -179,11 +171,7 @@ impl PlanListState {
                     });
                 }
 
-                Ok(PlanListItem {
-                    change,
-                    attribution,
-                    resource_copy_text: None,
-                })
+                Ok(PlanListItem::new(change, attribution))
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -424,75 +412,6 @@ impl PlanListState {
     }
 }
 
-impl PlanListItem {
-    #[must_use]
-    pub(crate) fn address(&self) -> &str {
-        &self.change.address
-    }
-
-    #[must_use]
-    pub(crate) const fn kind(&self) -> ResourceChangeKind {
-        self.change.kind
-    }
-
-    #[must_use]
-    pub(crate) const fn needs_review(&self) -> bool {
-        self.attribution.needs_review()
-    }
-
-    #[must_use]
-    pub(crate) const fn attribution(&self) -> &ResourceAttribution {
-        &self.attribution
-    }
-
-    #[must_use]
-    pub(crate) fn attribute_diffs(&self) -> AttributeDiffs {
-        diff_resource_attributes(&self.change)
-    }
-
-    #[must_use]
-    fn copy_effect(&self, target: CopyTarget, resource_count: usize) -> Option<CopyEffect> {
-        Some(CopyEffect::new(
-            target,
-            resource_count,
-            self.resource_copy_text.clone()?,
-        ))
-    }
-
-    #[must_use]
-    pub(crate) fn git_label(&self) -> String {
-        if !self.attribution.analysis().is_complete() {
-            return "incomplete".to_owned();
-        }
-
-        match self.attribution.status() {
-            AttributionStatus::NoMatch => "no match".to_owned(),
-            AttributionStatus::Direct => self.attribution.evidence().first().map_or_else(
-                || "direct".to_owned(),
-                |evidence| {
-                    let range = evidence.range();
-                    let location = if range.start_line() == range.end_line() {
-                        format!("{}:{}", evidence.path().display(), range.start_line())
-                    } else {
-                        format!(
-                            "{}:{}-{}",
-                            evidence.path().display(),
-                            range.start_line(),
-                            range.end_line()
-                        )
-                    };
-                    let additional = self.attribution.evidence().len().saturating_sub(1);
-                    if additional == 0 {
-                        format!("direct: {location}")
-                    } else {
-                        format!("direct: {location} (+{additional} more)")
-                    }
-                },
-            ),
-        }
-    }
-}
-
 impl PlanListContext {
     #[must_use]
     pub(crate) fn root(&self) -> &Path {
@@ -529,20 +448,19 @@ impl UnsupportedChangeKind {
 
 #[cfg(test)]
 mod tests {
-    use super::super::attribution::{
-        AnalysisIssue, SourceLineChange, attribute_changes, mark_analysis_incomplete,
-    };
-    use super::super::review::{ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus};
-    use super::super::source_location::{
-        ResourceAddress, ResourceSourceLocation, SourceRange, SourceSide,
-    };
     use super::*;
+    use crate::app::attribution::{
+        AnalysisIssue, ResourceAddress, ResourceSourceLocation, SourceLineChange, SourceRange,
+        SourceSide, attribute_changes, mark_analysis_incomplete,
+    };
+    use crate::app::plan::{PlanAction, ResourceChange, ResourceChangeKind, ResourceMode};
+    use crate::app::review::{ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus};
 
     fn state() -> PlanListState {
         let change = ResourceChange {
             address: "aws_instance.api".to_owned(),
-            mode: super::super::plan::ResourceMode::Managed,
-            actions: vec![super::super::plan::PlanAction::Update],
+            mode: ResourceMode::Managed,
+            actions: vec![PlanAction::Update],
             kind: ResourceChangeKind::Update,
             before: None,
             after: None,
@@ -552,10 +470,9 @@ mod tests {
             replace_paths: None,
             action_reason: None,
         };
-        let attribution =
-            super::super::attribution::attribute_changes(std::slice::from_ref(&change), &[], &[])
-                .pop()
-                .expect("one change should produce one attribution");
+        let attribution = attribute_changes(std::slice::from_ref(&change), &[], &[])
+            .pop()
+            .expect("one change should produce one attribution");
         PlanListState::from_plan(
             Plan {
                 changes: vec![change],
@@ -637,8 +554,8 @@ mod tests {
     fn change(address: &str) -> ResourceChange {
         ResourceChange {
             address: address.to_owned(),
-            mode: super::super::plan::ResourceMode::Managed,
-            actions: vec![super::super::plan::PlanAction::Update],
+            mode: ResourceMode::Managed,
+            actions: vec![PlanAction::Update],
             kind: ResourceChangeKind::Update,
             before: None,
             after: None,
@@ -812,8 +729,8 @@ mod tests {
     fn mismatched_attribution_is_rejected() {
         let change = ResourceChange {
             address: "aws_instance.api".to_owned(),
-            mode: super::super::plan::ResourceMode::Managed,
-            actions: vec![super::super::plan::PlanAction::Update],
+            mode: ResourceMode::Managed,
+            actions: vec![PlanAction::Update],
             kind: ResourceChangeKind::Update,
             before: None,
             after: None,
@@ -853,7 +770,7 @@ mod tests {
                 changes: source
                     .items
                     .iter()
-                    .map(|item| item.change.clone())
+                    .map(|item| item.change().clone())
                     .collect(),
                 summary: source.summary,
                 unsupported_changes: Vec::new(),
@@ -862,7 +779,7 @@ mod tests {
             source
                 .items
                 .iter()
-                .map(|item| item.attribution.clone())
+                .map(|item| item.attribution().clone())
                 .collect(),
             ReviewComparison::new(
                 ReviewComparisonBasis::WorkingTreeVsHead,

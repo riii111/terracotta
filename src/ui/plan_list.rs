@@ -8,16 +8,16 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::{DefaultTerminal, Frame};
 
+use crate::app::attribution::{
+    ResourceAddress, ResourceSourceLocation, SourceFileAnalysis, SourceRange, SourceSide,
+};
 use crate::app::attribution::{SourceLineChange as AttributionSourceLineChange, attribute_changes};
 use crate::app::copy::CopyTarget;
 use crate::app::plan::{
     Plan, PlanAction, PlanSummary, PlanValue, ResourceChange, ResourceChangeKind, ResourceMode,
     UnsupportedChange, UnsupportedChangeKind, UnsupportedChangeScope,
 };
-use crate::app::plan_list::{PlanListAction, PlanListFilter, PlanListItem, PlanListState};
-use crate::app::source_location::{
-    ResourceAddress, ResourceSourceLocation, SourceFileAnalysis, SourceRange, SourceSide,
-};
+use crate::app::review::{PlanListAction, PlanListFilter, PlanListItem, PlanListState};
 
 const MIN_HEIGHT: u16 = 11;
 const MIN_CONTENT_HEIGHT: u16 = MIN_HEIGHT - 2;

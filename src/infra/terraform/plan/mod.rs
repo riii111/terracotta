@@ -10,7 +10,7 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 
-use crate::app::progress::{ExecutionEvent, ExecutionPhase};
+use crate::app::execution::{ExecutionEvent, ExecutionPhase};
 
 use super::{
     command::{
@@ -204,11 +204,11 @@ mod tests {
 
     use serde_json::json;
 
-    use crate::app::progress::{Diagnostic, DiagnosticSource, ResourceEvent, ResourceEventKind};
+    use crate::app::execution::{Diagnostic, DiagnosticSource, ResourceEvent, ResourceEventKind};
 
     use super::super::command::{ProcessOutput, ProcessOutputChunk, RunningProcess};
     use super::*;
-    use crate::app::progress::{
+    use crate::app::execution::{
         EventStream, ExecutionEventKind, ProcessExitStatus, ProcessTermination,
     };
     use std::process::Command;
