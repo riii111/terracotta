@@ -24,10 +24,7 @@ use crate::{
         review::PlanReviewMessage,
         session::SessionOutcome,
     },
-    infra::{
-        ClipboardExecutor, review,
-        terraform::{CancellationToken, TerraformExecutionErrorKind},
-    },
+    infra::{CancellationToken, ClipboardExecutor, review},
 };
 
 #[cfg(feature = "test-support")]
@@ -72,14 +69,22 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
             );
             let message = match result {
                 Ok(review) => PlanReviewMessage::Completed(review),
-                Err(error) => PlanReviewMessage::Failed {
-                    message: error.to_string(),
-                    interrupted: matches!(
-                        error.kind(),
-                        TerraformExecutionErrorKind::Interrupted { .. }
-                    ),
+                Err(error) => match error {
+                    review::ReviewError::Interrupted => PlanReviewMessage::Failed {
+                        message: "review was interrupted".to_owned(),
+                        interrupted: true,
+                    },
+                    review::ReviewError::Terraform(error) => PlanReviewMessage::Failed {
+                        message: error.to_string(),
+                        interrupted: false,
+                    },
                 },
             };
+            if worker_cancellation.is_cancelled()
+                && matches!(&message, PlanReviewMessage::Completed(_))
+            {
+                return;
+            }
             let _ = sender.send(message);
         }) {
         Ok(worker) => worker,

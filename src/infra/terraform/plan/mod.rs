@@ -12,10 +12,11 @@ use std::os::unix::fs::OpenOptionsExt;
 
 use crate::app::execution::{ExecutionEvent, ExecutionPhase};
 use crate::app::plan::Plan;
+use crate::infra::CancellationToken;
 
 use super::{
     command::{
-        CancellationToken, ProcessRunner, ProcessStatus, TerraformCommand, TerraformExecutionError,
+        ProcessRunner, ProcessStatus, TerraformCommand, TerraformExecutionError,
         TerraformExecutionErrorKind, interrupted_error, non_zero_error, run_command_with_events,
     },
     show::read_plan,

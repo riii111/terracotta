@@ -4,11 +4,7 @@ use std::{
     io::{self, Read},
     path::Path,
     process::{Child, Command, ExitStatus, Stdio},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-        mpsc::{self, Receiver, Sender, TryRecvError},
-    },
+    sync::mpsc::{self, Receiver, Sender, TryRecvError},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
@@ -16,31 +12,11 @@ use std::{
 use crate::app::execution::{
     EventStream, ExecutionEvent, ExecutionEventKind, ProcessExitStatus, ProcessTermination,
 };
+use crate::infra::CancellationToken;
 
 use super::{events::TerraformEventParser, show::PlanParseError};
 
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(10);
-
-#[derive(Clone, Default)]
-pub(crate) struct CancellationToken {
-    cancelled: Arc<AtomicBool>,
-}
-
-impl CancellationToken {
-    #[must_use]
-    pub(crate) fn new() -> Self {
-        Self::default()
-    }
-
-    pub(crate) fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Relaxed);
-    }
-
-    #[must_use]
-    pub(crate) fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Relaxed)
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TerraformCommand {

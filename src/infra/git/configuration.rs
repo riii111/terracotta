@@ -4,10 +4,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::infra::CancellationToken;
 use crate::infra::terraform::hcl::HclSourceFile;
 
 use super::{
-    command::{checked_git, nul_fields},
+    command::{GitCommandError, checked_git, nul_fields},
     diff::{ComparisonBasis, GitDiff},
 };
 
@@ -138,6 +139,14 @@ impl ConfigurationComparisons {
 }
 
 pub(crate) fn capture_working_tree_configuration(root: &Path) -> ConfigurationSnapshot {
+    capture_working_tree_configuration_with_cancellation(root, &CancellationToken::new())
+        .expect("working tree configuration should not be interrupted without cancellation")
+}
+
+pub(crate) fn capture_working_tree_configuration_with_cancellation(
+    root: &Path,
+    cancellation: &CancellationToken,
+) -> Result<ConfigurationSnapshot, GitCommandError> {
     let mut snapshot = ConfigurationSnapshot {
         files: Vec::new(),
         issues: Vec::new(),
@@ -149,7 +158,7 @@ pub(crate) fn capture_working_tree_configuration(root: &Path) -> ConfigurationSn
                 "failed to read Terraform configuration directory {}: {error}",
                 root.display()
             ));
-            return snapshot;
+            return Ok(snapshot);
         }
     };
 
@@ -160,6 +169,11 @@ pub(crate) fn capture_working_tree_configuration(root: &Path) -> ConfigurationSn
         .collect::<Vec<_>>();
     paths.sort();
     for path in paths {
+        if cancellation.is_cancelled() {
+            return Err(GitCommandError::interrupted(
+                "read working tree configuration",
+            ));
+        }
         match fs::read(&path) {
             Ok(contents) => snapshot.files.push(ConfigurationFile { path, contents }),
             Err(error) => snapshot.issues.push(format!(
@@ -168,7 +182,7 @@ pub(crate) fn capture_working_tree_configuration(root: &Path) -> ConfigurationSn
             )),
         }
     }
-    snapshot
+    Ok(snapshot)
 }
 
 pub(crate) fn capture_revision_configuration(
@@ -176,6 +190,21 @@ pub(crate) fn capture_revision_configuration(
     root: &Path,
     revision: &str,
 ) -> ConfigurationSnapshot {
+    capture_revision_configuration_with_cancellation(
+        repository_root,
+        root,
+        revision,
+        &CancellationToken::new(),
+    )
+    .expect("Git configuration should not be interrupted without cancellation")
+}
+
+pub(crate) fn capture_revision_configuration_with_cancellation(
+    repository_root: &Path,
+    root: &Path,
+    revision: &str,
+    cancellation: &CancellationToken,
+) -> Result<ConfigurationSnapshot, GitCommandError> {
     let mut snapshot = ConfigurationSnapshot {
         files: Vec::new(),
         issues: Vec::new(),
@@ -186,7 +215,7 @@ pub(crate) fn capture_revision_configuration(
             snapshot.issues.push(format!(
                 "failed to resolve Terraform root in Git repository: {error}"
             ));
-            return snapshot;
+            return Ok(snapshot);
         }
     };
     let root_spec = if root_relative.as_os_str().is_empty() {
@@ -207,13 +236,17 @@ pub(crate) fn capture_revision_configuration(
             OsStr::new("--"),
             root_spec,
         ],
+        cancellation,
     ) {
         Ok(output) => output,
         Err(error) => {
             snapshot
                 .issues
                 .push(format!("{}: {}", error.operation, error.message));
-            return snapshot;
+            if error.is_interrupted() {
+                return Err(error);
+            }
+            return Ok(snapshot);
         }
     };
     let paths = match nul_fields(&output.stdout, "parse Git Terraform configuration") {
@@ -222,10 +255,15 @@ pub(crate) fn capture_revision_configuration(
             snapshot
                 .issues
                 .push(format!("{}: {}", error.operation, error.message));
-            return snapshot;
+            return Ok(snapshot);
         }
     };
     for relative in paths {
+        if cancellation.is_cancelled() {
+            return Err(GitCommandError::interrupted(
+                "read Git Terraform configuration",
+            ));
+        }
         let relative = PathBuf::from(relative);
         if !is_configuration_file(&relative)
             || !is_direct_repository_path(repository_root, root, &relative)
@@ -237,11 +275,13 @@ pub(crate) fn capture_revision_configuration(
             repository_root,
             "read Git Terraform configuration",
             [OsStr::new("show"), OsStr::new(revision_path.as_str())],
+            cancellation,
         ) {
             Ok(output) => snapshot.files.push(ConfigurationFile {
                 path: repository_root.join(&relative),
                 contents: output.stdout,
             }),
+            Err(error) if error.is_interrupted() => return Err(error),
             Err(error) => snapshot.issues.push(format!(
                 "{} {}: {}",
                 error.operation,
@@ -253,22 +293,32 @@ pub(crate) fn capture_revision_configuration(
     snapshot
         .files
         .sort_by(|left, right| left.path.cmp(&right.path));
-    snapshot
+    Ok(snapshot)
 }
 
 pub(crate) fn compare_configurations(
     diff: &GitDiff,
     working_tree: &ConfigurationSnapshot,
 ) -> ConfigurationComparisons {
+    compare_configurations_with_cancellation(diff, working_tree, &CancellationToken::new())
+        .expect("Git configuration should not be interrupted without cancellation")
+}
+
+pub(crate) fn compare_configurations_with_cancellation(
+    diff: &GitDiff,
+    working_tree: &ConfigurationSnapshot,
+    cancellation: &CancellationToken,
+) -> Result<ConfigurationComparisons, GitCommandError> {
     let mut capture_revision = |revision: &str| {
-        capture_revision_configuration(
+        capture_revision_configuration_with_cancellation(
             diff.repository_root()
                 .expect("repository root is checked below"),
             diff.root(),
             revision,
+            cancellation,
         )
     };
-    compare_configurations_with_capture(diff, working_tree, &mut capture_revision)
+    compare_configurations_with_capture_cancellable(diff, working_tree, &mut capture_revision)
 }
 
 fn compare_configurations_with_capture(
@@ -276,8 +326,18 @@ fn compare_configurations_with_capture(
     working_tree: &ConfigurationSnapshot,
     capture_revision: &mut dyn FnMut(&str) -> ConfigurationSnapshot,
 ) -> ConfigurationComparisons {
+    let mut capture_revision = |revision: &str| Ok(capture_revision(revision));
+    compare_configurations_with_capture_cancellable(diff, working_tree, &mut capture_revision)
+        .expect("test Git configuration capture should not be interrupted")
+}
+
+fn compare_configurations_with_capture_cancellable(
+    diff: &GitDiff,
+    working_tree: &ConfigurationSnapshot,
+    capture_revision: &mut dyn FnMut(&str) -> Result<ConfigurationSnapshot, GitCommandError>,
+) -> Result<ConfigurationComparisons, GitCommandError> {
     let head = match (diff.repository_root(), diff.head_commit()) {
-        (Some(_), Some(head_commit)) => Some(capture_revision(head_commit)),
+        (Some(_), Some(head_commit)) => Some(capture_revision(head_commit)?),
         _ => None,
     };
     let working_tree = match (diff.repository_root(), diff.head_commit(), head.as_ref()) {
@@ -286,30 +346,34 @@ fn compare_configurations_with_capture(
         (Some(_), Some(_), Some(head)) => comparison_between(head, working_tree),
         (Some(_), Some(_), None) => unreachable!("a resolved HEAD must have a snapshot"),
     };
-    let head_vs_merge_base = (diff.basis() == ComparisonBasis::HeadVsMergeBase).then(|| {
-        match (
-            diff.repository_root(),
-            diff.merge_base(),
-            diff.head_commit(),
-            head.as_ref(),
-        ) {
-            (None, _, _, _) => unavailable_comparison("Git repository root is unavailable"),
-            (_, Some(merge_base), Some(head_commit), Some(head)) => {
-                if merge_base == head_commit {
-                    comparison_between(head, head)
-                } else {
-                    let merge_base = capture_revision(merge_base);
-                    comparison_between(&merge_base, head)
+    let head_vs_merge_base = if diff.basis() == ComparisonBasis::HeadVsMergeBase {
+        Some(
+            match (
+                diff.repository_root(),
+                diff.merge_base(),
+                diff.head_commit(),
+                head.as_ref(),
+            ) {
+                (None, _, _, _) => unavailable_comparison("Git repository root is unavailable"),
+                (_, Some(merge_base), Some(head_commit), Some(head)) => {
+                    if merge_base == head_commit {
+                        comparison_between(head, head)
+                    } else {
+                        let merge_base = capture_revision(merge_base)?;
+                        comparison_between(&merge_base, head)
+                    }
                 }
-            }
-            _ => unavailable_comparison("Git comparison commits are unavailable"),
-        }
-    });
+                _ => unavailable_comparison("Git comparison commits are unavailable"),
+            },
+        )
+    } else {
+        None
+    };
 
-    ConfigurationComparisons {
+    Ok(ConfigurationComparisons {
         working_tree,
         head_vs_merge_base,
-    }
+    })
 }
 
 fn comparison_between(

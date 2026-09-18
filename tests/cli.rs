@@ -92,6 +92,9 @@ case "$1" in
     printf '%s\n' "$plan_path" > "$TERRACOTTA_FAKE_PLAN_PATH"
     printf '%s\n' "$$" > "$TERRACOTTA_FAKE_PID_PATH"
     : > "$plan_path"
+    if [ "${TERRACOTTA_FAKE_MODE:-success}" = config_interrupt ]; then
+      : > "$TERRACOTTA_FAKE_PLAN_DONE_PATH"
+    fi
     if [ "${TERRACOTTA_FAKE_MODE:-success}" = interrupt ]; then
       exec /bin/sleep 30
     fi
@@ -108,6 +111,26 @@ case "$1" in
     exit 2
     ;;
 esac
+"#;
+
+    const FAKE_GIT: &str = r#"#!/bin/sh
+set -eu
+
+arguments=" $* "
+mode="${TERRACOTTA_FAKE_MODE:-success}"
+if [ "$mode" = git_interrupt ] && printf '%s' "$arguments" | grep -q ' diff '; then
+  printf '%s\n' "$$" > "$TERRACOTTA_FAKE_GIT_PID_PATH"
+  while :; do :; done
+fi
+if [ "$mode" = config_interrupt ] && [ -f "$TERRACOTTA_FAKE_PLAN_DONE_PATH" ]; then
+  case "$arguments" in
+    *" ls-tree "*|*" show "*)
+      printf '%s\n' "$$" > "$TERRACOTTA_FAKE_GIT_PID_PATH"
+      while :; do :; done
+      ;;
+  esac
+fi
+exec "$TERRACOTTA_REAL_GIT" "$@"
 "#;
 
     const PTY_DRIVER: &str = r#"
@@ -435,6 +458,15 @@ try:
         send_key(b"\x03")
         wait_new("Cancelling...", "cancelling")
         exit_code = wait_exit()
+    elif scenario == "git_interrupt":
+        wait_file(os.environ["TERRACOTTA_FAKE_GIT_PID_PATH"], "git_started")
+        send_key(b"\x03")
+        wait_new("Cancelling...", "cancelling")
+        exit_code = wait_exit()
+    elif scenario == "config_interrupt":
+        wait_file(os.environ["TERRACOTTA_FAKE_GIT_PID_PATH"], "git_started")
+        send_key(b"\x03")
+        exit_code = wait_exit()
     elif scenario == "narrow":
         wait_new("Terminal too small", "narrow")
         resize(100, 24)
@@ -472,6 +504,8 @@ except BaseException as error:
         bin: PathBuf,
         plan_path_record: PathBuf,
         pid_record: PathBuf,
+        git_pid_record: PathBuf,
+        plan_done_record: PathBuf,
         show_json: PathBuf,
     }
 
@@ -492,12 +526,18 @@ except BaseException as error:
 
             let plan_path_record = directory.join("plan-path");
             let pid_record = directory.join("terraform-pid");
+            let git_pid_record = directory.join("git-pid");
+            let plan_done_record = directory.join("plan-done");
             let show_json = directory.join("show.json");
             fs::write(&show_json, PLAN_JSON).expect("fake show JSON should be written");
             let terraform = bin.join("terraform");
             fs::write(&terraform, FAKE_TERRAFORM).expect("fake Terraform should be written");
             fs::set_permissions(&terraform, fs::Permissions::from_mode(0o755))
                 .expect("fake Terraform should be executable");
+            let fake_git = bin.join("git");
+            fs::write(&fake_git, FAKE_GIT).expect("fake Git should be written");
+            fs::set_permissions(&fake_git, fs::Permissions::from_mode(0o755))
+                .expect("fake Git should be executable");
 
             if with_git {
                 git(&root, &["init", "--quiet", "--initial-branch=main"]);
@@ -528,6 +568,8 @@ except BaseException as error:
                 bin,
                 plan_path_record,
                 pid_record,
+                git_pid_record,
+                plan_done_record,
                 show_json,
             }
         }
@@ -558,7 +600,15 @@ except BaseException as error:
                 .env("TERRACOTTA_FAKE_MODE", scenario)
                 .env("TERRACOTTA_FAKE_PLAN_PATH", &self.plan_path_record)
                 .env("TERRACOTTA_FAKE_PID_PATH", &self.pid_record)
+                .env("TERRACOTTA_FAKE_GIT_PID_PATH", &self.git_pid_record)
+                .env("TERRACOTTA_FAKE_PLAN_DONE_PATH", &self.plan_done_record)
                 .env("TERRACOTTA_FAKE_SHOW_JSON", &self.show_json)
+                .env(
+                    "TERRACOTTA_REAL_GIT",
+                    real_git_path()
+                        .to_str()
+                        .expect("real Git path should be UTF-8"),
+                )
                 .env("GIT_CONFIG_NOSYSTEM", "1")
                 .env("GIT_CONFIG_GLOBAL", "/dev/null")
                 .env("GIT_TERMINAL_PROMPT", "0")
@@ -660,6 +710,30 @@ except BaseException as error:
         );
     }
 
+    fn real_git_path() -> PathBuf {
+        env::split_paths(&env::var_os("PATH").expect("PATH should be available"))
+            .map(|directory| directory.join("git"))
+            .find(|path| path.is_file())
+            .expect("real Git should be available")
+    }
+
+    fn assert_child_reaped(path: &Path, label: &str) {
+        let pid = fs::read_to_string(path)
+            .unwrap_or_else(|error| panic!("{label} pid should be recorded: {error}"))
+            .trim()
+            .parse::<u32>()
+            .unwrap_or_else(|error| panic!("{label} pid should be numeric: {error}"));
+        assert!(
+            !Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .expect("kill should start")
+                .success(),
+            "{label} process {pid} remains alive"
+        );
+    }
+
     #[test]
     fn pty_workflow_connects_plan_list_detail_expansion_copy_and_quit() {
         let fixture = Fixture::new(true);
@@ -711,6 +785,42 @@ except BaseException as error:
         assert_eq!(result.exit_code, 0);
         result.assert_restored();
         result.observed("git_failure");
+        fixture.assert_temporary_plan_removed();
+    }
+
+    #[test]
+    fn pty_ctrl_c_reaps_git_during_diff_and_returns_interrupt_status() {
+        let fixture = Fixture::new(true);
+        let result = fixture.run(
+            "git_interrupt",
+            100,
+            24,
+            Path::new(env!("CARGO_BIN_EXE_terracotta")),
+            &["plan"],
+        );
+
+        assert_eq!(result.exit_code, 130);
+        result.assert_restored();
+        result.observed("git_started");
+        result.observed("cancelling");
+        assert_child_reaped(&fixture.git_pid_record, "Git diff");
+    }
+
+    #[test]
+    fn pty_ctrl_c_reaps_git_during_post_plan_configuration_and_cleans_plan() {
+        let fixture = Fixture::new(true);
+        let result = fixture.run(
+            "config_interrupt",
+            100,
+            24,
+            Path::new(env!("CARGO_BIN_EXE_terracotta")),
+            &["plan"],
+        );
+
+        assert_eq!(result.exit_code, 130);
+        result.assert_restored();
+        result.observed("git_started");
+        assert_child_reaped(&fixture.git_pid_record, "post-plan Git");
         fixture.assert_temporary_plan_removed();
     }
 

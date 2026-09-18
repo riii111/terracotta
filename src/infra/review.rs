@@ -1,15 +1,43 @@
-use std::{ffi::OsStr, path::Path};
+use std::{
+    ffi::OsStr,
+    fmt::{Display, Formatter},
+    path::Path,
+};
 
 use crate::app::{
     attribution::{AnalysisIssue, SourceFileAnalysis, attribute_changes, mark_analysis_incomplete},
     execution::{ExecutionEvent, ExecutionEventKind, ExecutionPhase},
     review::{PlanReview, ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus},
 };
+use crate::infra::CancellationToken;
 
 use super::{
     git::{self, ComparisonBasis, ConfigurationComparison, ConfigurationSnapshot, GitDiff},
-    terraform::{self, CancellationToken, TerraformExecutionError, hcl},
+    terraform::{self, TerraformExecutionError, hcl},
 };
+
+#[derive(Debug)]
+pub(crate) enum ReviewError {
+    Interrupted,
+    Terraform(TerraformExecutionError),
+}
+
+impl Display for ReviewError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Interrupted => formatter.write_str("review was interrupted"),
+            Self::Terraform(error) => Display::fmt(error, formatter),
+        }
+    }
+}
+
+impl std::error::Error for ReviewError {}
+
+impl From<TerraformExecutionError> for ReviewError {
+    fn from(error: TerraformExecutionError) -> Self {
+        Self::Terraform(error)
+    }
+}
 
 pub(crate) fn run_review(
     root: &Path,
@@ -17,7 +45,7 @@ pub(crate) fn run_review(
     cancellation: &CancellationToken,
     event_sink: &mut dyn FnMut(ExecutionEvent),
     phase_sink: &mut dyn FnMut(ExecutionPhase),
-) -> Result<PlanReview, TerraformExecutionError> {
+) -> Result<PlanReview, ReviewError> {
     run_review_with_dependencies(
         root,
         compare_ref,
@@ -29,6 +57,10 @@ pub(crate) fn run_review(
     )
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "review stages keep their cancellation boundaries in execution order"
+)]
 fn run_review_with_dependencies(
     root: &Path,
     compare_ref: Option<&str>,
@@ -37,20 +69,42 @@ fn run_review_with_dependencies(
     after_git_diff: Option<&mut dyn FnMut()>,
     event_sink: &mut dyn FnMut(ExecutionEvent),
     phase_sink: &mut dyn FnMut(ExecutionPhase),
-) -> Result<PlanReview, TerraformExecutionError> {
-    let git_diff = collect_git_diff(root, compare_ref);
+) -> Result<PlanReview, ReviewError> {
+    let git_diff =
+        collect_git_diff(root, compare_ref, cancellation).map_err(|()| ReviewError::Interrupted)?;
+    if cancellation.is_cancelled() {
+        return Err(ReviewError::Interrupted);
+    }
     if let Some(after_git_diff) = after_git_diff {
         after_git_diff();
     }
+    if cancellation.is_cancelled() {
+        return Err(ReviewError::Interrupted);
+    }
     let execution_root = git_diff.root().to_owned();
-    let configuration_before = git::capture_working_tree_configuration(&execution_root);
-    let git_branch = git::current_branch(&execution_root);
+    let configuration_before =
+        git::capture_working_tree_configuration_with_cancellation(&execution_root, cancellation)
+            .map_err(|error| git_review_error(&error))?;
+    if cancellation.is_cancelled() {
+        return Err(ReviewError::Interrupted);
+    }
+    let git_branch = git::current_branch(&execution_root, cancellation)
+        .map_err(|error| git_review_error(&error))?;
+    if cancellation.is_cancelled() {
+        return Err(ReviewError::Interrupted);
+    }
     event_sink(ExecutionEvent {
         received_at: std::time::Instant::now(),
         kind: ExecutionEventKind::Git(git_branch.clone()),
     });
+    if cancellation.is_cancelled() {
+        return Err(ReviewError::Interrupted);
+    }
 
     let workspace = terraform::read_workspace_with_runner(&execution_root, cancellation, runner)?;
+    if cancellation.is_cancelled() {
+        return Err(ReviewError::Interrupted);
+    }
     event_sink(ExecutionEvent {
         received_at: std::time::Instant::now(),
         kind: ExecutionEventKind::Workspace(workspace.clone()),
@@ -62,12 +116,34 @@ fn run_review_with_dependencies(
         event_sink,
         phase_sink,
     )?;
+    if cancellation.is_cancelled() {
+        return Err(ReviewError::Interrupted);
+    }
     phase_sink(ExecutionPhase::Matching);
-    let configuration_after = git::capture_working_tree_configuration(&execution_root);
+    if cancellation.is_cancelled() {
+        return Err(ReviewError::Interrupted);
+    }
+    let configuration_after =
+        git::capture_working_tree_configuration_with_cancellation(&execution_root, cancellation)
+            .map_err(|error| git_review_error(&error))?;
+    if cancellation.is_cancelled() {
+        return Err(ReviewError::Interrupted);
+    }
 
-    let source_files = parse_git_sources(&git_diff);
+    let source_files = parse_git_sources(&git_diff, cancellation)?;
+    if cancellation.is_cancelled() {
+        return Err(ReviewError::Interrupted);
+    }
     let configuration_comparisons: git::ConfigurationComparisons =
-        git::compare_configurations(&git_diff, &configuration_before);
+        git::compare_configurations_with_cancellation(
+            &git_diff,
+            &configuration_before,
+            cancellation,
+        )
+        .map_err(|error| git_review_error(&error))?;
+    if cancellation.is_cancelled() {
+        return Err(ReviewError::Interrupted);
+    }
     let mut analysis_issues = git_analysis_issues(&git_diff);
     let current_native_paths = configuration_comparisons
         .working_tree()
@@ -101,6 +177,9 @@ fn run_review_with_dependencies(
     let mut attributions =
         attribute_changes(&plan.changes, &source_files, git_diff.changed_lines());
     mark_analysis_incomplete(&mut attributions, &analysis_issues);
+    if cancellation.is_cancelled() {
+        return Err(ReviewError::Interrupted);
+    }
 
     Ok(PlanReview::new(
         execution_root,
@@ -114,21 +193,47 @@ fn run_review_with_dependencies(
     .with_git(git_branch.unwrap_or_else(|| "unavailable".to_owned())))
 }
 
-fn collect_git_diff(root: &Path, compare_ref: Option<&str>) -> GitDiff {
-    compare_ref.map_or_else(
-        || git::collect_diff(root),
-        |compare_ref| git::collect_diff_against_ref(root, compare_ref),
-    )
+fn collect_git_diff(
+    root: &Path,
+    compare_ref: Option<&str>,
+    cancellation: &CancellationToken,
+) -> Result<GitDiff, ()> {
+    compare_ref
+        .map_or_else(
+            || git::collect_diff_with_cancellation(root, cancellation),
+            |compare_ref| {
+                git::collect_diff_against_ref_with_cancellation(root, compare_ref, cancellation)
+            },
+        )
+        .map_err(|_| ())
 }
 
-fn parse_git_sources(diff: &GitDiff) -> Vec<SourceFileAnalysis> {
+fn parse_git_sources(
+    diff: &GitDiff,
+    cancellation: &CancellationToken,
+) -> Result<Vec<SourceFileAnalysis>, ReviewError> {
     let inputs = diff
         .before()
         .iter()
         .chain(diff.after())
         .cloned()
         .collect::<Vec<_>>();
-    hcl::parse_files(inputs).files().to_vec()
+    if cancellation.is_cancelled() {
+        return Err(ReviewError::Interrupted);
+    }
+    let parsed = hcl::parse_files(inputs);
+    if cancellation.is_cancelled() {
+        return Err(ReviewError::Interrupted);
+    }
+    Ok(parsed.files().to_vec())
+}
+
+fn git_review_error(error: &git::GitCommandError) -> ReviewError {
+    if error.is_interrupted() {
+        ReviewError::Interrupted
+    } else {
+        unreachable!("normal Git errors are recorded in review data")
+    }
 }
 
 fn git_analysis_issues(diff: &GitDiff) -> Vec<AnalysisIssue> {
@@ -410,6 +515,35 @@ mod tests {
             &mut |_| {},
         )
         .expect("fake Terraform review should succeed")
+    }
+
+    #[test]
+    fn reports_interruption_before_starting_terraform_after_git_diff() {
+        let repository = TestRepository::new();
+        repository.write(
+            "main.tf",
+            "resource \"terraform_data\" \"value\" {\n  input = \"before\"\n}\n",
+        );
+        repository.commit("initial");
+        repository.write(
+            "main.tf",
+            "resource \"terraform_data\" \"value\" {\n  input = \"after\"\n}\n",
+        );
+        let cancellation = CancellationToken::new();
+        let mut cancel_after_git_diff = || cancellation.cancel();
+        let runner = FakeRunner::new(plan_output(None), None);
+
+        let result = run_review_with_dependencies(
+            &repository.path,
+            None,
+            &cancellation,
+            &runner,
+            Some(&mut cancel_after_git_diff),
+            &mut |_| {},
+            &mut |_| {},
+        );
+
+        assert!(matches!(result, Err(ReviewError::Interrupted)));
     }
 
     #[test]

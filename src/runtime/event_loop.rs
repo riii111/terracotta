@@ -15,7 +15,7 @@ use crate::{
         review::{DetailAction, PlanListAction, PlanReviewMessage},
         session::{self, Action, Effect, SessionOutcome, SessionState},
     },
-    infra::{ClipboardExecutor, terraform::CancellationToken},
+    infra::{CancellationToken, ClipboardExecutor},
     ui::features::{execution, plan_review},
 };
 

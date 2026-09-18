@@ -23,7 +23,7 @@ use crate::app::{
         ReviewComparisonStatus,
     },
 };
-use crate::infra::{ClipboardExecutor, terraform::CancellationToken};
+use crate::infra::{CancellationToken, ClipboardExecutor};
 
 use super::{event_loop, run_terminal};
 
