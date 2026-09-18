@@ -735,6 +735,11 @@ mod tests {
 
         update(
             &mut state,
+            Action::Detail(DetailAction::SelectPrevious),
+            started_at + std::time::Duration::from_secs(3),
+        );
+        update(
+            &mut state,
             Action::Detail(DetailAction::Reveal),
             started_at + std::time::Duration::from_secs(2),
         );
