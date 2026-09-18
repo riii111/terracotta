@@ -51,7 +51,13 @@ pub(crate) fn apply_detail_scroll(
     area: Rect,
 ) {
     let layout = resource_detail_layout(area, list, detail, copy_notice, now);
-    let content = rows::detail_content(list, detail, view.analysis_info_expanded(), now);
+    let content = rows::detail_content(
+        list,
+        detail,
+        view.analysis_info_expanded(),
+        layout.body().width,
+        now,
+    );
     apply_scroll(
         view,
         scroll,
@@ -70,7 +76,13 @@ pub(crate) fn ensure_detail_selection_visible(
     area: Rect,
 ) {
     let layout = resource_detail_layout(area, list, detail, copy_notice, now);
-    let content = rows::detail_content(list, detail, view.analysis_info_expanded(), now);
+    let content = rows::detail_content(
+        list,
+        detail,
+        view.analysis_info_expanded(),
+        layout.body().width,
+        now,
+    );
     ensure_selected_visible(view, &content, layout.body().width, layout.body().height);
 }
 
@@ -83,7 +95,13 @@ pub(crate) fn clamp_detail_scroll(
     area: Rect,
 ) {
     let layout = resource_detail_layout(area, list, detail, copy_notice, now);
-    let content = rows::detail_content(list, detail, view.analysis_info_expanded(), now);
+    let content = rows::detail_content(
+        list,
+        detail,
+        view.analysis_info_expanded(),
+        layout.body().width,
+        now,
+    );
     clamp_scroll(view, &content, layout.body().width, layout.body().height);
 }
 

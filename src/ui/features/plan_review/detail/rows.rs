@@ -10,7 +10,7 @@ use crate::app::review::{
     AttributeGroup, DetailRow, PlanListContext, PlanListState, ReviewComparison,
     ReviewComparisonSource, ReviewDetailState,
 };
-use crate::ui::shell::context::display_path;
+use crate::ui::shell::context::{display_path, truncate_middle};
 use crate::ui::theme;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,6 +23,7 @@ pub(super) fn detail_content(
     list: &PlanListState,
     detail: &ReviewDetailState,
     analysis_info_expanded: bool,
+    width: u16,
     now: std::time::Instant,
 ) -> DetailContent {
     let item = list
@@ -52,6 +53,7 @@ pub(super) fn detail_content(
         list.comparison(),
         repository_root,
         execution_root,
+        width,
     );
     lines.push(Line::default());
     lines.push(Line::from("Diff:"));
@@ -112,6 +114,7 @@ fn append_attribution_summary(
     comparison: &ReviewComparison,
     repository_root: Option<&std::path::Path>,
     execution_root: Option<&std::path::Path>,
+    width: u16,
 ) {
     lines.push(Line::from(format!(
         "Git: {} ({} {})",
@@ -121,12 +124,12 @@ fn append_attribution_summary(
     )));
 
     if let Some(evidence) = attribution.evidence().first() {
-        lines.push(Line::from(detail_path(
-            &format!(
-                "First evidence: {}",
-                evidence_location(evidence, comparison, repository_root, execution_root)
-            ),
-            "",
+        const PREFIX: &str = "  First evidence: ";
+        let location = evidence_location(evidence, comparison, repository_root, execution_root);
+        let available = usize::from(width).saturating_sub(PREFIX.len());
+        lines.push(Line::from(format!(
+            "{PREFIX}{}",
+            truncate_middle(&location, available)
         )));
     }
     if attribution.status() == AttributionStatus::NoMatch {
@@ -384,6 +387,9 @@ const fn attribution_label(attribution: &ResourceAttribution) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use crate::app::attribution::{
+        ResourceAddress, ResourceSourceLocation, SourceFileAnalysis, SourceLineChange, SourceRange,
+    };
     use crate::app::plan::AttributePathSegment;
     use crate::app::review::{DetailAction, ReviewComparisonBasis, ReviewComparisonStatus};
     use crate::ui::test_support::buffer_text;
@@ -520,7 +526,7 @@ mod tests {
                 .contains("Analysis scope (all analyzed files, not selected-resource evidence)"),
             "{expanded}"
         );
-        let content = detail_content(&state.list, &state.detail, true, Instant::now());
+        let content = detail_content(&state.list, &state.detail, true, 120, Instant::now());
         assert!(
             content
                 .lines
@@ -535,7 +541,7 @@ mod tests {
     #[test]
     fn analysis_info_opens_without_context_or_analyzed_files() {
         let state = state_without_context();
-        let content = detail_content(&state.list, &state.detail, true, Instant::now());
+        let content = detail_content(&state.list, &state.detail, true, 120, Instant::now());
         let text = content
             .lines
             .iter()
@@ -572,9 +578,9 @@ mod tests {
     #[test]
     fn puts_analysis_info_after_diff_and_replacement_reason() {
         let mut state = state_for_change(change(), &[]);
-        let collapsed = detail_content(&state.list, &state.detail, false, Instant::now());
+        let collapsed = detail_content(&state.list, &state.detail, false, 120, Instant::now());
         state.toggle_analysis_info(120, 60, Instant::now());
-        let expanded = detail_content(&state.list, &state.detail, true, Instant::now());
+        let expanded = detail_content(&state.list, &state.detail, true, 120, Instant::now());
 
         let collapsed_diff = collapsed
             .lines
@@ -618,5 +624,35 @@ mod tests {
 
         assert!(line.contains("modules/production/services/networking/main.tf"));
         assert!(line.ends_with("main.tf:42-46 (after)"));
+    }
+
+    #[test]
+    fn first_evidence_summary_stays_on_one_line_at_minimum_width() {
+        let long_path =
+            "modules/production/services/networking/terraform/main/region/ap-northeast-1/main.tf";
+        let source = SourceFileAnalysis::new(
+            long_path.into(),
+            SourceSide::After,
+            vec![ResourceSourceLocation::new(
+                ResourceAddress::new("aws_instance", "api"),
+                long_path.into(),
+                SourceSide::After,
+                SourceRange::new(42, 46),
+            )],
+            Vec::new(),
+        );
+        let changed_line =
+            SourceLineChange::new(long_path, SourceSide::After, SourceRange::new(42, 46));
+        let state = state_for_change_with_sources(change(), &[changed_line], vec![source]);
+        let text = buffer_text(&render(&state, 48, 30));
+        let lines = text.lines().collect::<Vec<_>>();
+        let first = lines
+            .iter()
+            .position(|line| line.contains("First evidence:"))
+            .unwrap_or_else(|| panic!("first evidence summary should be rendered: {text}"));
+
+        assert!(lines[first].contains("..."), "{text}");
+        assert!(!lines[first + 1].contains("First evidence:"), "{text}");
+        assert!(lines[first + 2].contains("Diff:"), "{text}");
     }
 }

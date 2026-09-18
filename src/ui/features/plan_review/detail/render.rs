@@ -131,7 +131,13 @@ pub(super) fn render_resource_detail_at(
         );
     }
 
-    let content = super::rows::detail_content(list, detail, view.analysis_info_expanded(), now);
+    let content = super::rows::detail_content(
+        list,
+        detail,
+        view.analysis_info_expanded(),
+        chunks[1].width,
+        now,
+    );
     let scroll = view.scroll().min(super::viewport::max_scroll(
         &content,
         chunks[1].width,

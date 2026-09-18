@@ -40,6 +40,7 @@ impl DetailFixture {
                 &self.list,
                 &self.detail,
                 self.view.analysis_info_expanded(),
+                width,
                 now,
             );
             super::viewport::ensure_selected_visible(&mut self.view, &content, width, height);
@@ -57,6 +58,7 @@ impl DetailFixture {
             &self.list,
             &self.detail,
             self.view.analysis_info_expanded(),
+            width,
             now,
         );
         super::viewport::apply_scroll(&mut self.view, scroll, &content, width, height);
