@@ -40,8 +40,8 @@ impl DiagnosticsLayout {
 pub(crate) fn diagnostics_layout(area: Rect) -> DiagnosticsLayout {
     let footer_lines = footer::layout(
         vec![
-            footer::hint(&["q"], "quit"),
             footer::hint(&["Esc", "w"], "back"),
+            footer::hint(&["q"], "quit"),
             footer::hint(&["↑", "↓", "j", "k"], "scroll"),
             footer::hint(&["PgUp", "PgDn"], "page"),
         ],
@@ -49,8 +49,8 @@ pub(crate) fn diagnostics_layout(area: Rect) -> DiagnosticsLayout {
     );
     let required_footer_lines = footer::layout(
         vec![
-            footer::hint(&["q"], "quit"),
             footer::hint(&["Esc", "w"], "back"),
+            footer::hint(&["q"], "quit"),
         ],
         area.width,
     );
@@ -342,6 +342,16 @@ mod tests {
         let layout = diagnostics_layout(Rect::new(0, 0, 80, 20));
 
         assert!(layout.body().height > 0);
+    }
+
+    #[test]
+    fn diagnostics_footer_puts_back_before_quit() {
+        let layout = diagnostics_layout(Rect::new(0, 0, 120, 40));
+
+        assert_eq!(
+            layout.shell.footer_lines()[0].to_string(),
+            "Esc/w back | q quit | ↑/↓/j/k scroll | PgUp/PgDn page"
+        );
     }
 
     #[test]

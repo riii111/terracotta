@@ -2,7 +2,7 @@
 source: src/ui/features/execution/tests/render_snapshots.rs
 expression: "buffer_text(&render_to_buffer(&state, started_at + Duration::from_secs(2), 60,\n20,))"
 ---
-Terracotta | loading... (Git loading) [workspace: loa......]
+Terracotta | loading... (Git loading)  workspace: loading...
 Git: loading...
 ┌Failed────────────────────────────────────────────────────┐
 │Elapsed 2.0s                                              │
@@ -18,7 +18,7 @@ Git: loading...
 │                                                          │
 │                                                          │
 │                                                          │
-│                                                          │
 │──────────────────────────────────────────────────────────│
 └──────────────────────────────────────────────────────────┘
-q quit | ↑/↓/PgUp/PgDn scroll | y diagnostic | Y result
+q quit | ↑/↓/PgUp/PgDn scroll | y copy diagnostic
+Y copy result

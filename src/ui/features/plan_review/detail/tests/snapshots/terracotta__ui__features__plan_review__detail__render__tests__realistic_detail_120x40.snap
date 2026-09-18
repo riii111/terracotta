@@ -2,8 +2,8 @@
 source: src/ui/features/plan_review/detail/tests/render_snapshots.rs
 expression: "buffer_text(&render(&state, 120, 40))"
 ---
-Terracotta | repo / environments/development/main
-Git: working tree vs HEAD [branch: feature/ui07]
+Terracotta | repo / environments/development/main                                                   branch: feature/ui07
+Git: working tree vs HEAD
 ┌Resource 1/1 | Filter: All────────────────────────────────────────────────────────────────────────────────────────────┐
 │~ aws_instance.api (of 1 total)                                                                                       │
 │                                                                                                                      │

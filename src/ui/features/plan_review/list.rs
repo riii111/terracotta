@@ -1149,10 +1149,9 @@ mod tests {
         let state = connected_state();
         let text = buffer_text(&render_to_buffer(&state, MIN_WIDTH, MIN_HEIGHT));
 
-        assert!(
-            text.contains("Terracotta | prod (Git unavailable)"),
-            "{text}"
-        );
+        let header = text.lines().next().expect("rendered header");
+        assert!(header.starts_with("Terracotta | "), "{text}");
+        assert!(header.contains("branch: feature/review"), "{text}");
         assert!(text.contains("Git: working tree vs HEAD"), "{text}");
         assert!(text.contains("Needs review: 1/1"), "{text}");
         assert!(text.contains("Analysis incomplete"), "{text}");

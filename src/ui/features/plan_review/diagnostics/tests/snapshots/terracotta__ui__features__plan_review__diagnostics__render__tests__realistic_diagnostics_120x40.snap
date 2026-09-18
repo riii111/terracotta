@@ -2,8 +2,8 @@
 source: src/ui/features/plan_review/diagnostics/tests/render_snapshots.rs
 expression: "buffer_text(&render_to_buffer((120, 40), |frame|\n{\n    render_diagnostics(frame, &list, &state, DiagnosticsViewState::default());\n}))"
 ---
-Terracotta | repo / environments/development/main
-Git: working tree vs HEAD [branch: feature/ui07]
+Terracotta | repo / environments/development/main                                                   branch: feature/ui07
+Git: working tree vs HEAD
 ┌Diagnostics───────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │Warning 1/1                                                                                                           │
 │Summary: development configuration warning                                                                            │
@@ -41,4 +41,4 @@ Git: working tree vs HEAD [branch: feature/ui07]
 │                                                                                                                      │
 │                                                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-q quit | Esc/w back | ↑/↓/j/k scroll | PgUp/PgDn page
+Esc/w back | q quit | ↑/↓/j/k scroll | PgUp/PgDn page

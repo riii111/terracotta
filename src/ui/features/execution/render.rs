@@ -384,8 +384,8 @@ fn footer_lines(state: &ExecutionState, width: u16) -> Vec<Line<'static>> {
         vec![
             footer::hint(&["q"], "quit"),
             footer::hint(&["↑", "↓", "PgUp", "PgDn"], "scroll"),
-            footer::hint(&["y"], "diagnostic"),
-            footer::hint(&["Y"], "result"),
+            footer::hint(&["y"], "copy diagnostic"),
+            footer::hint(&["Y"], "copy result"),
         ]
     } else {
         vec![
@@ -527,10 +527,7 @@ mod tests {
             text.contains("Terracotta | prod (Git unavailable)"),
             "{text}"
         );
-        assert!(
-            text.contains("Git: working tree vs HEAD [branch: feature/plan-ui]"),
-            "{text}"
-        );
+        assert!(text.contains("Git: working tree vs HEAD"), "{text}");
 
         let long_context = ExecutionState::with_context(
             started_at,
@@ -551,7 +548,7 @@ mod tests {
             "{long_context_text}"
         );
         assert!(
-            long_context_text.contains("[workspace: ") && long_context_text.contains("long-name]"),
+            long_context_text.contains("workspace: workspace-with-a-long-name"),
             "{long_context_text}"
         );
         assert!(
@@ -754,6 +751,24 @@ mod tests {
         );
         assert!(text.contains("Error 1/1"), "{text}");
         assert!(text.contains("q quit"), "{text}");
+    }
+
+    #[test]
+    fn failed_footer_names_copy_targets_after_scroll() {
+        let started_at = Instant::now();
+        let mut state = ExecutionState::new(started_at);
+        state.fail("Terraform failed".to_owned(), started_at);
+
+        let footer = footer_lines(&state, 80)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(
+            footer,
+            "q quit | ↑/↓/PgUp/PgDn scroll | y copy diagnostic | Y copy result"
+        );
     }
 
     #[test]

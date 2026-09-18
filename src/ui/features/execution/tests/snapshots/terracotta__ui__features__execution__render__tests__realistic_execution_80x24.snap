@@ -2,8 +2,8 @@
 source: src/ui/features/execution/tests/render_snapshots.rs
 expression: "buffer_text(&render_to_buffer(&state, started_at + Duration::from_secs(5), 80,\n24,))"
 ---
-Terracotta | repo / environments/development/main
-Git: working tree vs HEAD [branch: feature/ui07]
+Terracotta | repo / environments/development/main           branch: feature/ui07
+Git: working tree vs HEAD
 ┌Planning──────────────────────────────────────────────────────────────────────┐
 │Planning...                                                                   │
 │Waiting for Terraform output... 4s    Follow: On                              │
