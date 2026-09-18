@@ -66,9 +66,11 @@ fn run_review_with_dependencies(
     let configuration_after = git::capture_working_tree_configuration(&execution_root);
 
     let source_files = parse_git_sources(&git_diff);
-    let configuration_comparison = git::compare_configuration(&git_diff, &configuration_before);
+    let configuration_comparisons: git::ConfigurationComparisons =
+        git::compare_configurations(&git_diff, &configuration_before);
     let mut analysis_issues = git_analysis_issues(&git_diff);
-    let current_native_paths = configuration_comparison
+    let current_native_paths = configuration_comparisons
+        .working_tree()
         .changed_paths()
         .iter()
         .filter(|path| is_supported_native_configuration_path(&execution_root, path))
@@ -88,22 +90,13 @@ fn run_review_with_dependencies(
         &mut analysis_issues,
         &configuration_before,
         &configuration_after,
-        &configuration_comparison,
-        git_diff.basis() == ComparisonBasis::HeadVsMergeBase,
+        configuration_comparisons.working_tree(),
+        configuration_comparisons.head_vs_merge_base(),
     );
-    if git_diff.basis() == ComparisonBasis::HeadVsMergeBase {
-        add_unsupported_comparison_changes(
-            &mut analysis_issues,
-            &git_diff,
-            &git::compare_commit_configurations(&git_diff),
-        );
-    } else {
-        add_unsupported_comparison_changes(
-            &mut analysis_issues,
-            &git_diff,
-            &configuration_comparison,
-        );
-    }
+    let unsupported_comparison = configuration_comparisons
+        .head_vs_merge_base()
+        .unwrap_or_else(|| configuration_comparisons.working_tree());
+    add_unsupported_comparison_changes(&mut analysis_issues, &git_diff, unsupported_comparison);
 
     let mut attributions = attribute_changes(
         &execution.plan().changes,
@@ -151,8 +144,8 @@ fn add_configuration_issues(
     issues: &mut Vec<AnalysisIssue>,
     before: &ConfigurationSnapshot,
     after: &ConfigurationSnapshot,
-    comparison: &ConfigurationComparison,
-    execution_must_match_head: bool,
+    working_tree_comparison: &ConfigurationComparison,
+    head_vs_merge_base: Option<&ConfigurationComparison>,
 ) {
     for path in before.changed_paths(after) {
         push_unique(issues, AnalysisIssue::configuration_changed(&path));
@@ -163,13 +156,19 @@ fn add_configuration_issues(
             AnalysisIssue::configuration_unavailable(None, message.clone()),
         );
     }
-    for message in comparison.issues() {
+    for message in working_tree_comparison.issues() {
         push_unique(
             issues,
             AnalysisIssue::configuration_unavailable(None, message.clone()),
         );
     }
-    if execution_must_match_head {
+    if let Some(comparison) = head_vs_merge_base {
+        for message in comparison.issues() {
+            push_unique(
+                issues,
+                AnalysisIssue::configuration_unavailable(None, message.clone()),
+            );
+        }
         for path in comparison.changed_paths() {
             push_unique(issues, AnalysisIssue::configuration_differs_from_head(path));
         }

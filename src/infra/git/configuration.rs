@@ -8,7 +8,7 @@ use crate::infra::terraform::hcl::HclSourceFile;
 
 use super::{
     command::{checked_git, nul_fields},
-    diff::GitDiff,
+    diff::{ComparisonBasis, GitDiff},
 };
 
 #[derive(Clone, PartialEq, Eq)]
@@ -116,6 +116,24 @@ impl ConfigurationComparison {
     #[must_use]
     pub(crate) fn issues(&self) -> &[String] {
         &self.issues
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ConfigurationComparisons {
+    working_tree: ConfigurationComparison,
+    head_vs_merge_base: Option<ConfigurationComparison>,
+}
+
+impl ConfigurationComparisons {
+    #[must_use]
+    pub(crate) const fn working_tree(&self) -> &ConfigurationComparison {
+        &self.working_tree
+    }
+
+    #[must_use]
+    pub(crate) const fn head_vs_merge_base(&self) -> Option<&ConfigurationComparison> {
+        self.head_vs_merge_base.as_ref()
     }
 }
 
@@ -238,52 +256,78 @@ pub(crate) fn capture_revision_configuration(
     snapshot
 }
 
-pub(crate) fn compare_configuration(
+pub(crate) fn compare_configurations(
     diff: &GitDiff,
     working_tree: &ConfigurationSnapshot,
+) -> ConfigurationComparisons {
+    let mut capture_revision = |revision: &str| {
+        capture_revision_configuration(
+            diff.repository_root()
+                .expect("repository root is checked below"),
+            diff.root(),
+            revision,
+        )
+    };
+    compare_configurations_with_capture(diff, working_tree, &mut capture_revision)
+}
+
+fn compare_configurations_with_capture(
+    diff: &GitDiff,
+    working_tree: &ConfigurationSnapshot,
+    capture_revision: &mut dyn FnMut(&str) -> ConfigurationSnapshot,
+) -> ConfigurationComparisons {
+    let head = match (diff.repository_root(), diff.head_commit()) {
+        (Some(_), Some(head_commit)) => Some(capture_revision(head_commit)),
+        _ => None,
+    };
+    let working_tree = match (diff.repository_root(), diff.head_commit(), head.as_ref()) {
+        (None, _, _) => unavailable_comparison("Git repository root is unavailable"),
+        (_, None, _) => unavailable_comparison("Git comparison commit is unavailable"),
+        (Some(_), Some(_), Some(head)) => comparison_between(head, working_tree),
+        (Some(_), Some(_), None) => unreachable!("a resolved HEAD must have a snapshot"),
+    };
+    let head_vs_merge_base = (diff.basis() == ComparisonBasis::HeadVsMergeBase).then(|| {
+        match (
+            diff.repository_root(),
+            diff.merge_base(),
+            diff.head_commit(),
+            head.as_ref(),
+        ) {
+            (None, _, _, _) => unavailable_comparison("Git repository root is unavailable"),
+            (_, Some(merge_base), Some(head_commit), Some(head)) => {
+                if merge_base == head_commit {
+                    comparison_between(head, head)
+                } else {
+                    let merge_base = capture_revision(merge_base);
+                    comparison_between(&merge_base, head)
+                }
+            }
+            _ => unavailable_comparison("Git comparison commits are unavailable"),
+        }
+    });
+
+    ConfigurationComparisons {
+        working_tree,
+        head_vs_merge_base,
+    }
+}
+
+fn comparison_between(
+    before: &ConfigurationSnapshot,
+    after: &ConfigurationSnapshot,
 ) -> ConfigurationComparison {
-    let Some(repository_root) = diff.repository_root() else {
-        return ConfigurationComparison {
-            changed_paths: Vec::new(),
-            issues: vec!["Git repository root is unavailable".to_owned()],
-        };
-    };
-    let revision = diff.head_commit();
-    let Some(revision) = revision else {
-        return ConfigurationComparison {
-            changed_paths: Vec::new(),
-            issues: vec!["Git comparison commit is unavailable".to_owned()],
-        };
-    };
-    let baseline = capture_revision_configuration(repository_root, diff.root(), revision);
-    let mut issues = baseline.issues.clone();
-    issues.extend(working_tree.issues.iter().cloned());
+    let mut issues = before.issues.clone();
+    issues.extend(after.issues.iter().cloned());
     ConfigurationComparison {
-        changed_paths: baseline.changed_paths(working_tree),
+        changed_paths: before.changed_paths(after),
         issues,
     }
 }
 
-pub(crate) fn compare_commit_configurations(diff: &GitDiff) -> ConfigurationComparison {
-    let Some(repository_root) = diff.repository_root() else {
-        return ConfigurationComparison {
-            changed_paths: Vec::new(),
-            issues: vec!["Git repository root is unavailable".to_owned()],
-        };
-    };
-    let (Some(before), Some(after)) = (diff.merge_base(), diff.head_commit()) else {
-        return ConfigurationComparison {
-            changed_paths: Vec::new(),
-            issues: vec!["Git comparison commits are unavailable".to_owned()],
-        };
-    };
-    let before = capture_revision_configuration(repository_root, diff.root(), before);
-    let after = capture_revision_configuration(repository_root, diff.root(), after);
-    let mut issues = before.issues.clone();
-    issues.extend(after.issues.iter().cloned());
+fn unavailable_comparison(message: &str) -> ConfigurationComparison {
     ConfigurationComparison {
-        changed_paths: before.changed_paths(&after),
-        issues,
+        changed_paths: Vec::new(),
+        issues: vec![message.to_owned()],
     }
 }
 
@@ -301,4 +345,176 @@ fn is_configuration_file(path: &Path) -> bool {
                 || name.ends_with(".tfvars.json")
                 || name == ".terraform.lock.hcl"
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        process::Command,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    use super::super::diff::{collect_diff, collect_diff_against_ref};
+    use super::*;
+
+    static NEXT_REPOSITORY: AtomicU64 = AtomicU64::new(0);
+
+    struct TestRepository {
+        path: PathBuf,
+    }
+
+    impl TestRepository {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "terracotta-configuration-{}-{}",
+                std::process::id(),
+                NEXT_REPOSITORY.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&path).expect("test repository should be created");
+            git(&path, &["init", "--quiet", "--initial-branch=main"]);
+            git(&path, &["config", "user.email", "test@example.com"]);
+            git(&path, &["config", "user.name", "Terracotta Test"]);
+            Self { path }
+        }
+
+        fn write(&self, relative: &str, source: &str) {
+            fs::write(self.path.join(relative), source)
+                .expect("test configuration should be written");
+        }
+
+        fn commit(&self, message: &str) {
+            git(&self.path, &["add", "."]);
+            git(&self.path, &["commit", "--quiet", "-m", message]);
+        }
+    }
+
+    impl Drop for TestRepository {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.path).expect("test repository should be removed");
+        }
+    }
+
+    fn git(repository: &Path, arguments: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repository)
+            .args(arguments)
+            .output()
+            .expect("git should start");
+        assert!(
+            output.status.success(),
+            "git failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn shares_the_head_snapshot_when_merge_base_is_head() {
+        let repository = TestRepository::new();
+        repository.write("main.tf", "resource \"example\" \"one\" {}\n");
+        repository.commit("initial");
+        let diff = collect_diff_against_ref(&repository.path, "HEAD");
+        let working_tree = capture_working_tree_configuration(&repository.path);
+        let mut revisions = Vec::new();
+
+        let comparisons =
+            compare_configurations_with_capture(&diff, &working_tree, &mut |revision| {
+                revisions.push(revision.to_owned());
+                ConfigurationSnapshot {
+                    files: Vec::new(),
+                    issues: Vec::new(),
+                }
+            });
+
+        assert_eq!(
+            revisions,
+            vec![diff.head_commit().expect("HEAD should resolve")]
+        );
+        assert!(comparisons.head_vs_merge_base().is_some());
+    }
+
+    #[test]
+    fn captures_head_and_merge_base_once_for_a_commit_comparison() {
+        let repository = TestRepository::new();
+        repository.write("main.tf", "resource \"example\" \"one\" {}\n");
+        repository.commit("base");
+        git(&repository.path, &["branch", "compare"]);
+        repository.write(
+            "main.tf",
+            "resource \"example\" \"one\" {\n  value = \"head\"\n}\n",
+        );
+        repository.commit("head");
+        let diff = collect_diff_against_ref(&repository.path, "compare");
+        let repository_root = diff
+            .repository_root()
+            .expect("repository root should resolve")
+            .to_owned();
+        let root = diff.root().to_owned();
+        let working_tree = capture_working_tree_configuration(&root);
+        let mut revisions = Vec::new();
+
+        let comparisons =
+            compare_configurations_with_capture(&diff, &working_tree, &mut |revision| {
+                revisions.push(revision.to_owned());
+                capture_revision_configuration(&repository_root, &root, revision)
+            });
+
+        assert_eq!(revisions.len(), 2);
+        assert_eq!(
+            revisions[0],
+            diff.head_commit().expect("HEAD should resolve")
+        );
+        assert_eq!(
+            revisions[1],
+            diff.merge_base().expect("merge-base should resolve")
+        );
+        assert!(
+            comparisons.working_tree().changed_paths().is_empty(),
+            "working tree comparison changed paths: {:?}",
+            comparisons.working_tree().changed_paths()
+        );
+        assert_eq!(
+            comparisons
+                .head_vs_merge_base()
+                .expect("compare-ref basis should retain a comparison")
+                .changed_paths(),
+            &[root.join("main.tf")]
+        );
+    }
+
+    #[test]
+    fn keeps_unavailable_commit_comparison_reason() {
+        let repository = TestRepository::new();
+        repository.write("main.tf", "resource \"example\" \"one\" {}\n");
+        repository.commit("initial");
+        let diff = collect_diff_against_ref(&repository.path, "missing");
+        let working_tree = capture_working_tree_configuration(&repository.path);
+
+        let comparisons = compare_configurations(&diff, &working_tree);
+
+        assert!(comparisons.working_tree().issues().is_empty());
+        assert_eq!(
+            comparisons
+                .head_vs_merge_base()
+                .expect("compare-ref basis should retain a comparison")
+                .issues(),
+            &["Git comparison commits are unavailable"]
+        );
+    }
+
+    #[test]
+    fn keeps_unavailable_head_reason_without_a_commit_comparison() {
+        let repository = TestRepository::new();
+        repository.write("main.tf", "resource \"example\" \"one\" {}\n");
+        let diff = collect_diff(&repository.path);
+        let working_tree = capture_working_tree_configuration(&repository.path);
+
+        let comparisons = compare_configurations(&diff, &working_tree);
+
+        assert_eq!(
+            comparisons.working_tree().issues(),
+            &["Git comparison commit is unavailable"]
+        );
+        assert!(comparisons.head_vs_merge_base().is_none());
+    }
 }
