@@ -14,9 +14,7 @@ use crate::ui::primitives::atoms::separator;
 use crate::ui::primitives::molecules::terminal_notice;
 use crate::ui::shell::{
     context::{display_path, truncate_middle},
-    footer,
-    header,
-    layout as shell_layout,
+    footer, header, layout as shell_layout,
 };
 use crate::ui::theme;
 
@@ -283,7 +281,6 @@ fn list_item(
     context: Option<&PlanListContext>,
 ) -> ListItem<'static> {
     let marker = if item.needs_review() { "!" } else { " " };
-    let git = git_evidence_label(item, context);
 
     let action_style = theme::action_style(item.kind());
     let review_style = theme::review_style(item.needs_review());
@@ -300,33 +297,50 @@ fn list_item(
                 + if wide_actions { 2 } else { 0 },
         );
         let git_width = width.saturating_sub(address_width + action_column_width + 4);
-        return ListItem::new(Line::from(vec![
+        let git_lines = git_evidence_lines(item, context, git_width);
+        let git_offset = 2 + action_column_width + address_width + 2;
+        let first_git_line = git_lines.first().map(String::as_str).unwrap_or_default();
+        let mut lines = vec![Line::from(vec![
             Span::styled(marker.to_owned(), review_style),
             Span::raw(" "),
             Span::styled(action, action_style),
             Span::raw(action_padding),
             Span::raw(address),
             Span::raw(padding),
-            Span::styled(truncate_middle(&git, git_width), git_style),
-        ]));
+            Span::styled(first_git_line.to_owned(), git_style),
+        ])];
+        lines.extend(git_lines.into_iter().skip(1).map(|line| {
+            Line::from(vec![
+                Span::raw(" ".repeat(git_offset)),
+                Span::styled(line, git_style),
+            ])
+        }));
+        return ListItem::new(lines);
     }
 
     let address_width = width.saturating_sub(10);
     let address = truncate_end(item.address(), address_width);
     let evidence_width = width.saturating_sub(10);
-    ListItem::new(vec![
-        Line::from(vec![
-            Span::styled(marker.to_owned(), review_style),
-            Span::raw(" "),
-            Span::styled(action_label(item.kind(), false), action_style),
-            Span::raw("       "),
-            Span::raw(address),
-        ]),
-        Line::from(vec![
-            Span::raw("          "),
-            Span::styled(truncate_middle(&git, evidence_width), git_style),
-        ]),
-    ])
+    let git_lines = git_evidence_lines(item, context, evidence_width);
+    let mut lines = vec![Line::from(vec![
+        Span::raw("          "),
+        Span::styled(git_lines.first().cloned().unwrap_or_default(), git_style),
+    ])];
+    lines.extend(
+        git_lines
+            .into_iter()
+            .skip(1)
+            .map(|line| Line::from(vec![Span::raw("          "), Span::styled(line, git_style)])),
+    );
+    let mut row_lines = vec![Line::from(vec![
+        Span::styled(marker.to_owned(), review_style),
+        Span::raw(" "),
+        Span::styled(action_label(item.kind(), false), action_style),
+        Span::raw("       "),
+        Span::raw(address),
+    ])];
+    row_lines.extend(lines);
+    ListItem::new(row_lines)
 }
 
 fn action_label(kind: ResourceChangeKind, wide: bool) -> String {
@@ -346,31 +360,110 @@ const fn kind_label(kind: ResourceChangeKind) -> &'static str {
     }
 }
 
-fn git_evidence_label(item: &PlanListItem, context: Option<&PlanListContext>) -> String {
+fn git_evidence_lines(
+    item: &PlanListItem,
+    context: Option<&PlanListContext>,
+    max_width: usize,
+) -> Vec<String> {
     let repository_root = context.and_then(PlanListContext::repository_root);
     let execution_root = context.map(PlanListContext::root);
-    let mut labels = Vec::new();
+    let incomplete = !item.attribution().analysis().is_complete();
+    let status = if incomplete {
+        Some("review: analysis incomplete")
+    } else if matches!(item.attribution().status(), AttributionStatus::NoMatch) {
+        Some("review: no match")
+    } else {
+        None
+    };
 
     if let Some(evidence) = item.attribution().evidence().first() {
         let path = display_path(evidence.path(), repository_root, execution_root);
         let range = evidence.range();
-        let location = if range.start_line() == range.end_line() {
-            format!("{path}:{}", range.start_line())
+        let location_suffix = if range.start_line() == range.end_line() {
+            format!(":{}", range.start_line())
         } else {
-            format!("{path}:{}-{}", range.start_line(), range.end_line())
+            format!(":{}-{}", range.start_line(), range.end_line())
         };
         let evidence_count = item.attribution().evidence().len();
-        let count = (evidence_count > 1).then(|| format!(" [{evidence_count} evidence]"));
-        labels.push(format!("direct: {location}{}", count.unwrap_or_default()));
+        let count = if evidence_count > 1 {
+            format!(" [{evidence_count} evidence]")
+        } else {
+            String::new()
+        };
+        let prefix = "direct: ";
+        let status_suffix = status.map_or_else(String::new, |status| format!(" | {status}"));
+        let path_width = max_width.saturating_sub(
+            display_width(prefix)
+                + display_width(&location_suffix)
+                + display_width(&count)
+                + display_width(&status_suffix),
+        );
+        let direct = format!(
+            "{prefix}{}{location_suffix}{count}",
+            truncate_middle(&path, path_width)
+        );
+
+        if status_suffix.is_empty() {
+            if display_width(&direct) <= max_width {
+                return vec![direct];
+            }
+            let path_line = format!(
+                "{prefix}{}",
+                truncate_middle(&path, max_width.saturating_sub(display_width(prefix)))
+            );
+            let mut lines = vec![path_line];
+            lines.extend(wrap_label(&format!("{location_suffix}{count}"), max_width));
+            return lines;
+        }
+
+        let combined = format!("{direct}{status_suffix}");
+        if display_width(&combined) <= max_width {
+            return vec![combined];
+        }
+
+        let path_line = format!(
+            "{prefix}{}",
+            truncate_middle(&path, max_width.saturating_sub(display_width(prefix)))
+        );
+        let mut lines = vec![path_line];
+        lines.extend(wrap_label(&format!("{location_suffix}{count}"), max_width));
+        lines.extend(wrap_label(
+            status.expect("status suffix should have a status"),
+            max_width,
+        ));
+        return lines;
     }
 
-    if !item.attribution().analysis().is_complete() {
-        labels.push("review: analysis incomplete".to_owned());
-    } else if matches!(item.attribution().status(), AttributionStatus::NoMatch) {
-        labels.push("review: no match".to_owned());
+    status.map_or_else(
+        || vec![String::new()],
+        |status| wrap_label(status, max_width),
+    )
+}
+
+fn wrap_label(value: &str, max_width: usize) -> Vec<String> {
+    if max_width == 0 || display_width(value) <= max_width {
+        return vec![value.to_owned()];
     }
 
-    labels.join(" | ")
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in value.split_whitespace() {
+        let candidate = if current.is_empty() {
+            word.to_owned()
+        } else {
+            format!("{current} {word}")
+        };
+        if !current.is_empty() && display_width(&candidate) > max_width {
+            lines.push(std::mem::take(&mut current));
+            word.clone_into(&mut current);
+        } else {
+            current = candidate;
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
 }
 
 fn summary_lines(state: &PlanListState, width: usize) -> Vec<Line<'static>> {
@@ -411,9 +504,10 @@ fn summary_lines(state: &PlanListState, width: usize) -> Vec<Line<'static>> {
         ];
     }
 
+    let filter_label = filter_label(state.filter());
     let filter_line = Line::from(vec![
         review_count.clone(),
-        Span::raw(format!("  Filter: {}", state.filter().label())),
+        Span::raw(format!("  Filter: {filter_label}")),
     ]);
     let showing_line = Line::from(format!(
         "Showing: {}/{}",
@@ -422,7 +516,7 @@ fn summary_lines(state: &PlanListState, width: usize) -> Vec<Line<'static>> {
     ));
     let combined = Line::from(vec![
         review_count,
-        Span::raw(format!("  Filter: {}", state.filter().label())),
+        Span::raw(format!("  Filter: {filter_label}")),
         Span::raw(format!(
             "  Showing: {}/{}",
             state.visible_count(),
@@ -438,6 +532,13 @@ fn summary_lines(state: &PlanListState, width: usize) -> Vec<Line<'static>> {
 
 fn has_search(state: &PlanListState) -> bool {
     state.searching() || !state.search().is_empty()
+}
+
+const fn filter_label(filter: PlanListFilter) -> &'static str {
+    match filter {
+        PlanListFilter::All => filter.label(),
+        PlanListFilter::NeedsReview => "Needs review (f)",
+    }
 }
 
 fn footer_lines(
@@ -472,8 +573,12 @@ fn footer_lines(
     if has_visible_items {
         items.push(footer::hint(&["Enter"], "details"));
     }
-    items.push(footer::hint(&["f"], "change filter"));
-    items.push(footer::hint(&["/"], "edit search"));
+    if has_visible_items || (!state.items().is_empty() && state.filter() != PlanListFilter::All) {
+        items.push(footer::hint(&["f"], "change filter"));
+    }
+    if has_visible_items || (!state.items().is_empty() && has_search(state)) {
+        items.push(footer::hint(&["/"], "edit search"));
+    }
     footer::layout(items, width)
 }
 
@@ -497,7 +602,7 @@ mod tests {
     use crate::app::attribution::{
         ResourceAddress, ResourceSourceLocation, SourceFileAnalysis,
         SourceLineChange as AttributionSourceLineChange, SourceRange, SourceSide,
-        attribute_changes,
+        attribute_changes, mark_analysis_incomplete,
     };
     use crate::app::plan::{
         Plan, PlanAction, PlanSummary, PlanValue, ResourceChange, ResourceMode, UnsupportedChange,
@@ -896,6 +1001,19 @@ mod tests {
     }
 
     #[test]
+    fn git_column_keeps_path_location_count_and_incomplete_status_when_narrow() {
+        let state = long_evidence_incomplete_state();
+        let text = buffer_text(&render_to_buffer(&state, 96, 20));
+        let single_line = text.replace('\n', " ");
+
+        assert!(single_line.contains("direct:"), "{text}");
+        assert!(single_line.contains(":10-12 [2 evidence]"), "{text}");
+        assert!(single_line.contains("review: analysis"), "{text}");
+        assert!(single_line.contains("incomplete"), "{text}");
+        assert!(single_line.contains("..."), "{text}");
+    }
+
+    #[test]
     fn empty_filter_uses_shared_message_and_keeps_only_filter_search_hints() {
         let mut state = direct_only_state();
         state.apply(PlanListAction::ToggleFilter);
@@ -906,7 +1024,7 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("f change filter"), "{text}");
-        assert!(text.contains("/ edit search"), "{text}");
+        assert!(!text.contains("/ edit search"), "{text}");
         assert!(!text.contains("Enter details"), "{text}");
         assert!(!text.contains("y resource"), "{text}");
     }
@@ -942,6 +1060,8 @@ mod tests {
 
         assert!(text.contains("No resource changes."), "{text}");
         assert!(text.contains("Needs review: 0/0"));
+        assert!(!text.contains("f change filter"), "{text}");
+        assert!(!text.contains("/ edit search"), "{text}");
     }
 
     #[test]
@@ -1217,6 +1337,8 @@ mod tests {
             text.contains("No resources match the current filter/search."),
             "{text}"
         );
+        assert!(text.contains("/ edit search"), "{text}");
+        assert!(!text.contains("f change filter"), "{text}");
     }
 
     #[test]
@@ -1413,6 +1535,79 @@ mod tests {
         )
         .with_repository_root(Some(PathBuf::from("/repo")));
         PlanListState::from_review(review).expect("multiple evidence fixture should build a list")
+    }
+
+    fn long_evidence_incomplete_state() -> PlanListState {
+        let address = "aws_instance.resource_with_a_long_name_that_forces_a_narrow_git_column";
+        let change = synthetic_change(address, ResourceChangeKind::Update, PlanAction::Update);
+        let first_path = "/repo/environments/production/very_long_configuration/main.tf";
+        let second_path = "/repo/environments/shared/another_configuration/main.tf";
+        let source_files = vec![
+            SourceFileAnalysis::new(
+                first_path.into(),
+                SourceSide::After,
+                vec![ResourceSourceLocation::new(
+                    ResourceAddress::new(
+                        "aws_instance",
+                        "resource_with_a_long_name_that_forces_a_narrow_git_column",
+                    ),
+                    first_path.into(),
+                    SourceSide::After,
+                    SourceRange::new(10, 12),
+                )],
+                Vec::new(),
+            ),
+            SourceFileAnalysis::new(
+                second_path.into(),
+                SourceSide::After,
+                vec![ResourceSourceLocation::new(
+                    ResourceAddress::new(
+                        "aws_instance",
+                        "resource_with_a_long_name_that_forces_a_narrow_git_column",
+                    ),
+                    second_path.into(),
+                    SourceSide::After,
+                    SourceRange::new(30, 31),
+                )],
+                Vec::new(),
+            ),
+        ];
+        let mut attributions = attribute_changes(
+            std::slice::from_ref(&change),
+            &source_files,
+            &[
+                AttributionSourceLineChange::new(
+                    first_path,
+                    SourceSide::After,
+                    SourceRange::new(10, 10),
+                ),
+                AttributionSourceLineChange::new(
+                    second_path,
+                    SourceSide::After,
+                    SourceRange::new(30, 30),
+                ),
+            ],
+        );
+        mark_analysis_incomplete(&mut attributions, &[AnalysisIssue::git("incomplete")]);
+        let review = PlanReview::new(
+            PathBuf::from("/repo/environments/production"),
+            "default".to_owned(),
+            Plan {
+                changes: vec![change],
+                summary: PlanSummary {
+                    updates: 1,
+                    ..PlanSummary::default()
+                },
+                unsupported_changes: Vec::new(),
+            },
+            source_files,
+            attributions,
+            ReviewComparison::working_tree(),
+            Vec::new(),
+        )
+        .with_repository_root(Some(PathBuf::from("/repo")));
+        PlanListState::from_review(review)
+            .expect("long evidence incomplete fixture should build a list")
     }
 
     fn unicode_state() -> PlanListState {

@@ -13,4 +13,4 @@ Git: working tree vs HEAD
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
-q quit | j/k/↑/↓ select | f change filter | / edit search
+q quit | j/k/↑/↓ select
