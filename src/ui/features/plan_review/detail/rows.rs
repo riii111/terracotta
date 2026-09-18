@@ -1,15 +1,16 @@
 use ratatui::text::{Line, Span};
 
-use crate::app::attribution::{AttributionStatus, ResourceAttribution};
-use crate::app::attribution::{SourceFileAnalysis, SourceSide};
+use crate::app::attribution::SourceSide;
+use crate::app::attribution::{AttributionEvidence, AttributionStatus, ResourceAttribution};
 use crate::app::plan::{
     AttributeChangeKind, AttributeDiff, AttributeDiffs, AttributeValue, format_attribute_path,
     format_replace_path,
 };
 use crate::app::review::{
-    AttributeGroup, DetailRow, PlanListContext, PlanListState, ReviewDetailState,
+    AttributeGroup, DetailRow, PlanListContext, PlanListState, ReviewComparison,
+    ReviewComparisonSource, ReviewDetailState,
 };
-use crate::ui::shell::context::{display_path, truncate_middle};
+use crate::ui::shell::context::display_path;
 use crate::ui::theme;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,22 +19,11 @@ pub(crate) struct DetailContent {
     pub(crate) selected_line: Option<usize>,
 }
 
-#[cfg(test)]
 pub(super) fn detail_content(
     list: &PlanListState,
     detail: &ReviewDetailState,
-    sources_expanded: bool,
+    analysis_info_expanded: bool,
     now: std::time::Instant,
-) -> DetailContent {
-    detail_content_with_width(list, detail, sources_expanded, now, usize::MAX)
-}
-
-pub(super) fn detail_content_with_width(
-    list: &PlanListState,
-    detail: &ReviewDetailState,
-    sources_expanded: bool,
-    now: std::time::Instant,
-    body_width: usize,
 ) -> DetailContent {
     let item = list
         .selected_item()
@@ -50,16 +40,18 @@ pub(super) fn detail_content_with_width(
         ),
         Span::raw(" "),
         Span::raw(item.address().to_owned()),
+        Span::raw(format!(" (of {} total)", list.items().len())),
     ]));
+    if !list.search().is_empty() {
+        lines.push(Line::from(format!("Search: {}", list.search())));
+    }
     lines.push(Line::default());
-    append_attribution(
+    append_attribution_summary(
         &mut lines,
         item.attribution(),
-        list.source_files(),
-        sources_expanded,
+        list.comparison(),
         repository_root,
         execution_root,
-        body_width,
     );
     lines.push(Line::default());
     lines.push(Line::from("Diff:"));
@@ -96,14 +88,16 @@ pub(super) fn detail_content_with_width(
     }
 
     append_replacement(&mut lines, attributes);
-    if sources_expanded && !list.source_files().is_empty() {
-        append_source_files(
-            &mut lines,
-            list.source_files(),
-            repository_root,
-            execution_root,
-            body_width,
-        );
+    append_evidence(
+        &mut lines,
+        item.attribution(),
+        list.comparison(),
+        repository_root,
+        execution_root,
+    );
+    append_analysis_details(&mut lines, item.attribution());
+    if analysis_info_expanded {
+        append_analysis_info(&mut lines, list, repository_root, execution_root);
     }
 
     DetailContent {
@@ -112,125 +106,176 @@ pub(super) fn detail_content_with_width(
     }
 }
 
-fn append_attribution(
+fn append_attribution_summary(
     lines: &mut Vec<Line<'static>>,
     attribution: &ResourceAttribution,
-    source_files: &[SourceFileAnalysis],
-    sources_expanded: bool,
+    comparison: &ReviewComparison,
     repository_root: Option<&std::path::Path>,
     execution_root: Option<&std::path::Path>,
-    body_width: usize,
 ) {
     lines.push(Line::from(format!(
-        "Git: {}",
-        attribution_label(attribution)
+        "Git: {} ({} {})",
+        attribution_label(attribution),
+        attribution.evidence().len(),
+        "evidence",
     )));
 
-    if attribution.status() == AttributionStatus::NoMatch {
-        lines.push(Line::from("  No direct match in analyzed sources."));
-    }
-    for evidence in attribution.evidence() {
-        let range = evidence.range();
-        let location_suffix = if range.start_line() == range.end_line() {
-            format!(
-                ":{} ({})",
-                range.start_line(),
-                source_side_label(evidence.side())
-            )
-        } else {
-            format!(
-                ":{}-{} ({})",
-                range.start_line(),
-                range.end_line(),
-                source_side_label(evidence.side())
-            )
-        };
+    if let Some(evidence) = attribution.evidence().first() {
         lines.push(Line::from(detail_path(
-            &display_path(evidence.path(), repository_root, execution_root),
-            &location_suffix,
-            body_width,
+            &format!(
+                "First evidence: {}",
+                evidence_location(evidence, comparison, repository_root, execution_root)
+            ),
+            "",
         )));
     }
-    if attribution.status() == AttributionStatus::Direct && !attribution.evidence().is_empty() {
-        lines.push(Line::from("  Resource block overlaps changed lines."));
+    if attribution.status() == AttributionStatus::NoMatch {
+        lines.push(Line::from(
+            "No direct match within the analyzed scope; this does not establish safety.",
+        ));
     }
     if !attribution.analysis().is_complete() {
-        lines.push(Line::from("  Analysis incomplete:"));
-        for issue in attribution.analysis().issues() {
-            lines.push(Line::from(format!("    {}", issue.message())));
-        }
-    }
-
-    let action = if sources_expanded { "hide" } else { "show" };
-    if source_files.is_empty() {
-        lines.push(Line::from("  Analyzed sources: none"));
-    } else {
-        lines.push(Line::from(format!(
-            "  Analyzed sources: {} (s {action})",
-            source_files.len()
-        )));
+        lines.push(Line::from(
+            "Analysis incomplete; details follow after Git evidence.",
+        ));
     }
 }
 
-fn append_source_files(
+fn append_evidence(
     lines: &mut Vec<Line<'static>>,
-    source_files: &[SourceFileAnalysis],
+    attribution: &ResourceAttribution,
+    comparison: &ReviewComparison,
     repository_root: Option<&std::path::Path>,
     execution_root: Option<&std::path::Path>,
-    body_width: usize,
 ) {
     lines.push(Line::default());
-    lines.push(Line::from("Analyzed sources:"));
-    for source in source_files {
-        let suffix = if source.is_complete() {
-            String::new()
-        } else {
-            " [incomplete]".to_owned()
-        };
-        let location_suffix = format!(" ({}){suffix}", source_side_label(source.side()));
+    lines.push(Line::from("Git evidence:"));
+    if attribution.evidence().is_empty() {
+        lines.push(Line::from("  None"));
+    }
+    for evidence in attribution.evidence() {
         lines.push(Line::from(detail_path(
-            &display_path(source.path(), repository_root, execution_root),
-            &location_suffix,
-            body_width,
+            &evidence_location(evidence, comparison, repository_root, execution_root),
+            "",
         )));
     }
 }
 
-fn detail_path(path: &str, suffix: &str, body_width: usize) -> String {
-    let prefix = "  ";
-    let path_width = body_width.saturating_sub(Line::from(format!("{prefix}{suffix}")).width());
-    format!("{prefix}{}{suffix}", truncate_path(path, path_width))
+fn append_analysis_details(lines: &mut Vec<Line<'static>>, attribution: &ResourceAttribution) {
+    if attribution.analysis().is_complete() {
+        return;
+    }
+
+    lines.push(Line::default());
+    lines.push(Line::from("Analysis details:"));
+    for issue in attribution.analysis().issues() {
+        lines.push(Line::from(format!("  - {}", issue.message())));
+    }
 }
 
-fn truncate_path(path: &str, max_width: usize) -> String {
-    if Line::from(path).width() <= max_width {
-        return path.to_owned();
+fn append_analysis_info(
+    lines: &mut Vec<Line<'static>>,
+    list: &PlanListState,
+    repository_root: Option<&std::path::Path>,
+    execution_root: Option<&std::path::Path>,
+) {
+    lines.push(Line::default());
+    lines.push(Line::from("Analysis info (s hide):"));
+    lines.push(Line::from(
+        "Analysis scope (all analyzed files, not selected-resource evidence)",
+    ));
+
+    if let Some(context) = list.context() {
+        lines.push(Line::from(format!(
+            "Execution root: {}",
+            context.root().display()
+        )));
+        lines.push(Line::from(format!(
+            "Repository root: {}",
+            context.repository_root().map_or_else(
+                || "unavailable".to_owned(),
+                |path| path.display().to_string(),
+            )
+        )));
+        lines.push(Line::from(format!("Workspace: {}", context.workspace())));
+        lines.push(Line::from(format!("Git branch: {}", context.git())));
+    } else {
+        lines.push(Line::from("Execution root: Target unavailable"));
+        lines.push(Line::from("Repository root: unavailable"));
+        lines.push(Line::from("Workspace: unavailable"));
+        lines.push(Line::from("Git branch: unavailable"));
+    }
+    lines.push(Line::from(format!(
+        "Comparison: {}",
+        list.comparison().label()
+    )));
+
+    lines.push(Line::from("Analyzed files:"));
+    if list.source_files().is_empty() {
+        lines.push(Line::from("  No analyzed files"));
+    }
+    for source in list.source_files() {
+        let suffix = if source.is_complete() {
+            format!(
+                " ({})",
+                comparison_side_label(list.comparison(), source.side())
+            )
+        } else {
+            format!(
+                " ({}) [incomplete]",
+                comparison_side_label(list.comparison(), source.side())
+            )
+        };
+        lines.push(Line::from(detail_path(
+            &display_path(source.path(), repository_root, execution_root),
+            &suffix,
+        )));
     }
 
-    let basename = std::path::Path::new(path).file_name().map_or_else(
-        || path.to_owned(),
-        |name| name.to_string_lossy().into_owned(),
-    );
-    let basename_width = Line::from(basename.as_str()).width();
-    if max_width >= basename_width.saturating_add(3) {
-        let directory = std::path::Path::new(path)
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .map_or_else(String::new, |parent| {
-                let mut directory = parent.display().to_string();
-                if !directory.ends_with('/') {
-                    directory.push('/');
-                }
-                directory
-            });
-        let directory_width = max_width.saturating_sub(basename_width + 3);
-        return format!(
-            "{}...{basename}",
-            truncate_middle(&directory, directory_width)
-        );
+    if !list.analysis_issues().is_empty() {
+        lines.push(Line::from("Analysis issues:"));
+        for issue in list.analysis_issues() {
+            lines.push(Line::from(format!("  - {issue}")));
+        }
     }
+}
 
-    truncate_middle(&basename, max_width)
+fn evidence_location(
+    evidence: &AttributionEvidence,
+    comparison: &ReviewComparison,
+    repository_root: Option<&std::path::Path>,
+    execution_root: Option<&std::path::Path>,
+) -> String {
+    let range = evidence.range();
+    let line = if range.start_line() == range.end_line() {
+        range.start_line().to_string()
+    } else {
+        format!("{}-{}", range.start_line(), range.end_line())
+    };
+    format!(
+        "{}:{line} ({})",
+        display_path(evidence.path(), repository_root, execution_root),
+        comparison_side_label(comparison, evidence.side())
+    )
+}
+
+fn detail_path(path: &str, suffix: &str) -> String {
+    format!("  {path}{suffix}")
+}
+
+fn comparison_side_label(comparison: &ReviewComparison, side: SourceSide) -> String {
+    match comparison.source_for(side) {
+        ReviewComparisonSource::Head => "HEAD".to_owned(),
+        ReviewComparisonSource::WorkingTree => "working tree".to_owned(),
+        ReviewComparisonSource::MergeBase => comparison.compare_ref().map_or_else(
+            || "merge-base".to_owned(),
+            |name| format!("merge-base({name})"),
+        ),
+    }
+}
+
+const fn pluralize(count: usize, singular: &'static str, plural: &'static str) -> &'static str {
+    if count == 1 { singular } else { plural }
 }
 
 fn append_attribute(
@@ -331,31 +376,16 @@ fn append_replacement(lines: &mut Vec<Line<'static>>, attributes: &AttributeDiff
 }
 
 const fn attribution_label(attribution: &ResourceAttribution) -> &'static str {
-    if attribution.analysis().is_complete() {
-        match attribution.status() {
-            AttributionStatus::Direct => "direct",
-            AttributionStatus::NoMatch => "no match",
-        }
-    } else {
-        "incomplete"
+    match attribution.status() {
+        AttributionStatus::Direct => "direct",
+        AttributionStatus::NoMatch => "no match",
     }
-}
-
-const fn source_side_label(side: SourceSide) -> &'static str {
-    match side {
-        SourceSide::Before => "before",
-        SourceSide::After => "after",
-    }
-}
-
-const fn pluralize(count: usize, singular: &'static str, plural: &'static str) -> &'static str {
-    if count == 1 { singular } else { plural }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::app::plan::AttributePathSegment;
-    use crate::app::review::DetailAction;
+    use crate::app::review::{DetailAction, ReviewComparisonBasis, ReviewComparisonStatus};
     use crate::ui::test_support::buffer_text;
 
     use super::super::test_support::*;
@@ -452,18 +482,18 @@ mod tests {
     }
 
     #[test]
-    fn summarizes_empty_and_incomplete_sources_with_side_and_toggle_state() {
+    fn summarizes_match_status_and_expands_analysis_info_with_side_names() {
         let empty = state_for_change_with_sources(change(), &[], Vec::new());
         let empty_text = buffer_text(&render(&empty, 100, 60));
         assert!(
-            empty_text.contains("No direct match in analyzed sources."),
+            empty_text.contains(
+                "No direct match within the analyzed scope; this does not establish safety."
+            ),
             "{empty_text}"
         );
-        assert!(
-            empty_text.contains("Analyzed sources: none"),
-            "{empty_text}"
-        );
-        assert!(!empty_text.contains("s sources"), "{empty_text}");
+        assert!(empty_text.contains("Git evidence:"), "{empty_text}");
+        assert!(empty_text.contains("  None"), "{empty_text}");
+        assert!(!empty_text.contains("Analyzed files:"), "{empty_text}");
 
         let long_path =
             "modules/production/services/networking/terraform/main/region/ap-northeast-1/main.tf";
@@ -477,16 +507,17 @@ mod tests {
         );
         let collapsed = buffer_text(&render(&state, 120, 60));
         assert!(
-            collapsed.contains("Analyzed sources: 2 (s show)"),
+            collapsed.contains("Analysis incomplete; details follow after Git evidence."),
             "{collapsed}"
         );
-        assert!(collapsed.contains("Analysis incomplete:"), "{collapsed}");
         assert!(!collapsed.contains("(before)"), "{collapsed}");
 
-        state.toggle_sources(120, 60, Instant::now());
+        state.toggle_analysis_info(120, 60, Instant::now());
         let expanded = buffer_text(&render(&state, 120, 60));
+        assert!(expanded.contains("Analysis info (s hide):"), "{expanded}");
         assert!(
-            expanded.contains("Analyzed sources: 2 (s hide)"),
+            expanded
+                .contains("Analysis scope (all analyzed files, not selected-resource evidence)"),
             "{expanded}"
         );
         let content = detail_content(&state.list, &state.detail, true, Instant::now());
@@ -494,21 +525,55 @@ mod tests {
             content
                 .lines
                 .iter()
-                .any(|line| { line.to_string() == format!("  {long_path} (before)") })
+                .any(|line| { line.to_string() == format!("  {long_path} (HEAD)") })
         );
+        assert!(content.lines.iter().any(|line| {
+            line.to_string() == format!("  {long_path} (working tree) [incomplete]")
+        }));
+    }
+
+    #[test]
+    fn analysis_info_opens_without_context_or_analyzed_files() {
+        let state = state_without_context();
+        let content = detail_content(&state.list, &state.detail, true, Instant::now());
+        let text = content
+            .lines
+            .iter()
+            .map(Line::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
         assert!(
-            content
-                .lines
-                .iter()
-                .any(|line| { line.to_string() == format!("  {long_path} (after) [incomplete]") })
+            text.contains("Execution root: Target unavailable"),
+            "{text}"
+        );
+        assert!(text.contains("Repository root: unavailable"), "{text}");
+        assert!(text.contains("No analyzed files"), "{text}");
+    }
+
+    #[test]
+    fn comparison_side_labels_keep_the_requested_ref_name() {
+        let comparison = ReviewComparison::new(
+            ReviewComparisonBasis::HeadVsMergeBase,
+            Some("main".to_owned()),
+            ReviewComparisonStatus::Complete,
+        );
+
+        assert_eq!(
+            comparison_side_label(&comparison, SourceSide::Before),
+            "merge-base(main)"
+        );
+        assert_eq!(
+            comparison_side_label(&comparison, SourceSide::After),
+            "HEAD"
         );
     }
 
     #[test]
-    fn puts_expanded_sources_after_diff_and_replacement_reason() {
+    fn puts_analysis_info_after_diff_and_replacement_reason() {
         let mut state = state_for_change(change(), &[]);
         let collapsed = detail_content(&state.list, &state.detail, false, Instant::now());
-        state.toggle_sources(120, 60, Instant::now());
+        state.toggle_analysis_info(120, 60, Instant::now());
         let expanded = detail_content(&state.list, &state.detail, true, Instant::now());
 
         let collapsed_diff = collapsed
@@ -530,24 +595,28 @@ mod tests {
                 line.to_string() == "Replacement reason: replace_because_cannot_update"
             })
             .expect("replacement reason should be present");
-        let sources = expanded
+        let evidence = expanded
             .lines
             .iter()
-            .position(|line| line.to_string() == "Analyzed sources:")
-            .expect("expanded source heading should be present");
-        assert!(sources > replacement);
+            .position(|line| line.to_string() == "Git evidence:")
+            .expect("evidence heading should be present");
+        let analysis = expanded
+            .lines
+            .iter()
+            .position(|line| line.to_string() == "Analysis info (s hide):")
+            .expect("analysis info heading should be present");
+        assert!(evidence > replacement);
+        assert!(analysis > evidence);
     }
 
     #[test]
-    fn path_elision_keeps_filename_and_location_suffix() {
+    fn full_path_keeps_filename_and_location_suffix() {
         let line = detail_path(
             "modules/production/services/networking/main.tf",
             ":42-46 (after)",
-            32,
         );
 
-        assert!(line.contains("..."));
+        assert!(line.contains("modules/production/services/networking/main.tf"));
         assert!(line.ends_with("main.tf:42-46 (after)"));
-        assert!(Line::from(line.as_str()).width() <= 32);
     }
 }

@@ -19,7 +19,7 @@ const MIN_WIDTH: u16 = 48;
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct DetailViewState {
     scroll: u16,
-    sources_expanded: bool,
+    analysis_info_expanded: bool,
 }
 
 impl DetailViewState {
@@ -27,17 +27,17 @@ impl DetailViewState {
         self.scroll
     }
 
-    pub(crate) const fn sources_expanded(&self) -> bool {
-        self.sources_expanded
+    pub(crate) const fn analysis_info_expanded(&self) -> bool {
+        self.analysis_info_expanded
     }
 
-    pub(crate) const fn toggle_sources(&mut self) {
-        self.sources_expanded = !self.sources_expanded;
+    pub(crate) const fn toggle_analysis_info(&mut self) {
+        self.analysis_info_expanded = !self.analysis_info_expanded;
     }
 
     pub(crate) const fn reset(&mut self) {
         self.scroll = 0;
-        self.sources_expanded = false;
+        self.analysis_info_expanded = false;
     }
 }
 
@@ -51,13 +51,7 @@ pub(crate) fn apply_detail_scroll(
     area: Rect,
 ) {
     let layout = resource_detail_layout(area, list, detail, copy_notice, now);
-    let content = rows::detail_content_with_width(
-        list,
-        detail,
-        view.sources_expanded(),
-        now,
-        usize::from(layout.body().width),
-    );
+    let content = rows::detail_content(list, detail, view.analysis_info_expanded(), now);
     apply_scroll(
         view,
         scroll,
@@ -76,13 +70,7 @@ pub(crate) fn ensure_detail_selection_visible(
     area: Rect,
 ) {
     let layout = resource_detail_layout(area, list, detail, copy_notice, now);
-    let content = rows::detail_content_with_width(
-        list,
-        detail,
-        view.sources_expanded(),
-        now,
-        usize::from(layout.body().width),
-    );
+    let content = rows::detail_content(list, detail, view.analysis_info_expanded(), now);
     ensure_selected_visible(view, &content, layout.body().width, layout.body().height);
 }
 
@@ -95,13 +83,7 @@ pub(crate) fn clamp_detail_scroll(
     area: Rect,
 ) {
     let layout = resource_detail_layout(area, list, detail, copy_notice, now);
-    let content = rows::detail_content_with_width(
-        list,
-        detail,
-        view.sources_expanded(),
-        now,
-        usize::from(layout.body().width),
-    );
+    let content = rows::detail_content(list, detail, view.analysis_info_expanded(), now);
     clamp_scroll(view, &content, layout.body().width, layout.body().height);
 }
 

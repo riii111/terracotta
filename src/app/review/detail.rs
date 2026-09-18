@@ -82,6 +82,10 @@ impl ReviewDetailState {
     }
 
     pub(crate) fn navigate(&mut self, navigation: ResourceNavigation, list: &mut PlanListState) {
+        if !self.can_navigate(navigation) {
+            return;
+        }
+
         let target = match navigation {
             ResourceNavigation::Previous => self.index.checked_sub(1),
             ResourceNavigation::Next => self
@@ -96,6 +100,17 @@ impl ReviewDetailState {
         list.select_resource(target);
         if let Some(next) = Self::from_list(list) {
             *self = next;
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn can_navigate(&self, navigation: ResourceNavigation) -> bool {
+        match navigation {
+            ResourceNavigation::Previous => self.index > 0,
+            ResourceNavigation::Next => match self.index.checked_add(1) {
+                Some(target) => target < self.total,
+                None => false,
+            },
         }
     }
 
@@ -442,5 +457,20 @@ mod tests {
         assert_eq!(detail.selected(), detail.rows().len() - 1);
         detail.apply(DetailAction::SelectNext, Instant::now());
         assert_eq!(detail.selected(), detail.rows().len() - 1);
+    }
+
+    #[test]
+    fn navigation_availability_stops_at_filtered_collection_edges() {
+        let mut detail = detail();
+        detail.total = 3;
+        detail.index = 1;
+
+        assert!(detail.can_navigate(ResourceNavigation::Previous));
+        assert!(detail.can_navigate(ResourceNavigation::Next));
+
+        detail.index = 0;
+        assert!(!detail.can_navigate(ResourceNavigation::Previous));
+        detail.index = 2;
+        assert!(!detail.can_navigate(ResourceNavigation::Next));
     }
 }

@@ -288,11 +288,9 @@ fn handle_detail_key(
             cancellation,
             clipboard,
         )),
-        Some(plan_review::DetailInput::ToggleSources) => {
-            if let Some(review) = state.review()
-                && !review.list().source_files().is_empty()
-            {
-                view.toggle_sources();
+        Some(plan_review::DetailInput::ToggleAnalysisInfo) => {
+            if let Some(review) = state.review() {
+                view.toggle_analysis_info();
                 let size = terminal.size()?;
                 if let Some(detail) = review.detail() {
                     plan_review::clamp_detail_scroll(

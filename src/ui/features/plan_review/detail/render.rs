@@ -6,7 +6,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::app::copy::{CopyNotice, CopyTarget};
-use crate::app::review::{PlanListState, ReviewDetailState};
+use crate::app::review::{PlanListState, ResourceNavigation, ReviewDetailState};
 use crate::ui::primitives::molecules::terminal_notice;
 use crate::ui::shell::{footer, header, layout as shell_layout};
 use crate::ui::theme;
@@ -105,7 +105,12 @@ pub(super) fn render_resource_detail_at(
     let content_area = shell_layout::render_content_block(
         frame,
         layout.shell.content(),
-        format!("Resource {}/{}", detail.index() + 1, detail.total()),
+        format!(
+            "Resource {}/{} | Filter: {}",
+            detail.index() + 1,
+            detail.total(),
+            list.filter().label()
+        ),
     );
     debug_assert_eq!(content_area, layout.shell.content_inner());
 
@@ -126,13 +131,7 @@ pub(super) fn render_resource_detail_at(
         );
     }
 
-    let content = super::rows::detail_content_with_width(
-        list,
-        detail,
-        view.sources_expanded(),
-        now,
-        usize::from(chunks[1].width),
-    );
+    let content = super::rows::detail_content(list, detail, view.analysis_info_expanded(), now);
     let scroll = view.scroll().min(super::viewport::max_scroll(
         &content,
         chunks[1].width,
@@ -174,6 +173,7 @@ fn footer_lines(
     } else if detail.can_reveal_selected() {
         items.push(footer::hint(&["r"], "reveal 10s"));
     }
+    items.push(footer::hint(&["s"], "analysis info"));
     match (
         list.can_copy(CopyTarget::Resource),
         list.can_copy(CopyTarget::Plan),
@@ -189,10 +189,12 @@ fn footer_lines(
     items.extend([
         footer::hint(&["↑", "↓"], "select"),
         footer::hint(&["Enter"], "expand"),
-        footer::hint(&["[", "]"], "prev/next"),
     ]);
-    if !list.source_files().is_empty() {
-        items.push(footer::hint(&["s"], "sources"));
+    if detail.can_navigate(ResourceNavigation::Previous) {
+        items.push(footer::hint(&["[", "←", "Ctrl+B"], "prev"));
+    }
+    if detail.can_navigate(ResourceNavigation::Next) {
+        items.push(footer::hint(&["]", "→", "Ctrl+F"], "next"));
     }
     footer::layout(items, width)
 }
@@ -212,6 +214,7 @@ fn required_footer_lines(
     } else if detail.can_reveal_selected() {
         items.push(footer::hint(&["r"], "reveal 10s"));
     }
+    items.push(footer::hint(&["s"], "analysis info"));
     footer::layout(items, width)
 }
 
@@ -291,11 +294,11 @@ mod tests {
     }
 
     #[test]
-    fn keeps_source_toggle_operation_in_body_when_footer_is_narrow() {
+    fn keeps_analysis_info_operation_in_footer_when_body_is_narrow() {
         let state = state();
         let text = buffer_text(&render(&state, 48, 30));
 
-        assert!(text.contains("Analyzed sources: 1 (s show)"), "{text}");
+        assert!(text.contains("s analysis info"), "{text}");
     }
 
     #[test]
@@ -318,14 +321,14 @@ mod tests {
     }
 
     #[test]
-    fn resetting_detail_view_closes_sources() {
+    fn resetting_detail_view_closes_analysis_info() {
         let mut state = state();
-        state.toggle_sources(100, 40, Instant::now());
-        assert!(state.view.sources_expanded());
+        state.toggle_analysis_info(100, 40, Instant::now());
+        assert!(state.view.analysis_info_expanded());
 
         state.view.reset();
 
-        assert!(!state.view.sources_expanded());
+        assert!(!state.view.analysis_info_expanded());
         assert_eq!(state.scroll(), 0);
     }
 }

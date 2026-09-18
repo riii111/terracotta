@@ -27,10 +27,6 @@ pub(crate) enum ReviewComparisonBasis {
     HeadVsMergeBase,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "UI05 uses the semantic source-side mapping")
-)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReviewComparisonSource {
     Head,
@@ -90,10 +86,6 @@ impl ReviewComparison {
         self.compare_ref.as_deref()
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "UI05 uses the semantic source-side mapping")
-    )]
     #[must_use]
     pub(crate) const fn source_for(&self, side: SourceSide) -> ReviewComparisonSource {
         match (self.basis, side) {

@@ -11,10 +11,7 @@ use crate::app::plan::{
     Plan, PlanAction, PlanSummary, PlanValue, ReplacePathSegment, ResourceChange,
     ResourceChangeKind, ResourceMode, format_attribute_path,
 };
-use crate::app::review::{
-    AttributeGroup, DetailAction, DetailRow, PlanReview, ReviewComparison, ReviewComparisonBasis,
-    ReviewComparisonStatus,
-};
+use crate::app::review::{AttributeGroup, DetailAction, DetailRow, PlanReview, ReviewComparison};
 use crate::ui::test_support::render_to_buffer;
 
 use super::*;
@@ -39,12 +36,11 @@ impl DetailFixture {
             action,
             DetailAction::SelectPrevious | DetailAction::SelectNext | DetailAction::ToggleExpansion
         ) {
-            let content = super::rows::detail_content_with_width(
+            let content = super::rows::detail_content(
                 &self.list,
                 &self.detail,
-                self.view.sources_expanded(),
+                self.view.analysis_info_expanded(),
                 now,
-                usize::from(width),
             );
             super::viewport::ensure_selected_visible(&mut self.view, &content, width, height);
         }
@@ -57,12 +53,11 @@ impl DetailFixture {
         height: u16,
         now: std::time::Instant,
     ) {
-        let content = super::rows::detail_content_with_width(
+        let content = super::rows::detail_content(
             &self.list,
             &self.detail,
-            self.view.sources_expanded(),
+            self.view.analysis_info_expanded(),
             now,
-            usize::from(width),
         );
         super::viewport::apply_scroll(&mut self.view, scroll, &content, width, height);
     }
@@ -75,8 +70,8 @@ impl DetailFixture {
         self.copy_notice = Some(notice);
     }
 
-    pub(super) fn toggle_sources(&mut self, width: u16, height: u16, now: Instant) {
-        self.view.toggle_sources();
+    pub(super) fn toggle_analysis_info(&mut self, width: u16, height: u16, now: Instant) {
+        self.view.toggle_analysis_info();
         super::super::clamp_detail_scroll(
             &mut self.view,
             &self.list,
@@ -138,6 +133,32 @@ pub(super) fn state() -> DetailFixture {
     state_with_changed_lines(&[])
 }
 
+pub(super) fn state_without_context() -> DetailFixture {
+    let change = change();
+    let attribution = attribute_changes(std::slice::from_ref(&change), &[], &[])
+        .pop()
+        .expect("one change should produce one attribution");
+    let list = PlanListState::from_plan(
+        Plan {
+            changes: vec![change],
+            summary: PlanSummary {
+                updates: 1,
+                ..PlanSummary::default()
+            },
+            unsupported_changes: Vec::new(),
+        },
+        vec![attribution],
+        ReviewComparison::working_tree(),
+    )
+    .expect("review should build a list");
+    DetailFixture {
+        detail: ReviewDetailState::from_list(&list).expect("selected item should open"),
+        list,
+        view: DetailViewState::default(),
+        copy_notice: None,
+    }
+}
+
 pub(super) fn state_with_changed_lines(changed_lines: &[SourceLineChange]) -> DetailFixture {
     state_for_change(change(), changed_lines)
 }
@@ -189,11 +210,7 @@ pub(super) fn state_for_change_with_sources(
         },
         source_files,
         vec![attribution],
-        ReviewComparison::new(
-            ReviewComparisonBasis::WorkingTreeVsHead,
-            None,
-            ReviewComparisonStatus::Complete,
-        ),
+        ReviewComparison::working_tree(),
         Vec::new(),
     )
     .with_git("feature/resize".to_owned());
