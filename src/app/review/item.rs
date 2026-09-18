@@ -1,4 +1,4 @@
-use crate::app::attribution::{AttributionStatus, ResourceAttribution};
+use crate::app::attribution::ResourceAttribution;
 use crate::app::copy::{CopyEffect, CopyTarget};
 use crate::app::plan::{
     AttributeDiffs, ResourceChange, ResourceChangeKind, diff_resource_attributes,
@@ -69,38 +69,5 @@ impl PlanListItem {
             resource_count,
             self.resource_copy_text.clone()?,
         ))
-    }
-
-    #[must_use]
-    pub(crate) fn git_label(&self) -> String {
-        if !self.attribution.analysis().is_complete() {
-            return "incomplete".to_owned();
-        }
-
-        match self.attribution.status() {
-            AttributionStatus::NoMatch => "no match".to_owned(),
-            AttributionStatus::Direct => self.attribution.evidence().first().map_or_else(
-                || "direct".to_owned(),
-                |evidence| {
-                    let range = evidence.range();
-                    let location = if range.start_line() == range.end_line() {
-                        format!("{}:{}", evidence.path().display(), range.start_line())
-                    } else {
-                        format!(
-                            "{}:{}-{}",
-                            evidence.path().display(),
-                            range.start_line(),
-                            range.end_line()
-                        )
-                    };
-                    let additional = self.attribution.evidence().len().saturating_sub(1);
-                    if additional == 0 {
-                        format!("direct: {location}")
-                    } else {
-                        format!("direct: {location} (+{additional} more)")
-                    }
-                },
-            ),
-        }
     }
 }

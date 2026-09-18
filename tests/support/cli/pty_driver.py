@@ -283,7 +283,7 @@ def kill_child():
 
 try:
     if scenario == "workflow":
-        wait_new("Needs review: 0 / 1", "list")
+        wait_new("Needs review: 0/1", "list")
         send_key(b"f")
         wait_parts(["Showing", "0/1"], "filter_empty")
         send_key(b"f")
@@ -292,7 +292,7 @@ try:
         send_key(b"/")
         wait_new("Type to search", "search_input")
         send_key(b"z")
-        wait_new("No matching resources", "search_empty")
+        wait_new("No resources match the current filter/search.", "search_empty")
         send_key(b"\x7f")
         send_key(b"\x7f")
         send_key(b"\r")
@@ -343,17 +343,17 @@ try:
     elif scenario == "narrow":
         wait_new("Terminal too small", "narrow")
         resize(100, 24)
-        wait_new("Needs review: 0 / 1", "resized")
+        wait_new("Needs review: 0/1", "resized")
         send_key(b"q")
         exit_code = wait_exit()
     elif scenario == "empty":
-        wait_parts(["Needs review: 0 / 0", "No res"], "empty")
+        wait_parts(["Needs review: 0/0", "No res"], "empty")
         send_key(b"y")
         send_key(b"\r")
         send_key(b"q")
         exit_code = wait_exit()
     elif scenario == "compare_ref":
-        wait_parts(["merge-base(main)", "Needs review: 1 / 1"], "compare_ref")
+        wait_parts(["merge-base(main)", "Needs review: 1/1"], "compare_ref")
         send_key(b"q")
         exit_code = wait_exit()
     elif scenario == "panic":

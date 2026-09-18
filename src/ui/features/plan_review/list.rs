@@ -4,12 +4,20 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph};
 
+use crate::app::attribution::AttributionStatus;
 use crate::app::copy::{CopyNotice, CopyTarget};
 use crate::app::plan::ResourceChangeKind;
-use crate::app::review::{PlanListFilter, PlanListItem, PlanListState, ReviewDiagnosticsState};
+use crate::app::review::{
+    PlanListContext, PlanListFilter, PlanListItem, PlanListState, ReviewDiagnosticsState,
+};
 use crate::ui::primitives::atoms::separator;
 use crate::ui::primitives::molecules::terminal_notice;
-use crate::ui::shell::{footer, header, layout as shell_layout};
+use crate::ui::shell::{
+    context::{display_path, truncate_middle},
+    footer,
+    header,
+    layout as shell_layout,
+};
 use crate::ui::theme;
 
 use super::text::{display_width, truncate_end};
@@ -58,7 +66,8 @@ pub(crate) fn render_plan_list_with_diagnostics(
         content_area.width as usize,
         compact_layout,
     );
-    let summary = summary_lines(state);
+    let summary = summary_lines(state, content_area.width as usize);
+    let summary_height = u16::try_from(summary.len()).unwrap_or(u16::MAX);
     let search_height = u16::from(has_search);
     let notice_height = u16::try_from(notices.len()).unwrap_or(u16::MAX);
     let separator_height =
@@ -66,6 +75,7 @@ pub(crate) fn render_plan_list_with_diagnostics(
     let copy_notice_height = u16::from(copy_notice.is_some());
     let chunks = list_layout(
         content_area,
+        summary_height,
         search_height,
         separator_height,
         notice_height,
@@ -116,6 +126,7 @@ pub(crate) fn render_plan_list_with_diagnostics(
 
 fn list_layout(
     content_area: Rect,
+    summary_height: u16,
     search_height: u16,
     separator_height: u16,
     notice_height: u16,
@@ -124,7 +135,7 @@ fn list_layout(
     Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(2),
+            Constraint::Length(summary_height),
             Constraint::Length(search_height),
             Constraint::Length(separator_height),
             Constraint::Length(notice_height),
@@ -212,29 +223,30 @@ fn render_rows(
         *list_state.offset_mut() = 0;
         let message = if state.items().is_empty() {
             "No resource changes.".to_owned()
-        } else if !state.search().is_empty() {
-            format!("No matching resources. Search: {}", state.search())
         } else {
-            format!(
-                "No items in this filter. Press f to show all {} changes.",
-                state.items().len()
-            )
+            "No resources match the current filter/search.".to_owned()
         };
         frame.render_widget(Paragraph::new(message), area);
         return;
     }
 
     let width = area.width.saturating_sub(2) as usize;
+    let wide_actions = frame.area().width >= 96;
+    let action_column_width = if wide_actions { 11 } else { 8 };
     let resource_width = state
         .visible_items()
         .map(|item| display_width(item.address()))
         .max()
         .unwrap_or(8)
         .max(8)
-        .min(width.saturating_sub(36));
+        .min(width.saturating_sub(action_column_width + 28));
     let inline = area.width >= 80;
     let heading = if inline {
-        format!("    ACTION  {:resource_width$}  GIT", "RESOURCE")
+        format!(
+            "    ACTION{}{:resource_width$}  GIT",
+            " ".repeat(action_column_width - "ACTION".len()),
+            "RESOURCE"
+        )
     } else {
         "    ACTION  RESOURCE / GIT".to_owned()
     };
@@ -244,7 +256,15 @@ fn render_rows(
     ));
     let items = state
         .visible_items()
-        .map(|item| list_item(item, width, inline.then_some(resource_width)))
+        .map(|item| {
+            list_item(
+                item,
+                width,
+                inline.then_some(resource_width),
+                wide_actions,
+                state.context(),
+            )
+        })
         .collect::<Vec<_>>();
     let list = List::new(items)
         .block(Block::new().title(header))
@@ -259,9 +279,11 @@ fn list_item(
     item: &PlanListItem,
     width: usize,
     resource_width: Option<usize>,
+    wide_actions: bool,
+    context: Option<&PlanListContext>,
 ) -> ListItem<'static> {
     let marker = if item.needs_review() { "!" } else { " " };
-    let git = item.git_label();
+    let git = git_evidence_label(item, context);
 
     let action_style = theme::action_style(item.kind());
     let review_style = theme::review_style(item.needs_review());
@@ -270,17 +292,22 @@ fn list_item(
     if let Some(address_width) = resource_width {
         let address = truncate_end(item.address(), address_width);
         let padding = " ".repeat(address_width.saturating_sub(display_width(&address)) + 2);
+        let action = action_label(item.kind(), wide_actions);
+        let action_text_width: usize = if wide_actions { 9 } else { 1 };
+        let action_column_width: usize = if wide_actions { 11 } else { 8 };
+        let action_padding = " ".repeat(
+            action_text_width.saturating_sub(display_width(&action))
+                + if wide_actions { 2 } else { 0 },
+        );
+        let git_width = width.saturating_sub(address_width + action_column_width + 4);
         return ListItem::new(Line::from(vec![
             Span::styled(marker.to_owned(), review_style),
             Span::raw(" "),
-            Span::styled(theme::action_symbol(item.kind()), action_style),
-            Span::raw("       "),
+            Span::styled(action, action_style),
+            Span::raw(action_padding),
             Span::raw(address),
             Span::raw(padding),
-            Span::styled(
-                truncate_end(&git, width.saturating_sub(address_width + 12)),
-                git_style,
-            ),
+            Span::styled(truncate_middle(&git, git_width), git_style),
         ]));
     }
 
@@ -291,36 +318,70 @@ fn list_item(
         Line::from(vec![
             Span::styled(marker.to_owned(), review_style),
             Span::raw(" "),
-            Span::styled(theme::action_symbol(item.kind()), action_style),
+            Span::styled(action_label(item.kind(), false), action_style),
             Span::raw("       "),
             Span::raw(address),
         ]),
         Line::from(vec![
             Span::raw("          "),
-            Span::styled(truncate_end(&git, evidence_width), git_style),
+            Span::styled(truncate_middle(&git, evidence_width), git_style),
         ]),
     ])
 }
 
-fn summary_lines(state: &PlanListState) -> Vec<Line<'static>> {
+fn action_label(kind: ResourceChangeKind, wide: bool) -> String {
+    if wide {
+        format!("{} {}", theme::action_symbol(kind), kind_label(kind))
+    } else {
+        theme::action_symbol(kind).to_owned()
+    }
+}
+
+const fn kind_label(kind: ResourceChangeKind) -> &'static str {
+    match kind {
+        ResourceChangeKind::Create => "create",
+        ResourceChangeKind::Update => "update",
+        ResourceChangeKind::Replace => "replace",
+        ResourceChangeKind::Delete => "delete",
+    }
+}
+
+fn git_evidence_label(item: &PlanListItem, context: Option<&PlanListContext>) -> String {
+    let repository_root = context.and_then(PlanListContext::repository_root);
+    let execution_root = context.map(PlanListContext::root);
+    let mut labels = Vec::new();
+
+    if let Some(evidence) = item.attribution().evidence().first() {
+        let path = display_path(evidence.path(), repository_root, execution_root);
+        let range = evidence.range();
+        let location = if range.start_line() == range.end_line() {
+            format!("{path}:{}", range.start_line())
+        } else {
+            format!("{path}:{}-{}", range.start_line(), range.end_line())
+        };
+        let evidence_count = item.attribution().evidence().len();
+        let count = (evidence_count > 1).then(|| format!(" [{evidence_count} evidence]"));
+        labels.push(format!("direct: {location}{}", count.unwrap_or_default()));
+    }
+
+    if !item.attribution().analysis().is_complete() {
+        labels.push("review: analysis incomplete".to_owned());
+    } else if matches!(item.attribution().status(), AttributionStatus::NoMatch) {
+        labels.push("review: no match".to_owned());
+    }
+
+    labels.join(" | ")
+}
+
+fn summary_lines(state: &PlanListState, width: usize) -> Vec<Line<'static>> {
     let summary = state.summary();
     let needs_review = state.needs_review_count() > 0;
-    let review_count = Span::styled(
-        if state.filter() == PlanListFilter::All {
-            format!(
-                "Needs review: {} / {}",
-                state.needs_review_count(),
-                state.items().len()
-            )
-        } else {
-            format!(
-                "Review {}/{}",
-                state.needs_review_count(),
-                state.items().len()
-            )
-        },
-        theme::review_style(needs_review),
+    let review_text = format!(
+        "Needs review: {}/{}",
+        state.needs_review_count(),
+        state.items().len()
     );
+    let review_count = Span::styled(review_text, theme::review_style(needs_review));
 
     let action_line = Line::from(vec![
         Span::styled(
@@ -350,18 +411,29 @@ fn summary_lines(state: &PlanListState) -> Vec<Line<'static>> {
         ];
     }
 
-    vec![
-        action_line,
-        Line::from(vec![
-            review_count,
-            Span::raw(format!("  Filter: {}", state.filter().label())),
-            Span::raw(format!(
-                "  Showing {}/{}",
-                state.visible_count(),
-                state.items().len()
-            )),
-        ]),
-    ]
+    let filter_line = Line::from(vec![
+        review_count.clone(),
+        Span::raw(format!("  Filter: {}", state.filter().label())),
+    ]);
+    let showing_line = Line::from(format!(
+        "Showing: {}/{}",
+        state.visible_count(),
+        state.items().len()
+    ));
+    let combined = Line::from(vec![
+        review_count,
+        Span::raw(format!("  Filter: {}", state.filter().label())),
+        Span::raw(format!(
+            "  Showing: {}/{}",
+            state.visible_count(),
+            state.items().len()
+        )),
+    ]);
+    if combined.width() <= width {
+        vec![action_line, combined]
+    } else {
+        vec![action_line, filter_line, showing_line]
+    }
 }
 
 fn has_search(state: &PlanListState) -> bool {
@@ -385,28 +457,23 @@ fn footer_lines(
         );
     }
 
+    let has_visible_items = state.visible_count() > 0;
     let mut items = vec![footer::hint(&["q"], "quit")];
     if diagnostics.count() > 0 {
         items.push(footer::hint(&["w"], "diagnostics"));
     }
-    match (
-        state.can_copy(CopyTarget::Resource),
-        state.can_copy(CopyTarget::Plan),
-    ) {
-        (true, true) => {
-            items.push(footer::hint(&["y"], "resource"));
-            items.push(footer::hint(&["Y"], "plan"));
-        }
-        (true, false) => items.push(footer::hint(&["y"], "resource")),
-        (false, true) => items.push(footer::hint(&["Y"], "plan")),
-        (false, false) => {}
+    if has_visible_items && state.can_copy(CopyTarget::Resource) {
+        items.push(footer::hint(&["y"], "resource"));
     }
-    items.extend([
-        footer::hint(&["j", "k", "↑", "↓"], "select"),
-        footer::hint(&["Enter"], "details"),
-        footer::hint(&["f"], "filter"),
-        footer::hint(&["/"], "search"),
-    ]);
+    if state.can_copy(CopyTarget::Plan) {
+        items.push(footer::hint(&["Y"], "plan"));
+    }
+    items.push(footer::hint(&["j", "k", "↑", "↓"], "select"));
+    if has_visible_items {
+        items.push(footer::hint(&["Enter"], "details"));
+    }
+    items.push(footer::hint(&["f"], "change filter"));
+    items.push(footer::hint(&["/"], "edit search"));
     footer::layout(items, width)
 }
 
@@ -753,13 +820,13 @@ mod tests {
 
         assert!(text.contains("Git: working tree vs HEAD"));
         assert!(text.contains("+1 create  ~1 update  R1 replace  -1 delete"));
-        assert!(text.contains("Needs review: 2 / 4"), "{text}");
+        assert!(text.contains("Needs review: 2/4"), "{text}");
         assert!(text.contains("main.tf:42-46"));
         assert!(text.contains("incomplete"));
         assert!(text.contains("no match"));
         assert!(text.contains("q quit"), "{text}");
         assert!(text.contains("j/k/↑/↓ select"), "{text}");
-        assert!(text.contains("/ search"), "{text}");
+        assert!(text.contains("/ edit search"), "{text}");
         assert!(
             text.contains("aws_s3_bucket.logs_with_a_very_long_resource_address"),
             "{text}"
@@ -792,13 +859,56 @@ mod tests {
 
         for (address, label) in [
             ("aws_instance.api", "direct:"),
-            ("aws_instance.worker", "incomplete"),
-            ("aws_security_group.old", "no match"),
+            ("aws_instance.worker", "review: analysis incomplete"),
+            ("aws_security_group.old", "review: no match"),
         ] {
             let row = text.lines().find(|line| line.contains(address)).unwrap();
             assert_eq!(row.find(address), Some(resource_column), "{row}");
             assert_eq!(row.find(label), Some(git_column), "{row}");
         }
+    }
+
+    #[test]
+    fn action_column_adds_change_names_at_the_96_cell_boundary() {
+        let state = synthetic_state();
+        let wide = buffer_text(&render_to_buffer(&state, 96, 20));
+        let narrow = buffer_text(&render_to_buffer(&state, 95, 20));
+
+        for label in ["+ create", "~ update", "R replace", "- delete"] {
+            assert!(wide.contains(label), "wide list is missing {label}: {wide}");
+        }
+        assert!(
+            !narrow.contains("~ update"),
+            "narrow list used a wide action: {narrow}"
+        );
+    }
+
+    #[test]
+    fn git_column_uses_repository_relative_first_evidence_and_total_count() {
+        let state = multiple_evidence_state();
+        let text = buffer_text(&render_to_buffer(&state, 120, 16));
+
+        assert!(
+            text.contains("direct: environments/prod/main.tf:10-12 [2 evidence]"),
+            "{text}"
+        );
+        assert!(!text.contains("/repo/environments/prod"), "{text}");
+    }
+
+    #[test]
+    fn empty_filter_uses_shared_message_and_keeps_only_filter_search_hints() {
+        let mut state = direct_only_state();
+        state.apply(PlanListAction::ToggleFilter);
+        let text = buffer_text(&render_to_buffer(&state, 80, 12));
+
+        assert!(
+            text.contains("No resources match the current filter/search."),
+            "{text}"
+        );
+        assert!(text.contains("f change filter"), "{text}");
+        assert!(text.contains("/ edit search"), "{text}");
+        assert!(!text.contains("Enter details"), "{text}");
+        assert!(!text.contains("y resource"), "{text}");
     }
 
     #[test]
@@ -831,7 +941,7 @@ mod tests {
         let text = buffer_text(&render_to_buffer(&state, 80, 12));
 
         assert!(text.contains("No resource changes."), "{text}");
-        assert!(text.contains("Needs review: 0 / 0"));
+        assert!(text.contains("Needs review: 0/0"));
     }
 
     #[test]
@@ -844,7 +954,7 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("Git: working tree vs HEAD"), "{text}");
-        assert!(text.contains("Needs review: 1 / 1"), "{text}");
+        assert!(text.contains("Needs review: 1/1"), "{text}");
         assert!(text.contains("Analysis incomplete"), "{text}");
         assert!(text.contains("(+2 more)"), "{text}");
         assert!(text.contains("q quit"), "{text}");
@@ -861,7 +971,7 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("(+2 more)"), "{text}");
-        assert!(text.contains("Needs review: 1 / 1"), "{text}");
+        assert!(text.contains("Needs review: 1/1"), "{text}");
         assert!(text.contains("q quit"), "{text}");
     }
 
@@ -890,7 +1000,7 @@ mod tests {
 
         assert!(text.contains("Diagnostics: 1"), "{text}");
         assert!(!text.contains("Diagnostics: 1 (w)"), "{text}");
-        assert!(text.contains("Showing 0/4"), "{text}");
+        assert!(text.contains("Showing: 0/4"), "{text}");
         assert!(!text.contains("w diagnostics"), "{text}");
     }
 
@@ -982,7 +1092,7 @@ mod tests {
             text.contains("+1 create  ~1 update  R1 replace  -1 delete"),
             "{text}"
         );
-        assert!(text.contains("Needs review: 2 / 4"), "{text}");
+        assert!(text.contains("Needs review: 2/4"), "{text}");
     }
 
     #[test]
@@ -1088,7 +1198,7 @@ mod tests {
         state.apply(PlanListAction::SetSearch("AWS_S3".to_owned()));
         let text = buffer_text(&render_to_buffer(&state, 100, 16));
 
-        assert!(text.contains("Filter: All  Showing 1/4"), "{text}");
+        assert!(text.contains("Filter: All  Showing: 1/4"), "{text}");
         assert!(text.contains("/ AWS_S3_"), "{text}");
         assert!(
             text.contains("Enter confirm | Esc cancel | Ctrl-C quit | Type to search"),
@@ -1104,7 +1214,7 @@ mod tests {
         state.apply(PlanListAction::SetSearch("missing".to_owned()));
         let text = buffer_text(&render_to_buffer(&state, 100, 16));
         assert!(
-            text.contains("No matching resources. Search: missing"),
+            text.contains("No resources match the current filter/search."),
             "{text}"
         );
     }
@@ -1116,8 +1226,8 @@ mod tests {
         state.apply(PlanListAction::SetSearch("security".to_owned()));
         let text = buffer_text(&render_to_buffer(&state, MIN_WIDTH, MIN_HEIGHT));
 
-        assert!(text.contains("Needs review: 2 / 4"), "{text}");
-        assert!(text.contains("Showing 1/4"), "{text}");
+        assert!(text.contains("Needs review: 2/4"), "{text}");
+        assert!(text.contains("Showing: 1/4"), "{text}");
         assert!(text.contains("/ security_"), "{text}");
     }
 
@@ -1130,10 +1240,10 @@ mod tests {
 
         assert!(text.contains("Unshown: output (1)"), "{text}");
         assert!(text.contains("Analysis incomplete"), "{text}");
-        assert!(text.contains("Needs review: 1 / 1"), "{text}");
-        assert!(text.contains("Showing 0/1"), "{text}");
+        assert!(text.contains("Needs review: 1/1"), "{text}");
+        assert!(text.contains("Showing: 0/1"), "{text}");
         assert!(
-            text.contains("No matching resources. Search: missing"),
+            text.contains("No resources match the current filter/search."),
             "{text}"
         );
     }
@@ -1161,9 +1271,9 @@ mod tests {
         state.apply(PlanListAction::ToggleFilter);
         let text = buffer_text(&render_to_buffer(&state, 100, 16));
 
-        assert!(text.contains("Review 2/4"), "{text}");
+        assert!(text.contains("Needs review: 2/4"), "{text}");
         assert!(text.contains("Filter: Needs review"), "{text}");
-        assert!(text.contains("Showing 2/4"), "{text}");
+        assert!(text.contains("Showing: 2/4"), "{text}");
         assert!(!text.contains("aws_instance.api"), "{text}");
         assert!(text.contains("aws_instance.worker"), "{text}");
 
@@ -1175,16 +1285,16 @@ mod tests {
     }
 
     #[test]
-    fn empty_filter_explains_how_to_restore_nonempty_plan() {
+    fn empty_filter_uses_common_no_match_message() {
         let mut state = direct_only_state();
         state.apply(PlanListAction::ToggleFilter);
         let text = buffer_text(&render_to_buffer(&state, 80, 12));
 
         assert!(
-            text.contains("No items in this filter. Press f to show all 1 changes."),
+            text.contains("No resources match the current filter/search."),
             "{text}"
         );
-        assert!(text.contains("Showing 0/1"), "{text}");
+        assert!(text.contains("Showing: 0/1"), "{text}");
     }
 
     #[test]
@@ -1194,7 +1304,7 @@ mod tests {
         let text = buffer_text(&render_to_buffer(&state, MIN_WIDTH, MIN_HEIGHT));
 
         assert!(text.contains("Filter: Needs review"), "{text}");
-        assert!(text.contains("Showing 1/1"), "{text}");
+        assert!(text.contains("Showing: 1/1"), "{text}");
         assert!(text.contains("q quit"), "{text}");
     }
 
@@ -1237,6 +1347,72 @@ mod tests {
             ReviewComparison::working_tree(),
         )
         .expect("direct-only fixture should build a list")
+    }
+
+    fn multiple_evidence_state() -> PlanListState {
+        let change = synthetic_change(
+            "aws_instance.api",
+            ResourceChangeKind::Update,
+            PlanAction::Update,
+        );
+        let source_files = vec![
+            SourceFileAnalysis::new(
+                "/repo/environments/prod/main.tf".into(),
+                SourceSide::After,
+                vec![ResourceSourceLocation::new(
+                    ResourceAddress::new("aws_instance", "api"),
+                    "/repo/environments/prod/main.tf".into(),
+                    SourceSide::After,
+                    SourceRange::new(10, 12),
+                )],
+                Vec::new(),
+            ),
+            SourceFileAnalysis::new(
+                "/repo/common/main.tf".into(),
+                SourceSide::After,
+                vec![ResourceSourceLocation::new(
+                    ResourceAddress::new("aws_instance", "api"),
+                    "/repo/common/main.tf".into(),
+                    SourceSide::After,
+                    SourceRange::new(20, 20),
+                )],
+                Vec::new(),
+            ),
+        ];
+        let attributions = attribute_changes(
+            std::slice::from_ref(&change),
+            &source_files,
+            &[
+                AttributionSourceLineChange::new(
+                    "/repo/environments/prod/main.tf",
+                    SourceSide::After,
+                    SourceRange::new(11, 11),
+                ),
+                AttributionSourceLineChange::new(
+                    "/repo/common/main.tf",
+                    SourceSide::After,
+                    SourceRange::new(20, 20),
+                ),
+            ],
+        );
+        let review = PlanReview::new(
+            PathBuf::from("/repo/environments/prod"),
+            "default".to_owned(),
+            Plan {
+                changes: vec![change],
+                summary: PlanSummary {
+                    updates: 1,
+                    ..PlanSummary::default()
+                },
+                unsupported_changes: Vec::new(),
+            },
+            source_files,
+            attributions,
+            ReviewComparison::working_tree(),
+            Vec::new(),
+        )
+        .with_repository_root(Some(PathBuf::from("/repo")));
+        PlanListState::from_review(review).expect("multiple evidence fixture should build a list")
     }
 
     fn unicode_state() -> PlanListState {
@@ -1316,19 +1492,11 @@ mod tests {
         highlighted: bool,
         case: &str,
     ) {
-        let label = if state.filter() == PlanListFilter::All {
-            format!(
-                "Needs review: {} / {}",
-                state.needs_review_count(),
-                state.items().len()
-            )
-        } else {
-            format!(
-                "Review {}/{}",
-                state.needs_review_count(),
-                state.items().len()
-            )
-        };
+        let label = format!(
+            "Needs review: {}/{}",
+            state.needs_review_count(),
+            state.items().len()
+        );
         let area = buffer.area();
         let (x, y) = (area.y..area.bottom())
             .find_map(|y| {

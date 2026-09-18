@@ -6,11 +6,11 @@ Terracotta | Target unavailable
 Git: working tree vs HEAD
 ┌Plan──────────────────────────────────────────────────────────────────────────┐
 │+0 create  ~0 update  R0 replace  -0 delete                                   │
-│Needs review: 0 / 0   Filter: All                                             │
+│Needs review: 0/0   Filter: All                                               │
 │──────────────────────────────────────────────────────────────────────────────│
 │No resource changes.                                                          │
 │                                                                              │
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
-q quit | j/k/↑/↓ select | Enter details | f filter | / search
+q quit | j/k/↑/↓ select | f change filter | / edit search
