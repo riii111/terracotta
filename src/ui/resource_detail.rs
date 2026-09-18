@@ -11,10 +11,11 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use crate::app::attribution::{AttributionStatus, ResourceAttribution};
 use crate::app::attribution::{SourceFileAnalysis, SourceSide};
 use crate::app::copy::{CopyEffect, CopyNotice, CopyTarget};
+use crate::app::plan::ResourceChangeKind;
 use crate::app::plan::{
     AttributeChangeKind, AttributeDiff, AttributeDiffs, AttributePathSegment, AttributeValue,
+    format_attribute_path, format_replace_path,
 };
-use crate::app::plan::{ReplacePathSegment, ResourceChangeKind};
 use crate::app::review::{PlanListAction, PlanListContext, PlanListItem, PlanListState};
 
 const MIN_HEIGHT: u16 = 8;
@@ -683,7 +684,7 @@ fn append_attribute(
     let marker = if selected { "> " } else { "  " };
     lines.push(Line::from(vec![
         Span::raw(marker),
-        Span::raw(attribute_path(&attribute.path)),
+        Span::raw(format_attribute_path(&attribute.path)),
     ]));
     lines.push(Line::from(format!(
         "    - {}",
@@ -721,7 +722,7 @@ fn append_group(
         ),
         AttributeGroup::Nested { kind, path } => format!(
             "{}: {count} {}{hidden}",
-            attribute_path(path),
+            format_attribute_path(path),
             group_kind_label(*kind, count),
         ),
     };
@@ -758,7 +759,7 @@ fn append_replacement(lines: &mut Vec<Line<'static>>, attributes: &AttributeDiff
     lines.push(Line::default());
     lines.push(Line::from("Replacement triggered by:"));
     for path in paths {
-        lines.push(Line::from(format!("  {}", replacement_path(path))));
+        lines.push(Line::from(format!("  {}", format_replace_path(path))));
     }
     if let Some(reason) = &attributes.action_reason {
         lines.push(Line::from(format!("Replacement reason: {reason}")));
@@ -773,54 +774,6 @@ const fn attribution_label(attribution: &ResourceAttribution) -> &'static str {
         }
     } else {
         "incomplete"
-    }
-}
-
-fn attribute_path(path: &[AttributePathSegment]) -> String {
-    let mut result = String::new();
-    for segment in path {
-        match segment {
-            AttributePathSegment::Key(key) => {
-                if !result.is_empty() {
-                    result.push('.');
-                }
-                result.push_str(key);
-            }
-            AttributePathSegment::Index(index) => {
-                result.push('[');
-                result.push_str(&index.to_string());
-                result.push(']');
-            }
-        }
-    }
-    if result.is_empty() {
-        "<resource>".to_owned()
-    } else {
-        result
-    }
-}
-
-fn replacement_path(path: &[ReplacePathSegment]) -> String {
-    let mut result = String::new();
-    for segment in path {
-        match segment {
-            ReplacePathSegment::Attribute(attribute) => {
-                if !result.is_empty() {
-                    result.push('.');
-                }
-                result.push_str(attribute);
-            }
-            ReplacePathSegment::Index(index) => {
-                result.push('[');
-                result.push_str(&index.to_string());
-                result.push(']');
-            }
-        }
-    }
-    if result.is_empty() {
-        "<resource>".to_owned()
-    } else {
-        result
     }
 }
 
@@ -1022,7 +975,7 @@ mod tests {
     use crate::app::attribution::{ResourceAddress, ResourceSourceLocation, SourceRange};
     use crate::app::attribution::{SourceLineChange, attribute_changes};
     use crate::app::plan::{
-        Plan, PlanAction, PlanSummary, PlanValue, ResourceChange, ResourceMode,
+        Plan, PlanAction, PlanSummary, PlanValue, ReplacePathSegment, ResourceChange, ResourceMode,
     };
     use crate::app::review::{
         PlanReview, ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus,
@@ -1237,7 +1190,7 @@ mod tests {
     fn select_attribute(state: &mut ResourceDetailState, target: &str) {
         for _ in 0..detail_rows(state).len() {
             if let Some(DetailRow::Attribute(index)) = detail_rows(state).get(state.selected)
-                && attribute_path(&state.attributes.attributes[*index].path) == target
+                && format_attribute_path(&state.attributes.attributes[*index].path) == target
             {
                 return;
             }
@@ -1438,6 +1391,7 @@ mod tests {
         assert!(text.contains("password"), "{text}");
         assert!(text.contains("<sensitive>"), "{text}");
         assert!(text.contains("Replacement triggered by:"), "{text}");
+        assert!(text.contains("  instance_type"), "{text}");
         assert!(
             text.contains("Replacement reason: replace_because_cannot_update"),
             "{text}"
@@ -1447,6 +1401,27 @@ mod tests {
         assert!(text.contains("Enter expand"), "{text}");
         assert!(text.contains("[ / ] prev/next"), "{text}");
         assert!(!text.contains("reveal"), "{text}");
+    }
+
+    #[test]
+    fn renders_quoted_replacement_paths_without_exposing_sensitive_values() {
+        let mut change = change();
+        change.replace_paths = Some(vec![vec![
+            ReplacePathSegment::Attribute("tags".to_owned()),
+            ReplacePathSegment::Attribute("service.name".to_owned()),
+            ReplacePathSegment::Index(u64::MAX),
+        ]]);
+
+        let state = state_for_change(change, &[]);
+        let text = buffer_text(&render(&state, 100, 40));
+
+        assert!(
+            text.contains("tags[\"service.name\"][18446744073709551615]"),
+            "{text}"
+        );
+        assert!(text.contains("<sensitive>"), "{text}");
+        assert!(!text.contains("old-secret"), "{text}");
+        assert!(!text.contains("new-secret"), "{text}");
     }
 
     #[test]

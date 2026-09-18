@@ -453,7 +453,8 @@ mod tests {
     use crate::ui::test_support::render_to_buffer as render_test_buffer;
 
     use super::super::super::app::execution::{
-        DiagnosticPoint, DiagnosticPosition, DiagnosticSource,
+        DiagnosticPoint, DiagnosticPosition, DiagnosticSource, ExecutionPhase, ProcessExitStatus,
+        ProcessTermination,
     };
     use super::*;
 
@@ -607,13 +608,13 @@ mod tests {
     fn renders_failed_stage_with_long_diagnostic_and_quit_footer() {
         let started_at = Instant::now();
         let mut state = ExecutionState::new(started_at);
-        state.apply(ExecutionAction::SetStage(ExecutionStage::Failed));
+        let diagnostic_detail = "日本語の診断文と絵文字🙂を含む長い内容。".repeat(8);
         state.record(event(
             started_at + Duration::from_secs(1),
             ExecutionEventKind::Diagnostic(Diagnostic {
                 severity: DiagnosticSeverity::Error,
                 summary: "Terraform initialization required".to_owned(),
-                detail: Some("日本語の診断文と絵文字🙂を含む長い内容。".repeat(8)),
+                detail: Some(diagnostic_detail.clone()),
                 position: Some(DiagnosticPosition {
                     filename: "infra/prod/main.tf".to_owned(),
                     start: DiagnosticPoint {
@@ -631,6 +632,22 @@ mod tests {
                 raw: None,
             }),
         ));
+        state.record(event(
+            started_at + Duration::from_secs(2),
+            ExecutionEventKind::Terminated(ProcessTermination {
+                status: ProcessExitStatus::Exited(1),
+                interrupted: false,
+            }),
+        ));
+        assert_eq!(state.progress().diagnostics().len(), 1);
+        assert_eq!(
+            state.progress().diagnostics()[0].summary,
+            "Terraform initialization required"
+        );
+        assert_eq!(
+            state.progress().diagnostics()[0].detail.as_deref(),
+            Some(diagnostic_detail.as_str())
+        );
         let text = buffer_text(&render_to_buffer(
             &state,
             started_at + Duration::from_secs(2),
@@ -653,11 +670,17 @@ mod tests {
         let started_at = Instant::now();
         let mut state = ExecutionState::new(started_at);
 
-        state.apply(ExecutionAction::SetStage(ExecutionStage::Reading));
+        state.record(event(
+            started_at,
+            ExecutionEventKind::Phase(ExecutionPhase::Reading),
+        ));
         let reading = buffer_text(&render_to_buffer(&state, started_at, 80, 16));
         assert!(reading.contains("Reading plan..."), "{reading}");
 
-        state.apply(ExecutionAction::SetStage(ExecutionStage::Matching));
+        state.record(event(
+            started_at,
+            ExecutionEventKind::Phase(ExecutionPhase::Matching),
+        ));
         let matching = buffer_text(&render_to_buffer(&state, started_at, 80, 16));
         assert!(matching.contains("Matching Git changes..."), "{matching}");
 
@@ -743,7 +766,13 @@ mod tests {
         assert!(!running.contains("press q to quit"), "{running}");
 
         let mut failed = ExecutionState::new(started_at);
-        failed.apply(ExecutionAction::SetStage(ExecutionStage::Failed));
+        failed.record(event(
+            started_at,
+            ExecutionEventKind::Terminated(ProcessTermination {
+                status: ProcessExitStatus::Exited(1),
+                interrupted: false,
+            }),
+        ));
         let failed_text = buffer_text(&render_to_buffer(
             &failed,
             started_at,
