@@ -137,7 +137,7 @@ pub(crate) fn run_connected(
                                     execution_view,
                                     body,
                                 );
-                                execution_view.apply_scroll(scroll, current, max);
+                                execution_view.apply_scroll(scroll, current, max, body.height);
                                 None
                             }
                             Some(execution::ExecutionInput::Copy(target)) => {

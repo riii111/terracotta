@@ -620,12 +620,19 @@ mod tests {
         let mut view = ExecutionViewState::from_state(&state);
         let (current, max) = execution_scroll_position_with_view(&state, view, with_notice);
         assert_eq!(current, max);
-        view.apply_scroll(ExecutionScroll::PageUp, current, max);
-        assert_eq!(view.scroll(), current.saturating_sub(8));
-        view.apply_scroll(ExecutionScroll::PageDown, view.scroll(), max);
+        view.apply_scroll(ExecutionScroll::PageUp, current, max, with_notice.height);
+        assert_eq!(view.scroll(), current.saturating_sub(with_notice.height));
+        view.apply_scroll(
+            ExecutionScroll::PageDown,
+            view.scroll(),
+            max,
+            with_notice.height,
+        );
         assert_eq!(
             view.scroll(),
-            (current.saturating_sub(8)).saturating_add(8).min(max)
+            (current.saturating_sub(with_notice.height))
+                .saturating_add(with_notice.height)
+                .min(max)
         );
     }
 
@@ -725,7 +732,7 @@ mod tests {
         ));
 
         let mut view = ExecutionViewState::from_state(&state);
-        view.apply_scroll(ExecutionScroll::Down, 0, 1);
+        view.apply_scroll(ExecutionScroll::Down, 0, 1, 1);
         let stopped = buffer_text(&render_to_buffer_with_view(
             &state, view, started_at, 80, 16,
         ));
@@ -757,7 +764,7 @@ mod tests {
         assert!(current_offset > 0);
         assert_eq!(current_offset, max_offset);
 
-        view.apply_scroll(ExecutionScroll::Up, current_offset, max_offset);
+        view.apply_scroll(ExecutionScroll::Up, current_offset, max_offset, body.height);
         assert!(!view.follows_latest());
         let stopped_offset = view.scroll();
         assert_eq!(stopped_offset, current_offset - 1);

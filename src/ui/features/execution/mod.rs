@@ -31,12 +31,14 @@ impl ExecutionViewState {
         action: ExecutionScroll,
         current_offset: u16,
         max_offset: u16,
+        page_height: u16,
     ) {
+        let page_height = page_height.max(1);
         let offset = match action {
             ExecutionScroll::Up => current_offset.saturating_sub(1),
             ExecutionScroll::Down => current_offset.saturating_add(1).min(max_offset),
-            ExecutionScroll::PageUp => current_offset.saturating_sub(8),
-            ExecutionScroll::PageDown => current_offset.saturating_add(8).min(max_offset),
+            ExecutionScroll::PageUp => current_offset.saturating_sub(page_height),
+            ExecutionScroll::PageDown => current_offset.saturating_add(page_height).min(max_offset),
         };
         self.follow = false;
         self.scroll = offset;
