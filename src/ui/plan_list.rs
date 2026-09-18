@@ -1,96 +1,32 @@
-use std::io;
-use std::time::{Duration, Instant};
-
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
-use ratatui::{DefaultTerminal, Frame};
 
-use crate::app::attribution::{
-    ResourceAddress, ResourceSourceLocation, SourceFileAnalysis, SourceRange, SourceSide,
-};
-use crate::app::attribution::{SourceLineChange as AttributionSourceLineChange, attribute_changes};
 use crate::app::copy::CopyTarget;
-use crate::app::plan::{
-    Plan, PlanAction, PlanSummary, PlanValue, ResourceChange, ResourceChangeKind, ResourceMode,
-    UnsupportedChange, UnsupportedChangeKind, UnsupportedChangeScope,
-};
+use crate::app::plan::ResourceChangeKind;
 use crate::app::review::{PlanListAction, PlanListFilter, PlanListItem, PlanListState};
+
+#[cfg(test)]
+use crate::app::attribution::{
+    ResourceAddress, ResourceSourceLocation, SourceFileAnalysis,
+    SourceLineChange as AttributionSourceLineChange, SourceRange, SourceSide, attribute_changes,
+};
+#[cfg(test)]
+use crate::app::plan::{
+    Plan, PlanAction, PlanSummary, PlanValue, ResourceChange, ResourceMode, UnsupportedChange,
+    UnsupportedChangeKind, UnsupportedChangeScope,
+};
 
 const MIN_HEIGHT: u16 = 11;
 const MIN_CONTENT_HEIGHT: u16 = MIN_HEIGHT - 2;
 const MIN_WIDTH: u16 = 48;
 const ANALYSIS_PREFIX: &str = "Analysis incomplete: ";
 
-pub(super) fn run_synthetic() -> io::Result<()> {
-    let mut state = synthetic_state();
-    ratatui::run(|terminal| run_plan_list(terminal, &mut state))
-}
-
-fn run_plan_list(terminal: &mut DefaultTerminal, state: &mut PlanListState) -> io::Result<()> {
-    let mut list_view = ListState::default();
-    let mut detail = None;
-    loop {
-        if let Some(detail_state) = detail.as_mut() {
-            terminal.draw(|frame| {
-                super::resource_detail::render_resource_detail(frame, detail_state);
-            })?;
-        } else {
-            terminal.draw(|frame| render_plan_list_with_state(frame, state, &mut list_view))?;
-        }
-
-        if event::poll(Duration::from_millis(100))?
-            && let Event::Key(key) = event::read()?
-            && key.is_press()
-        {
-            if let Some(detail_state) = detail.as_mut() {
-                let size = terminal.size()?;
-                let now = Instant::now();
-                let viewport_height = detail_state.viewport_height_at(size.height, now);
-                match super::resource_detail::key_to_input(key) {
-                    Some(super::resource_detail::DetailInput::Back) => {
-                        state.apply(PlanListAction::SelectResource(detail_state.item_index()));
-                        detail = None;
-                    }
-                    Some(super::resource_detail::DetailInput::Quit) => return Ok(()),
-                    Some(super::resource_detail::DetailInput::Navigate(navigation)) => {
-                        detail_state.navigate(navigation, state);
-                    }
-                    Some(super::resource_detail::DetailInput::Copy(_)) | None => {}
-                    Some(super::resource_detail::DetailInput::Action(action)) => {
-                        detail_state.apply_at(
-                            action,
-                            size.width.saturating_sub(2),
-                            viewport_height,
-                            now,
-                        );
-                    }
-                }
-            } else if state.searching() {
-                if handle_search_input(state, key) {
-                    return Ok(());
-                }
-            } else {
-                match key_to_action(key) {
-                    Some(ListInput::Quit) => return Ok(()),
-                    Some(ListInput::OpenDetail) => {
-                        detail = super::resource_detail::ResourceDetailState::from_list(state);
-                    }
-                    Some(ListInput::StartSearch) => {
-                        state.apply(PlanListAction::BeginSearch);
-                    }
-                    Some(ListInput::Selection(action)) => state.apply(action),
-                    Some(ListInput::Copy(_)) | None => {}
-                }
-            }
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum ListInput {
+pub(crate) enum ListInput {
     Selection(PlanListAction),
     Copy(CopyTarget),
     OpenDetail,
@@ -99,7 +35,7 @@ pub(super) enum ListInput {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum SearchInput {
+pub(crate) enum SearchInput {
     Insert(char),
     Delete,
     Confirm,
@@ -107,7 +43,7 @@ pub(super) enum SearchInput {
     Quit,
 }
 
-pub(super) fn key_to_action(key: KeyEvent) -> Option<ListInput> {
+pub(crate) fn key_to_action(key: KeyEvent) -> Option<ListInput> {
     let key = super::input::normalize_key(key);
 
     if matches!(key.code, KeyCode::Char('q'))
@@ -137,7 +73,7 @@ pub(super) fn key_to_action(key: KeyEvent) -> Option<ListInput> {
     }
 }
 
-pub(super) fn search_key_to_input(key: KeyEvent) -> Option<SearchInput> {
+pub(crate) fn search_key_to_input(key: KeyEvent) -> Option<SearchInput> {
     let key = super::input::normalize_key(key);
 
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -155,34 +91,25 @@ pub(super) fn search_key_to_input(key: KeyEvent) -> Option<SearchInput> {
     }
 }
 
-pub(super) fn handle_search_input(state: &mut PlanListState, key: KeyEvent) -> bool {
+pub(crate) fn search_key_to_action(state: &PlanListState, key: KeyEvent) -> Option<PlanListAction> {
     match search_key_to_input(key) {
-        Some(SearchInput::Quit) => true,
-        Some(SearchInput::Confirm) => {
-            state.apply(PlanListAction::ConfirmSearch);
-            false
-        }
-        Some(SearchInput::Cancel) => {
-            state.apply(PlanListAction::CancelSearch);
-            false
-        }
+        Some(SearchInput::Confirm) => Some(PlanListAction::ConfirmSearch),
+        Some(SearchInput::Cancel) => Some(PlanListAction::CancelSearch),
         Some(SearchInput::Delete) => {
             let mut search = state.search().to_owned();
             search.pop();
-            state.apply(PlanListAction::SetSearch(search));
-            false
+            Some(PlanListAction::SetSearch(search))
         }
         Some(SearchInput::Insert(character)) => {
             let mut search = state.search().to_owned();
             search.push(character);
-            state.apply(PlanListAction::SetSearch(search));
-            false
+            Some(PlanListAction::SetSearch(search))
         }
-        None => false,
+        Some(SearchInput::Quit) | None => None,
     }
 }
 
-pub(super) fn render_plan_list_with_state(
+pub(crate) fn render_plan_list_with_state(
     frame: &mut Frame<'_>,
     state: &PlanListState,
     list_state: &mut ListState,
@@ -550,6 +477,7 @@ fn truncate_end(value: &str, max_chars: usize) -> String {
     )
 }
 
+#[cfg(test)]
 fn synthetic_state() -> PlanListState {
     let mut changes = vec![
         synthetic_change(
@@ -653,6 +581,7 @@ fn synthetic_state() -> PlanListState {
     .expect("synthetic changes and attributions should align")
 }
 
+#[cfg(test)]
 fn synthetic_change(address: &str, kind: ResourceChangeKind, action: PlanAction) -> ResourceChange {
     ResourceChange {
         address: address.to_owned(),

@@ -241,6 +241,10 @@ impl PlanListState {
         }
     }
 
+    pub(crate) fn select_resource(&mut self, index: usize) {
+        self.apply(PlanListAction::SelectResource(index));
+    }
+
     #[must_use]
     pub(crate) fn comparison(&self) -> &str {
         &self.comparison

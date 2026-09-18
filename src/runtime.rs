@@ -1,3 +1,8 @@
+#![allow(
+    clippy::redundant_pub_crate,
+    reason = "runtime exposes only crate-internal entry points"
+)]
+
 use std::{
     io::{self, IsTerminal, Write},
     panic::{self, AssertUnwindSafe},
@@ -8,18 +13,21 @@ use std::{
     time::Instant,
 };
 
+mod event_loop;
+mod synthetic;
+
 use crate::{
     app::{
         execution::{
             ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionPhase, ExecutionState,
         },
         review::PlanReviewMessage,
+        session::SessionOutcome,
     },
     infra::{
         ClipboardExecutor, review,
         terraform::{CancellationToken, TerraformExecutionErrorKind},
     },
-    ui::{self, UiOutcome},
 };
 
 #[cfg(feature = "test-support")]
@@ -93,12 +101,12 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
             panic!("synthetic terminal panic");
         }
 
-        ui::run_connected(
+        event_loop::run_connected(
             terminal,
             ExecutionState::with_context(Instant::now(), context),
             &receiver,
-            &mut || cancellation.cancel(),
-            &mut |effect| clipboard.execute(&effect),
+            &cancellation,
+            &mut clipboard,
         )
     });
     if ui_result.is_err() {
@@ -107,9 +115,9 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
     let worker_panicked = worker.join();
 
     match (ui_result, worker_panicked) {
-        (Ok(UiOutcome::Reviewed), Ok(())) => ExitCode::SUCCESS,
-        (Ok(UiOutcome::Interrupted), Ok(())) => ExitCode::from(INTERRUPTED),
-        (Ok(UiOutcome::Failed), Ok(())) => ExitCode::from(EXECUTION_FAILURE),
+        (Ok(SessionOutcome::Reviewed), Ok(())) => ExitCode::SUCCESS,
+        (Ok(SessionOutcome::Interrupted), Ok(())) => ExitCode::from(INTERRUPTED),
+        (Ok(SessionOutcome::Failed), Ok(())) => ExitCode::from(EXECUTION_FAILURE),
         (Err(error), Ok(())) => {
             report_error(&format!("TUI failed: {error}"));
             ExitCode::from(EXECUTION_FAILURE)
@@ -119,6 +127,14 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
             ExitCode::from(EXECUTION_FAILURE)
         }
     }
+}
+
+pub(crate) fn run_synthetic() -> io::Result<()> {
+    synthetic::run_synthetic()
+}
+
+pub(crate) fn run_synthetic_execution() -> io::Result<()> {
+    synthetic::run_synthetic_execution()
 }
 
 fn run_terminal<F, R>(callback: F) -> R

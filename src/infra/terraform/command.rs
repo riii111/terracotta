@@ -37,7 +37,7 @@ impl CancellationToken {
     }
 
     #[must_use]
-    pub(super) fn is_cancelled(&self) -> bool {
+    pub(crate) fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Relaxed)
     }
 }
