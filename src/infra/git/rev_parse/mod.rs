@@ -5,6 +5,8 @@ use std::{
     process::Output,
 };
 
+use crate::infra::CancellationToken;
+
 use super::command::{GitCommandError, parse_error, run_git, run_git_with_env};
 
 pub(super) enum DiscoveryError {
@@ -23,11 +25,15 @@ pub(super) enum CompareRefError {
     Failed(GitCommandError),
 }
 
-pub(super) fn discover_repository(root: &Path) -> Result<PathBuf, DiscoveryError> {
+pub(super) fn discover_repository(
+    root: &Path,
+    cancellation: &CancellationToken,
+) -> Result<PathBuf, DiscoveryError> {
     let output = run_git(
         root,
         "discover repository",
         ["rev-parse", "--show-toplevel"],
+        cancellation,
     )
     .map_err(DiscoveryError::Failed)?;
     if !output.status.success() {
@@ -37,26 +43,24 @@ pub(super) fn discover_repository(root: &Path) -> Result<PathBuf, DiscoveryError
 
     let repository_root = String::from_utf8(output.stdout)
         .map_err(|error| {
-            DiscoveryError::Failed(GitCommandError {
-                operation: "discover repository".to_owned(),
-                message: error.to_string(),
-            })
+            DiscoveryError::Failed(parse_error("discover repository", &error.to_string()))
         })?
         .trim()
         .to_owned();
     fs::canonicalize(repository_root).map_err(|error| {
-        DiscoveryError::Failed(GitCommandError {
-            operation: "resolve repository root".to_owned(),
-            message: error.to_string(),
-        })
+        DiscoveryError::Failed(parse_error("resolve repository root", &error.to_string()))
     })
 }
 
-pub(super) fn resolve_head(repository_root: &Path) -> Result<String, HeadError> {
+pub(super) fn resolve_head(
+    repository_root: &Path,
+    cancellation: &CancellationToken,
+) -> Result<String, HeadError> {
     let output = run_git(
         repository_root,
         "resolve HEAD",
         ["rev-parse", "--verify", "HEAD^{commit}"],
+        cancellation,
     )
     .map_err(HeadError::Failed)?;
     if output.status.success() {
@@ -70,14 +74,30 @@ pub(super) fn resolve_head(repository_root: &Path) -> Result<String, HeadError> 
 pub(super) fn resolve_compare_ref(
     repository_root: &Path,
     compare_ref: &str,
+    cancellation: &CancellationToken,
 ) -> Result<String, CompareRefError> {
-    resolve_compare_ref_with_env(repository_root, compare_ref, &[])
+    resolve_compare_ref_with_env_and_cancellation(repository_root, compare_ref, &[], cancellation)
 }
 
 pub(super) fn resolve_compare_ref_with_env(
     repository_root: &Path,
     compare_ref: &str,
     environment: &[(&str, &str)],
+) -> Result<String, CompareRefError> {
+    let cancellation = CancellationToken::new();
+    resolve_compare_ref_with_env_and_cancellation(
+        repository_root,
+        compare_ref,
+        environment,
+        &cancellation,
+    )
+}
+
+fn resolve_compare_ref_with_env_and_cancellation(
+    repository_root: &Path,
+    compare_ref: &str,
+    environment: &[(&str, &str)],
+    cancellation: &CancellationToken,
 ) -> Result<String, CompareRefError> {
     if compare_ref.is_empty() {
         return Err(CompareRefError::Unavailable(
@@ -86,20 +106,23 @@ pub(super) fn resolve_compare_ref_with_env(
     }
 
     if compare_ref.starts_with("refs/") {
-        return resolve_commit_revision(repository_root, compare_ref, environment)
+        return resolve_commit_revision(repository_root, compare_ref, environment, cancellation)
             .map_err(|error| CompareRefError::Unavailable(error.message));
     }
 
-    if !is_valid_comparison_ref_name(repository_root, compare_ref, environment)? {
-        return resolve_commit_revision(repository_root, compare_ref, environment)
+    if !is_valid_comparison_ref_name(repository_root, compare_ref, environment, cancellation)? {
+        return resolve_commit_revision(repository_root, compare_ref, environment, cancellation)
             .map_err(|error| CompareRefError::Unavailable(error.message));
     }
 
-    if let Some(commit) = resolve_git_directory_ref(repository_root, compare_ref, environment)? {
+    if let Some(commit) =
+        resolve_git_directory_ref(repository_root, compare_ref, environment, cancellation)?
+    {
         return Ok(commit);
     }
 
-    let candidates = comparison_ref_candidates(repository_root, compare_ref, environment)?;
+    let candidates =
+        comparison_ref_candidates(repository_root, compare_ref, environment, cancellation)?;
     if !candidates.is_empty() {
         if candidates.len() > 1 {
             return Err(CompareRefError::Ambiguous(format!(
@@ -107,11 +130,11 @@ pub(super) fn resolve_compare_ref_with_env(
                 candidates.join(", ")
             )));
         }
-        return resolve_commit_revision(repository_root, &candidates[0], environment)
+        return resolve_commit_revision(repository_root, &candidates[0], environment, cancellation)
             .map_err(|error| CompareRefError::Unavailable(error.message));
     }
 
-    resolve_commit_revision(repository_root, compare_ref, environment)
+    resolve_commit_revision(repository_root, compare_ref, environment, cancellation)
         .map_err(|error| CompareRefError::Unavailable(error.message))
 }
 
@@ -119,6 +142,7 @@ fn comparison_ref_candidates(
     repository_root: &Path,
     compare_ref: &str,
     environment: &[(&str, &str)],
+    cancellation: &CancellationToken,
 ) -> Result<Vec<String>, CompareRefError> {
     let patterns = [
         format!("refs/{compare_ref}"),
@@ -138,6 +162,7 @@ fn comparison_ref_candidates(
         "list comparison ref candidates",
         args,
         environment,
+        cancellation,
     )
     .map_err(CompareRefError::Failed)?;
     if !output.status.success() {
@@ -168,6 +193,7 @@ fn is_valid_comparison_ref_name(
     repository_root: &Path,
     compare_ref: &str,
     environment: &[(&str, &str)],
+    cancellation: &CancellationToken,
 ) -> Result<bool, CompareRefError> {
     let output = run_git_with_env(
         repository_root,
@@ -178,6 +204,7 @@ fn is_valid_comparison_ref_name(
             OsStr::new(compare_ref),
         ],
         environment,
+        cancellation,
     )
     .map_err(CompareRefError::Failed)?;
     Ok(output.status.success())
@@ -187,6 +214,7 @@ fn resolve_git_directory_ref(
     repository_root: &Path,
     compare_ref: &str,
     environment: &[(&str, &str)],
+    cancellation: &CancellationToken,
 ) -> Result<Option<String>, CompareRefError> {
     let output = run_git_with_env(
         repository_root,
@@ -197,6 +225,7 @@ fn resolve_git_directory_ref(
             OsStr::new(compare_ref),
         ],
         environment,
+        cancellation,
     )
     .map_err(CompareRefError::Failed)?;
     if !output.status.success() {
@@ -225,6 +254,11 @@ fn resolve_git_directory_ref(
         return Ok(None);
     }
 
+    if cancellation.is_cancelled() {
+        return Err(CompareRefError::Failed(GitCommandError::interrupted(
+            "read Git directory ref",
+        )));
+    }
     let content = fs::read(&path).map_err(|error| {
         CompareRefError::Failed(parse_error("read Git directory ref", &error.to_string()))
     })?;
@@ -232,7 +266,7 @@ fn resolve_git_directory_ref(
         return Ok(None);
     }
 
-    resolve_commit_revision(repository_root, compare_ref, environment)
+    resolve_commit_revision(repository_root, compare_ref, environment, cancellation)
         .map(Some)
         .map_err(|error| CompareRefError::Unavailable(error.message))
 }
@@ -271,6 +305,7 @@ fn resolve_commit_revision(
     repository_root: &Path,
     revision: &str,
     environment: &[(&str, &str)],
+    cancellation: &CancellationToken,
 ) -> Result<String, GitCommandError> {
     let revision = format!("{revision}^{{commit}}");
     let output = run_git_with_env(
@@ -284,6 +319,7 @@ fn resolve_commit_revision(
             OsStr::new(&revision),
         ],
         environment,
+        cancellation,
     )?;
     if output.status.success() {
         single_commit(&output, "resolve comparison ref")

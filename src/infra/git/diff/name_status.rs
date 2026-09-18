@@ -3,6 +3,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::infra::CancellationToken;
+
 use super::super::command::{GitCommandError, checked_git, nul_fields, parse_error};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,6 +24,7 @@ pub(super) fn changed_files(
     repository_root: &Path,
     root: &Path,
     root_spec: &Path,
+    cancellation: &CancellationToken,
 ) -> Result<Vec<ChangedFile>, GitCommandError> {
     let output = checked_git(
         repository_root,
@@ -35,6 +38,7 @@ pub(super) fn changed_files(
             OsStr::new("--"),
             root_spec.as_os_str(),
         ],
+        cancellation,
     )?;
     parse_name_status(&output.stdout, repository_root, root)
 }
@@ -45,6 +49,7 @@ pub(super) fn changed_files_between(
     root_spec: &Path,
     before_revision: &str,
     after_revision: &str,
+    cancellation: &CancellationToken,
 ) -> Result<Vec<ChangedFile>, GitCommandError> {
     let output = checked_git(
         repository_root,
@@ -59,6 +64,7 @@ pub(super) fn changed_files_between(
             OsStr::new("--"),
             root_spec.as_os_str(),
         ],
+        cancellation,
     )?;
     parse_name_status(&output.stdout, repository_root, root)
 }
@@ -67,6 +73,7 @@ pub(super) fn untracked_files(
     repository_root: &Path,
     root: &Path,
     root_spec: &Path,
+    cancellation: &CancellationToken,
 ) -> Result<Vec<ChangedFile>, GitCommandError> {
     let output = checked_git(
         repository_root,
@@ -79,6 +86,7 @@ pub(super) fn untracked_files(
             OsStr::new("--"),
             root_spec.as_os_str(),
         ],
+        cancellation,
     )?;
     parse_untracked_files(&output.stdout, repository_root, root)
 }
@@ -87,6 +95,7 @@ pub(super) fn files_without_head(
     repository_root: &Path,
     root: &Path,
     root_spec: &Path,
+    cancellation: &CancellationToken,
 ) -> Result<Vec<ChangedFile>, GitCommandError> {
     let output = checked_git(
         repository_root,
@@ -100,6 +109,7 @@ pub(super) fn files_without_head(
             OsStr::new("--"),
             root_spec.as_os_str(),
         ],
+        cancellation,
     )?;
     let paths = parse_nul_paths(&output.stdout, "read files without HEAD")?;
     Ok(paths

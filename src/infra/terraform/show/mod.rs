@@ -1,11 +1,11 @@
 use std::{ffi::OsString, path::Path};
 
 use crate::app::plan::Plan;
+use crate::infra::CancellationToken;
 
 use super::command::{
-    CancellationToken, ProcessOutput, ProcessRunner, ProcessStatus, TerraformCommand,
-    TerraformExecutionError, TerraformExecutionErrorKind, interrupted_error, non_zero_error,
-    run_command,
+    ProcessOutput, ProcessRunner, ProcessStatus, TerraformCommand, TerraformExecutionError,
+    TerraformExecutionErrorKind, interrupted_error, non_zero_error, run_command,
 };
 
 mod json;

@@ -3,6 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::infra::CancellationToken;
 use crate::{
     app::{
         attribution::SourceLineChange,
@@ -22,6 +23,7 @@ pub(super) fn changed_lines(
     repository_root: &Path,
     root: &Path,
     root_spec: &Path,
+    cancellation: &CancellationToken,
 ) -> Result<Vec<SourceLineChange>, GitCommandError> {
     let output = checked_git(
         repository_root,
@@ -40,6 +42,7 @@ pub(super) fn changed_lines(
             OsStr::new("--"),
             root_spec.as_os_str(),
         ],
+        cancellation,
     )?;
     parse_diff_hunks(&output.stdout, repository_root, root)
 }
@@ -50,6 +53,7 @@ pub(super) fn changed_lines_between(
     root_spec: &Path,
     before_revision: &str,
     after_revision: &str,
+    cancellation: &CancellationToken,
 ) -> Result<Vec<SourceLineChange>, GitCommandError> {
     let output = checked_git(
         repository_root,
@@ -69,6 +73,7 @@ pub(super) fn changed_lines_between(
             OsStr::new("--"),
             root_spec.as_os_str(),
         ],
+        cancellation,
     )?;
     parse_diff_hunks(&output.stdout, repository_root, root)
 }

@@ -1,5 +1,7 @@
 use std::{ffi::OsStr, path::Path};
 
+use crate::infra::CancellationToken;
+
 use super::command::{GitCommandError, parse_error, run_git};
 
 pub(super) enum MergeBaseError {
@@ -12,6 +14,7 @@ pub(super) fn resolve_merge_base(
     repository_root: &Path,
     compare_commit: &str,
     head_commit: &str,
+    cancellation: &CancellationToken,
 ) -> Result<String, MergeBaseError> {
     let output = run_git(
         repository_root,
@@ -22,6 +25,7 @@ pub(super) fn resolve_merge_base(
             OsStr::new(compare_commit),
             OsStr::new(head_commit),
         ],
+        cancellation,
     )
     .map_err(MergeBaseError::Failed)?;
     if !output.status.success() {

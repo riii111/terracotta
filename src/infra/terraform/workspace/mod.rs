@@ -1,9 +1,10 @@
 use std::{ffi::OsString, path::Path};
 
+use crate::infra::CancellationToken;
+
 use super::command::{
-    CancellationToken, ProcessRunner, ProcessStatus, SystemProcessRunner, TerraformCommand,
-    TerraformExecutionError, TerraformExecutionErrorKind, interrupted_error, non_zero_error,
-    run_command,
+    ProcessRunner, ProcessStatus, SystemProcessRunner, TerraformCommand, TerraformExecutionError,
+    TerraformExecutionErrorKind, interrupted_error, non_zero_error, run_command,
 };
 
 pub(crate) fn read_workspace(
