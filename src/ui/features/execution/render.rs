@@ -1,8 +1,11 @@
-use std::time::{Duration, Instant};
+use std::{
+    path::Path,
+    time::{Duration, Instant},
+};
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -10,6 +13,7 @@ use crate::app::execution::{Diagnostic, DiagnosticSeverity, ResourceEventKind};
 use crate::app::execution::{ExecutionStage, ExecutionState};
 use crate::ui::primitives::atoms::separator;
 use crate::ui::primitives::molecules::terminal_notice;
+use crate::ui::shell::context::display_path;
 use crate::ui::shell::{footer, header, layout as shell_layout};
 use crate::ui::theme;
 
@@ -104,7 +108,7 @@ pub(crate) fn execution_layout(area: Rect, state: &ExecutionState) -> ExecutionL
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(STATUS_HEIGHT),
+            Constraint::Length(status_height(state)),
             Constraint::Min(1),
             Constraint::Length(SEPARATOR_HEIGHT),
             Constraint::Length(copy_notice_height),
@@ -139,41 +143,39 @@ fn status_lines_with_view(
         "Cancelling...".to_owned()
     } else {
         match state.stage() {
-            ExecutionStage::Planning => {
-                format!("{} Processing", spinner(state.elapsed_at(now)))
-            }
+            ExecutionStage::Planning => "Planning...".to_owned(),
             ExecutionStage::Reading => "Reading plan...".to_owned(),
-            ExecutionStage::Matching => "Matching Git changes...".to_owned(),
-            ExecutionStage::Failed => "Terraform plan failed.".to_owned(),
+            ExecutionStage::Matching => "Matching Git...".to_owned(),
+            ExecutionStage::Failed => format_elapsed_line(state.elapsed_at(now)),
         }
     };
-    let waiting = if state.stage() == ExecutionStage::Failed {
-        String::new()
-    } else {
-        format!(
-            "Waiting for Terraform... {}s",
-            state.waiting_at(now).as_secs()
-        )
-    };
+
+    if state.stage() == ExecutionStage::Failed {
+        return vec![Line::from(status)];
+    }
+
     vec![
+        Line::from(status),
         Line::from(vec![
-            Span::raw(status),
+            Span::raw(format!(
+                "Waiting for Terraform output... {}s",
+                state.waiting_at(now).as_secs()
+            )),
             Span::raw("    Follow: "),
             Span::styled(
                 if view.follows_latest() { "On" } else { "Off" },
-                if view.follows_latest() {
-                    Style::default().fg(Color::Cyan)
-                } else {
-                    Style::default().fg(Color::Yellow)
-                },
+                theme::secondary_style(),
             ),
         ]),
-        Line::from(waiting),
-        Line::from(format!("Elapsed {}", format_elapsed(state.elapsed_at(now)))),
+        Line::from(format_elapsed_line(state.elapsed_at(now))),
     ]
 }
 
 fn execution_lines(state: &ExecutionState) -> Vec<String> {
+    if state.stage() == ExecutionStage::Failed {
+        return failed_lines(state);
+    }
+
     let mut lines = resource_lines(state.progress().resources());
     if lines.is_empty() {
         lines.push("  No Terraform events yet.".to_owned());
@@ -184,14 +186,45 @@ fn execution_lines(state: &ExecutionState) -> Vec<String> {
         lines.push(String::new());
         lines.push(format!("  Diagnostics ({})", diagnostics.len()));
         for diagnostic in diagnostics {
-            append_diagnostic(&mut lines, diagnostic);
+            append_diagnostic(&mut lines, diagnostic, state);
         }
     }
 
-    if state.stage() == ExecutionStage::Failed {
-        lines.push(String::new());
-        lines.push("  Review result is unavailable.".to_owned());
-    }
+    lines
+}
+
+fn failed_lines(state: &ExecutionState) -> Vec<String> {
+    let diagnostics = state.progress().diagnostics();
+    let mut lines = if diagnostics.is_empty() {
+        vec!["  Diagnostic unavailable.".to_owned()]
+    } else {
+        let mut lines = Vec::new();
+        for (index, diagnostic) in diagnostics.iter().enumerate() {
+            if index > 0 {
+                lines.push(String::new());
+            }
+            lines.push(format!("  Summary: {}", diagnostic.summary));
+            if let Some(detail) = &diagnostic.detail {
+                for line in detail.lines() {
+                    lines.push(format!("  Detail: {line}"));
+                }
+            }
+            if let Some(position) = &diagnostic.position {
+                let filename = display_path(
+                    Path::new(&position.filename),
+                    state.context().repository_root_path(),
+                    Some(state.context().cwd_path()),
+                );
+                lines.push(format!(
+                    "  Location: {filename}:{}:{}",
+                    position.start.line, position.start.column
+                ));
+            }
+        }
+        lines
+    };
+    lines.push(String::new());
+    lines.push("  Review result is unavailable.".to_owned());
     lines
 }
 
@@ -210,7 +243,7 @@ fn resource_lines<'a>(
         .collect()
 }
 
-fn append_diagnostic(lines: &mut Vec<String>, diagnostic: &Diagnostic) {
+fn append_diagnostic(lines: &mut Vec<String>, diagnostic: &Diagnostic, state: &ExecutionState) {
     lines.push(format!(
         "    {}: {}",
         diagnostic_severity(diagnostic.severity),
@@ -222,9 +255,14 @@ fn append_diagnostic(lines: &mut Vec<String>, diagnostic: &Diagnostic) {
         }
     }
     if let Some(position) = &diagnostic.position {
+        let filename = display_path(
+            Path::new(&position.filename),
+            state.context().repository_root_path(),
+            Some(state.context().cwd_path()),
+        );
         lines.push(format!(
-            "      at {}:{}:{}",
-            position.filename, position.start.line, position.start.column
+            "      at {filename}:{}:{}",
+            position.start.line, position.start.column
         ));
     }
 }
@@ -303,17 +341,24 @@ const fn diagnostic_severity(severity: DiagnosticSeverity) -> &'static str {
     }
 }
 
-fn spinner(elapsed: Duration) -> char {
-    let index = usize::try_from((elapsed.as_millis() / 250) % 4).unwrap_or(0);
-    ['|', '/', '-', '\\'][index]
-}
-
 fn format_elapsed(elapsed: Duration) -> String {
     format!(
         "{}.{:01}s",
         elapsed.as_secs(),
         elapsed.subsec_millis() / 100
     )
+}
+
+fn format_elapsed_line(elapsed: Duration) -> String {
+    format!("Elapsed {}", format_elapsed(elapsed))
+}
+
+fn status_height(state: &ExecutionState) -> u16 {
+    if state.stage() == ExecutionStage::Failed {
+        1
+    } else {
+        STATUS_HEIGHT
+    }
 }
 
 fn footer_lines(state: &ExecutionState, width: u16) -> Vec<Line<'static>> {
@@ -435,8 +480,11 @@ mod tests {
             text.contains("Terracotta | loading... (Git loading)"),
             "{text}"
         );
-        assert!(text.contains("| Processing"), "{text}");
-        assert!(text.contains("Waiting for Terraform... 2s"), "{text}");
+        assert!(text.contains("Planning..."), "{text}");
+        assert!(
+            text.contains("Waiting for Terraform output... 2s"),
+            "{text}"
+        );
         assert!(text.contains("Elapsed 5.0s"), "{text}");
         assert!(text.contains("[done] aws_vpc.main"), "{text}");
         assert!(text.contains("[run] aws_instance.api"), "{text}");
@@ -530,7 +578,10 @@ mod tests {
         ));
 
         assert!(text.contains("No Terraform events yet."), "{text}");
-        assert!(text.contains("Waiting for Terraform... 2s"), "{text}");
+        assert!(
+            text.contains("Waiting for Terraform output... 2s"),
+            "{text}"
+        );
         assert!(!text.to_ascii_lowercase().contains("copy"), "{text}");
     }
 
@@ -673,12 +724,13 @@ mod tests {
             text.contains("Terracotta | loading... (Git loading)"),
             "{text}"
         );
-        assert!(text.contains("Terraform plan failed."), "{text}");
+        assert!(text.contains("Summary:"), "{text}");
+        assert!(!text.contains("No Terraform events yet."), "{text}");
         assert!(text.contains("Terraform initialization required"), "{text}");
         let compact = text.replace(' ', "");
         assert!(compact.contains("日本語の診断文"), "{text}");
         assert!(compact.contains("絵文字🙂"), "{text}");
-        assert!(text.contains("at infra/prod/main.tf:12:3"), "{text}");
+        assert!(text.contains("Location: infra/prod/main.tf:12:3"), "{text}");
         assert!(text.contains("q quit"), "{text}");
     }
 
@@ -699,7 +751,7 @@ mod tests {
             ExecutionEventKind::Phase(ExecutionPhase::Matching),
         ));
         let matching = buffer_text(&render_to_buffer(&state, started_at, 80, 16));
-        assert!(matching.contains("Matching Git changes..."), "{matching}");
+        assert!(matching.contains("Matching Git..."), "{matching}");
 
         state.apply(ExecutionAction::RequestCancellation);
         let cancelling = buffer_text(&render_to_buffer(&state, started_at, 80, 16));

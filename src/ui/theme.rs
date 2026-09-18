@@ -85,6 +85,12 @@ pub(crate) fn warning_style() -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
+pub(crate) fn error_style() -> Style {
+    Style::default()
+        .fg(Color::Rgb(0xbf, 0x61, 0x6a))
+        .add_modifier(Modifier::BOLD)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,6 +173,16 @@ mod tests {
             warning_style(),
             Style::default()
                 .fg(Color::Rgb(0xeb, 0xcb, 0x8b))
+                .add_modifier(Modifier::BOLD)
+        );
+    }
+
+    #[test]
+    fn error_style_uses_the_error_rgb_color() {
+        assert_eq!(
+            error_style(),
+            Style::default()
+                .fg(Color::Rgb(0xbf, 0x61, 0x6a))
                 .add_modifier(Modifier::BOLD)
         );
     }

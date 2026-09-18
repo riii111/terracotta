@@ -1,6 +1,6 @@
 use ratatui::layout::Rect;
 
-use crate::app::review::ReviewDiagnosticsState;
+use crate::app::review::{PlanListState, ReviewDiagnosticsState};
 
 mod input;
 mod render;
@@ -28,11 +28,12 @@ impl DiagnosticsViewState {
 pub(crate) fn apply_diagnostics_scroll(
     view: &mut DiagnosticsViewState,
     scroll: DiagnosticsScroll,
+    list: &PlanListState,
     diagnostics: &ReviewDiagnosticsState,
     area: Rect,
 ) {
     let layout = diagnostics_layout(area);
-    let content = render::diagnostic_content(diagnostics);
+    let content = render::diagnostic_content(diagnostics, list);
     let max = render::max_scroll(&content, layout.body().width, layout.body().height);
     let page = layout.body().height.max(1);
     view.scroll = match scroll {
@@ -45,11 +46,12 @@ pub(crate) fn apply_diagnostics_scroll(
 
 pub(crate) fn clamp_diagnostics_scroll(
     view: &mut DiagnosticsViewState,
+    list: &PlanListState,
     diagnostics: &ReviewDiagnosticsState,
     area: Rect,
 ) {
     let layout = diagnostics_layout(area);
-    let content = render::diagnostic_content(diagnostics);
+    let content = render::diagnostic_content(diagnostics, list);
     view.scroll = view.scroll.min(render::max_scroll(
         &content,
         layout.body().width,
@@ -61,6 +63,8 @@ pub(crate) fn clamp_diagnostics_scroll(
 mod tests {
     use super::*;
     use crate::app::execution::{Diagnostic, DiagnosticSeverity, DiagnosticSource};
+    use crate::app::plan::{Plan, PlanSummary};
+    use crate::app::review::ReviewComparison;
 
     fn diagnostics() -> ReviewDiagnosticsState {
         ReviewDiagnosticsState::new(vec![Diagnostic {
@@ -77,7 +81,8 @@ mod tests {
         let diagnostics = diagnostics();
         let mut view = DiagnosticsViewState { scroll: 100 };
 
-        clamp_diagnostics_scroll(&mut view, &diagnostics, Rect::new(0, 0, 80, 12));
+        let list = empty_list();
+        clamp_diagnostics_scroll(&mut view, &list, &diagnostics, Rect::new(0, 0, 80, 12));
 
         assert!(view.scroll() < 100);
         view.reset();
@@ -95,12 +100,38 @@ mod tests {
         }]);
         let area = Rect::new(0, 0, 60, 12);
         let mut view = DiagnosticsViewState::default();
+        let list = empty_list();
 
-        apply_diagnostics_scroll(&mut view, DiagnosticsScroll::PageDown, &diagnostics, area);
+        apply_diagnostics_scroll(
+            &mut view,
+            DiagnosticsScroll::PageDown,
+            &list,
+            &diagnostics,
+            area,
+        );
         assert!(view.scroll() > 0);
-        let last = view.scroll();
-        apply_diagnostics_scroll(&mut view, DiagnosticsScroll::PageDown, &diagnostics, area);
-        assert!(view.scroll() >= last);
-        clamp_diagnostics_scroll(&mut view, &diagnostics, area);
+        let last_scroll = view.scroll();
+        apply_diagnostics_scroll(
+            &mut view,
+            DiagnosticsScroll::PageDown,
+            &list,
+            &diagnostics,
+            area,
+        );
+        assert!(view.scroll() >= last_scroll);
+        clamp_diagnostics_scroll(&mut view, &list, &diagnostics, area);
+    }
+
+    fn empty_list() -> PlanListState {
+        PlanListState::from_plan(
+            Plan {
+                changes: Vec::new(),
+                summary: PlanSummary::default(),
+                unsupported_changes: Vec::new(),
+            },
+            Vec::new(),
+            ReviewComparison::working_tree(),
+        )
+        .expect("empty plan should create a list state")
     }
 }

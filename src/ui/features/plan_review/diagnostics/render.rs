@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -6,8 +8,9 @@ use ratatui::widgets::{Paragraph, Wrap};
 
 use super::DiagnosticsViewState;
 use crate::app::execution::{DiagnosticPosition, DiagnosticSeverity};
-use crate::app::review::{PlanListState, ReviewDiagnosticsState};
+use crate::app::review::{PlanListContext, PlanListState, ReviewDiagnosticsState};
 use crate::ui::primitives::molecules::terminal_notice;
+use crate::ui::shell::context::display_path;
 use crate::ui::shell::{footer, header, layout as shell_layout};
 use crate::ui::theme;
 
@@ -89,13 +92,10 @@ pub(crate) fn render_diagnostics(
         list.context(),
         list.comparison(),
     );
-    let content_area = shell_layout::render_content_block(
-        frame,
-        layout.shell.content(),
-        format!("Diagnostics ({})", diagnostics.count()),
-    );
+    let content_area =
+        shell_layout::render_content_block(frame, layout.shell.content(), "Diagnostics");
     debug_assert_eq!(content_area, layout.shell.content_inner());
-    let content = diagnostic_content(diagnostics);
+    let content = diagnostic_content(diagnostics, list);
     let scroll = view
         .scroll()
         .min(max_scroll(&content, layout.body.width, layout.body.height));
@@ -113,20 +113,24 @@ pub(crate) fn render_diagnostics(
     );
 }
 
-pub(super) fn diagnostic_content(state: &ReviewDiagnosticsState) -> Vec<Line<'static>> {
+pub(super) fn diagnostic_content(
+    state: &ReviewDiagnosticsState,
+    list: &PlanListState,
+) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     for (index, diagnostic) in state.diagnostics().iter().enumerate() {
         if index > 0 {
             lines.push(Line::default());
         }
         lines.push(Line::from(Span::styled(
-            format!("Diagnostic {}/{}", index + 1, state.count()),
-            Style::default().add_modifier(Modifier::BOLD),
+            format!(
+                "{} {}/{}",
+                severity_label(diagnostic.severity),
+                index + 1,
+                state.count()
+            ),
+            severity_style(diagnostic.severity),
         )));
-        lines.push(Line::from(vec![
-            Span::styled("Severity: ", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(severity_label(diagnostic.severity)),
-        ]));
         lines.push(Line::from(vec![
             Span::styled("Summary: ", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(diagnostic.summary.clone()),
@@ -135,7 +139,7 @@ pub(super) fn diagnostic_content(state: &ReviewDiagnosticsState) -> Vec<Line<'st
             append_multiline(&mut lines, "Detail: ", detail);
         }
         if let Some(position) = &diagnostic.position {
-            lines.push(Line::from(format_location(position)));
+            lines.push(Line::from(format_location(position, list)));
         }
     }
     lines
@@ -151,10 +155,15 @@ fn append_multiline(lines: &mut Vec<Line<'static>>, prefix: &str, text: &str) {
     }
 }
 
-fn format_location(position: &DiagnosticPosition) -> String {
+fn format_location(position: &DiagnosticPosition, list: &PlanListState) -> String {
+    let filename = display_path(
+        Path::new(&position.filename),
+        list.context().and_then(PlanListContext::repository_root),
+        list.context().map(PlanListContext::root),
+    );
     format!(
         "Location: {}:{}:{}-{}:{}",
-        position.filename,
+        filename,
         position.start.line,
         position.start.column,
         position.end.line,
@@ -164,10 +173,18 @@ fn format_location(position: &DiagnosticPosition) -> String {
 
 const fn severity_label(severity: DiagnosticSeverity) -> &'static str {
     match severity {
-        DiagnosticSeverity::Error => "error",
-        DiagnosticSeverity::Warning => "warning",
-        DiagnosticSeverity::Info => "info",
-        DiagnosticSeverity::Unknown => "unknown",
+        DiagnosticSeverity::Error => "Error",
+        DiagnosticSeverity::Warning => "Warning",
+        DiagnosticSeverity::Info => "Info",
+        DiagnosticSeverity::Unknown => "Unknown",
+    }
+}
+
+fn severity_style(severity: DiagnosticSeverity) -> Style {
+    match severity {
+        DiagnosticSeverity::Error => theme::error_style(),
+        DiagnosticSeverity::Warning => theme::warning_style(),
+        DiagnosticSeverity::Info | DiagnosticSeverity::Unknown => theme::secondary_style(),
     }
 }
 
@@ -187,7 +204,7 @@ fn wrapped_line_count(content: &[Line<'static>], width: u16) -> usize {
 mod tests {
     use crate::app::execution::{Diagnostic, DiagnosticPoint, DiagnosticSource};
     use crate::app::plan::{Plan, PlanSummary};
-    use crate::app::review::ReviewComparison;
+    use crate::app::review::{PlanReview, ReviewComparison};
     use crate::ui::test_support::{assert_shell_frame_and_footer, buffer_text, render_to_buffer};
 
     use super::*;
@@ -222,13 +239,64 @@ mod tests {
             render_diagnostics(frame, &list, &state, DiagnosticsViewState::default());
         }));
 
-        assert!(text.contains("Diagnostics (1)"), "{text}");
-        assert!(text.contains("warning"), "{text}");
+        assert!(text.contains("Diagnostics"), "{text}");
+        assert!(text.contains("Warning 1/1"), "{text}");
         assert!(
             text.contains('警') && text.contains('告') && text.contains('🙂'),
             "{text}"
         );
-        assert!(text.contains("main.tf:4:2-4:8"), "{text}");
+        assert!(text.contains("Location: main.tf:4:2-4:8"), "{text}");
+    }
+
+    #[test]
+    fn relativizes_location_without_rewriting_detail_text() {
+        let diagnostics = ReviewDiagnosticsState::new(vec![Diagnostic {
+            severity: DiagnosticSeverity::Error,
+            summary: "invalid configuration".to_owned(),
+            detail: Some("See /repo/infra/prod/main.tf for the full context.".to_owned()),
+            position: Some(DiagnosticPosition {
+                filename: "/repo/infra/prod/main.tf".to_owned(),
+                start: DiagnosticPoint {
+                    line: 4,
+                    column: 2,
+                    byte: None,
+                },
+                end: DiagnosticPoint {
+                    line: 4,
+                    column: 8,
+                    byte: None,
+                },
+            }),
+            source: DiagnosticSource::Terraform,
+        }]);
+        let review = PlanReview::new(
+            std::path::PathBuf::from("/repo/infra/prod"),
+            "default".to_owned(),
+            Plan {
+                changes: Vec::new(),
+                summary: PlanSummary::default(),
+                unsupported_changes: Vec::new(),
+            },
+            Vec::new(),
+            Vec::new(),
+            ReviewComparison::working_tree(),
+            Vec::new(),
+        )
+        .with_repository_root(Some(std::path::PathBuf::from("/repo")));
+        let list = PlanListState::from_review(review).expect("review data should build a list");
+
+        let text = buffer_text(&render_to_buffer((80, 20), |frame| {
+            render_diagnostics(frame, &list, &diagnostics, DiagnosticsViewState::default());
+        }));
+
+        assert!(
+            text.contains("Location: infra/prod/main.tf:4:2-4:8"),
+            "{text}"
+        );
+        assert!(
+            text.contains("See /repo/infra/prod/main.tf for the full context."),
+            "{text}"
+        );
     }
 
     #[test]

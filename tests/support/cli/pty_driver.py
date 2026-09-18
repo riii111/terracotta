@@ -311,7 +311,7 @@ try:
     elif scenario == "diagnostic_success":
         wait_new("Diagnostics: 1 (w)", "diagnostic_notice")
         send_key(b"w")
-        wait_parts(["Diagnostics (1)", "warning", "synthetic plan warning"], "diagnostics")
+        wait_parts(["Diagnostics", "Warning 1/1", "synthetic plan warning"], "diagnostics")
         send_key(b"\x1b")
         wait_new("Diagnostics: 1 (w)", "diagnostics_back")
         send_key(b"q")

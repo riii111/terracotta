@@ -5,8 +5,8 @@ expression: "buffer_text(&render_to_buffer(&state, started_at + Duration::from_s
 Terracotta | prod (Git unavailable)
 Git: working tree vs HEAD [branch: feature/network]
 ┌Planning───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│| Processing    Follow: On                                                                                                                                         │
-│Waiting for Terraform... 2s                                                                                                                                        │
+│Planning...                                                                                                                                                        │
+│Waiting for Terraform output... 2s    Follow: On                                                                                                                   │
 │Elapsed 5.0s                                                                                                                                                       │
 │  [done] aws_vpc.main                         Refresh complete                                                                                                     │
 │  [run] aws_instance.api                     Refreshing                                                                                                            │

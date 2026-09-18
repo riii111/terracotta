@@ -84,6 +84,7 @@ pub(crate) fn run_connected(
                 let size = terminal.size()?;
                 plan_review::clamp_diagnostics_scroll(
                     view,
+                    review.list(),
                     review.diagnostics(),
                     Rect::new(0, 0, size.width, size.height),
                 );
@@ -239,6 +240,7 @@ fn handle_diagnostics_key(
                 plan_review::apply_diagnostics_scroll(
                     view,
                     scroll,
+                    review.list(),
                     review.diagnostics(),
                     Rect::new(0, 0, size.width, size.height),
                 );

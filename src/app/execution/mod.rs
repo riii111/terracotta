@@ -44,6 +44,7 @@ pub(crate) struct ExecutionState {
     stage: ExecutionStage,
     context: ExecutionContext,
     started_at: Instant,
+    finished_at: Option<Instant>,
     progress: ExecutionProgress,
     cancellation_requested: bool,
     failure_message: Option<String>,
@@ -57,6 +58,7 @@ impl ExecutionState {
             stage: ExecutionStage::Planning,
             context,
             started_at,
+            finished_at: None,
             progress: ExecutionProgress::default(),
             cancellation_requested: false,
             failure_message: None,
@@ -90,11 +92,13 @@ impl ExecutionState {
             ExecutionEventKind::Git(git) => {
                 self.context = self.context.clone().with_git(git.clone());
             }
-            ExecutionEventKind::Terminated(termination)
+            ExecutionEventKind::Terminated(termination) => {
+                self.finished_at.get_or_insert(event.received_at);
                 if !termination.interrupted
-                    && !matches!(termination.status, ProcessExitStatus::Exited(0)) =>
-            {
-                self.stage = ExecutionStage::Failed;
+                    && !matches!(termination.status, ProcessExitStatus::Exited(0))
+                {
+                    self.stage = ExecutionStage::Failed;
+                }
             }
             _ => {}
         }
@@ -103,6 +107,7 @@ impl ExecutionState {
 
     pub(crate) fn fail(&mut self, message: String, received_at: Instant) {
         self.stage = ExecutionStage::Failed;
+        self.finished_at = Some(received_at);
         self.failure_message = Some(message.clone());
         self.record(ExecutionEvent {
             received_at,
@@ -163,7 +168,9 @@ impl ExecutionState {
 
     #[must_use]
     pub(crate) fn elapsed_at(&self, now: Instant) -> Duration {
-        now.saturating_duration_since(self.started_at)
+        self.finished_at
+            .unwrap_or(now)
+            .saturating_duration_since(self.started_at)
     }
 
     #[must_use]
@@ -228,6 +235,26 @@ mod tests {
         assert_eq!(
             state.waiting_at(started_at + Duration::from_secs(5)),
             Duration::from_secs(3)
+        );
+    }
+
+    #[test]
+    fn failed_elapsed_stays_at_the_termination_time() {
+        let started_at = Instant::now();
+        let finished_at = started_at + Duration::from_secs(2);
+        let mut state = ExecutionState::new(started_at);
+
+        state.record(event(
+            finished_at,
+            ExecutionEventKind::Terminated(ProcessTermination {
+                status: ProcessExitStatus::Exited(1),
+                interrupted: false,
+            }),
+        ));
+
+        assert_eq!(
+            state.elapsed_at(started_at + Duration::from_secs(10)),
+            Duration::from_secs(2)
         );
     }
 

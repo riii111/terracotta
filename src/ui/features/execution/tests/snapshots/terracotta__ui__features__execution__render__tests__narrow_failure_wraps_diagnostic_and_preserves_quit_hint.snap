@@ -5,18 +5,18 @@ expression: "buffer_text(&render_to_buffer(&state, started_at + Duration::from_s
 Terracotta | loading... (Git loading) [workspace: loa......]
 Git: loading...
 ┌Failed────────────────────────────────────────────────────┐
-│Terraform plan failed.    Follow: On                      │
-│                                                          │
 │Elapsed 2.0s                                              │
-│  No Terraform events yet.                                │
-│                                                          │
-│  Diagnostics (1)                                         │
-│    error: Terraform initialization required              │
-│      Run terraform init to install the providers required│
-│ by this configuration.                                   │
-│      at infra/prod/main.tf:12:3                          │
+│  Summary: Terraform initialization required              │
+│  Detail: Run terraform init to install the providers requ│
+│ired by this configuration.                               │
+│  Location: infra/prod/main.tf:12:3                       │
 │                                                          │
 │  Review result is unavailable.                           │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
 │                                                          │
 │                                                          │
 │──────────────────────────────────────────────────────────│
