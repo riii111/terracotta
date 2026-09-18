@@ -144,123 +144,150 @@ impl SessionState {
     }
 }
 
-#[allow(
-    clippy::too_many_lines,
-    reason = "the session reducer keeps all user and worker action transitions together"
-)]
 pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> Vec<Effect> {
     match action {
         Action::Execution(action) => update_execution_action(state, action),
-        Action::WorkerEvent(event) => {
-            if let SessionState::Execution(execution) = state {
-                execution.record(event);
-            }
-            Vec::new()
-        }
+        Action::WorkerEvent(event) => record_worker_event(state, event),
         Action::ReviewCompleted(review) => complete_review(state, &review),
         Action::ReviewFailed {
             message,
             interrupted,
         } => fail_review(state, message, interrupted, now),
         Action::WorkerDisconnected => worker_disconnected(state),
-        Action::List(action) => {
-            if let SessionState::Review(review) = state {
-                review.list.apply(action);
-            }
-            Vec::new()
-        }
-        Action::OpenDiagnostics => {
-            if let SessionState::Review(review) = state
-                && review.detail().is_none()
-            {
-                review.diagnostics.open();
-            }
-            Vec::new()
-        }
-        Action::CloseDiagnostics => {
-            if let SessionState::Review(review) = state {
-                review.diagnostics.close();
-            }
-            Vec::new()
-        }
-        Action::OpenDetail => {
-            if let SessionState::Review(review) = state
-                && !review.diagnostics().is_open()
-            {
-                review.detail = ReviewDetailState::from_list(&review.list);
-            }
-            Vec::new()
-        }
-        Action::CloseDetail => {
-            if let SessionState::Review(review) = state
-                && let Some(detail) = review.detail.take()
-            {
-                review.list.select_resource(detail.index());
-            }
-            Vec::new()
-        }
-        Action::Detail(action) => {
-            if let SessionState::Review(review) = state
-                && let Some(detail) = review.detail.as_mut()
-            {
-                detail.apply(action, now);
-            }
-            Vec::new()
-        }
-        Action::Navigate(navigation) => {
-            if let SessionState::Review(review) = state
-                && let Some(detail) = review.detail.as_mut()
-            {
-                detail.navigate(navigation, &mut review.list);
-            }
-            Vec::new()
-        }
+        Action::List(action) => update_list(state, action),
+        Action::OpenDiagnostics => open_diagnostics(state),
+        Action::CloseDiagnostics => close_diagnostics(state),
+        Action::OpenDetail => open_detail(state),
+        Action::CloseDetail => close_detail(state),
+        Action::Detail(action) => update_detail(state, action, now),
+        Action::Navigate(navigation) => navigate_detail(state, navigation),
         Action::Copy(target) => copy_effect(state, target)
             .map_or_else(Vec::new, |effect| vec![Effect::WriteClipboard(effect)]),
         Action::CopyCompleted {
             target,
             resource_count,
             result,
-        } => {
-            let notice = match result {
-                CopyResult::Written => CopyNotice::Copied {
-                    target,
-                    resource_count,
-                },
-                CopyResult::Failed => CopyNotice::Failed,
-            };
-            match state {
-                SessionState::Execution(execution) => execution.set_copy_notice(notice),
-                SessionState::Review(review) => {
-                    review.copy_notice = Some(notice);
-                    review.list.set_copy_notice(notice);
-                }
-            }
-            Vec::new()
-        }
-        Action::TimeUpdated => {
-            if let SessionState::Review(review) = state
-                && let Some(detail) = review.detail.as_mut()
-            {
-                detail.clear_expired(now);
-            }
-            Vec::new()
-        }
-        Action::DetailAreaTooSmall => {
-            if let SessionState::Review(review) = state
-                && let Some(detail) = review.detail.as_mut()
-            {
-                detail.mask();
-            }
-            Vec::new()
-        }
-        Action::Quit => match state {
-            SessionState::Execution(execution) if execution.stage() == ExecutionStage::Failed => {
-                vec![Effect::Finish(SessionOutcome::Failed)]
-            }
-            SessionState::Execution(_) => Vec::new(),
-            SessionState::Review(_) => vec![Effect::Finish(SessionOutcome::Reviewed)],
+        } => copy_completed(state, target, resource_count, result),
+        Action::TimeUpdated => time_updated(state, now),
+        Action::DetailAreaTooSmall => detail_area_too_small(state),
+        Action::Quit => quit_effect(state),
+    }
+}
+
+fn record_worker_event(state: &mut SessionState, event: ExecutionEvent) -> Vec<Effect> {
+    if let SessionState::Execution(execution) = state {
+        execution.record(event);
+    }
+    Vec::new()
+}
+
+fn update_list(state: &mut SessionState, action: PlanListAction) -> Vec<Effect> {
+    if let SessionState::Review(review) = state {
+        review.list.apply(action);
+    }
+    Vec::new()
+}
+
+const fn open_diagnostics(state: &mut SessionState) -> Vec<Effect> {
+    if let SessionState::Review(review) = state
+        && review.detail().is_none()
+    {
+        review.diagnostics.open();
+    }
+    Vec::new()
+}
+
+const fn close_diagnostics(state: &mut SessionState) -> Vec<Effect> {
+    if let SessionState::Review(review) = state {
+        review.diagnostics.close();
+    }
+    Vec::new()
+}
+
+fn open_detail(state: &mut SessionState) -> Vec<Effect> {
+    if let SessionState::Review(review) = state
+        && !review.diagnostics().is_open()
+    {
+        review.detail = ReviewDetailState::from_list(&review.list);
+    }
+    Vec::new()
+}
+
+fn close_detail(state: &mut SessionState) -> Vec<Effect> {
+    if let SessionState::Review(review) = state
+        && let Some(detail) = review.detail.take()
+    {
+        review.list.select_resource(detail.index());
+    }
+    Vec::new()
+}
+
+fn update_detail(state: &mut SessionState, action: DetailAction, now: Instant) -> Vec<Effect> {
+    if let SessionState::Review(review) = state
+        && let Some(detail) = review.detail.as_mut()
+    {
+        detail.apply(action, now);
+    }
+    Vec::new()
+}
+
+fn navigate_detail(state: &mut SessionState, navigation: ResourceNavigation) -> Vec<Effect> {
+    if let SessionState::Review(review) = state
+        && let Some(detail) = review.detail.as_mut()
+    {
+        detail.navigate(navigation, &mut review.list);
+    }
+    Vec::new()
+}
+
+const fn copy_completed(
+    state: &mut SessionState,
+    target: CopyTarget,
+    resource_count: usize,
+    result: CopyResult,
+) -> Vec<Effect> {
+    let notice = match result {
+        CopyResult::Written => CopyNotice::Copied {
+            target,
+            resource_count,
         },
+        CopyResult::Failed => CopyNotice::Failed,
+    };
+    match state {
+        SessionState::Execution(execution) => execution.set_copy_notice(notice),
+        SessionState::Review(review) => {
+            review.copy_notice = Some(notice);
+            review.list.set_copy_notice(notice);
+        }
+    }
+    Vec::new()
+}
+
+fn time_updated(state: &mut SessionState, now: Instant) -> Vec<Effect> {
+    if let SessionState::Review(review) = state
+        && let Some(detail) = review.detail.as_mut()
+    {
+        detail.clear_expired(now);
+    }
+    Vec::new()
+}
+
+fn detail_area_too_small(state: &mut SessionState) -> Vec<Effect> {
+    if let SessionState::Review(review) = state
+        && let Some(detail) = review.detail.as_mut()
+    {
+        detail.mask();
+    }
+    Vec::new()
+}
+
+fn quit_effect(state: &SessionState) -> Vec<Effect> {
+    match state {
+        SessionState::Execution(execution) if execution.stage() == ExecutionStage::Failed => {
+            vec![Effect::Finish(SessionOutcome::Failed)]
+        }
+        SessionState::Execution(_) => Vec::new(),
+        SessionState::Review(_) => vec![Effect::Finish(SessionOutcome::Reviewed)],
     }
 }
 

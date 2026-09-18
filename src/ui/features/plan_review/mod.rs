@@ -3,6 +3,7 @@ mod diagnostics;
 mod input;
 mod list;
 mod text;
+mod wrap;
 
 pub(crate) use detail::{
     DetailInput, DetailViewState, apply_detail_scroll, clamp_detail_scroll,
