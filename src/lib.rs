@@ -12,7 +12,7 @@ pub(crate) mod runtime;
 #[cfg(feature = "test-support")]
 pub(crate) mod test_support;
 
-pub mod ui;
+mod ui;
 
 use std::{path::Path, process::ExitCode};
 
