@@ -12,7 +12,7 @@ pub(crate) use event::{
     EventStream, ExecutionEvent, ExecutionEventKind, ExecutionPhase, ExecutionSummary,
     ProcessExitStatus, ProcessTermination, ResourceEvent, ResourceEventKind,
 };
-pub(crate) use progress::{ExecutionProgress, ResourceProgress};
+pub(crate) use progress::ExecutionProgress;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ExecutionStage {

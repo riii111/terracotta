@@ -1,8 +1,6 @@
 mod input;
 mod render;
 
-use crate::app::execution::ExecutionState;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ExecutionScroll {
     Up,
@@ -11,21 +9,22 @@ pub(crate) enum ExecutionScroll {
     PageDown,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ExecutionViewState {
     scroll: u16,
     follow: bool,
 }
 
-impl ExecutionViewState {
-    #[must_use]
-    pub(crate) const fn from_state(_state: &ExecutionState) -> Self {
+impl Default for ExecutionViewState {
+    fn default() -> Self {
         Self {
             scroll: 0,
             follow: true,
         }
     }
+}
 
+impl ExecutionViewState {
     pub(crate) fn apply_scroll(
         &mut self,
         action: ExecutionScroll,
