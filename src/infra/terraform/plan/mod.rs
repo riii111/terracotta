@@ -14,46 +14,13 @@ use crate::app::execution::{ExecutionEvent, ExecutionPhase};
 
 use super::{
     command::{
-        CancellationToken, ProcessRunner, ProcessStatus, SystemProcessRunner, TerraformCommand,
-        TerraformExecutionError, TerraformExecutionErrorKind, interrupted_error, non_zero_error,
-        run_command_with_events,
+        CancellationToken, ProcessRunner, ProcessStatus, TerraformCommand, TerraformExecutionError,
+        TerraformExecutionErrorKind, interrupted_error, non_zero_error, run_command_with_events,
     },
     show::{PlanExecution, read_plan},
 };
 
 pub(crate) fn run_plan(
-    root: &Path,
-    cancellation: &CancellationToken,
-) -> Result<PlanExecution, TerraformExecutionError> {
-    let mut ignore_event = |_event: ExecutionEvent| {};
-    run_plan_with_events(root, cancellation, &mut ignore_event)
-}
-
-pub(crate) fn run_plan_with_events(
-    root: &Path,
-    cancellation: &CancellationToken,
-    event_sink: &mut dyn FnMut(ExecutionEvent),
-) -> Result<PlanExecution, TerraformExecutionError> {
-    run_plan_with_events_with_runner(root, cancellation, &SystemProcessRunner, event_sink)
-}
-
-pub(crate) fn run_plan_with_events_with_runner(
-    root: &Path,
-    cancellation: &CancellationToken,
-    runner: &dyn ProcessRunner,
-    event_sink: &mut dyn FnMut(ExecutionEvent),
-) -> Result<PlanExecution, TerraformExecutionError> {
-    let mut ignore_phase = |_| {};
-    run_plan_with_events_with_runner_and_phase(
-        root,
-        cancellation,
-        runner,
-        event_sink,
-        &mut ignore_phase,
-    )
-}
-
-pub(crate) fn run_plan_with_events_with_runner_and_phase(
     root: &Path,
     cancellation: &CancellationToken,
     runner: &dyn ProcessRunner,
@@ -65,7 +32,7 @@ pub(crate) fn run_plan_with_events_with_runner_and_phase(
             message: error.to_string(),
         })
     })?;
-    let result = execute_plan_with_events_and_phase(
+    let result = execute_plan(
         root,
         &temporary_plan.path,
         cancellation,
@@ -77,25 +44,7 @@ pub(crate) fn run_plan_with_events_with_runner_and_phase(
     finish_plan(temporary_plan, result)
 }
 
-fn execute_plan_with_events(
-    root: &Path,
-    plan_path: &Path,
-    cancellation: &CancellationToken,
-    runner: &dyn ProcessRunner,
-    event_sink: &mut dyn FnMut(ExecutionEvent),
-) -> Result<PlanExecution, TerraformExecutionError> {
-    let mut ignore_phase = |_| {};
-    execute_plan_with_events_and_phase(
-        root,
-        plan_path,
-        cancellation,
-        runner,
-        event_sink,
-        &mut ignore_phase,
-    )
-}
-
-fn execute_plan_with_events_and_phase(
+fn execute_plan(
     root: &Path,
     plan_path: &Path,
     cancellation: &CancellationToken,
@@ -213,14 +162,20 @@ mod tests {
     };
     use std::process::Command;
 
-    fn execute_plan(
+    fn execute_plan_without_events(
         root: &Path,
         plan_path: &Path,
         cancellation: &CancellationToken,
         runner: &dyn ProcessRunner,
     ) -> Result<PlanExecution, TerraformExecutionError> {
-        let mut ignore_event = |_event: ExecutionEvent| {};
-        execute_plan_with_events(root, plan_path, cancellation, runner, &mut ignore_event)
+        execute_plan(
+            root,
+            plan_path,
+            cancellation,
+            runner,
+            &mut |_| {},
+            &mut |_| {},
+        )
     }
 
     const PLAN_JSON: &[u8] = br#"{"format_version":"1.0"}"#;
@@ -440,7 +395,7 @@ mod tests {
         temporary_plan: TemporaryPlan,
         cancellation: &CancellationToken,
     ) -> Result<PlanExecution, TerraformExecutionError> {
-        let result = execute_plan(
+        let result = execute_plan_without_events(
             Path::new("/root with spaces"),
             &temporary_plan.path,
             cancellation,
@@ -514,12 +469,13 @@ mod tests {
         let (temporary_plan, directory) = temporary_plan_with_space();
         let mut events = Vec::new();
 
-        let result = execute_plan_with_events(
+        let result = execute_plan(
             Path::new("/root"),
             &temporary_plan.path,
             &cancellation,
             &runner,
             &mut |event| events.push(event),
+            &mut |_| {},
         );
         let result = finish_plan(temporary_plan, result).expect("plan should be returned");
 
@@ -773,7 +729,15 @@ mod tests {
         );
 
         let cancellation = CancellationToken::new();
-        let result = run_plan(&directory, &cancellation);
+        let mut ignore_event = |_| {};
+        let mut ignore_phase = |_| {};
+        let result = run_plan(
+            &directory,
+            &cancellation,
+            &super::super::command::SystemProcessRunner,
+            &mut ignore_event,
+            &mut ignore_phase,
+        );
         let cleanup = Command::new("python3")
             .args(["fixtures/basic/scenario.py", "clean"])
             .arg(&directory)

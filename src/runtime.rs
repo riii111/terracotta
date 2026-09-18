@@ -63,7 +63,7 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
                     kind: ExecutionEventKind::Phase(phase),
                 }));
             };
-            let result = review::run_review_with_events_and_phases(
+            let result = review::run_review(
                 &worker_root,
                 worker_compare_ref.as_deref(),
                 &worker_cancellation,
