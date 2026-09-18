@@ -6,9 +6,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
 use crate::app::copy::{CopyNotice, CopyTarget};
 use crate::app::plan::ResourceChangeKind;
-use crate::app::review::{
-    PlanListAction, PlanListFilter, PlanListItem, PlanListState, ReviewDiagnosticsState,
-};
+use crate::app::review::{PlanListFilter, PlanListItem, PlanListState, ReviewDiagnosticsState};
 use crate::ui::primitives::atoms::separator;
 use crate::ui::primitives::molecules::terminal_notice;
 use crate::ui::shell::{footer, header};
@@ -20,16 +18,6 @@ const MIN_HEIGHT: u16 = 11;
 const MIN_CONTENT_HEIGHT: u16 = MIN_HEIGHT - 2;
 const MIN_WIDTH: u16 = 48;
 const ANALYSIS_PREFIX: &str = "Analysis incomplete: ";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ListInput {
-    Selection(PlanListAction),
-    Copy(CopyTarget),
-    OpenDetail,
-    OpenDiagnostics,
-    StartSearch,
-    Quit,
-}
 
 pub(crate) fn render_plan_list_with_diagnostics(
     frame: &mut Frame<'_>,
@@ -491,7 +479,7 @@ mod tests {
     use crate::app::attribution::AnalysisIssue;
     use crate::app::execution::{Diagnostic, DiagnosticSeverity, DiagnosticSource};
     use crate::app::review::{
-        PlanReview, ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus,
+        PlanListAction, PlanReview, ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus,
     };
     use crate::ui::test_support::{buffer_text, render_to_buffer as render_test_buffer};
 
