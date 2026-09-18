@@ -11,8 +11,6 @@ pub(crate) enum DetailAction {
     SelectPrevious,
     SelectNext,
     ToggleExpansion,
-    PageUp,
-    PageDown,
     Reveal,
 }
 
@@ -132,7 +130,6 @@ impl ReviewDetailState {
                 }
             }
             DetailAction::Reveal => self.toggle_reveal(now),
-            DetailAction::PageUp | DetailAction::PageDown => {}
         }
     }
 
@@ -342,4 +339,108 @@ fn append_attribute_rows(
 enum AttributeItem {
     Attribute(usize),
     Group(Vec<AttributePathSegment>),
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use crate::app::plan::{
+        PlanAction, PlanValue, ResourceChange, ResourceChangeKind, ResourceMode,
+        diff_resource_attributes,
+    };
+
+    use super::*;
+
+    fn detail() -> ReviewDetailState {
+        let change = ResourceChange {
+            address: "aws_instance.api".to_owned(),
+            mode: ResourceMode::Managed,
+            actions: vec![PlanAction::Update],
+            kind: ResourceChangeKind::Update,
+            before: Some(PlanValue::Object(BTreeMap::from([
+                (
+                    "group".to_owned(),
+                    PlanValue::Object(BTreeMap::from([(
+                        "child".to_owned(),
+                        PlanValue::String("old".to_owned()),
+                    )])),
+                ),
+                ("root".to_owned(), PlanValue::String("old".to_owned())),
+                ("same".to_owned(), PlanValue::String("same".to_owned())),
+            ]))),
+            after: Some(PlanValue::Object(BTreeMap::from([
+                (
+                    "group".to_owned(),
+                    PlanValue::Object(BTreeMap::from([(
+                        "child".to_owned(),
+                        PlanValue::String("new".to_owned()),
+                    )])),
+                ),
+                ("root".to_owned(), PlanValue::String("new".to_owned())),
+                ("same".to_owned(), PlanValue::String("same".to_owned())),
+            ]))),
+            before_sensitive: None,
+            after_sensitive: None,
+            after_unknown: None,
+            replace_paths: None,
+            action_reason: None,
+        };
+        ReviewDetailState {
+            index: 0,
+            total: 1,
+            attributes: diff_resource_attributes(&change),
+            selected: 0,
+            expanded_groups: Vec::new(),
+            reveal: None,
+        }
+    }
+
+    #[test]
+    fn rows_preserve_attribute_order_and_expansion_changes_the_app_rows() {
+        let mut detail = detail();
+        let group = AttributeGroup::Nested {
+            kind: AttributeChangeKind::Changed,
+            path: vec![AttributePathSegment::Key("group".to_owned())],
+        };
+
+        assert!(matches!(
+            detail.rows().first(),
+            Some(DetailRow::Group {
+                group: actual,
+                count: 1,
+            }) if actual == &group
+        ));
+        assert!(matches!(
+            detail.rows().last(),
+            Some(DetailRow::Group {
+                group: AttributeGroup::Unchanged,
+                count: 1,
+            })
+        ));
+
+        detail.apply(DetailAction::ToggleExpansion, Instant::now());
+
+        assert!(detail.expanded_groups().contains(&group));
+        assert!(matches!(
+            detail.rows().get(1),
+            Some(DetailRow::Attribute(index))
+                if detail.attributes().attributes[*index].path
+                    == [AttributePathSegment::Key("group".to_owned()), AttributePathSegment::Key("child".to_owned())]
+        ));
+    }
+
+    #[test]
+    fn selection_stops_at_each_app_row_boundary() {
+        let mut detail = detail();
+
+        detail.apply(DetailAction::SelectPrevious, Instant::now());
+        assert_eq!(detail.selected(), 0);
+        detail.apply(DetailAction::SelectNext, Instant::now());
+        detail.apply(DetailAction::SelectNext, Instant::now());
+        detail.apply(DetailAction::SelectNext, Instant::now());
+        assert_eq!(detail.selected(), detail.rows().len() - 1);
+        detail.apply(DetailAction::SelectNext, Instant::now());
+        assert_eq!(detail.selected(), detail.rows().len() - 1);
+    }
 }

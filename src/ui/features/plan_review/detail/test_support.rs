@@ -3,18 +3,66 @@ use std::path::PathBuf;
 use ratatui::buffer::Buffer;
 use serde_json::{Value, json};
 
-use crate::app::attribution::{ResourceAddress, ResourceSourceLocation, SourceRange, SourceSide};
-use crate::app::attribution::{SourceLineChange, attribute_changes};
+use crate::app::attribution::{
+    ResourceAddress, ResourceSourceLocation, SourceFileAnalysis, SourceLineChange, SourceRange,
+    SourceSide, attribute_changes,
+};
 use crate::app::plan::{
     Plan, PlanAction, PlanSummary, PlanValue, ReplacePathSegment, ResourceChange,
     ResourceChangeKind, ResourceMode, format_attribute_path,
 };
 use crate::app::review::{
-    PlanReview, ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus,
+    AttributeGroup, DetailAction, DetailRow, PlanReview, ReviewComparison, ReviewComparisonBasis,
+    ReviewComparisonStatus,
 };
 use crate::ui::test_support::render_to_buffer;
 
 use super::*;
+
+pub(super) struct DetailFixture {
+    pub(super) list: PlanListState,
+    pub(super) detail: ReviewDetailState,
+    pub(super) view: DetailViewState,
+    pub(super) copy_notice: Option<CopyNotice>,
+}
+
+impl DetailFixture {
+    pub(super) fn apply_action(
+        &mut self,
+        action: DetailAction,
+        width: u16,
+        height: u16,
+        now: std::time::Instant,
+    ) {
+        self.detail.apply(action, now);
+        if matches!(
+            action,
+            DetailAction::SelectPrevious | DetailAction::SelectNext | DetailAction::ToggleExpansion
+        ) {
+            let content = super::rows::detail_content(&self.list, &self.detail, now);
+            super::viewport::ensure_selected_visible(&mut self.view, &content, width, height);
+        }
+    }
+
+    pub(super) fn apply_scroll(
+        &mut self,
+        scroll: DetailScroll,
+        width: u16,
+        height: u16,
+        now: std::time::Instant,
+    ) {
+        let content = super::rows::detail_content(&self.list, &self.detail, now);
+        super::viewport::apply_scroll(&mut self.view, scroll, &content, width, height);
+    }
+
+    pub(super) fn scroll(&self) -> u16 {
+        self.view.scroll()
+    }
+
+    pub(super) fn set_copy_notice(&mut self, notice: CopyNotice) {
+        self.copy_notice = Some(notice);
+    }
+}
 
 pub(super) fn plan_value(value: Value) -> PlanValue {
     match value {
@@ -62,18 +110,18 @@ pub(super) fn change() -> ResourceChange {
     }
 }
 
-pub(super) fn state() -> ResourceDetailState {
+pub(super) fn state() -> DetailFixture {
     state_with_changed_lines(&[])
 }
 
-pub(super) fn state_with_changed_lines(changed_lines: &[SourceLineChange]) -> ResourceDetailState {
+pub(super) fn state_with_changed_lines(changed_lines: &[SourceLineChange]) -> DetailFixture {
     state_for_change(change(), changed_lines)
 }
 
 pub(super) fn state_for_change(
     change: ResourceChange,
     changed_lines: &[SourceLineChange],
-) -> ResourceDetailState {
+) -> DetailFixture {
     let source_files = vec![SourceFileAnalysis::new(
         PathBuf::from("main.tf"),
         SourceSide::After,
@@ -114,61 +162,12 @@ pub(super) fn state_for_change(
     )
     .with_git("feature/resize".to_owned());
     let list = PlanListState::from_review(&review).expect("review should build a list");
-    ResourceDetailState::from_list(&list).expect("selected item should open")
-}
-
-pub(super) fn filtered_review_list() -> PlanListState {
-    let mut worker = change();
-    worker.address = "aws_instance.worker".to_owned();
-    let changes = vec![change(), worker];
-    let attributions = attribute_changes(&changes, &[], &[]);
-    let review = PlanReview::new(
-        PathBuf::from("/infra/prod"),
-        "default".to_owned(),
-        Plan {
-            changes,
-            summary: PlanSummary {
-                updates: 2,
-                ..PlanSummary::default()
-            },
-            unsupported_changes: Vec::new(),
-        },
-        Vec::new(),
-        attributions,
-        ReviewComparison::new(
-            ReviewComparisonBasis::WorkingTreeVsHead,
-            None,
-            None,
-            None,
-            None,
-            ReviewComparisonStatus::Complete,
-        ),
-        Vec::new(),
-    )
-    .with_git("feature/resize".to_owned());
-    PlanListState::from_review(&review).expect("review should build a list")
-}
-
-pub(super) fn navigation_list() -> PlanListState {
-    let mut worker = change();
-    worker.address = "aws_instance.worker".to_owned();
-    let mut bucket = change();
-    bucket.address = "aws_s3_bucket.logs".to_owned();
-    let changes = vec![change(), worker, bucket];
-    let attributions = attribute_changes(&changes, &[], &[]);
-    PlanListState::from_plan(
-        Plan {
-            changes,
-            summary: PlanSummary {
-                updates: 3,
-                ..PlanSummary::default()
-            },
-            unsupported_changes: Vec::new(),
-        },
-        attributions,
-        "working tree vs HEAD",
-    )
-    .expect("navigation fixture should build a list")
+    DetailFixture {
+        detail: ReviewDetailState::from_list(&list).expect("selected item should open"),
+        list,
+        view: DetailViewState::default(),
+        copy_notice: None,
+    }
 }
 
 pub(super) fn expansion_change() -> ResourceChange {
@@ -205,33 +204,35 @@ pub(super) fn expansion_change() -> ResourceChange {
     }
 }
 
-pub(super) fn select_group(state: &mut ResourceDetailState, target: &AttributeGroup) {
-    for _ in 0..detail_rows(state).len() {
-        if detail_rows(state)
-            .get(state.selected)
+pub(super) fn select_group(state: &mut DetailFixture, target: &AttributeGroup) {
+    for _ in 0..state.detail.rows().len() {
+        if state
+            .detail
+            .rows()
+            .get(state.detail.selected())
             .and_then(DetailRow::group)
             == Some(target)
         {
             return;
         }
-        state.apply_at(DetailAction::SelectNext, 96, 40, Instant::now());
+        state.apply_action(DetailAction::SelectNext, 96, 40, Instant::now());
     }
     panic!("group should be selectable");
 }
 
-pub(super) fn select_attribute(state: &mut ResourceDetailState, target: &str) {
-    for _ in 0..detail_rows(state).len() {
-        if let Some(DetailRow::Attribute(index)) = detail_rows(state).get(state.selected)
-            && format_attribute_path(&state.attributes.attributes[*index].path) == target
+pub(super) fn select_attribute(state: &mut DetailFixture, target: &str) {
+    for _ in 0..state.detail.rows().len() {
+        if let Some(DetailRow::Attribute(index)) = state.detail.rows().get(state.detail.selected())
+            && format_attribute_path(&state.detail.attributes().attributes[*index].path) == target
         {
             return;
         }
-        state.apply_at(DetailAction::SelectNext, 96, 40, Instant::now());
+        state.apply_action(DetailAction::SelectNext, 96, 40, Instant::now());
     }
     panic!("attribute {target} should be selectable");
 }
 
-pub(super) fn sensitive_sibling_state() -> ResourceDetailState {
+pub(super) fn sensitive_sibling_state() -> DetailFixture {
     let mut change = change();
     change.before = Some(plan_value(json!({
         "password": "old-secret",
@@ -254,7 +255,7 @@ pub(super) fn sensitive_sibling_state() -> ResourceDetailState {
     state_for_change(change, &[])
 }
 
-pub(super) fn unknown_sensitive_state() -> ResourceDetailState {
+pub(super) fn unknown_sensitive_state() -> DetailFixture {
     let mut change = change();
     change.kind = ResourceChangeKind::Create;
     change.actions = vec![PlanAction::Create];
@@ -266,20 +267,27 @@ pub(super) fn unknown_sensitive_state() -> ResourceDetailState {
     state_for_change(change, &[])
 }
 
-pub(super) fn render(state: &ResourceDetailState, width: u16, height: u16) -> Buffer {
-    let mut state = state.clone();
+pub(super) fn render(state: &DetailFixture, width: u16, height: u16) -> Buffer {
     render_to_buffer((width, height), |frame| {
-        render_resource_detail(frame, &mut state);
+        render_resource_detail(
+            frame,
+            &state.list,
+            &state.detail,
+            state.copy_notice,
+            &state.view,
+        );
     })
 }
 
-pub(super) fn render_at(
-    state: &mut ResourceDetailState,
-    width: u16,
-    height: u16,
-    now: Instant,
-) -> Buffer {
+pub(super) fn render_at(state: &DetailFixture, width: u16, height: u16, now: Instant) -> Buffer {
     render_to_buffer((width, height), |frame| {
-        super::render::render_resource_detail_at(frame, state, now);
+        super::render::render_resource_detail_at(
+            frame,
+            &state.list,
+            &state.detail,
+            state.copy_notice,
+            &state.view,
+            now,
+        );
     })
 }

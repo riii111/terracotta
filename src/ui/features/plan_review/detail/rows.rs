@@ -3,13 +3,11 @@ use ratatui::text::{Line, Span};
 use crate::app::attribution::{AttributionStatus, ResourceAttribution};
 use crate::app::attribution::{SourceFileAnalysis, SourceSide};
 use crate::app::plan::{
-    AttributeChangeKind, AttributeDiff, AttributeDiffs, AttributePathSegment, AttributeValue,
-    format_attribute_path, format_replace_path,
+    AttributeChangeKind, AttributeDiff, AttributeDiffs, AttributeValue, format_attribute_path,
+    format_replace_path,
 };
-use crate::app::review::{AttributeGroup, DetailRow};
+use crate::app::review::{AttributeGroup, DetailRow, PlanListState, ReviewDetailState};
 use crate::ui::theme;
-
-use super::ResourceDetailState;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DetailContent {
@@ -18,27 +16,31 @@ pub(crate) struct DetailContent {
 }
 
 pub(super) fn detail_content(
-    state: &ResourceDetailState,
+    list: &PlanListState,
+    detail: &ReviewDetailState,
     now: std::time::Instant,
 ) -> DetailContent {
+    let item = list
+        .selected_item()
+        .expect("open detail should retain a selected resource");
     let mut lines = Vec::new();
     let mut selected_line = None;
 
     lines.push(Line::from(vec![
         Span::styled(
-            theme::action_symbol(state.item.kind()),
-            theme::action_style(state.item.kind()),
+            theme::action_symbol(item.kind()),
+            theme::action_style(item.kind()),
         ),
         Span::raw(" "),
-        Span::raw(state.item.address().to_owned()),
+        Span::raw(item.address().to_owned()),
     ]));
     lines.push(Line::default());
-    append_attribution(&mut lines, state.item.attribution(), &state.source_files);
+    append_attribution(&mut lines, item.attribution(), list.source_files());
     lines.push(Line::default());
     lines.push(Line::from("Diff:"));
 
-    let has_changed_attributes = state
-        .attributes
+    let attributes = detail.attributes();
+    let has_changed_attributes = attributes
         .attributes
         .iter()
         .any(|attribute| attribute.kind == AttributeChangeKind::Changed);
@@ -46,123 +48,34 @@ pub(super) fn detail_content(
         lines.push(Line::from("  No changed attributes."));
     }
 
-    let rows = detail_rows(state);
+    let rows = detail.rows();
     for (row_index, row) in rows.iter().enumerate() {
-        if row_index == state.selected {
+        if row_index == detail.selected() {
             selected_line = Some(lines.len());
         }
         match row {
             DetailRow::Attribute(attribute_index) => append_attribute(
                 &mut lines,
-                &state.attributes.attributes[*attribute_index],
-                row_index == state.selected,
-                state.reveals_attribute(&state.attributes.attributes[*attribute_index], now),
+                &attributes.attributes[*attribute_index],
+                row_index == detail.selected(),
+                detail.reveals_attribute(&attributes.attributes[*attribute_index], now),
             ),
             DetailRow::Group { group, count } => append_group(
                 &mut lines,
                 group,
                 *count,
-                state.expanded_groups.contains(group),
-                row_index == state.selected,
+                detail.expanded_groups().contains(group),
+                row_index == detail.selected(),
             ),
         }
     }
 
-    append_replacement(&mut lines, &state.attributes);
+    append_replacement(&mut lines, attributes);
 
     DetailContent {
         lines,
         selected_line,
     }
-}
-
-pub(super) fn detail_rows(state: &ResourceDetailState) -> Vec<DetailRow> {
-    let mut rows = Vec::new();
-    append_attribute_rows(
-        &mut rows,
-        &state.attributes.attributes,
-        AttributeChangeKind::Changed,
-        &[],
-        &state.expanded_groups,
-    );
-
-    let unchanged_count = state.attributes.unchanged_count;
-    if unchanged_count > 0 {
-        let group = AttributeGroup::Unchanged;
-        rows.push(DetailRow::Group {
-            group: group.clone(),
-            count: unchanged_count,
-        });
-        if state.expanded_groups.contains(&group) {
-            append_attribute_rows(
-                &mut rows,
-                &state.attributes.attributes,
-                AttributeChangeKind::Unchanged,
-                &[],
-                &state.expanded_groups,
-            );
-        }
-    }
-    rows
-}
-
-fn append_attribute_rows(
-    rows: &mut Vec<DetailRow>,
-    attributes: &[AttributeDiff],
-    kind: AttributeChangeKind,
-    parent: &[AttributePathSegment],
-    expanded_groups: &[AttributeGroup],
-) {
-    let mut items = Vec::new();
-    for (index, attribute) in attributes.iter().enumerate() {
-        if attribute.kind != kind
-            || attribute.path.len() <= parent.len()
-            || !attribute.path.starts_with(parent)
-        {
-            continue;
-        }
-
-        let segment = &attribute.path[parent.len()];
-        let item = if attribute.path.len() == parent.len() + 1 {
-            AttributeItem::Attribute(index)
-        } else {
-            let mut path = parent.to_vec();
-            path.push(segment.clone());
-            AttributeItem::Group(path)
-        };
-        if !items.contains(&item) {
-            items.push(item);
-        }
-    }
-
-    for item in items {
-        match item {
-            AttributeItem::Attribute(index) => rows.push(DetailRow::Attribute(index)),
-            AttributeItem::Group(path) => {
-                let group = AttributeGroup::Nested {
-                    kind,
-                    path: path.clone(),
-                };
-                let count = attributes
-                    .iter()
-                    .filter(|attribute| attribute.kind == kind && attribute.path.starts_with(&path))
-                    .count();
-                rows.push(DetailRow::Group {
-                    group: group.clone(),
-                    count,
-                });
-                if expanded_groups.contains(&group) {
-                    append_attribute_rows(rows, attributes, kind, &path, expanded_groups);
-                }
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum AttributeItem {
-    Attribute(usize),
-    Group(Vec<AttributePathSegment>),
 }
 
 fn append_attribution(
@@ -339,6 +252,8 @@ const fn pluralize(count: usize, singular: &'static str, plural: &'static str) -
 
 #[cfg(test)]
 mod tests {
+    use crate::app::plan::AttributePathSegment;
+    use crate::app::review::DetailAction;
     use crate::ui::test_support::buffer_text;
 
     use super::super::test_support::*;
@@ -350,11 +265,13 @@ mod tests {
         let mut state = state_for_change(expansion_change(), &[]);
         let unchanged = AttributeGroup::Unchanged;
         select_group(&mut state, &unchanged);
-        let group_index = state.selected;
+        let group_index = state.detail.selected();
 
-        state.apply_at(DetailAction::ToggleExpansion, 96, 40, Instant::now());
+        state
+            .detail
+            .apply(DetailAction::ToggleExpansion, Instant::now());
 
-        assert_eq!(state.selected, group_index);
+        assert_eq!(state.detail.selected(), group_index);
         let text = buffer_text(&render(&state, 100, 60));
         assert!(
             text.contains("> [v] 2 unchanged attributes  [Enter collapse]"),
@@ -362,9 +279,9 @@ mod tests {
         );
         assert!(text.contains("root_unchanged"), "{text}");
 
-        state.apply_at(DetailAction::SelectNext, 96, 40, Instant::now());
+        state.detail.apply(DetailAction::SelectNext, Instant::now());
         assert!(matches!(
-            detail_rows(&state).get(state.selected),
+            state.detail.rows().get(state.detail.selected()),
             Some(DetailRow::Group {
                 group: AttributeGroup::Nested {
                     kind: AttributeChangeKind::Unchanged,
@@ -374,9 +291,13 @@ mod tests {
             })
         ));
 
-        state.apply_at(DetailAction::SelectPrevious, 96, 40, Instant::now());
-        state.apply_at(DetailAction::ToggleExpansion, 96, 40, Instant::now());
-        assert_eq!(state.selected, group_index);
+        state
+            .detail
+            .apply(DetailAction::SelectPrevious, Instant::now());
+        state
+            .detail
+            .apply(DetailAction::ToggleExpansion, Instant::now());
+        assert_eq!(state.detail.selected(), group_index);
         let text = buffer_text(&render(&state, 100, 60));
         assert!(
             text.contains("> [>] 2 unchanged attributes hidden  [Enter expand]"),
@@ -394,7 +315,9 @@ mod tests {
         };
         select_group(&mut state, &group);
 
-        state.apply_at(DetailAction::ToggleExpansion, 96, 40, Instant::now());
+        state
+            .detail
+            .apply(DetailAction::ToggleExpansion, Instant::now());
         let text = buffer_text(&render(&state, 100, 60));
 
         assert!(

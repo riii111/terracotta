@@ -351,19 +351,34 @@ mod tests {
     }
 
     fn review_with_resource() -> PlanReview {
-        let change = ResourceChange {
-            address: "aws_instance.api".to_owned(),
+        review_with_changes(vec![sensitive_change(
+            "aws_instance.api",
+            "before-secret",
+            "after-secret",
+        )])
+    }
+
+    fn review_with_resources() -> PlanReview {
+        review_with_changes(vec![
+            sensitive_change("aws_instance.api", "before-secret", "after-secret"),
+            sensitive_change("aws_instance.worker", "before-worker", "after-worker"),
+        ])
+    }
+
+    fn sensitive_change(address: &str, before: &str, after: &str) -> ResourceChange {
+        ResourceChange {
+            address: address.to_owned(),
             mode: ResourceMode::Managed,
             actions: vec![PlanAction::Update],
             kind: ResourceChangeKind::Update,
-            before: Some(PlanValue::Object(BTreeMap::from([(
-                "password".to_owned(),
-                PlanValue::String("before-secret".to_owned()),
-            )]))),
-            after: Some(PlanValue::Object(BTreeMap::from([(
-                "password".to_owned(),
-                PlanValue::String("after-secret".to_owned()),
-            )]))),
+            before: Some(PlanValue::Object(BTreeMap::from([
+                ("password".to_owned(), PlanValue::String(before.to_owned())),
+                ("public".to_owned(), PlanValue::String("old".to_owned())),
+            ]))),
+            after: Some(PlanValue::Object(BTreeMap::from([
+                ("password".to_owned(), PlanValue::String(after.to_owned())),
+                ("public".to_owned(), PlanValue::String("new".to_owned())),
+            ]))),
             before_sensitive: Some(PlanValue::Object(BTreeMap::from([(
                 "password".to_owned(),
                 PlanValue::Bool(true),
@@ -375,8 +390,10 @@ mod tests {
             after_unknown: None,
             replace_paths: None,
             action_reason: None,
-        };
-        let changes = vec![change];
+        }
+    }
+
+    fn review_with_changes(changes: Vec<ResourceChange>) -> PlanReview {
         let attributions = attribute_changes(&changes, &[], &[]);
         PlanReview::new(
             PathBuf::from("/tmp/project"),
@@ -384,7 +401,7 @@ mod tests {
             Plan {
                 changes,
                 summary: PlanSummary {
-                    updates: 1,
+                    updates: attributions.len(),
                     ..PlanSummary::default()
                 },
                 unsupported_changes: Vec::new(),
@@ -401,6 +418,27 @@ mod tests {
             ),
             Vec::new(),
         )
+    }
+
+    fn opened_detail_state() -> (SessionState, Instant) {
+        let started_at = now();
+        let mut state = SessionState::new(ExecutionState::new(started_at));
+        update(
+            &mut state,
+            Action::ReviewCompleted(review_with_resources()),
+            started_at,
+        );
+        update(&mut state, Action::OpenDetail, started_at);
+        (state, started_at)
+    }
+
+    fn assert_revealed_at(state: &SessionState, at: Instant) {
+        assert!(
+            state
+                .review()
+                .and_then(ReviewSessionState::detail)
+                .is_some_and(|detail| detail.is_revealed_at(at))
+        );
     }
 
     #[test]
@@ -610,5 +648,195 @@ mod tests {
         assert_eq!(review.detail(), detail_before.as_ref());
         assert_eq!(review.copy_notice(), Some(CopyNotice::Failed));
         assert_eq!(review.list().copy_notice(), Some(CopyNotice::Failed));
+    }
+
+    #[test]
+    fn detail_navigation_follows_filtered_order_stops_at_edges_and_reopens_cleanly() {
+        let started_at = now();
+        let mut state = SessionState::new(ExecutionState::new(started_at));
+        update(
+            &mut state,
+            Action::ReviewCompleted(review_with_resources()),
+            started_at,
+        );
+        update(
+            &mut state,
+            Action::List(PlanListAction::BeginSearch),
+            started_at,
+        );
+        update(
+            &mut state,
+            Action::List(PlanListAction::SetSearch("aws_instance".to_owned())),
+            started_at,
+        );
+        update(
+            &mut state,
+            Action::List(PlanListAction::ConfirmSearch),
+            started_at,
+        );
+        update(&mut state, Action::OpenDetail, started_at);
+        update(&mut state, Action::Detail(DetailAction::Reveal), started_at);
+
+        update(
+            &mut state,
+            Action::Navigate(ResourceNavigation::Next),
+            started_at,
+        );
+        let review = state.review().expect("review state");
+        assert_eq!(review.list().selected(), Some(1));
+        assert_eq!(review.detail().map(ReviewDetailState::index), Some(1));
+        assert_eq!(review.detail().and_then(ReviewDetailState::reveal), None);
+
+        update(
+            &mut state,
+            Action::Navigate(ResourceNavigation::Next),
+            started_at,
+        );
+        assert_eq!(
+            state.review().and_then(|review| review.list().selected()),
+            Some(1)
+        );
+
+        update(
+            &mut state,
+            Action::Navigate(ResourceNavigation::Previous),
+            started_at,
+        );
+        assert_eq!(
+            state.review().and_then(|review| review.list().selected()),
+            Some(0)
+        );
+
+        update(
+            &mut state,
+            Action::Detail(DetailAction::Reveal),
+            started_at + std::time::Duration::from_secs(1),
+        );
+        assert!(
+            state
+                .review()
+                .and_then(ReviewSessionState::detail)
+                .is_some_and(
+                    |detail| detail.is_revealed_at(started_at + std::time::Duration::from_secs(1))
+                )
+        );
+
+        update(
+            &mut state,
+            Action::CloseDetail,
+            started_at + std::time::Duration::from_secs(2),
+        );
+        assert!(
+            state
+                .review()
+                .is_some_and(|review| review.detail().is_none())
+        );
+        update(
+            &mut state,
+            Action::OpenDetail,
+            started_at + std::time::Duration::from_secs(3),
+        );
+        assert_eq!(
+            state
+                .review()
+                .and_then(|review| review.detail())
+                .map(ReviewDetailState::selected),
+            Some(0)
+        );
+        assert_eq!(
+            state
+                .review()
+                .and_then(ReviewSessionState::detail)
+                .and_then(ReviewDetailState::reveal),
+            None
+        );
+    }
+
+    #[test]
+    fn detail_reveal_repress_masks_the_current_value() {
+        let (mut state, started_at) = opened_detail_state();
+        update(&mut state, Action::Detail(DetailAction::Reveal), started_at);
+        assert_revealed_at(&state, started_at);
+
+        let pressed_again = started_at + std::time::Duration::from_secs(1);
+        update(
+            &mut state,
+            Action::Detail(DetailAction::Reveal),
+            pressed_again,
+        );
+        assert!(
+            state
+                .review()
+                .and_then(ReviewSessionState::detail)
+                .is_some_and(|detail| detail.reveal().is_none())
+        );
+    }
+
+    #[test]
+    fn detail_selection_change_masks_an_active_reveal() {
+        let (mut state, started_at) = opened_detail_state();
+        update(&mut state, Action::Detail(DetailAction::Reveal), started_at);
+        assert_revealed_at(&state, started_at);
+
+        let changed_at = started_at + std::time::Duration::from_secs(1);
+        update(
+            &mut state,
+            Action::Detail(DetailAction::SelectNext),
+            changed_at,
+        );
+        assert!(
+            state
+                .review()
+                .and_then(ReviewSessionState::detail)
+                .is_some_and(|detail| detail.reveal().is_none())
+        );
+    }
+
+    #[test]
+    fn detail_time_update_masks_an_expired_reveal() {
+        let (mut state, started_at) = opened_detail_state();
+        let revealed_at = started_at + std::time::Duration::from_secs(1);
+        update(
+            &mut state,
+            Action::Detail(DetailAction::Reveal),
+            revealed_at,
+        );
+        assert_revealed_at(&state, revealed_at);
+
+        update(
+            &mut state,
+            Action::TimeUpdated,
+            started_at + std::time::Duration::from_secs(11),
+        );
+        assert!(
+            state
+                .review()
+                .and_then(ReviewSessionState::detail)
+                .is_some_and(|detail| detail.reveal().is_none())
+        );
+    }
+
+    #[test]
+    fn detail_area_too_small_masks_an_active_reveal() {
+        let (mut state, started_at) = opened_detail_state();
+        let revealed_at = started_at + std::time::Duration::from_secs(1);
+        update(
+            &mut state,
+            Action::Detail(DetailAction::Reveal),
+            revealed_at,
+        );
+        assert_revealed_at(&state, revealed_at);
+
+        update(
+            &mut state,
+            Action::DetailAreaTooSmall,
+            started_at + std::time::Duration::from_secs(2),
+        );
+        assert!(
+            state
+                .review()
+                .and_then(ReviewSessionState::detail)
+                .is_some_and(|detail| detail.reveal().is_none())
+        );
     }
 }

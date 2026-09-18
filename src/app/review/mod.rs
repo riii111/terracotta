@@ -11,10 +11,10 @@ mod item;
 mod list;
 
 pub(crate) use detail::{
-    AttributeGroup, DetailAction, DetailRow, ResourceNavigation, ReviewDetailState, SensitiveReveal,
+    AttributeGroup, DetailAction, DetailRow, ResourceNavigation, ReviewDetailState,
 };
 pub(crate) use item::PlanListItem;
-pub(crate) use list::{PlanListAction, PlanListContext, PlanListFilter, PlanListState};
+pub(crate) use list::{PlanListAction, PlanListFilter, PlanListState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReviewComparisonBasis {

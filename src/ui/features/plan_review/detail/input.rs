@@ -7,10 +7,17 @@ use crate::ui::input::normalize_key;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DetailInput {
     Action(DetailAction),
+    Scroll(DetailScroll),
     Navigate(ResourceNavigation),
     Copy(CopyTarget),
     Back,
     Quit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DetailScroll {
+    PageUp,
+    PageDown,
 }
 
 pub(crate) fn key_to_input(key: KeyEvent) -> Option<DetailInput> {
@@ -39,8 +46,8 @@ pub(crate) fn key_to_input(key: KeyEvent) -> Option<DetailInput> {
         KeyCode::Char(']') => return Some(DetailInput::Navigate(ResourceNavigation::Next)),
         KeyCode::Char('r') if key.modifiers == KeyModifiers::NONE => DetailAction::Reveal,
         KeyCode::Enter => DetailAction::ToggleExpansion,
-        KeyCode::PageUp => DetailAction::PageUp,
-        KeyCode::PageDown => DetailAction::PageDown,
+        KeyCode::PageUp => return Some(DetailInput::Scroll(DetailScroll::PageUp)),
+        KeyCode::PageDown => return Some(DetailInput::Scroll(DetailScroll::PageDown)),
         _ => return None,
     };
     Some(DetailInput::Action(action))
@@ -97,7 +104,12 @@ mod tests {
             (
                 "page_down",
                 key(KeyCode::PageDown),
-                Some(DetailInput::Action(DetailAction::PageDown)),
+                Some(DetailInput::Scroll(DetailScroll::PageDown)),
+            ),
+            (
+                "page_up",
+                key(KeyCode::PageUp),
+                Some(DetailInput::Scroll(DetailScroll::PageUp)),
             ),
             ("back", key(KeyCode::Esc), Some(DetailInput::Back)),
             ("quit", key(KeyCode::Char('q')), Some(DetailInput::Quit)),

@@ -81,18 +81,22 @@ pub(crate) fn run_connected(
             {
                 return Ok(outcome);
             }
+            if detail_view.is_none() {
+                detail_view = Some(plan_review::DetailViewState::default());
+            }
             if dirty
                 && let Some(review) = state.review()
                 && let Some(detail) = review.detail()
+                && let Some(view) = detail_view.as_mut()
             {
-                let scroll = detail_view
-                    .as_ref()
-                    .map_or(0, plan_review::ResourceDetailState::scroll);
-                detail_view = plan_review::ResourceDetailState::from_session(
+                let size = terminal.size()?;
+                plan_review::clamp_detail_scroll(
+                    view,
                     review.list(),
                     detail,
                     review.copy_notice(),
-                    scroll,
+                    now,
+                    Rect::new(0, 0, size.width, size.height),
                 );
             }
         } else if dirty {
@@ -101,10 +105,10 @@ pub(crate) fn run_connected(
 
         if dirty || state.execution().is_some() {
             draw(
-                &mut state,
+                &state,
                 terminal,
                 &mut list_view,
-                &mut detail_view,
+                detail_view.as_ref(),
                 execution_view,
             )?;
             dirty = false;
@@ -154,40 +158,62 @@ pub(crate) fn run_connected(
                             Some(plan_review::DetailInput::Quit) => Some(Action::Quit),
                             Some(plan_review::DetailInput::Navigate(navigation)) => {
                                 if let Some(view) = detail_view.as_mut() {
-                                    view.reset_scroll();
+                                    view.reset();
                                 }
                                 Some(Action::Navigate(navigation))
                             }
                             Some(plan_review::DetailInput::Copy(target)) => {
                                 Some(Action::Copy(target))
                             }
-                            Some(plan_review::DetailInput::Action(
-                                action @ (DetailAction::PageUp | DetailAction::PageDown),
-                            )) => {
+                            Some(plan_review::DetailInput::Scroll(scroll)) => {
                                 if let Some(view) = detail_view.as_mut() {
                                     let size = terminal.size()?;
-                                    let body = plan_review::resource_detail_layout(
-                                        Rect::new(0, 0, size.width, size.height),
-                                        view,
-                                        now,
-                                    )
-                                    .body();
-                                    view.apply_at(action, body.width, body.height, now);
+                                    if let Some(review) = state.review()
+                                        && let Some(detail) = review.detail()
+                                    {
+                                        plan_review::apply_detail_scroll(
+                                            view,
+                                            scroll,
+                                            review.list(),
+                                            detail,
+                                            review.copy_notice(),
+                                            now,
+                                            Rect::new(0, 0, size.width, size.height),
+                                        );
+                                    }
                                 }
                                 None
                             }
                             Some(plan_review::DetailInput::Action(action)) => {
-                                if let Some(view) = detail_view.as_mut() {
-                                    let size = terminal.size()?;
-                                    let body = plan_review::resource_detail_layout(
-                                        Rect::new(0, 0, size.width, size.height),
-                                        view,
-                                        now,
-                                    )
-                                    .body();
-                                    view.apply_at(action, body.width, body.height, now);
+                                if let Some(outcome) = dispatch(
+                                    &mut state,
+                                    Action::Detail(action),
+                                    now,
+                                    cancellation,
+                                    clipboard,
+                                ) {
+                                    return Ok(outcome);
                                 }
-                                Some(Action::Detail(action))
+                                if matches!(
+                                    action,
+                                    DetailAction::SelectPrevious
+                                        | DetailAction::SelectNext
+                                        | DetailAction::ToggleExpansion
+                                ) && let Some(review) = state.review()
+                                    && let Some(detail) = review.detail()
+                                    && let Some(view) = detail_view.as_mut()
+                                {
+                                    let size = terminal.size()?;
+                                    plan_review::ensure_detail_selection_visible(
+                                        view,
+                                        review.list(),
+                                        detail,
+                                        review.copy_notice(),
+                                        now,
+                                        Rect::new(0, 0, size.width, size.height),
+                                    );
+                                }
+                                None
                             }
                             None => None,
                         }
@@ -234,10 +260,10 @@ pub(crate) fn run_connected(
 }
 
 fn draw(
-    state: &mut SessionState,
+    state: &SessionState,
     terminal: &mut DefaultTerminal,
     list_view: &mut ListState,
-    detail_view: &mut Option<plan_review::ResourceDetailState>,
+    detail_view: Option<&plan_review::DetailViewState>,
     execution_view: execution::ExecutionViewState,
 ) -> io::Result<()> {
     match state {
@@ -252,8 +278,18 @@ fn draw(
             })?;
         }
         SessionState::Review(review) => {
-            if let Some(detail) = detail_view.as_mut() {
-                terminal.draw(|frame| plan_review::render_resource_detail(frame, detail))?;
+            if let Some(view) = detail_view {
+                if let Some(detail) = review.detail() {
+                    terminal.draw(|frame| {
+                        plan_review::render_resource_detail(
+                            frame,
+                            review.list(),
+                            detail,
+                            review.copy_notice(),
+                            view,
+                        );
+                    })?;
+                }
             } else {
                 terminal.draw(|frame| {
                     plan_review::render_plan_list_with_state(frame, review.list(), list_view);
