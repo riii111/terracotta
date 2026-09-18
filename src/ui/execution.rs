@@ -1,88 +1,89 @@
-use std::io;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
-use ratatui::{DefaultTerminal, Frame};
 
 use crate::app::copy::CopyTarget;
-use crate::app::execution::{
-    Diagnostic, DiagnosticSeverity, ExecutionEvent, ExecutionEventKind, ResourceEvent,
-    ResourceEventKind, ResourceProgress,
-};
-use crate::app::execution::{
-    ExecutionAction, ExecutionContext, ExecutionScroll, ExecutionStage, ExecutionState,
-};
+use crate::app::execution::{Diagnostic, DiagnosticSeverity, ResourceEventKind, ResourceProgress};
+use crate::app::execution::{ExecutionAction, ExecutionStage, ExecutionState};
+
+#[cfg(test)]
+use crate::app::execution::{ExecutionContext, ExecutionEvent, ExecutionEventKind, ResourceEvent};
 
 const MIN_HEIGHT: u16 = 11;
 const MIN_WIDTH: u16 = 48;
 const STATUS_HEIGHT: u16 = 3;
 const SEPARATOR_HEIGHT: u16 = 1;
 
-pub(super) fn run_synthetic_execution() -> io::Result<()> {
-    let started_at = Instant::now();
-    let mut state = ExecutionState::with_context(
-        started_at,
-        ExecutionContext::known(
-            "infra/prod",
-            "default",
-            "feature/execution-ui",
-            "working tree vs HEAD",
-        ),
-    );
-    state.record(ExecutionEvent {
-        received_at: started_at,
-        kind: ExecutionEventKind::Resource(ResourceEvent {
-            address: "aws_vpc.main".to_owned(),
-            kind: ResourceEventKind::RefreshComplete,
-        }),
-    });
-    state.record(ExecutionEvent {
-        received_at: started_at + Duration::from_millis(400),
-        kind: ExecutionEventKind::Resource(ResourceEvent {
-            address: "aws_instance.api".to_owned(),
-            kind: ResourceEventKind::RefreshStart,
-        }),
-    });
-    ratatui::run(|terminal| run_execution(terminal, &mut state))
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExecutionScroll {
+    Up,
+    Down,
+    PageUp,
+    PageDown,
 }
 
-fn run_execution(terminal: &mut DefaultTerminal, state: &mut ExecutionState) -> io::Result<()> {
-    loop {
-        terminal.draw(|frame| render_execution(frame, state, Instant::now()))?;
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct ExecutionViewState {
+    scroll: u16,
+    follow: bool,
+}
 
-        if event::poll(Duration::from_millis(100))?
-            && let Event::Key(key) = event::read()?
-            && key.is_press()
-        {
-            match execution_key_to_input(key, state.stage()) {
-                Some(ExecutionInput::Quit) => return Ok(()),
-                Some(ExecutionInput::Action(action)) => state.apply(action),
-                Some(ExecutionInput::Scroll(action)) => {
-                    let size = terminal.size()?;
-                    let area = Rect::new(0, 0, size.width, size.height);
-                    let body = execution_chunks(area, state)[2];
-                    let (current_offset, max_offset) = execution_scroll_position(state, body);
-                    state.apply_scroll(action, current_offset, max_offset);
-                }
-                Some(ExecutionInput::Copy(_)) | None => {}
-            }
+impl ExecutionViewState {
+    #[must_use]
+    pub(crate) const fn from_state(_state: &ExecutionState) -> Self {
+        Self {
+            scroll: 0,
+            follow: true,
         }
+    }
+
+    pub(crate) fn apply_scroll(
+        &mut self,
+        action: ExecutionScroll,
+        current_offset: u16,
+        max_offset: u16,
+    ) {
+        let offset = match action {
+            ExecutionScroll::Up => current_offset.saturating_sub(1),
+            ExecutionScroll::Down => current_offset.saturating_add(1).min(max_offset),
+            ExecutionScroll::PageUp => current_offset.saturating_sub(8),
+            ExecutionScroll::PageDown => current_offset.saturating_add(8).min(max_offset),
+        };
+        self.follow = false;
+        self.scroll = offset;
+    }
+
+    pub(crate) const fn end(&mut self) {
+        self.follow = true;
+        self.scroll = 0;
+    }
+
+    #[must_use]
+    pub(crate) const fn follows_latest(self) -> bool {
+        self.follow
+    }
+
+    #[must_use]
+    pub(crate) const fn scroll(self) -> u16 {
+        self.scroll
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum ExecutionInput {
+pub(crate) enum ExecutionInput {
     Action(ExecutionAction),
     Scroll(ExecutionScroll),
     Copy(CopyTarget),
+    End,
     Quit,
 }
 
-pub(super) fn execution_key_to_input(
+pub(crate) fn execution_key_to_input(
     key: KeyEvent,
     stage: ExecutionStage,
 ) -> Option<ExecutionInput> {
@@ -112,12 +113,23 @@ pub(super) fn execution_key_to_input(
         KeyCode::Down | KeyCode::Char('j') => Some(ExecutionInput::Scroll(ExecutionScroll::Down)),
         KeyCode::PageUp => Some(ExecutionInput::Scroll(ExecutionScroll::PageUp)),
         KeyCode::PageDown => Some(ExecutionInput::Scroll(ExecutionScroll::PageDown)),
-        KeyCode::End => Some(ExecutionInput::Action(ExecutionAction::End)),
+        KeyCode::End => Some(ExecutionInput::End),
         _ => None,
     }
 }
 
-pub(super) fn render_execution(frame: &mut Frame<'_>, state: &ExecutionState, now: Instant) {
+#[cfg(test)]
+pub(crate) fn render_execution(frame: &mut Frame<'_>, state: &ExecutionState, now: Instant) {
+    let view = ExecutionViewState::from_state(state);
+    render_execution_with_view(frame, state, view, now);
+}
+
+pub(crate) fn render_execution_with_view(
+    frame: &mut Frame<'_>,
+    state: &ExecutionState,
+    view: ExecutionViewState,
+    now: Instant,
+) {
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT || !has_execution_space(area, state) {
         render_too_small(frame, area, state.stage());
@@ -135,17 +147,20 @@ pub(super) fn render_execution(frame: &mut Frame<'_>, state: &ExecutionState, no
         Paragraph::new(wrapped_lines(&context_lines(state), chunks[0].width)),
         chunks[0],
     );
-    frame.render_widget(Paragraph::new(status_lines(state, now)), chunks[1]);
+    frame.render_widget(
+        Paragraph::new(status_lines_with_view(state, view, now)),
+        chunks[1],
+    );
 
     let lines = wrapped_lines(&execution_lines(state), chunks[2].width);
     let paragraph = Paragraph::new(lines.clone());
     let visible_height = usize::from(chunks[2].height);
     let max_scroll = lines.len().saturating_sub(visible_height);
     let max_scroll = u16::try_from(max_scroll).unwrap_or(u16::MAX);
-    let scroll = if state.follows_latest() {
+    let scroll = if view.follows_latest() {
         max_scroll
     } else {
-        state.scroll().min(max_scroll)
+        view.scroll().min(max_scroll)
     };
     frame.render_widget(paragraph.scroll((scroll, 0)), chunks[2]);
     frame.render_widget(separator(chunks[3].width), chunks[3]);
@@ -155,7 +170,7 @@ pub(super) fn render_execution(frame: &mut Frame<'_>, state: &ExecutionState, no
     );
 }
 
-pub(super) fn execution_chunks(area: Rect, state: &ExecutionState) -> Vec<Rect> {
+pub(crate) fn execution_chunks(area: Rect, state: &ExecutionState) -> Vec<Rect> {
     let content_area = Block::new().borders(Borders::ALL).inner(area);
     let (context_height, footer_height) = execution_fixed_heights(state, content_area.width);
     Layout::default()
@@ -192,14 +207,18 @@ fn has_execution_space(area: Rect, state: &ExecutionState) -> bool {
         <= content_area.height
 }
 
-pub(super) fn execution_scroll_position(state: &ExecutionState, body: Rect) -> (u16, u16) {
+pub(crate) fn execution_scroll_position_with_view(
+    state: &ExecutionState,
+    view: ExecutionViewState,
+    body: Rect,
+) -> (u16, u16) {
     let lines = wrapped_lines(&execution_lines(state), body.width);
     let visible_height = usize::from(body.height);
     let max_scroll = u16::try_from(lines.len().saturating_sub(visible_height)).unwrap_or(u16::MAX);
-    let current_scroll = if state.follows_latest() {
+    let current_scroll = if view.follows_latest() {
         max_scroll
     } else {
-        state.scroll().min(max_scroll)
+        view.scroll().min(max_scroll)
     };
     (current_scroll, max_scroll)
 }
@@ -218,7 +237,11 @@ fn render_too_small(frame: &mut Frame<'_>, area: Rect, stage: ExecutionStage) {
     );
 }
 
-fn status_lines(state: &ExecutionState, now: Instant) -> Vec<Line<'static>> {
+fn status_lines_with_view(
+    state: &ExecutionState,
+    view: ExecutionViewState,
+    now: Instant,
+) -> Vec<Line<'static>> {
     let status = if state.is_cancelling() {
         "Cancelling...".to_owned()
     } else {
@@ -244,8 +267,8 @@ fn status_lines(state: &ExecutionState, now: Instant) -> Vec<Line<'static>> {
             Span::raw(status),
             Span::raw("    Follow: "),
             Span::styled(
-                if state.follows_latest() { "On" } else { "Off" },
-                if state.follows_latest() {
+                if view.follows_latest() { "On" } else { "Off" },
+                if view.follows_latest() {
                     Style::default().fg(Color::Cyan)
                 } else {
                     Style::default().fg(Color::Yellow)
@@ -451,6 +474,18 @@ mod tests {
 
     fn render_to_buffer(state: &ExecutionState, now: Instant, width: u16, height: u16) -> Buffer {
         render_test_buffer((width, height), |frame| render_execution(frame, state, now))
+    }
+
+    fn render_to_buffer_with_view(
+        state: &ExecutionState,
+        view: ExecutionViewState,
+        now: Instant,
+        width: u16,
+        height: u16,
+    ) -> Buffer {
+        render_test_buffer((width, height), |frame| {
+            render_execution_with_view(frame, state, view, now);
+        })
     }
 
     fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
@@ -684,12 +719,17 @@ mod tests {
             ResourceEventKind::RefreshComplete,
         ));
 
-        state.apply_scroll(ExecutionScroll::Down, 0, 1);
-        let stopped = buffer_text(&render_to_buffer(&state, started_at, 80, 16));
+        let mut view = ExecutionViewState::from_state(&state);
+        view.apply_scroll(ExecutionScroll::Down, 0, 1);
+        let stopped = buffer_text(&render_to_buffer_with_view(
+            &state, view, started_at, 80, 16,
+        ));
         assert!(stopped.contains("Follow: Off"), "{stopped}");
 
-        state.apply(ExecutionAction::End);
-        let resumed = buffer_text(&render_to_buffer(&state, started_at, 80, 16));
+        view.end();
+        let resumed = buffer_text(&render_to_buffer_with_view(
+            &state, view, started_at, 80, 16,
+        ));
         assert!(resumed.contains("Follow: On"), "{resumed}");
     }
 
@@ -707,13 +747,14 @@ mod tests {
 
         let area = Rect::new(0, 0, 80, 16);
         let body = execution_chunks(area, &state)[2];
-        let (current_offset, max_offset) = execution_scroll_position(&state, body);
+        let mut view = ExecutionViewState::from_state(&state);
+        let (current_offset, max_offset) = execution_scroll_position_with_view(&state, view, body);
         assert!(current_offset > 0);
         assert_eq!(current_offset, max_offset);
 
-        state.apply_scroll(ExecutionScroll::Up, current_offset, max_offset);
-        assert!(!state.follows_latest());
-        let stopped_offset = state.scroll();
+        view.apply_scroll(ExecutionScroll::Up, current_offset, max_offset);
+        assert!(!view.follows_latest());
+        let stopped_offset = view.scroll();
         assert_eq!(stopped_offset, current_offset - 1);
 
         state.record(resource_event(
@@ -722,14 +763,15 @@ mod tests {
             ResourceEventKind::RefreshStart,
         ));
         let body = execution_chunks(area, &state)[2];
-        let (new_offset, new_max_offset) = execution_scroll_position(&state, body);
+        let (new_offset, new_max_offset) = execution_scroll_position_with_view(&state, view, body);
         assert_eq!(new_offset, stopped_offset);
         assert!(new_max_offset > max_offset);
 
-        state.apply(ExecutionAction::End);
+        view.end();
         let body = execution_chunks(area, &state)[2];
-        let (follow_offset, follow_max_offset) = execution_scroll_position(&state, body);
-        assert!(state.follows_latest());
+        let (follow_offset, follow_max_offset) =
+            execution_scroll_position_with_view(&state, view, body);
+        assert!(view.follows_latest());
         assert_eq!(follow_offset, follow_max_offset);
     }
 

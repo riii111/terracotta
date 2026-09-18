@@ -6,9 +6,13 @@ use super::{
     plan::Plan,
 };
 
+mod detail;
 mod item;
 mod list;
 
+pub(crate) use detail::{
+    AttributeGroup, DetailAction, DetailRow, ResourceNavigation, ReviewDetailState, SensitiveReveal,
+};
 pub(crate) use item::PlanListItem;
 pub(crate) use list::{PlanListAction, PlanListContext, PlanListFilter, PlanListState};
 

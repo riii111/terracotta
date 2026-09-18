@@ -14,22 +14,12 @@ pub(crate) use event::{
 };
 pub(crate) use progress::{ExecutionProgress, ResourceProgress};
 
-const PAGE_SCROLL: u16 = 8;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ExecutionStage {
     Planning,
     Reading,
     Matching,
     Failed,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ExecutionScroll {
-    Up,
-    Down,
-    PageUp,
-    PageDown,
 }
 
 impl ExecutionStage {
@@ -46,7 +36,6 @@ impl ExecutionStage {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ExecutionAction {
-    End,
     RequestCancellation,
 }
 
@@ -56,8 +45,6 @@ pub(crate) struct ExecutionState {
     context: ExecutionContext,
     started_at: Instant,
     progress: ExecutionProgress,
-    scroll: u16,
-    follow: bool,
     cancellation_requested: bool,
     failure_message: Option<String>,
     copy_notice: Option<copy::CopyNotice>,
@@ -76,8 +63,6 @@ impl ExecutionState {
             context,
             started_at,
             progress: ExecutionProgress::default(),
-            scroll: 0,
-            follow: true,
             cancellation_requested: false,
             failure_message: None,
             copy_notice: None,
@@ -86,28 +71,8 @@ impl ExecutionState {
 
     pub(crate) const fn apply(&mut self, action: ExecutionAction) {
         match action {
-            ExecutionAction::End => {
-                self.follow = true;
-                self.scroll = 0;
-            }
             ExecutionAction::RequestCancellation => self.cancellation_requested = true,
         }
-    }
-
-    pub(crate) fn apply_scroll(
-        &mut self,
-        action: ExecutionScroll,
-        current_offset: u16,
-        max_offset: u16,
-    ) {
-        let offset = match action {
-            ExecutionScroll::Up => current_offset.saturating_sub(1),
-            ExecutionScroll::Down => current_offset.saturating_add(1).min(max_offset),
-            ExecutionScroll::PageUp => current_offset.saturating_sub(PAGE_SCROLL),
-            ExecutionScroll::PageDown => current_offset.saturating_add(PAGE_SCROLL).min(max_offset),
-        };
-        self.follow = false;
-        self.scroll = offset;
     }
 
     pub(crate) fn record(&mut self, event: ExecutionEvent) {
@@ -198,16 +163,6 @@ impl ExecutionState {
     }
 
     #[must_use]
-    pub(crate) const fn scroll(&self) -> u16 {
-        self.scroll
-    }
-
-    #[must_use]
-    pub(crate) const fn follows_latest(&self) -> bool {
-        self.follow
-    }
-
-    #[must_use]
     pub(crate) fn elapsed_at(&self, now: Instant) -> Duration {
         now.saturating_duration_since(self.started_at)
     }
@@ -265,20 +220,6 @@ mod tests {
             state.waiting_at(started_at + Duration::from_secs(5)),
             Duration::from_secs(3)
         );
-    }
-
-    #[test]
-    fn manual_scroll_stops_following_until_end_is_pressed() {
-        let started_at = Instant::now();
-        let mut state = ExecutionState::new(started_at);
-
-        state.apply_scroll(ExecutionScroll::Down, 0, 10);
-        assert!(!state.follows_latest());
-        assert_eq!(state.scroll(), 1);
-
-        state.apply(ExecutionAction::End);
-        assert!(state.follows_latest());
-        assert_eq!(state.scroll(), 0);
     }
 
     #[test]

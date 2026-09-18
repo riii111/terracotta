@@ -10,36 +10,27 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use crate::app::attribution::{AttributionStatus, ResourceAttribution};
 use crate::app::attribution::{SourceFileAnalysis, SourceSide};
-use crate::app::copy::{CopyEffect, CopyNotice, CopyTarget};
+#[cfg(test)]
+use crate::app::copy::CopyEffect;
+use crate::app::copy::{CopyNotice, CopyTarget};
 use crate::app::plan::ResourceChangeKind;
 use crate::app::plan::{
     AttributeChangeKind, AttributeDiff, AttributeDiffs, AttributePathSegment, AttributeValue,
     format_attribute_path, format_replace_path,
 };
-use crate::app::review::{PlanListAction, PlanListContext, PlanListItem, PlanListState};
+#[cfg(test)]
+use crate::app::review::PlanListAction;
+use crate::app::review::{
+    AttributeGroup, DetailAction, DetailRow, PlanListContext, PlanListItem, PlanListState,
+    ResourceNavigation, ReviewDetailState, SensitiveReveal,
+};
 
 const MIN_HEIGHT: u16 = 8;
 const MIN_WIDTH: u16 = 48;
 const REVEAL_DURATION: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum DetailAction {
-    SelectPrevious,
-    SelectNext,
-    ToggleExpansion,
-    PageUp,
-    PageDown,
-    Reveal,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ResourceNavigation {
-    Previous,
-    Next,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum DetailInput {
+pub(crate) enum DetailInput {
     Action(DetailAction),
     Navigate(ResourceNavigation),
     Copy(CopyTarget),
@@ -48,37 +39,7 @@ pub(super) enum DetailInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum AttributeGroup {
-    Unchanged,
-    Nested {
-        kind: AttributeChangeKind,
-        path: Vec<AttributePathSegment>,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum DetailRow {
-    Attribute(usize),
-    Group { group: AttributeGroup, count: usize },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SensitiveReveal {
-    path: Vec<AttributePathSegment>,
-    expires_at: Instant,
-}
-
-impl DetailRow {
-    const fn group(&self) -> Option<&AttributeGroup> {
-        match self {
-            Self::Attribute(_) => None,
-            Self::Group { group, .. } => Some(group),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ResourceDetailState {
+pub(crate) struct ResourceDetailState {
     context: Option<PlanListContext>,
     comparison: String,
     item: PlanListItem,
@@ -124,6 +85,23 @@ impl ResourceDetailState {
         })
     }
 
+    pub(crate) fn from_session(
+        list: &PlanListState,
+        detail: &ReviewDetailState,
+        copy_notice: Option<CopyNotice>,
+        scroll: u16,
+    ) -> Option<Self> {
+        let mut state = Self::from_list(list)?;
+        state.selected = detail.selected();
+        state.expanded_groups = detail.expanded_groups().to_vec();
+        state.reveal = detail.reveal().cloned();
+        state.copy_notice = copy_notice;
+        state.scroll = scroll;
+        state.attributes = detail.attributes().clone();
+        Some(state)
+    }
+
+    #[cfg(test)]
     pub(super) fn navigate(&mut self, navigation: ResourceNavigation, list: &mut PlanListState) {
         let target = match navigation {
             ResourceNavigation::Previous => self.index.checked_sub(1),
@@ -142,7 +120,7 @@ impl ResourceDetailState {
         }
     }
 
-    pub(super) fn apply_at(
+    pub(crate) fn apply_at(
         &mut self,
         action: DetailAction,
         viewport_width: u16,
@@ -194,8 +172,12 @@ impl ResourceDetailState {
         }
     }
 
-    pub(super) const fn scroll(&self) -> u16 {
+    pub(crate) const fn scroll(&self) -> u16 {
         self.scroll
+    }
+
+    pub(crate) const fn reset_scroll(&mut self) {
+        self.scroll = 0;
     }
 
     pub(super) const fn item_index(&self) -> usize {
@@ -207,6 +189,7 @@ impl ResourceDetailState {
     }
 
     #[must_use]
+    #[cfg(test)]
     pub(super) fn copy_effect(&self, target: CopyTarget) -> Option<CopyEffect> {
         let text = match target {
             CopyTarget::Resource => self.resource_copy_text.clone()?,
@@ -226,10 +209,12 @@ impl ResourceDetailState {
         self.copy_notice
     }
 
+    #[cfg(test)]
     pub(super) const fn set_copy_notice(&mut self, notice: CopyNotice) {
         self.copy_notice = Some(notice);
     }
 
+    #[cfg(test)]
     pub(super) fn viewport_height_at(&self, total_height: u16, now: Instant) -> u16 {
         total_height.saturating_sub(
             5 + u16::from(self.context.is_some()) * 2
@@ -330,7 +315,7 @@ impl ResourceDetailState {
     }
 }
 
-pub(super) fn key_to_input(key: KeyEvent) -> Option<DetailInput> {
+pub(crate) fn key_to_input(key: KeyEvent) -> Option<DetailInput> {
     let key = super::input::normalize_key(key);
 
     if key.code == KeyCode::Esc {
@@ -363,7 +348,7 @@ pub(super) fn key_to_input(key: KeyEvent) -> Option<DetailInput> {
     Some(DetailInput::Action(action))
 }
 
-pub(super) fn render_resource_detail(frame: &mut Frame<'_>, state: &mut ResourceDetailState) {
+pub(crate) fn render_resource_detail(frame: &mut Frame<'_>, state: &mut ResourceDetailState) {
     render_resource_detail_at(frame, state, Instant::now());
 }
 
@@ -532,12 +517,7 @@ fn detail_rows(state: &ResourceDetailState) -> Vec<DetailRow> {
         &state.expanded_groups,
     );
 
-    let unchanged_count = state
-        .attributes
-        .attributes
-        .iter()
-        .filter(|attribute| attribute.kind == AttributeChangeKind::Unchanged)
-        .count();
+    let unchanged_count = state.attributes.unchanged_count;
     if unchanged_count > 0 {
         let group = AttributeGroup::Unchanged;
         rows.push(DetailRow::Group {

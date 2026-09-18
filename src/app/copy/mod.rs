@@ -66,6 +66,11 @@ impl CopyEffect {
     }
 
     #[must_use]
+    pub(crate) const fn resource_count(&self) -> usize {
+        self.resource_count
+    }
+
+    #[must_use]
     pub(crate) fn text(&self) -> &str {
         &self.text
     }
