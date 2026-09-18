@@ -89,19 +89,24 @@ def setup():
 def demo():
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         raise RuntimeError("The demo requires an interactive terminal")
+    print("Starting Terracotta demo. No additional Enter is needed. Ctrl-C to cancel.",
+          file=sys.stderr, flush=True)
     repository = FIXTURES.parent.parent
+    print("[1/3] Preparing local Terraform scenario...", file=sys.stderr, flush=True)
     directory = setup()
     try:
         with tempfile.TemporaryDirectory(prefix="terracotta-demo-build-") as target:
             environment = isolated_environment(directory)
             environment["RUSTC_WRAPPER"] = ""
+            print("[2/3] Building Terracotta...", file=sys.stderr, flush=True)
             build = subprocess.run(
                 ["cargo", "build", "--locked", "--target-dir", target],
-                cwd=repository, env=environment,
+                cwd=repository, env=environment, stdin=subprocess.DEVNULL,
             )
             if build.returncode:
                 return build.returncode
             executable = "terracotta.exe" if os.name == "nt" else "terracotta"
+            print("[3/3] Opening plan review...", file=sys.stderr, flush=True)
             return subprocess.run(
                 [str(Path(target) / "debug" / executable), "plan"],
                 cwd=directory, env=environment,
@@ -129,10 +134,10 @@ def isolated_environment(directory):
 
 
 def run(directory, environment, *command):
-    print("Running: " + " ".join(command), file=sys.stderr)
+    print("Running: " + " ".join(command), file=sys.stderr, flush=True)
     result = subprocess.run(
         command, cwd=directory, env=environment, text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     if result.returncode:
         raise RuntimeError(result.stdout + result.stderr)
