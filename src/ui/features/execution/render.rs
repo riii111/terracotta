@@ -19,12 +19,6 @@ const MIN_WIDTH: u16 = 48;
 const STATUS_HEIGHT: u16 = 3;
 const SEPARATOR_HEIGHT: u16 = 1;
 
-#[cfg(test)]
-pub(crate) fn render_execution(frame: &mut Frame<'_>, state: &ExecutionState, now: Instant) {
-    let view = ExecutionViewState::from_state(state);
-    render_execution_with_view(frame, state, view, now);
-}
-
 pub(crate) fn render_execution_with_view(
     frame: &mut Frame<'_>,
     state: &ExecutionState,
@@ -398,6 +392,11 @@ mod tests {
     };
 
     include!("tests/render_snapshots.rs");
+
+    fn render_execution(frame: &mut Frame<'_>, state: &ExecutionState, now: Instant) {
+        let view = ExecutionViewState::from_state(state);
+        render_execution_with_view(frame, state, view, now);
+    }
 
     fn event(received_at: Instant, kind: ExecutionEventKind) -> ExecutionEvent {
         ExecutionEvent { received_at, kind }
