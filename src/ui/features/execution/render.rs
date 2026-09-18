@@ -6,7 +6,7 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-use crate::app::execution::{Diagnostic, DiagnosticSeverity, ResourceEventKind, ResourceProgress};
+use crate::app::execution::{Diagnostic, DiagnosticSeverity, ResourceEventKind};
 use crate::app::execution::{ExecutionStage, ExecutionState};
 use crate::ui::primitives::atoms::separator;
 use crate::ui::primitives::molecules::terminal_notice;
@@ -55,7 +55,6 @@ pub(crate) fn render_execution_with_view(
     );
 
     let lines = wrapped_lines(&execution_lines(state), chunks[2].width);
-    let paragraph = Paragraph::new(lines.clone());
     let visible_height = usize::from(chunks[2].height);
     let max_scroll = lines.len().saturating_sub(visible_height);
     let max_scroll = u16::try_from(max_scroll).unwrap_or(u16::MAX);
@@ -64,6 +63,7 @@ pub(crate) fn render_execution_with_view(
     } else {
         view.scroll().min(max_scroll)
     };
+    let paragraph = Paragraph::new(lines);
     frame.render_widget(paragraph.scroll((scroll, 0)), chunks[2]);
     frame.render_widget(separator::render(chunks[3].width), chunks[3]);
     if let Some(notice) = state.copy_notice() {
@@ -220,14 +220,16 @@ fn execution_lines(state: &ExecutionState) -> Vec<String> {
     lines
 }
 
-fn resource_lines<'a>(resources: impl Iterator<Item = (&'a str, ResourceProgress)>) -> Vec<String> {
+fn resource_lines<'a>(
+    resources: impl Iterator<Item = (&'a str, ResourceEventKind)>,
+) -> Vec<String> {
     resources
-        .map(|(address, progress)| {
+        .map(|(address, kind)| {
             format!(
                 "  [{}] {:<36} {}",
-                resource_status(progress.kind),
+                resource_status(kind),
                 address,
-                resource_label(progress.kind)
+                resource_label(kind)
             )
         })
         .collect()
@@ -393,7 +395,7 @@ mod tests {
     include!("tests/render_snapshots.rs");
 
     fn render_execution(frame: &mut Frame<'_>, state: &ExecutionState, now: Instant) {
-        let view = ExecutionViewState::from_state(state);
+        let view = ExecutionViewState::default();
         render_execution_with_view(frame, state, view, now);
     }
 
@@ -624,7 +626,7 @@ mod tests {
         let with_notice = execution_layout(area, &state).body();
         assert_eq!(without_notice.height, with_notice.height + 1);
 
-        let mut view = ExecutionViewState::from_state(&state);
+        let mut view = ExecutionViewState::default();
         let (current, max) = execution_scroll_position_with_view(&state, view, with_notice);
         assert_eq!(current, max);
         view.apply_scroll(ExecutionScroll::PageUp, current, max, with_notice.height);
@@ -737,7 +739,7 @@ mod tests {
             ResourceEventKind::RefreshComplete,
         ));
 
-        let mut view = ExecutionViewState::from_state(&state);
+        let mut view = ExecutionViewState::default();
         view.apply_scroll(ExecutionScroll::Down, 0, 1, 1);
         let stopped = buffer_text(&render_to_buffer_with_view(
             &state, view, started_at, 80, 16,
@@ -765,7 +767,7 @@ mod tests {
 
         let area = Rect::new(0, 0, 80, 16);
         let body = execution_layout(area, &state).body();
-        let mut view = ExecutionViewState::from_state(&state);
+        let mut view = ExecutionViewState::default();
         let (current_offset, max_offset) = execution_scroll_position_with_view(&state, view, body);
         assert!(current_offset > 0);
         assert_eq!(current_offset, max_offset);

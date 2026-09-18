@@ -30,7 +30,7 @@ pub(crate) fn run_connected(
     cancellation: &CancellationToken,
     clipboard: &mut ClipboardExecutor,
 ) -> io::Result<SessionOutcome> {
-    let mut execution_view = execution::ExecutionViewState::from_state(&execution);
+    let mut execution_view = execution::ExecutionViewState::default();
     let mut state = SessionState::new(execution);
     let mut list_view = ListState::default();
     let mut detail_view = None;

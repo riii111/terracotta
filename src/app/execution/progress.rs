@@ -6,19 +6,12 @@ use super::event::{
     ResourceEventKind,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ResourceProgress {
-    pub(crate) kind: ResourceEventKind,
-    pub(crate) completed: bool,
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ExecutionProgress {
-    resources: Vec<(String, ResourceProgress)>,
+    resources: Vec<(String, ResourceEventKind)>,
     resource_indices: BTreeMap<String, usize>,
     diagnostics: Vec<Diagnostic>,
     termination: Option<ProcessTermination>,
-    completed_resources: usize,
     last_event_at: Option<Instant>,
 }
 
@@ -29,27 +22,11 @@ impl ExecutionProgress {
         match kind {
             ExecutionEventKind::Resource(resource) => {
                 if let Some(&index) = self.resource_indices.get(&resource.address) {
-                    let progress = &mut self.resources[index].1;
-                    let was_completed = progress.completed;
-                    progress.kind = resource.kind;
-                    progress.completed = was_completed || resource.kind.is_complete();
-                    if progress.completed && !was_completed {
-                        self.completed_resources += 1;
-                    }
+                    self.resources[index].1 = resource.kind;
                 } else {
-                    let completed = resource.kind.is_complete();
                     self.resource_indices
                         .insert(resource.address.clone(), self.resources.len());
-                    self.resources.push((
-                        resource.address.clone(),
-                        ResourceProgress {
-                            kind: resource.kind,
-                            completed,
-                        },
-                    ));
-                    if completed {
-                        self.completed_resources += 1;
-                    }
+                    self.resources.push((resource.address, resource.kind));
                 }
             }
             ExecutionEventKind::Diagnostic(diagnostic) => self.diagnostics.push(diagnostic),
@@ -62,10 +39,10 @@ impl ExecutionProgress {
         }
     }
 
-    pub(crate) fn resources(&self) -> impl Iterator<Item = (&str, ResourceProgress)> {
+    pub(crate) fn resources(&self) -> impl Iterator<Item = (&str, ResourceEventKind)> {
         self.resources
             .iter()
-            .map(|(address, progress)| (address.as_str(), *progress))
+            .map(|(address, kind)| (address.as_str(), *kind))
     }
 
     #[must_use]
@@ -105,12 +82,6 @@ mod tests {
     };
     use super::*;
 
-    impl ExecutionProgress {
-        fn completed_resources(&self) -> usize {
-            self.completed_resources
-        }
-    }
-
     fn event(kind: ExecutionEventKind) -> ExecutionEvent {
         ExecutionEvent {
             received_at: Instant::now(),
@@ -145,27 +116,14 @@ mod tests {
         assert_eq!(
             progress.resources().collect::<Vec<_>>(),
             vec![
-                (
-                    "aws_vpc.main",
-                    ResourceProgress {
-                        kind: ResourceEventKind::ApplyComplete,
-                        completed: true,
-                    },
-                ),
-                (
-                    "aws_subnet.private[0]",
-                    ResourceProgress {
-                        kind: ResourceEventKind::RefreshStart,
-                        completed: false,
-                    },
-                ),
+                ("aws_vpc.main", ResourceEventKind::ApplyComplete,),
+                ("aws_subnet.private[0]", ResourceEventKind::RefreshStart,),
             ]
         );
-        assert_eq!(progress.completed_resources(), 1);
     }
 
     #[test]
-    fn completion_count_stays_stable_for_duplicate_and_post_completion_events() {
+    fn post_completion_event_updates_latest_state_without_new_resource() {
         let mut progress = ExecutionProgress::default();
         progress.record(event(ExecutionEventKind::Resource(ResourceEvent {
             address: "aws_vpc.main".to_owned(),
@@ -180,16 +138,9 @@ mod tests {
             kind: ResourceEventKind::ApplyStart,
         })));
 
-        assert_eq!(progress.completed_resources(), 1);
         assert_eq!(
             progress.resources().collect::<Vec<_>>(),
-            vec![(
-                "aws_vpc.main",
-                ResourceProgress {
-                    kind: ResourceEventKind::ApplyStart,
-                    completed: true,
-                },
-            )]
+            vec![("aws_vpc.main", ResourceEventKind::ApplyStart)]
         );
     }
 
@@ -216,10 +167,6 @@ mod tests {
         assert_eq!(
             hundred.resources().collect::<Vec<_>>(),
             ten_thousand.resources().collect::<Vec<_>>()
-        );
-        assert_eq!(
-            hundred.completed_resources(),
-            ten_thousand.completed_resources()
         );
         assert_eq!(hundred.diagnostics(), ten_thousand.diagnostics());
         assert_eq!(hundred.termination(), ten_thousand.termination());
