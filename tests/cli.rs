@@ -321,6 +321,7 @@ mod pty_tests {
 
         fn run(&self, binary: &Path) -> PtyResult {
             let mut process = Command::new("python3");
+            remove_ambient_cli_environment(&mut process);
             process
                 .current_dir(env!("CARGO_MANIFEST_DIR"))
                 .arg("tests/support/cli/pty_driver.py")
@@ -370,6 +371,15 @@ mod pty_tests {
             "basic scenario cleanup failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    fn remove_ambient_cli_environment(process: &mut Command) {
+        for (key, _) in env::vars_os() {
+            let name = key.to_string_lossy();
+            if name.starts_with("GIT_") || name.starts_with("TF_") {
+                process.env_remove(&key);
+            }
+        }
     }
 
     #[test]
