@@ -20,7 +20,6 @@ pub(crate) struct ExecutionProgress {
     diagnostics: Vec<Diagnostic>,
     termination: Option<ProcessTermination>,
     completed_resources: usize,
-    total_resources: Option<usize>,
     last_event_at: Option<Instant>,
 }
 
@@ -94,19 +93,6 @@ impl ExecutionProgress {
     pub(crate) const fn completed_resources(&self) -> usize {
         self.completed_resources
     }
-
-    #[must_use]
-    pub(crate) const fn total_resources(&self) -> Option<usize> {
-        self.total_resources
-    }
-
-    #[must_use]
-    pub(crate) const fn progress_ratio(&self) -> Option<(usize, usize)> {
-        match self.total_resources {
-            Some(total) => Some((self.completed_resources, total)),
-            None => None,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -167,8 +153,6 @@ mod tests {
             ]
         );
         assert_eq!(progress.completed_resources(), 1);
-        assert_eq!(progress.total_resources(), None);
-        assert_eq!(progress.progress_ratio(), None);
     }
 
     #[test]

@@ -18,6 +18,10 @@ pub(crate) enum SessionOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "session states are kept as direct product-state aggregates"
+)]
 pub(crate) enum SessionState {
     Execution(ExecutionState),
     Review(ReviewSessionState),
