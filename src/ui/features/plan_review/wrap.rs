@@ -75,5 +75,98 @@ pub(super) fn wrapped_line_count_for_line(line: &Line<'_>, max_width: u16) -> us
         non_whitespace_previous = !is_whitespace;
     }
 
-    count + 1
+    let has_unrendered_content = line_has_content || word_has_content || !whitespace.is_empty();
+    count + usize::from(count == 0 || has_unrendered_content)
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use ratatui::text::Text;
+    use ratatui::widgets::{Paragraph, Widget, Wrap};
+    use rstest::rstest;
+
+    use super::*;
+
+    const WIDTH: u16 = 5;
+    const MARKER: &str = "¤";
+
+    fn rendered_line_count(line: Line<'_>, width: u16) -> usize {
+        let area = Rect::new(0, 0, width, 64);
+        let text = Text::from(vec![line, Line::from(MARKER)]);
+        let mut buffer = Buffer::empty(area);
+        Paragraph::new(text)
+            .wrap(Wrap { trim: false })
+            .render(area, &mut buffer);
+
+        (0..area.height)
+            .find(|&y| {
+                buffer
+                    .cell((0, y))
+                    .is_some_and(|cell| cell.symbol() == MARKER)
+            })
+            .map(usize::from)
+            .expect("marker should be rendered after the target line")
+    }
+
+    #[rstest]
+    #[case::empty("")]
+    #[case::exact_width("12345")]
+    #[case::one_trailing_space("12345 ")]
+    #[case::two_trailing_spaces("12345  ")]
+    #[case::whitespace_only("     ")]
+    #[case::long_word("123456")]
+    #[case::wide_character("界")]
+    #[case::combining_character("e\u{301}")]
+    fn wrapped_count_matches_paragraph_rendering(#[case] input: &str) {
+        let line = Line::from(input);
+
+        assert_eq!(
+            wrapped_line_count_for_line(&line, WIDTH),
+            rendered_line_count(line, WIDTH),
+            "input: {input:?}"
+        );
+    }
+
+    struct ExpectedCase {
+        name: &'static str,
+        input: &'static str,
+        expected: usize,
+    }
+
+    #[test]
+    fn known_trailing_space_counts_match_rendering() {
+        for case in [
+            ExpectedCase {
+                name: "exact_width",
+                input: "12345",
+                expected: 1,
+            },
+            ExpectedCase {
+                name: "one_trailing_space",
+                input: "12345 ",
+                expected: 1,
+            },
+            ExpectedCase {
+                name: "two_trailing_spaces",
+                input: "12345  ",
+                expected: 2,
+            },
+        ] {
+            let line = Line::from(case.input);
+            assert_eq!(
+                wrapped_line_count_for_line(&line, WIDTH),
+                case.expected,
+                "case: {}",
+                case.name
+            );
+            assert_eq!(
+                rendered_line_count(line, WIDTH),
+                case.expected,
+                "case: {}",
+                case.name
+            );
+        }
+    }
 }

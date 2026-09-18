@@ -227,4 +227,9 @@ mod tests {
 
         assert!(layout.body().height > 0);
     }
+
+    #[test]
+    fn fitting_trailing_space_does_not_create_a_diagnostics_scroll_offset() {
+        assert_eq!(max_scroll(&[Line::from("12345 ")], 5, 1), 0);
+    }
 }
