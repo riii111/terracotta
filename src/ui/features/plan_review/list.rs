@@ -566,6 +566,7 @@ mod tests {
 
     use super::*;
     use crate::app::attribution::AnalysisIssue;
+    use crate::app::copy::CopyNotice;
     use crate::app::review::{
         PlanReview, ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus,
     };
@@ -750,6 +751,38 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("direct: storage.tf:8-10"), "{text}");
+    }
+
+    #[test]
+    fn list_copy_notices_keep_required_footer_at_supported_widths() {
+        let cases = [
+            (
+                CopyNotice::Copied {
+                    target: CopyTarget::Resource,
+                    resource_count: 1,
+                },
+                "Copied selected resource (redacted).",
+            ),
+            (CopyNotice::Failed, "Copy failed: clipboard unavailable."),
+        ];
+
+        for (notice, expected) in cases {
+            for width in [48, 60, 80, 120] {
+                let mut state = synthetic_state();
+                state.set_copy_notice(notice);
+                let text = buffer_text(&render_to_buffer(&state, width, MIN_HEIGHT));
+                let notice_line = text
+                    .lines()
+                    .position(|line| line.contains(expected))
+                    .expect("copy notice should be rendered");
+                let footer_line = text
+                    .lines()
+                    .position(|line| line.contains("q quit"))
+                    .expect("quit hint should be rendered");
+
+                assert!(notice_line < footer_line, "width: {width}\n{text}");
+            }
+        }
     }
 
     #[test]

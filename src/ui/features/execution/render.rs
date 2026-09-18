@@ -600,6 +600,36 @@ mod tests {
     }
 
     #[test]
+    fn execution_layout_reserves_copy_notice_row_for_scroll_body() {
+        let started_at = Instant::now();
+        let area = Rect::new(0, 0, 48, 12);
+        let mut state = ExecutionState::new(started_at);
+        for index in 0..40 {
+            state.record(resource_event(
+                started_at,
+                &format!("aws_instance.item[{index}]"),
+                ResourceEventKind::RefreshStart,
+            ));
+        }
+
+        let without_notice = execution_layout(area, &state).body();
+        state.set_copy_notice(CopyNotice::Failed);
+        let with_notice = execution_layout(area, &state).body();
+        assert_eq!(without_notice.height, with_notice.height + 1);
+
+        let mut view = ExecutionViewState::from_state(&state);
+        let (current, max) = execution_scroll_position_with_view(&state, view, with_notice);
+        assert_eq!(current, max);
+        view.apply_scroll(ExecutionScroll::PageUp, current, max);
+        assert_eq!(view.scroll(), current.saturating_sub(8));
+        view.apply_scroll(ExecutionScroll::PageDown, view.scroll(), max);
+        assert_eq!(
+            view.scroll(),
+            (current.saturating_sub(8)).saturating_add(8).min(max)
+        );
+    }
+
+    #[test]
     fn renders_failed_stage_with_long_diagnostic_and_quit_footer() {
         let started_at = Instant::now();
         let mut state = ExecutionState::new(started_at);

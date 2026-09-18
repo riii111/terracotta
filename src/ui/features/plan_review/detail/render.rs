@@ -206,6 +206,7 @@ mod tests {
     use crate::app::attribution::{SourceLineChange, SourceRange, SourceSide};
     use crate::app::plan::{AttributeChangeKind, ReplacePathSegment};
     use crate::ui::test_support::buffer_text;
+    use ratatui::layout::Rect;
 
     use super::super::test_support::*;
     use super::super::*;
@@ -320,6 +321,55 @@ mod tests {
             assert!(text.contains("Esc back"), "width: {width}\n{text}");
             assert!(text.contains("PgUp/PgDn scroll"), "width: {width}\n{text}");
         }
+    }
+
+    #[test]
+    fn detail_layout_reserves_notice_rows_and_drives_page_scroll() {
+        let now = Instant::now();
+        let area = Rect::new(0, 0, 48, 12);
+        let mut revealed = sensitive_sibling_state();
+        select_attribute(&mut revealed, "password");
+        revealed.apply_at(DetailAction::Reveal, 46, 4, now);
+
+        let mut cases = [
+            ("normal", state(), 4),
+            ("reveal", revealed, 3),
+            ("copy", state(), 3),
+            ("reveal and copy", sensitive_sibling_state(), 2),
+        ];
+        cases[2].1.set_copy_notice(CopyNotice::Failed);
+        select_attribute(&mut cases[3].1, "password");
+        cases[3].1.apply_at(DetailAction::Reveal, 46, 4, now);
+        cases[3].1.set_copy_notice(CopyNotice::Failed);
+
+        for (name, mut state, expected_height) in cases {
+            let body = resource_detail_layout(area, &state, now).body();
+            assert_eq!(body.height, expected_height, "case: {name}");
+
+            state.apply_at(DetailAction::PageDown, body.width, body.height, now);
+            assert_eq!(state.scroll(), body.height, "case: {name}");
+            for _ in 0..100 {
+                state.apply_at(DetailAction::PageDown, body.width, body.height, now);
+            }
+            let max_scroll = state.scroll();
+            state.apply_at(DetailAction::PageDown, body.width, body.height, now);
+            assert_eq!(state.scroll(), max_scroll, "case: {name}");
+            state.apply_at(DetailAction::PageUp, body.width, body.height, now);
+            assert_eq!(
+                state.scroll(),
+                max_scroll.saturating_sub(body.height),
+                "case: {name}"
+            );
+        }
+
+        let small = buffer_text(&render_at(&mut state(), 48, 7, now));
+        assert!(small.contains("Terminal too small"), "{small}");
+        assert_eq!(
+            resource_detail_layout(Rect::new(0, 0, 48, 7), &state(), now)
+                .body()
+                .height,
+            1
+        );
     }
 
     #[test]
