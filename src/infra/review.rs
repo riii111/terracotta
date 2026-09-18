@@ -312,14 +312,7 @@ fn review_comparison(diff: &GitDiff) -> ReviewComparison {
         .map_or(ReviewComparisonStatus::Complete, |message| {
             ReviewComparisonStatus::Incomplete(message.to_owned())
         });
-    ReviewComparison::new(
-        basis,
-        diff.compare_ref().map(str::to_owned),
-        diff.resolved_commit().map(str::to_owned),
-        diff.head_commit().map(str::to_owned),
-        diff.merge_base().map(str::to_owned),
-        status,
-    )
+    ReviewComparison::new(basis, diff.compare_ref().map(str::to_owned), status)
 }
 
 #[cfg(test)]
@@ -597,7 +590,6 @@ mod tests {
             review.comparison().basis(),
             ReviewComparisonBasis::WorkingTreeVsHead
         );
-        assert!(review.comparison().head_commit().is_some());
         assert!(review.comparison().status().is_complete());
         assert_eq!(review.attributions().len(), 5);
         assert_eq!(

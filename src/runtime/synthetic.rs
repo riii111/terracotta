@@ -246,9 +246,6 @@ fn synthetic_review() -> PlanReview {
         ReviewComparison::new(
             ReviewComparisonBasis::WorkingTreeVsHead,
             None,
-            None,
-            None,
-            None,
             ReviewComparisonStatus::Complete,
         ),
         Vec::new(),

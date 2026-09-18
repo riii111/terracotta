@@ -146,6 +146,7 @@ impl GitDiff {
         self.comparison.compare_ref.as_deref()
     }
 
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn resolved_commit(&self) -> Option<&str> {
         self.comparison.resolved_commit.as_deref()

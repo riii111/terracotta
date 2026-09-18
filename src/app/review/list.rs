@@ -108,17 +108,28 @@ pub(crate) struct PlanListContext {
 }
 
 impl PlanListState {
-    pub(crate) fn from_review(review: &PlanReview) -> Result<Self, PlanListError> {
-        let mut state = Self::from_plan(
-            review.plan().clone(),
-            review.attributions().to_vec(),
-            review.comparison().label(),
-        )?;
+    pub(crate) fn from_review(review: PlanReview) -> Result<Self, PlanListError> {
+        let plan_copy_text = copy::plan_text(&review);
+        let comparison = review.comparison();
+        let comparison_label = comparison.label();
+        let comparison_message = comparison.status().message().map(str::to_owned);
+        let PlanReview {
+            root,
+            workspace,
+            git,
+            plan,
+            source_files,
+            attributions,
+            comparison,
+            analysis_issues,
+        } = review;
 
-        if let Some(message) = review.comparison().status().message() {
-            state.analysis_issues.push(message.to_owned());
+        let mut state = Self::from_plan(plan, attributions, comparison_label)?;
+
+        if let Some(message) = comparison_message {
+            state.analysis_issues.push(message);
         }
-        for issue in review.analysis_issues() {
+        for issue in analysis_issues {
             if !state
                 .analysis_issues
                 .iter()
@@ -127,19 +138,19 @@ impl PlanListState {
                 state.analysis_issues.push(issue.message().to_owned());
             }
         }
-        state.source_files = review.source_files().to_vec();
+        state.source_files = source_files;
         for item in &mut state.items {
             item.set_resource_copy_text(copy::resource_text(
                 item.change(),
                 item.attribution(),
-                review.comparison(),
+                &comparison,
             ));
         }
-        state.plan_copy_text = Some(copy::plan_text(review));
+        state.plan_copy_text = Some(plan_copy_text);
         state.context = Some(PlanListContext {
-            root: review.root().to_owned(),
-            workspace: review.workspace().to_owned(),
-            git: review.git().to_owned(),
+            root,
+            workspace,
+            git,
         });
 
         Ok(state)
@@ -779,16 +790,13 @@ mod tests {
             ReviewComparison::new(
                 ReviewComparisonBasis::WorkingTreeVsHead,
                 None,
-                None,
-                None,
-                None,
                 ReviewComparisonStatus::Incomplete("comparison unavailable".to_owned()),
             ),
             vec![AnalysisIssue::git("analysis unavailable")],
         )
         .with_git("feature/review".to_owned());
 
-        let list = PlanListState::from_review(&review).expect("review data should build a list");
+        let list = PlanListState::from_review(review).expect("review data should build a list");
 
         assert_eq!(
             list.analysis_issues(),
