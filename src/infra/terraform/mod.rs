@@ -10,4 +10,6 @@ pub(crate) use plan::run_plan;
 pub(crate) use workspace::read_workspace_with_runner;
 
 #[cfg(test)]
-pub(crate) use command::{ProcessOutput, ProcessStatus, RunningProcess};
+pub(crate) mod tests {
+    pub(crate) use super::command::{ProcessOutput, ProcessStatus, RunningProcess};
+}

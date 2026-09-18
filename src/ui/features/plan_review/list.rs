@@ -16,17 +16,6 @@ use crate::ui::theme;
 
 use super::text::{display_width, truncate_end};
 
-#[cfg(test)]
-use crate::app::attribution::{
-    ResourceAddress, ResourceSourceLocation, SourceFileAnalysis,
-    SourceLineChange as AttributionSourceLineChange, SourceRange, SourceSide, attribute_changes,
-};
-#[cfg(test)]
-use crate::app::plan::{
-    Plan, PlanAction, PlanSummary, PlanValue, ResourceChange, ResourceMode, UnsupportedChange,
-    UnsupportedChangeKind, UnsupportedChangeScope,
-};
-
 const MIN_HEIGHT: u16 = 11;
 const MIN_CONTENT_HEIGHT: u16 = MIN_HEIGHT - 2;
 const MIN_WIDTH: u16 = 48;
@@ -40,15 +29,6 @@ pub(crate) enum ListInput {
     OpenDiagnostics,
     StartSearch,
     Quit,
-}
-
-#[cfg(test)]
-pub(crate) fn render_plan_list_with_state(
-    frame: &mut Frame<'_>,
-    state: &PlanListState,
-    list_state: &mut ListState,
-) {
-    render_plan_list_with_diagnostics(frame, state, &ReviewDiagnosticsState::default(), list_state);
 }
 
 pub(crate) fn render_plan_list_with_diagnostics(
@@ -475,128 +455,16 @@ fn required_footer_lines(state: &PlanListState, width: u16) -> Vec<Line<'static>
 }
 
 #[cfg(test)]
-fn synthetic_state() -> PlanListState {
-    let mut changes = vec![
-        synthetic_change(
-            "aws_instance.api",
-            ResourceChangeKind::Update,
-            PlanAction::Update,
-        ),
-        synthetic_change(
-            "aws_s3_bucket.logs_with_a_very_long_resource_address_that_needs_truncation_for_narrow_terminal",
-            ResourceChangeKind::Create,
-            PlanAction::Create,
-        ),
-        synthetic_change(
-            "aws_instance.worker",
-            ResourceChangeKind::Replace,
-            PlanAction::Delete,
-        ),
-        synthetic_change(
-            "aws_security_group.old",
-            ResourceChangeKind::Delete,
-            PlanAction::Delete,
-        ),
-    ];
-    let source_files = vec![
-        SourceFileAnalysis::new(
-            "main.tf".into(),
-            SourceSide::After,
-            vec![ResourceSourceLocation::new(
-                ResourceAddress::new("aws_instance", "api"),
-                "main.tf".into(),
-                SourceSide::After,
-                SourceRange::new(42, 46),
-            )],
-            Vec::new(),
-        ),
-        SourceFileAnalysis::new(
-            "storage.tf".into(),
-            SourceSide::After,
-            vec![ResourceSourceLocation::new(
-                ResourceAddress::new(
-                    "aws_s3_bucket",
-                    "logs_with_a_very_long_resource_address_that_needs_truncation_for_narrow_terminal",
-                ),
-                "storage.tf".into(),
-                SourceSide::After,
-                SourceRange::new(8, 10),
-            )],
-            Vec::new(),
-        ),
-        SourceFileAnalysis::new(
-            "worker.tf".into(),
-            SourceSide::After,
-            vec![ResourceSourceLocation::new(
-                ResourceAddress::new("aws_instance", "worker"),
-                "worker.tf".into(),
-                SourceSide::After,
-                SourceRange::new(12, 18),
-            )],
-            Vec::new(),
-        ),
-        SourceFileAnalysis::new(
-            "old.tf".into(),
-            SourceSide::Before,
-            vec![ResourceSourceLocation::new(
-                ResourceAddress::new("aws_security_group", "old"),
-                "old.tf".into(),
-                SourceSide::Before,
-                SourceRange::new(20, 24),
-            )],
-            Vec::new(),
-        ),
-    ];
-    changes[2].mode = ResourceMode::Data;
-    let changed_lines = vec![
-        AttributionSourceLineChange::new("main.tf", SourceSide::After, SourceRange::new(42, 43)),
-        AttributionSourceLineChange::new("storage.tf", SourceSide::After, SourceRange::new(8, 8)),
-        AttributionSourceLineChange::new("worker.tf", SourceSide::After, SourceRange::new(14, 14)),
-    ];
-    let attributions = attribute_changes(&changes, &source_files, &changed_lines);
-    PlanListState::from_plan(
-        Plan {
-            changes,
-            summary: PlanSummary {
-                creates: 1,
-                updates: 1,
-                replaces: 1,
-                deletes: 1,
-            },
-            unsupported_changes: vec![UnsupportedChange {
-                scope: UnsupportedChangeScope::Output,
-                address: "output.synthetic".to_owned(),
-                actions: vec![PlanAction::Update],
-                kind: UnsupportedChangeKind::Output,
-                reason: None,
-                action_type: None,
-            }],
-        },
-        attributions,
-        "working tree vs HEAD",
-    )
-    .expect("synthetic changes and attributions should align")
-}
-
-#[cfg(test)]
-fn synthetic_change(address: &str, kind: ResourceChangeKind, action: PlanAction) -> ResourceChange {
-    ResourceChange {
-        address: address.to_owned(),
-        mode: ResourceMode::Managed,
-        actions: vec![action],
-        kind,
-        before: Some(PlanValue::Null),
-        after: Some(PlanValue::Null),
-        before_sensitive: None,
-        after_sensitive: None,
-        after_unknown: None,
-        replace_paths: None,
-        action_reason: None,
-    }
-}
-
-#[cfg(test)]
 mod tests {
+    use crate::app::attribution::{
+        ResourceAddress, ResourceSourceLocation, SourceFileAnalysis,
+        SourceLineChange as AttributionSourceLineChange, SourceRange, SourceSide,
+        attribute_changes,
+    };
+    use crate::app::plan::{
+        Plan, PlanAction, PlanSummary, PlanValue, ResourceChange, ResourceMode, UnsupportedChange,
+        UnsupportedChangeKind, UnsupportedChangeScope,
+    };
     use crate::app::review::ReviewDetailState;
     use std::path::PathBuf;
 
@@ -612,6 +480,166 @@ mod tests {
     use crate::ui::test_support::{buffer_text, render_to_buffer as render_test_buffer};
 
     include!("tests/render_snapshots.rs");
+
+    fn render_plan_list_with_state(
+        frame: &mut Frame<'_>,
+        state: &PlanListState,
+        list_state: &mut ListState,
+    ) {
+        render_plan_list_with_diagnostics(
+            frame,
+            state,
+            &ReviewDiagnosticsState::default(),
+            list_state,
+        );
+    }
+
+    fn synthetic_state() -> PlanListState {
+        let mut changes = synthetic_changes();
+        changes[2].mode = ResourceMode::Data;
+        let source_files = synthetic_source_files();
+        let changed_lines = synthetic_changed_lines();
+        let attributions = attribute_changes(&changes, &source_files, &changed_lines);
+        PlanListState::from_plan(
+            Plan {
+                changes,
+                summary: PlanSummary {
+                    creates: 1,
+                    updates: 1,
+                    replaces: 1,
+                    deletes: 1,
+                },
+                unsupported_changes: vec![UnsupportedChange {
+                    scope: UnsupportedChangeScope::Output,
+                    address: "output.synthetic".to_owned(),
+                    actions: vec![PlanAction::Update],
+                    kind: UnsupportedChangeKind::Output,
+                    reason: None,
+                    action_type: None,
+                }],
+            },
+            attributions,
+            "working tree vs HEAD",
+        )
+        .expect("synthetic changes and attributions should align")
+    }
+
+    fn synthetic_changes() -> Vec<ResourceChange> {
+        vec![
+            synthetic_change(
+                "aws_instance.api",
+                ResourceChangeKind::Update,
+                PlanAction::Update,
+            ),
+            synthetic_change(
+                "aws_s3_bucket.logs_with_a_very_long_resource_address_that_needs_truncation_for_narrow_terminal",
+                ResourceChangeKind::Create,
+                PlanAction::Create,
+            ),
+            synthetic_change(
+                "aws_instance.worker",
+                ResourceChangeKind::Replace,
+                PlanAction::Delete,
+            ),
+            synthetic_change(
+                "aws_security_group.old",
+                ResourceChangeKind::Delete,
+                PlanAction::Delete,
+            ),
+        ]
+    }
+
+    fn synthetic_source_files() -> Vec<SourceFileAnalysis> {
+        vec![
+            SourceFileAnalysis::new(
+                "main.tf".into(),
+                SourceSide::After,
+                vec![ResourceSourceLocation::new(
+                    ResourceAddress::new("aws_instance", "api"),
+                    "main.tf".into(),
+                    SourceSide::After,
+                    SourceRange::new(42, 46),
+                )],
+                Vec::new(),
+            ),
+            SourceFileAnalysis::new(
+                "storage.tf".into(),
+                SourceSide::After,
+                vec![ResourceSourceLocation::new(
+                    ResourceAddress::new(
+                        "aws_s3_bucket",
+                        "logs_with_a_very_long_resource_address_that_needs_truncation_for_narrow_terminal",
+                    ),
+                    "storage.tf".into(),
+                    SourceSide::After,
+                    SourceRange::new(8, 10),
+                )],
+                Vec::new(),
+            ),
+            SourceFileAnalysis::new(
+                "worker.tf".into(),
+                SourceSide::After,
+                vec![ResourceSourceLocation::new(
+                    ResourceAddress::new("aws_instance", "worker"),
+                    "worker.tf".into(),
+                    SourceSide::After,
+                    SourceRange::new(12, 18),
+                )],
+                Vec::new(),
+            ),
+            SourceFileAnalysis::new(
+                "old.tf".into(),
+                SourceSide::Before,
+                vec![ResourceSourceLocation::new(
+                    ResourceAddress::new("aws_security_group", "old"),
+                    "old.tf".into(),
+                    SourceSide::Before,
+                    SourceRange::new(20, 24),
+                )],
+                Vec::new(),
+            ),
+        ]
+    }
+
+    fn synthetic_changed_lines() -> Vec<AttributionSourceLineChange> {
+        vec![
+            AttributionSourceLineChange::new(
+                "main.tf",
+                SourceSide::After,
+                SourceRange::new(42, 43),
+            ),
+            AttributionSourceLineChange::new(
+                "storage.tf",
+                SourceSide::After,
+                SourceRange::new(8, 8),
+            ),
+            AttributionSourceLineChange::new(
+                "worker.tf",
+                SourceSide::After,
+                SourceRange::new(14, 14),
+            ),
+        ]
+    }
+
+    fn synthetic_change(
+        address: &str,
+        kind: ResourceChangeKind,
+        action: PlanAction,
+    ) -> ResourceChange {
+        ResourceChange {
+            address: address.to_owned(),
+            mode: ResourceMode::Managed,
+            actions: vec![action],
+            kind,
+            before: Some(PlanValue::Null),
+            after: Some(PlanValue::Null),
+            before_sensitive: None,
+            after_sensitive: None,
+            after_unknown: None,
+            replace_paths: None,
+            action_reason: None,
+        }
+    }
 
     fn render_to_buffer(state: &PlanListState, width: u16, height: u16) -> Buffer {
         let mut list_state = ListState::default();
@@ -639,6 +667,19 @@ mod tests {
         render_test_buffer((width, height), |frame| {
             render_plan_list_with_diagnostics(frame, state, diagnostics, &mut list_state);
         })
+    }
+
+    fn empty_state() -> PlanListState {
+        PlanListState::from_plan(
+            Plan {
+                changes: Vec::new(),
+                summary: PlanSummary::default(),
+                unsupported_changes: Vec::new(),
+            },
+            Vec::new(),
+            "working tree vs HEAD",
+        )
+        .expect("empty plan should build a list")
     }
 
     fn warning_diagnostics() -> ReviewDiagnosticsState {
@@ -763,7 +804,7 @@ mod tests {
 
     #[test]
     fn empty_state_explains_that_there_are_no_resource_changes() {
-        let state = PlanListState::empty("working tree vs HEAD");
+        let state = empty_state();
         let text = buffer_text(&render_to_buffer(&state, 80, 12));
 
         assert!(text.contains("No resource changes."), "{text}");
@@ -973,7 +1014,7 @@ mod tests {
 
     #[test]
     fn empty_plan_disables_resource_copy() {
-        let state = PlanListState::empty("working tree vs HEAD");
+        let state = empty_state();
 
         assert!(!state.can_copy(CopyTarget::Resource));
     }

@@ -69,11 +69,6 @@ pub(crate) enum GitDiffStatus {
 
 impl GitDiffStatus {
     #[must_use]
-    pub(crate) const fn is_complete(&self) -> bool {
-        matches!(self, Self::Complete)
-    }
-
-    #[must_use]
     pub(crate) fn message(&self) -> Option<&str> {
         match self {
             Self::Complete => None,
@@ -209,11 +204,6 @@ enum ComparisonResolutionFailure {
     MergeBaseFailed(GitCommandError),
 }
 
-pub(crate) fn collect_diff(root: &Path) -> GitDiff {
-    collect_diff_with_cancellation(root, &CancellationToken::new())
-        .expect("Git diff should not be interrupted without a cancellation request")
-}
-
 pub(crate) fn collect_diff_with_cancellation(
     root: &Path,
     cancellation: &CancellationToken,
@@ -280,11 +270,6 @@ pub(crate) fn collect_diff_with_cancellation(
         }
         Err(HeadError::Failed(error)) => failed_diff_from_error(root, Some(repository_root), error),
     }
-}
-
-pub(crate) fn collect_diff_against_ref(root: &Path, compare_ref: &str) -> GitDiff {
-    collect_diff_against_ref_with_cancellation(root, compare_ref, &CancellationToken::new())
-        .expect("Git diff should not be interrupted without a cancellation request")
 }
 
 pub(crate) fn collect_diff_against_ref_with_cancellation(
@@ -791,10 +776,20 @@ mod tests {
 
     use std::process::Command;
 
-    use super::super::rev_parse::resolve_compare_ref_with_env;
+    use super::super::rev_parse::tests::resolve_compare_ref_with_env;
     use super::*;
 
     static NEXT_REPOSITORY: AtomicU64 = AtomicU64::new(0);
+
+    fn collect_diff(root: &Path) -> GitDiff {
+        collect_diff_with_cancellation(root, &CancellationToken::new())
+            .expect("Git diff should not be interrupted")
+    }
+
+    fn collect_diff_against_ref(root: &Path, compare_ref: &str) -> GitDiff {
+        collect_diff_against_ref_with_cancellation(root, compare_ref, &CancellationToken::new())
+            .expect("Git diff should not be interrupted")
+    }
 
     struct TestRepository {
         path: PathBuf,
@@ -1039,7 +1034,7 @@ mod tests {
         let result =
             resolve_compare_ref_with_env(&repository.path, "compare", &[("GIT_TRACE", "1")]);
 
-        assert!(matches!(result, Ok(commit) if commit.len() == 40));
+        assert!(result.is_some_and(|commit| commit.len() == 40));
     }
 
     #[test]
@@ -1474,7 +1469,7 @@ mod tests {
         let result = collect_diff(&file);
 
         assert!(matches!(result.status(), GitDiffStatus::Failed { .. }));
-        assert!(!result.status().is_complete());
+        assert!(!matches!(result.status(), GitDiffStatus::Complete));
         assert!(result.status().message().is_some());
     }
 }

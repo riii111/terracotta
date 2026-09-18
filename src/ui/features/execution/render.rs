@@ -19,12 +19,6 @@ const MIN_WIDTH: u16 = 48;
 const STATUS_HEIGHT: u16 = 3;
 const SEPARATOR_HEIGHT: u16 = 1;
 
-#[cfg(test)]
-pub(crate) fn render_execution(frame: &mut Frame<'_>, state: &ExecutionState, now: Instant) {
-    let view = ExecutionViewState::from_state(state);
-    render_execution_with_view(frame, state, view, now);
-}
-
 pub(crate) fn render_execution_with_view(
     frame: &mut Frame<'_>,
     state: &ExecutionState,
@@ -399,6 +393,11 @@ mod tests {
 
     include!("tests/render_snapshots.rs");
 
+    fn render_execution(frame: &mut Frame<'_>, state: &ExecutionState, now: Instant) {
+        let view = ExecutionViewState::from_state(state);
+        render_execution_with_view(frame, state, view, now);
+    }
+
     fn event(received_at: Instant, kind: ExecutionEventKind) -> ExecutionEvent {
         ExecutionEvent { received_at, kind }
     }
@@ -523,14 +522,23 @@ mod tests {
             "{long_context_text}"
         );
 
-        let unavailable = ExecutionState::with_context(started_at, ExecutionContext::unavailable());
+        let unavailable = ExecutionState::with_context(
+            started_at,
+            ExecutionContext::known(
+                "infra/prod",
+                "default",
+                "feature/plan-ui",
+                "working tree vs HEAD",
+            )
+            .with_git(None),
+        );
         let unavailable_text = buffer_text(&render_to_buffer(&unavailable, started_at, 80, 16));
         assert!(
-            unavailable_text.contains("cwd unavailable"),
+            unavailable_text.contains("cwd infra/prod"),
             "{unavailable_text}"
         );
         assert!(
-            unavailable_text.contains("compare unavailable"),
+            unavailable_text.contains("git unavailable"),
             "{unavailable_text}"
         );
     }

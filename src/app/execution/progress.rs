@@ -70,11 +70,6 @@ impl ExecutionProgress {
     }
 
     #[must_use]
-    pub(crate) const fn summary(&self) -> Option<&ExecutionSummary> {
-        self.summary.as_ref()
-    }
-
-    #[must_use]
     pub(crate) fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
     }
@@ -102,17 +97,22 @@ impl ExecutionProgress {
     pub(crate) const fn termination(&self) -> Option<ProcessTermination> {
         self.termination
     }
-
-    #[must_use]
-    pub(crate) const fn completed_resources(&self) -> usize {
-        self.completed_resources
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::event::{DiagnosticSource, ProcessExitStatus, ResourceEvent};
     use super::*;
+
+    impl ExecutionProgress {
+        fn summary(&self) -> Option<&ExecutionSummary> {
+            self.summary.as_ref()
+        }
+
+        fn completed_resources(&self) -> usize {
+            self.completed_resources
+        }
+    }
 
     fn event(kind: ExecutionEventKind) -> ExecutionEvent {
         ExecutionEvent {

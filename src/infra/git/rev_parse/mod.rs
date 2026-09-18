@@ -79,20 +79,6 @@ pub(super) fn resolve_compare_ref(
     resolve_compare_ref_with_env_and_cancellation(repository_root, compare_ref, &[], cancellation)
 }
 
-pub(super) fn resolve_compare_ref_with_env(
-    repository_root: &Path,
-    compare_ref: &str,
-    environment: &[(&str, &str)],
-) -> Result<String, CompareRefError> {
-    let cancellation = CancellationToken::new();
-    resolve_compare_ref_with_env_and_cancellation(
-        repository_root,
-        compare_ref,
-        environment,
-        &cancellation,
-    )
-}
-
 fn resolve_compare_ref_with_env_and_cancellation(
     repository_root: &Path,
     compare_ref: &str,
@@ -345,5 +331,25 @@ fn single_commit(output: &Output, operation: &str) -> Result<String, GitCommandE
             operation,
             "Git did not resolve exactly one commit",
         )),
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
+    pub(crate) fn resolve_compare_ref_with_env(
+        repository_root: &Path,
+        compare_ref: &str,
+        environment: &[(&str, &str)],
+    ) -> Option<String> {
+        let cancellation = CancellationToken::new();
+        resolve_compare_ref_with_env_and_cancellation(
+            repository_root,
+            compare_ref,
+            environment,
+            &cancellation,
+        )
+        .ok()
     }
 }

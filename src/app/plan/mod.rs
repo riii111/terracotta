@@ -107,13 +107,6 @@ pub(crate) struct PlanSummary {
     pub(crate) deletes: usize,
 }
 
-impl PlanSummary {
-    #[must_use]
-    pub(crate) const fn total(self) -> usize {
-        self.creates + self.updates + self.replaces + self.deletes
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UnsupportedChangeScope {
     Resource,
@@ -152,16 +145,4 @@ pub(crate) struct Plan {
     pub(crate) changes: Vec<ResourceChange>,
     pub(crate) summary: PlanSummary,
     pub(crate) unsupported_changes: Vec<UnsupportedChange>,
-}
-
-impl Plan {
-    #[must_use]
-    pub(crate) const fn has_changes(&self) -> bool {
-        !self.changes.is_empty() || !self.unsupported_changes.is_empty()
-    }
-
-    #[must_use]
-    pub(crate) const fn unsupported_change_count(&self) -> usize {
-        self.unsupported_changes.len()
-    }
 }

@@ -1,6 +1,5 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ExecutionContextValue {
-    Loading,
     Unavailable,
     Known(String),
 }
@@ -9,7 +8,6 @@ impl ExecutionContextValue {
     #[must_use]
     pub(crate) fn as_str(&self) -> &str {
         match self {
-            Self::Loading => "loading...",
             Self::Unavailable => "unavailable",
             Self::Known(value) => value,
         }
@@ -25,26 +23,6 @@ pub(crate) struct ExecutionContext {
 }
 
 impl ExecutionContext {
-    #[must_use]
-    pub(crate) const fn loading() -> Self {
-        Self {
-            cwd: ExecutionContextValue::Loading,
-            workspace: ExecutionContextValue::Loading,
-            git: ExecutionContextValue::Loading,
-            comparison: ExecutionContextValue::Loading,
-        }
-    }
-
-    #[must_use]
-    pub(crate) const fn unavailable() -> Self {
-        Self {
-            cwd: ExecutionContextValue::Unavailable,
-            workspace: ExecutionContextValue::Unavailable,
-            git: ExecutionContextValue::Unavailable,
-            comparison: ExecutionContextValue::Unavailable,
-        }
-    }
-
     #[must_use]
     pub(crate) fn known(
         cwd: impl Into<String>,

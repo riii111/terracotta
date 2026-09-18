@@ -32,11 +32,6 @@ pub(crate) enum ReviewComparisonStatus {
 
 impl ReviewComparisonStatus {
     #[must_use]
-    pub(crate) const fn is_complete(&self) -> bool {
-        matches!(self, Self::Complete)
-    }
-
-    #[must_use]
     pub(crate) fn message(&self) -> Option<&str> {
         match self {
             Self::Complete => None,
@@ -73,31 +68,6 @@ impl ReviewComparison {
             merge_base,
             status,
         }
-    }
-
-    #[must_use]
-    pub(crate) const fn basis(&self) -> ReviewComparisonBasis {
-        self.basis
-    }
-
-    #[must_use]
-    pub(crate) fn compare_ref(&self) -> Option<&str> {
-        self.compare_ref.as_deref()
-    }
-
-    #[must_use]
-    pub(crate) fn resolved_commit(&self) -> Option<&str> {
-        self.resolved_commit.as_deref()
-    }
-
-    #[must_use]
-    pub(crate) fn head_commit(&self) -> Option<&str> {
-        self.head_commit.as_deref()
-    }
-
-    #[must_use]
-    pub(crate) fn merge_base(&self) -> Option<&str> {
-        self.merge_base.as_deref()
     }
 
     #[must_use]
@@ -210,5 +180,26 @@ impl PlanReview {
             .iter()
             .filter(|attribution| attribution.needs_review())
             .count()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    impl ReviewComparisonStatus {
+        pub(crate) const fn is_complete(&self) -> bool {
+            matches!(self, Self::Complete)
+        }
+    }
+
+    impl ReviewComparison {
+        pub(crate) const fn basis(&self) -> ReviewComparisonBasis {
+            self.basis
+        }
+
+        pub(crate) fn head_commit(&self) -> Option<&str> {
+            self.head_commit.as_deref()
+        }
     }
 }

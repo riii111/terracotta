@@ -72,20 +72,6 @@ impl ProcessOutput {
         }
     }
 
-    pub(crate) const fn new(stdout: Vec<u8>, stderr: Vec<u8>) -> Self {
-        Self { stdout, stderr }
-    }
-
-    #[must_use]
-    pub(crate) fn stdout(&self) -> &[u8] {
-        &self.stdout
-    }
-
-    #[must_use]
-    pub(crate) fn stderr(&self) -> &[u8] {
-        &self.stderr
-    }
-
     fn append(&mut self, chunk: &ProcessOutputChunk) {
         match chunk.stream {
             EventStream::Stdout => self.stdout.extend_from_slice(&chunk.bytes),
@@ -145,16 +131,6 @@ pub(crate) struct TerraformExecutionError {
 }
 
 impl TerraformExecutionError {
-    #[must_use]
-    pub(crate) const fn kind(&self) -> &TerraformExecutionErrorKind {
-        &self.kind
-    }
-
-    #[must_use]
-    pub(crate) fn cleanup_error(&self) -> Option<&str> {
-        self.cleanup_error.as_deref()
-    }
-
     pub(super) const fn new(kind: TerraformExecutionErrorKind) -> Self {
         Self {
             kind,
@@ -630,4 +606,35 @@ fn join_readers(readers: &mut Vec<JoinHandle<io::Result<()>>>) -> io::Result<()>
         }
     }
     first_error.map_or(Ok(()), Err)
+}
+
+// Shared by sibling Terraform tests because the represented fields stay private
+// to this implementation module in production.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    impl ProcessOutput {
+        pub(crate) const fn new(stdout: Vec<u8>, stderr: Vec<u8>) -> Self {
+            Self { stdout, stderr }
+        }
+
+        pub(crate) fn stdout(&self) -> &[u8] {
+            &self.stdout
+        }
+
+        pub(crate) fn stderr(&self) -> &[u8] {
+            &self.stderr
+        }
+    }
+
+    impl TerraformExecutionError {
+        pub(crate) const fn kind(&self) -> &TerraformExecutionErrorKind {
+            &self.kind
+        }
+
+        pub(crate) fn cleanup_error(&self) -> Option<&str> {
+            self.cleanup_error.as_deref()
+        }
+    }
 }

@@ -335,7 +335,7 @@ mod tests {
 
     use crate::{
         app::attribution::{AnalysisIssueKind, AttributionStatus},
-        infra::terraform::ProcessOutput,
+        infra::terraform::tests::{ProcessOutput, ProcessStatus, RunningProcess},
     };
     use serde_json::json;
 
@@ -413,20 +413,20 @@ mod tests {
         output: Option<ProcessOutput>,
     }
 
-    impl terraform::RunningProcess for FakeProcess {
-        fn try_wait(&mut self) -> io::Result<Option<terraform::ProcessStatus>> {
-            Ok(Some(terraform::ProcessStatus::Exited(0)))
+    impl RunningProcess for FakeProcess {
+        fn try_wait(&mut self) -> io::Result<Option<ProcessStatus>> {
+            Ok(Some(ProcessStatus::Exited(0)))
         }
 
         fn kill(&mut self) -> io::Result<()> {
             Ok(())
         }
 
-        fn wait(&mut self) -> io::Result<terraform::ProcessStatus> {
-            Ok(terraform::ProcessStatus::Exited(0))
+        fn wait(&mut self) -> io::Result<ProcessStatus> {
+            Ok(ProcessStatus::Exited(0))
         }
 
-        fn collect_output(mut self: Box<Self>) -> io::Result<terraform::ProcessOutput> {
+        fn collect_output(mut self: Box<Self>) -> io::Result<ProcessOutput> {
             self.output
                 .take()
                 .ok_or_else(|| io::Error::other("fake process output was already collected"))
@@ -438,7 +438,7 @@ mod tests {
             &self,
             _root: &Path,
             arguments: &[std::ffi::OsString],
-        ) -> io::Result<Box<dyn terraform::RunningProcess>> {
+        ) -> io::Result<Box<dyn RunningProcess>> {
             if arguments.first().is_some_and(|argument| argument == "plan")
                 && let Some((path, source)) = &self.mutate_on_plan
             {

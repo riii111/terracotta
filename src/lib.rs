@@ -1,12 +1,4 @@
-#[allow(
-    dead_code,
-    reason = "later MVP screens still consume the source and attribute APIs"
-)]
 mod app;
-#[allow(
-    dead_code,
-    reason = "later MVP screens still consume the infrastructure APIs"
-)]
 mod infra;
 pub(crate) mod runtime;
 #[cfg(feature = "test-support")]

@@ -126,11 +126,6 @@ impl AnalysisIssue {
     }
 
     #[must_use]
-    pub(crate) const fn kind(&self) -> AnalysisIssueKind {
-        self.kind
-    }
-
-    #[must_use]
     pub(crate) fn path(&self) -> Option<&Path> {
         self.path.as_deref()
     }
@@ -414,6 +409,12 @@ fn root_resource_address(address: &str) -> Option<ResourceAddress> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl AnalysisIssue {
+        pub(crate) fn kind(&self) -> AnalysisIssueKind {
+            self.kind
+        }
+    }
 
     fn change(address: &str, kind: ResourceChangeKind) -> ResourceChange {
         let actions = match kind {
