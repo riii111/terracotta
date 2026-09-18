@@ -45,7 +45,7 @@ pub(crate) fn run_connected(
             &mut worker_disconnected,
             cancellation,
             clipboard,
-        )?;
+        );
         dirty |= received_message;
         if let Some(outcome) = outcome {
             return Ok(outcome);
@@ -394,7 +394,7 @@ fn receive_messages(
     worker_disconnected: &mut bool,
     cancellation: &CancellationToken,
     clipboard: &mut ClipboardExecutor,
-) -> io::Result<(Option<SessionOutcome>, bool)> {
+) -> (Option<SessionOutcome>, bool) {
     let mut received = false;
     loop {
         match messages.try_recv() {
@@ -407,12 +407,12 @@ fn receive_messages(
                     cancellation,
                     clipboard,
                 ) {
-                    return Ok((Some(outcome), received));
+                    return (Some(outcome), received);
                 }
             }
-            Err(TryRecvError::Empty) => return Ok((None, received)),
+            Err(TryRecvError::Empty) => return (None, received),
             Err(TryRecvError::Disconnected) if *worker_disconnected => {
-                return Ok((None, received));
+                return (None, received);
             }
             Err(TryRecvError::Disconnected) => {
                 *worker_disconnected = true;
@@ -424,9 +424,9 @@ fn receive_messages(
                     cancellation,
                     clipboard,
                 ) {
-                    return Ok((Some(outcome), received));
+                    return (Some(outcome), received);
                 }
-                return Ok((None, received));
+                return (None, received);
             }
         }
     }
@@ -439,36 +439,38 @@ fn dispatch(
     cancellation: &CancellationToken,
     clipboard: &mut ClipboardExecutor,
 ) -> Option<SessionOutcome> {
-    let effects = session::update(state, action, now);
-    apply_effects(state, effects, cancellation, clipboard)
+    let effect = session::update(state, action, now);
+    apply_effect(state, effect, cancellation, clipboard)
 }
 
-fn apply_effects(
+fn apply_effect(
     state: &mut SessionState,
-    effects: Vec<Effect>,
+    effect: Option<Effect>,
     cancellation: &CancellationToken,
     clipboard: &mut ClipboardExecutor,
 ) -> Option<SessionOutcome> {
-    let mut pending = effects;
-    while let Some(effect) = pending.pop() {
-        match effect {
-            Effect::CancelExecution => cancellation.cancel(),
-            Effect::WriteClipboard(effect) => {
-                let target = effect.target();
-                let resource_count = effect.resource_count();
-                let result = clipboard.execute(&effect);
-                pending.extend(session::update(
-                    state,
-                    Action::CopyCompleted {
-                        target,
-                        resource_count,
-                        result,
-                    },
-                    Instant::now(),
-                ));
-            }
-            Effect::Finish(outcome) => return Some(outcome),
+    match effect {
+        None => None,
+        Some(Effect::CancelExecution) => {
+            cancellation.cancel();
+            None
         }
+        Some(Effect::WriteClipboard(effect)) => {
+            let target = effect.target();
+            let resource_count = effect.resource_count();
+            let result = clipboard.execute(&effect);
+            dispatch(
+                state,
+                Action::CopyCompleted {
+                    target,
+                    resource_count,
+                    result,
+                },
+                Instant::now(),
+                cancellation,
+                clipboard,
+            )
+        }
+        Some(Effect::Finish(outcome)) => Some(outcome),
     }
-    None
 }
