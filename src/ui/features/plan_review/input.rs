@@ -14,12 +14,24 @@ pub(crate) enum PlanReviewInput {
     Bottom,
     LeftEdge,
     RightEdge,
+    SearchStart,
+    SearchChar(char),
+    SearchBackspace,
+    SearchLeft,
+    SearchRight,
+    SearchHome,
+    SearchEnd,
+    SearchConfirm,
+    SearchCancel,
     Copy,
     Quit,
 }
 
-pub(crate) fn key_to_input(key: KeyEvent) -> Option<PlanReviewInput> {
+pub(crate) fn key_to_input(key: KeyEvent, searching: bool) -> Option<PlanReviewInput> {
     let key = normalize_key(key);
+    if searching {
+        return search_key_to_input(key);
+    }
     match (key.code, key.modifiers) {
         (KeyCode::Char('c'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
             Some(PlanReviewInput::Quit)
@@ -62,8 +74,34 @@ pub(crate) fn key_to_input(key: KeyEvent) -> Option<PlanReviewInput> {
         (KeyCode::PageDown, _) => Some(PlanReviewInput::PageDown),
         (KeyCode::Home, _) => Some(PlanReviewInput::Top),
         (KeyCode::End, _) => Some(PlanReviewInput::Bottom),
+        (KeyCode::Char('/'), KeyModifiers::NONE) => Some(PlanReviewInput::SearchStart),
         (KeyCode::Char('y'), KeyModifiers::NONE) => Some(PlanReviewInput::Copy),
         (KeyCode::Char('q'), KeyModifiers::NONE) => Some(PlanReviewInput::Quit),
+        _ => None,
+    }
+}
+
+const fn search_key_to_input(key: KeyEvent) -> Option<PlanReviewInput> {
+    match (key.code, key.modifiers) {
+        (KeyCode::Enter, _) => Some(PlanReviewInput::SearchConfirm),
+        (KeyCode::Esc, _) => Some(PlanReviewInput::SearchCancel),
+        (KeyCode::Char('c'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
+            Some(PlanReviewInput::SearchCancel)
+        }
+        (KeyCode::Backspace, _) => Some(PlanReviewInput::SearchBackspace),
+        (KeyCode::Home, _) => Some(PlanReviewInput::SearchHome),
+        (KeyCode::End, _) => Some(PlanReviewInput::SearchEnd),
+        (KeyCode::Char('a'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
+            Some(PlanReviewInput::SearchHome)
+        }
+        (KeyCode::Char('e'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
+            Some(PlanReviewInput::SearchEnd)
+        }
+        (KeyCode::Left, _) => Some(PlanReviewInput::SearchLeft),
+        (KeyCode::Right, _) => Some(PlanReviewInput::SearchRight),
+        (KeyCode::Char(character), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+            Some(PlanReviewInput::SearchChar(character))
+        }
         _ => None,
     }
 }
@@ -75,6 +113,40 @@ mod tests {
     #[test]
     fn old_list_and_detail_keys_have_no_special_actions() {
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-        assert_eq!(key_to_input(key), None);
+        assert_eq!(key_to_input(key, false), None);
+    }
+
+    #[test]
+    fn slash_starts_search_only_outside_input() {
+        let key = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE);
+
+        assert_eq!(key_to_input(key, false), Some(PlanReviewInput::SearchStart));
+        assert_eq!(
+            key_to_input(key, true),
+            Some(PlanReviewInput::SearchChar('/'))
+        );
+    }
+
+    #[test]
+    fn search_input_prioritizes_editing_keys() {
+        assert_eq!(
+            key_to_input(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE), true),
+            Some(PlanReviewInput::SearchChar('x'))
+        );
+        assert_eq!(
+            key_to_input(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE), true),
+            Some(PlanReviewInput::SearchBackspace)
+        );
+        assert_eq!(
+            key_to_input(
+                KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+                true
+            ),
+            Some(PlanReviewInput::SearchRight)
+        );
+        assert_eq!(
+            key_to_input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), true),
+            Some(PlanReviewInput::SearchCancel)
+        );
     }
 }

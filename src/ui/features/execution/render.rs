@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::execution::{EventStream, ExecutionResult, ExecutionStage, ExecutionState};
-use crate::ui::primitives::atoms::separator;
+use crate::ui::primitives::atoms::{scrollbar, separator};
 use crate::ui::primitives::molecules::terminal_notice;
 use crate::ui::shell::{footer, header, layout as shell_layout};
 use crate::ui::theme;
@@ -45,17 +45,32 @@ pub(crate) fn render_execution_with_view(
     );
 
     let lines = execution_lines(state);
-    let max = max_scroll(lines.len(), layout.body().height);
+    let (max_vertical, max_horizontal) = scroll_limits(&lines, layout.body());
     let scroll = if view.follows_latest() {
-        preferred_scroll(state, max)
+        preferred_scroll(state, max_vertical)
     } else {
-        view.scroll().min(max)
+        view.scroll().min(max_vertical)
     };
+    let horizontal = view.horizontal().min(max_horizontal);
     frame.render_widget(
-        Paragraph::new(lines)
+        Paragraph::new(lines.clone())
             .style(theme::body_style())
-            .scroll((scroll, 0)),
+            .scroll((scroll, horizontal)),
         layout.chunks[1],
+    );
+    scrollbar::render_vertical(
+        frame,
+        layout.chunks[1],
+        lines.len(),
+        usize::from(layout.body().height),
+        usize::from(scroll),
+    );
+    scrollbar::render_horizontal(
+        frame,
+        layout.chunks[1],
+        max_line_width(&lines),
+        usize::from(layout.body().width),
+        usize::from(horizontal),
     );
     frame.render_widget(separator::render(layout.chunks[2].width), layout.chunks[2]);
     if let Some(notice) = state.copy_notice() {
@@ -78,13 +93,20 @@ pub(crate) struct ExecutionLayout {
 
 impl ExecutionLayout {
     pub(crate) fn body(&self) -> Rect {
-        self.chunks[1]
+        let body = self.chunks[1];
+        Rect::new(
+            body.x,
+            body.y,
+            body.width.saturating_sub(1),
+            body.height.saturating_sub(1),
+        )
     }
 }
 
 pub(crate) fn execution_layout(area: Rect, state: &ExecutionState) -> ExecutionLayout {
-    let footer_lines = footer_lines(state, area.width);
-    let shell = shell_layout::layout(area, footer_lines.clone(), footer_lines, 1);
+    let shell_area = shell_layout::centered_area(area);
+    let footer_lines = footer_lines(state, shell_area.width);
+    let shell = shell_layout::layout(shell_area, footer_lines.clone(), footer_lines, 1);
     let notice_height = u16::from(state.copy_notice().is_some());
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -104,13 +126,22 @@ pub(crate) fn execution_scroll_position_with_view(
     view: ExecutionViewState,
     body: Rect,
 ) -> (u16, u16) {
-    let max = max_scroll(execution_lines(state).len(), body.height);
+    let (max, _) = scroll_limits(&execution_lines(state), body);
     let current = if view.follows_latest() {
         preferred_scroll(state, max)
     } else {
         view.scroll().min(max)
     };
     (current, max)
+}
+
+pub(crate) fn execution_horizontal_scroll_position_with_view(
+    state: &ExecutionState,
+    view: ExecutionViewState,
+    body: Rect,
+) -> (u16, u16) {
+    let (_, max) = scroll_limits(&execution_lines(state), body);
+    (view.horizontal().min(max), max)
 }
 
 fn execution_lines(state: &ExecutionState) -> Vec<Line<'static>> {
@@ -195,8 +226,16 @@ fn footer_lines(state: &ExecutionState, width: u16) -> Vec<Line<'static>> {
     footer::layout(items, width)
 }
 
-fn max_scroll(line_count: usize, height: u16) -> u16 {
-    u16::try_from(line_count.saturating_sub(usize::from(height))).unwrap_or(u16::MAX)
+fn scroll_limits(lines: &[Line<'static>], body: Rect) -> (u16, u16) {
+    let vertical =
+        u16::try_from(lines.len().saturating_sub(usize::from(body.height))).unwrap_or(u16::MAX);
+    let horizontal = u16::try_from(max_line_width(lines).saturating_sub(usize::from(body.width)))
+        .unwrap_or(u16::MAX);
+    (vertical, horizontal)
+}
+
+fn max_line_width(lines: &[Line<'static>]) -> usize {
+    lines.iter().map(Line::width).max().unwrap_or(0)
 }
 
 fn preferred_scroll(state: &ExecutionState, max: u16) -> u16 {

@@ -39,11 +39,27 @@ pub(crate) fn execution_key_to_input(
         return Some(ExecutionInput::Copy(CopyTarget::Diagnostic));
     }
 
+    if key.code == KeyCode::Char('a') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        return Some(ExecutionInput::Scroll(ExecutionScroll::LeftEdge));
+    }
+    if key.code == KeyCode::Char('e') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        return Some(ExecutionInput::Scroll(ExecutionScroll::RightEdge));
+    }
+    if key.code == KeyCode::Char('<') && key.modifiers.contains(KeyModifiers::ALT) {
+        return Some(ExecutionInput::Scroll(ExecutionScroll::Top));
+    }
+    if key.code == KeyCode::Char('>') && key.modifiers.contains(KeyModifiers::ALT) {
+        return Some(ExecutionInput::End);
+    }
+
     match key.code {
         KeyCode::Up | KeyCode::Char('k') => Some(ExecutionInput::Scroll(ExecutionScroll::Up)),
         KeyCode::Down | KeyCode::Char('j') => Some(ExecutionInput::Scroll(ExecutionScroll::Down)),
+        KeyCode::Left | KeyCode::Char('h') => Some(ExecutionInput::Scroll(ExecutionScroll::Left)),
+        KeyCode::Right | KeyCode::Char('l') => Some(ExecutionInput::Scroll(ExecutionScroll::Right)),
         KeyCode::PageUp => Some(ExecutionInput::Scroll(ExecutionScroll::PageUp)),
         KeyCode::PageDown => Some(ExecutionInput::Scroll(ExecutionScroll::PageDown)),
+        KeyCode::Home => Some(ExecutionInput::Scroll(ExecutionScroll::Top)),
         KeyCode::End => Some(ExecutionInput::End),
         _ => None,
     }

@@ -35,14 +35,16 @@ pub(super) fn run_synthetic() -> io::Result<()> {
     let mut view = plan_review::PlanReviewViewState::default();
     ratatui::run(|terminal| {
         loop {
-            terminal.draw(|frame| plan_review::render(frame, &review, view))?;
+            terminal.draw(|frame| {
+                plan_review::render(frame, &review, &view, Instant::now());
+            })?;
             if let Event::Key(key) = event::read()?
                 && key.is_press()
             {
                 if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) {
                     return Ok(());
                 }
-                if let Some(input) = plan_review::key_to_input(key) {
+                if let Some(input) = plan_review::key_to_input(key, view.searching()) {
                     let size = terminal.size()?;
                     view.apply(
                         input,

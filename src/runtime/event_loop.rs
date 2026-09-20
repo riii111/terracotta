@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crossterm::event::{self, Event};
+use crossterm::event::{self, Event, KeyEvent};
 use ratatui::{DefaultTerminal, layout::Rect};
 
 use crate::{
@@ -45,7 +45,7 @@ pub(crate) fn run_connected(
         }
 
         if dirty || state.execution().is_some() {
-            draw(&state, terminal, execution_view, review_view)?;
+            draw(&state, terminal, execution_view, &review_view)?;
             dirty = false;
         }
 
@@ -54,61 +54,14 @@ pub(crate) fn run_connected(
                 Event::Resize(_, _) => dirty = true,
                 Event::Key(key) if key.is_press() => {
                     dirty = true;
-                    let action = if let Some(execution) = state.execution() {
-                        match execution::execution_key_to_input(key, execution.stage()) {
-                            Some(execution::ExecutionInput::Quit) => Some(Action::Quit),
-                            Some(execution::ExecutionInput::Action(
-                                ExecutionAction::RequestCancellation,
-                            )) => Some(Action::Execution(ExecutionAction::RequestCancellation)),
-                            Some(execution::ExecutionInput::End) => {
-                                execution_view.end();
-                                None
-                            }
-                            Some(execution::ExecutionInput::Scroll(scroll)) => {
-                                let size = terminal.size()?;
-                                let body = execution::execution_layout(
-                                    Rect::new(0, 0, size.width, size.height),
-                                    execution,
-                                )
-                                .body();
-                                let (current, max) = execution::execution_scroll_position_with_view(
-                                    execution,
-                                    execution_view,
-                                    body,
-                                );
-                                execution_view.apply_scroll(scroll, current, max, body.height);
-                                None
-                            }
-                            Some(execution::ExecutionInput::Copy(target)) => {
-                                Some(Action::Copy(target))
-                            }
-                            None => None,
-                        }
-                    } else if let Some(review) = state.review() {
-                        match plan_review::key_to_input(key) {
-                            Some(plan_review::PlanReviewInput::Quit) => Some(Action::Quit),
-                            Some(plan_review::PlanReviewInput::Copy) => {
-                                Some(Action::Copy(CopyTarget::Plan))
-                            }
-                            Some(input) => {
-                                let size = terminal.size()?;
-                                let body = Rect::new(
-                                    1,
-                                    3,
-                                    size.width.saturating_sub(2),
-                                    size.height.saturating_sub(5),
-                                );
-                                review_view.apply(input, body, review);
-                                None
-                            }
-                            None => None,
-                        }
-                    } else {
-                        None
-                    };
-
-                    if let Some(action) = action
-                        && let Some(outcome) = dispatch(&mut state, action, cancellation, clipboard)
+                    if let Some(action) = handle_key_event(
+                        terminal,
+                        &state,
+                        &mut execution_view,
+                        &mut review_view,
+                        key,
+                    )? && let Some(outcome) =
+                        dispatch(&mut state, action, cancellation, clipboard)
                     {
                         return Ok(outcome);
                     }
@@ -119,11 +72,89 @@ pub(crate) fn run_connected(
     }
 }
 
+fn handle_key_event(
+    terminal: &DefaultTerminal,
+    state: &SessionState,
+    execution_view: &mut execution::ExecutionViewState,
+    review_view: &mut plan_review::PlanReviewViewState,
+    key: KeyEvent,
+) -> io::Result<Option<Action>> {
+    if let Some(execution) = state.execution() {
+        return Ok(
+            match execution::execution_key_to_input(key, execution.stage()) {
+                Some(execution::ExecutionInput::Quit) => Some(Action::Quit),
+                Some(execution::ExecutionInput::Action(ExecutionAction::RequestCancellation)) => {
+                    Some(Action::Execution(ExecutionAction::RequestCancellation))
+                }
+                Some(execution::ExecutionInput::End) => {
+                    execution_view.end();
+                    None
+                }
+                Some(execution::ExecutionInput::Scroll(scroll)) => {
+                    let size = terminal.size()?;
+                    let body = execution::execution_layout(
+                        Rect::new(0, 0, size.width, size.height),
+                        execution,
+                    )
+                    .body();
+                    match scroll {
+                        execution::ExecutionScroll::Left
+                        | execution::ExecutionScroll::Right
+                        | execution::ExecutionScroll::LeftEdge
+                        | execution::ExecutionScroll::RightEdge => {
+                            let (current, max) =
+                                execution::execution_horizontal_scroll_position_with_view(
+                                    execution,
+                                    *execution_view,
+                                    body,
+                                );
+                            execution_view.apply_horizontal_scroll(scroll, current, max);
+                        }
+                        _ => {
+                            let (current, max) = execution::execution_scroll_position_with_view(
+                                execution,
+                                *execution_view,
+                                body,
+                            );
+                            execution_view.apply_scroll(scroll, current, max, body.height);
+                        }
+                    }
+                    None
+                }
+                Some(execution::ExecutionInput::Copy(target)) => Some(Action::Copy(target)),
+                None => None,
+            },
+        );
+    }
+
+    let Some(review) = state.review() else {
+        return Ok(None);
+    };
+    Ok(
+        match plan_review::key_to_input(key, review_view.searching()) {
+            Some(plan_review::PlanReviewInput::Quit) => Some(Action::Quit),
+            Some(plan_review::PlanReviewInput::Copy) => Some(Action::Copy(CopyTarget::Plan)),
+            Some(input) => {
+                let size = terminal.size()?;
+                let body = plan_review::layout(
+                    Rect::new(0, 0, size.width, size.height),
+                    review_view.searching(),
+                )
+                .body();
+                review_view
+                    .apply(input, body, review)
+                    .map(Action::ReviewSearchChanged)
+            }
+            None => None,
+        },
+    )
+}
+
 fn draw(
     state: &SessionState,
     terminal: &mut DefaultTerminal,
     execution_view: execution::ExecutionViewState,
-    review_view: plan_review::PlanReviewViewState,
+    review_view: &plan_review::PlanReviewViewState,
 ) -> io::Result<()> {
     match state {
         SessionState::Execution(execution) => {
@@ -137,7 +168,9 @@ fn draw(
             })?;
         }
         SessionState::Review(review) => {
-            terminal.draw(|frame| plan_review::render(frame, review, review_view))?;
+            terminal.draw(|frame| {
+                plan_review::render(frame, review, review_view, Instant::now());
+            })?;
         }
     }
     Ok(())
