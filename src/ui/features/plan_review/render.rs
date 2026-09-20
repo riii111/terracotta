@@ -296,6 +296,7 @@ pub(crate) fn render_apply_confirmation(
     frame: &mut Frame<'_>,
     state: &ApplyConfirmationState,
     input: &str,
+    cursor: usize,
 ) {
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
@@ -334,7 +335,15 @@ pub(crate) fn render_apply_confirmation(
         lines.push(Line::from("This plan includes resource deletion."));
         lines.push(Line::default());
     }
-    lines.push(Line::from(format!("Apply this plan? (yes/no): {input}")));
+    let cursor = cursor.min(input.len());
+    let before = input[..cursor].to_owned();
+    let after = input[cursor..].to_owned();
+    lines.push(Line::from(vec![
+        Span::raw("Apply this plan? (yes/no): "),
+        Span::styled(before, search_input_style()),
+        Span::styled("|", search_input_style()),
+        Span::styled(after, search_input_style()),
+    ]));
     frame.render_widget(
         Paragraph::new(lines)
             .style(theme::body_style())

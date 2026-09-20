@@ -1,107 +1,50 @@
 # Terracotta
 
-Terraformのplanを読み、判断しやすくする、確認したplanをapplyできる一時的なTUI付きCLI。
-
-Gitの変更と突き合わせて、**「自分のコード変更だけでは説明しづらい差分」**を見つけやすくする。
-
-MVPは`terracotta plan`によるplan実行、変更一覧、resource詳細、Gitのdirect照合、機微値の一時表示、マスク済みコピー、確認したplanのapplyを提供する。確認を終えるとシェルへ戻る。
+Terraformのplanを全文で確認し、確認したsaved planをそのままapplyできる、一時的なTUI付きCLI。
 
 ## 使い方
 
-Terraformを初期化済みのrootで実行する。
+Terraformを初期化済みのrootで、対話的な端末から実行する。
 
 ```sh
 terracotta plan
 ```
 
-通常は作業ツリーと`HEAD`を比較する。基準ブランチとの差分を確認する場合は、`HEAD`と指定refのmerge-baseを比較する。
+Terracottaはその場で`terraform plan -out=<一時ファイル>`を実行し、終了後にplan全文を確認できる画面を開く。planの内容と対象のworkspaceを確認してから、必要ならapplyへ進む。
 
-```sh
-terracotta plan --compare-ref main
-```
+確認画面では次の操作を使う。
 
-Terraformのplan失敗時はdiagnosticを表示して終了を待つ。Gitの取得・解析だけが失敗した場合は、planを閲覧できる状態を保ったまま「解析不完全」と表示する。
+- `↑`/`↓`/`←`/`→`: planをスクロール
+- `/`: plan全文を検索
+- `y`: 機微値をマスクしたplanをclipboardへコピー
+- `a`: apply確認へ進む
+- `q`: applyせずに終了
 
-planに変更がある場合、確認画面で`a`を押すとapply確認へ進む。`yes`とEnterで、確認した一時planを1回だけapplyする。`no`とEnter、またはEscでplan確認へ戻る。apply中はTerraformの標準出力と標準エラーを表示し、完了後は成功・失敗・中断の結果を確認できる。
+apply確認では、入力欄に小文字の`yes`または`no`を入力してEnterを押す。`yes`で確認した一時planを1回だけapplyし、`no`またはEscでplan確認へ戻る。大文字や別の入力ではapplyを開始しない。
 
-applyを実行せずに`q`で終了した場合の終了コードは0。applyが失敗した場合は1、Ctrl-Cで中断した場合は130。失敗または中断では、変更の一部が適用済みの可能性がある。
+apply中はTerraformの標準出力と標準エラーを表示する。完了後は成功・失敗・中断の状態、Terraformの出力、結果のclipboardコピーを確認できる。applyを開始した後は再applyや再planを行わない。
 
-`plan`はクラウド接続を隠す機能ではない。対象rootのTerraform設定、state、認証情報など、通常の`terraform plan`と`terraform apply`に必要な環境を用意する。
+applyを実行せずに終了した場合の終了コードは0。applyが失敗した場合は1、Ctrl-Cで中断した場合は130。失敗または中断では、変更の一部が適用済みの可能性がある。
 
-## イメージ
-
-- **一時CLI**：使うときだけ開き、終わったらシェルに戻る
-- **Git変更との照合**：各リソースが今のコード変更とつながるかを見る
-- **確認したplanを持ち出す**：機微値をマスクしたplanやresourceをclipboardへコピーする
-- **確認したplanをapplyする**：保存済みplanを1回だけTerraformへ渡す
-
-### 一時CLI
-
-`terracotta plan` のあいだだけTUIを開く。
-常駐しない。Homeやworkspace管理画面も持たない。
+## 画面の流れ
 
 ```text
 $ terracotta plan
 
       ↓
 
-  progress
+  terraform init済みのroot
       ↓
-  plan review
+  plan実行
       ↓
-  apply (optional)
+  plan全文レビュー
       ↓
-  result
-
+  apply確認（任意）
+      ↓
+  apply結果とTerraform出力
       ↓
 
 $ shell
 ```
 
-`init` が必要でも管理画面にはしない。その場で実行するかやめるか。
-
-### Git変更との照合
-
-各リソースを、今のGit変更と並べて見る。
-
-```text
-Plan
-
-+1  ~1  ↻0  -1
-
-Needs review: 1
-compare: working tree vs HEAD
-
-+ aws_subnet.private
-  Git: network.tf:18
-
-~ aws_instance.api
-  Git: main.tf:42
-
-- aws_security_group.old
-  Git: no match             ⚠
-```
-
-`Git: no match` は「無関係」ではない。
-**今のコード変更との対応が見つからなかった**、という表示。
-原因や安全性は判断しない。見る場所を絞る。
-
-リソースを選ぶと、コード変更とplan差分をまとめて見られる。
-
-```text
-~ aws_instance.api
-
-Git:
-  main.tf:42
-
-Diff:
-  instance_type
-    t3.small
-    → t3.medium
-```
-
-MVPではroot直下のmanaged resourceとネイティブHCLのGit変更をdirectに照合する。間接的な影響経路の推定は行わない。
-
-### 確認したplanを持ち出す
-
-plan全体やresource単位の情報を、機微値をマスクしたテキストとしてclipboardへコピーできる。apply結果もTerraformの出力を保ったままclipboardへコピーできる。
+Terracottaは常駐せず、確認が終わるとシェルへ戻る。クラウド接続、state、認証情報など、通常のTerraform実行に必要な環境は利用者が用意する。

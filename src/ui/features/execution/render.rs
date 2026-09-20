@@ -33,7 +33,13 @@ pub(crate) fn render_execution_with_view(
         || layout.body().width == 0
         || layout.body().height == 0
     {
-        let message = if state.stage() == ExecutionStage::Failed || state.is_apply() {
+        let finished_apply = matches!(
+            state.stage(),
+            ExecutionStage::ApplySucceeded
+                | ExecutionStage::ApplyFailed
+                | ExecutionStage::ApplyInterrupted
+        );
+        let message = if state.stage() == ExecutionStage::Failed || finished_apply {
             "Terminal too small. Resize or press q to quit."
         } else {
             "Terminal too small. Resize or press Ctrl-C to cancel."

@@ -34,21 +34,19 @@ pub(crate) fn run_connected(
     saved_plan_slot: &Arc<Mutex<Option<SavedPlan>>>,
     cancellation: &CancellationToken,
     clipboard: &mut ClipboardExecutor,
+    apply_worker: &mut Option<JoinHandle<()>>,
 ) -> io::Result<SessionOutcome> {
     let mut execution_view = execution::ExecutionViewState::default();
     let mut review_view = plan_review::PlanReviewViewState::default();
     let mut confirmation_input = String::new();
-    let mut apply_worker = ApplyWorkerGuard {
-        cancellation: cancellation.clone(),
-        handle: None,
-    };
+    let mut confirmation_cursor = 0;
     let mut effects = RuntimeEffects {
         root,
         sender,
         saved_plan_slot,
         cancellation,
         clipboard,
-        apply_worker: &mut apply_worker.handle,
+        apply_worker,
     };
     let mut state = SessionState::new(execution);
     let mut worker_disconnected = false;
@@ -88,6 +86,7 @@ pub(crate) fn run_connected(
                 execution_view,
                 &review_view,
                 &confirmation_input,
+                confirmation_cursor,
             )?;
             if clear_copy_flash && let SessionState::Review(review) = &mut state {
                 review.clear_copy_flash();
@@ -109,6 +108,7 @@ pub(crate) fn run_connected(
                         &mut execution_view,
                         &mut review_view,
                         &mut confirmation_input,
+                        &mut confirmation_cursor,
                         key,
                     )? {
                         if let Some(outcome) = dispatch(&mut state, action, &mut effects) {
@@ -124,6 +124,7 @@ pub(crate) fn run_connected(
                                 execution_view,
                                 &review_view,
                                 &confirmation_input,
+                                confirmation_cursor,
                             )?;
                             dirty = false;
                         }
@@ -141,6 +142,7 @@ fn handle_key_event(
     execution_view: &mut execution::ExecutionViewState,
     review_view: &mut plan_review::PlanReviewViewState,
     confirmation_input: &mut String,
+    confirmation_cursor: &mut usize,
     key: KeyEvent,
 ) -> io::Result<Option<Action>> {
     if let Some(execution) = state.execution() {
@@ -150,23 +152,58 @@ fn handle_key_event(
     if state.apply_confirmation().is_some() {
         return Ok(match plan_review::apply_confirmation_key_to_input(key) {
             Some(plan_review::ApplyConfirmationInput::Character(character)) => {
-                confirmation_input.push(character);
+                confirmation_input.insert(*confirmation_cursor, character);
+                *confirmation_cursor += character.len_utf8();
                 None
             }
             Some(plan_review::ApplyConfirmationInput::Backspace) => {
-                confirmation_input.pop();
+                if *confirmation_cursor > 0 {
+                    let previous = confirmation_input[..*confirmation_cursor]
+                        .char_indices()
+                        .next_back()
+                        .map_or(0, |(index, _)| index);
+                    confirmation_input.drain(previous..*confirmation_cursor);
+                    *confirmation_cursor = previous;
+                }
+                None
+            }
+            Some(plan_review::ApplyConfirmationInput::Left) => {
+                *confirmation_cursor = confirmation_input[..*confirmation_cursor]
+                    .char_indices()
+                    .next_back()
+                    .map_or(0, |(index, _)| index);
+                None
+            }
+            Some(plan_review::ApplyConfirmationInput::Right) => {
+                *confirmation_cursor = confirmation_input[*confirmation_cursor..]
+                    .char_indices()
+                    .nth(1)
+                    .map_or(confirmation_input.len(), |(index, _)| {
+                        *confirmation_cursor + index
+                    });
+                None
+            }
+            Some(plan_review::ApplyConfirmationInput::Home) => {
+                *confirmation_cursor = 0;
+                None
+            }
+            Some(plan_review::ApplyConfirmationInput::End) => {
+                *confirmation_cursor = confirmation_input.len();
                 None
             }
             Some(plan_review::ApplyConfirmationInput::Confirm) if confirmation_input == "yes" => {
                 confirmation_input.clear();
+                *confirmation_cursor = 0;
                 Some(Action::ConfirmApply)
             }
             Some(plan_review::ApplyConfirmationInput::Confirm) if confirmation_input == "no" => {
                 confirmation_input.clear();
+                *confirmation_cursor = 0;
                 Some(Action::CancelApply)
             }
             Some(plan_review::ApplyConfirmationInput::Cancel) => {
                 confirmation_input.clear();
+                *confirmation_cursor = 0;
                 Some(Action::CancelApply)
             }
             _ => None,
@@ -264,6 +301,7 @@ fn draw(
     execution_view: execution::ExecutionViewState,
     review_view: &plan_review::PlanReviewViewState,
     confirmation_input: &str,
+    confirmation_cursor: usize,
 ) -> io::Result<()> {
     match state {
         SessionState::Execution(execution) => {
@@ -283,7 +321,12 @@ fn draw(
         }
         SessionState::ApplyConfirmation(confirmation) => {
             terminal.draw(|frame| {
-                plan_review::render_apply_confirmation(frame, confirmation, confirmation_input);
+                plan_review::render_apply_confirmation(
+                    frame,
+                    confirmation,
+                    confirmation_input,
+                    confirmation_cursor,
+                );
             })?;
         }
         SessionState::Apply(execution) => {
@@ -400,18 +443,4 @@ struct RuntimeEffects<'a> {
     cancellation: &'a CancellationToken,
     clipboard: &'a mut ClipboardExecutor,
     apply_worker: &'a mut Option<JoinHandle<()>>,
-}
-
-struct ApplyWorkerGuard {
-    cancellation: CancellationToken,
-    handle: Option<JoinHandle<()>>,
-}
-
-impl Drop for ApplyWorkerGuard {
-    fn drop(&mut self) {
-        if let Some(handle) = self.handle.take() {
-            self.cancellation.cancel();
-            let _ = handle.join();
-        }
-    }
 }

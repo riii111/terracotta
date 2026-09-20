@@ -62,6 +62,10 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
         cancellation: cancellation.clone(),
         handle: Some(worker),
     };
+    let mut apply_worker = WorkerGuard {
+        cancellation: cancellation.clone(),
+        handle: None,
+    };
     let mut clipboard = ClipboardExecutor::new();
     let context = ExecutionContext::loading(root.display().to_string());
     let ui_result = run_terminal(|terminal| {
@@ -80,11 +84,13 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
             &saved_plan_slot,
             &cancellation,
             &mut clipboard,
+            &mut apply_worker.handle,
         )
     });
     if ui_result.is_err() {
         cancellation.cancel();
     }
+    let _ = apply_worker.join_if_started();
     let _ = worker.join();
     let cleanup_result =
         take_saved_plan(&saved_plan_slot).map_or(Ok(()), terraform::SavedPlan::cleanup);
@@ -303,6 +309,10 @@ impl WorkerGuard {
             .take()
             .expect("plan worker should be present")
             .join()
+    }
+
+    fn join_if_started(&mut self) -> thread::Result<()> {
+        self.handle.take().map_or(Ok(()), JoinHandle::join)
     }
 }
 

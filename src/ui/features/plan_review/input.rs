@@ -90,6 +90,10 @@ pub(crate) fn key_to_input(key: KeyEvent, searching: bool) -> Option<PlanReviewI
 pub(crate) enum ApplyConfirmationInput {
     Character(char),
     Backspace,
+    Left,
+    Right,
+    Home,
+    End,
     Confirm,
     Cancel,
 }
@@ -99,10 +103,17 @@ pub(crate) fn apply_confirmation_key_to_input(key: KeyEvent) -> Option<ApplyConf
     match (key.code, key.modifiers) {
         (KeyCode::Enter, _) => Some(ApplyConfirmationInput::Confirm),
         (KeyCode::Esc, _) => Some(ApplyConfirmationInput::Cancel),
-        (KeyCode::Char('c'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
-            Some(ApplyConfirmationInput::Cancel)
-        }
         (KeyCode::Backspace, _) => Some(ApplyConfirmationInput::Backspace),
+        (KeyCode::Left, _) => Some(ApplyConfirmationInput::Left),
+        (KeyCode::Right, _) => Some(ApplyConfirmationInput::Right),
+        (KeyCode::Home, _) => Some(ApplyConfirmationInput::Home),
+        (KeyCode::End, _) => Some(ApplyConfirmationInput::End),
+        (KeyCode::Char('a'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
+            Some(ApplyConfirmationInput::Home)
+        }
+        (KeyCode::Char('e'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
+            Some(ApplyConfirmationInput::End)
+        }
         (KeyCode::Char(character), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
             Some(ApplyConfirmationInput::Character(character))
         }
@@ -192,6 +203,41 @@ mod tests {
         assert_eq!(
             key_to_input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), false),
             None
+        );
+        assert_eq!(
+            apply_confirmation_key_to_input(KeyEvent::new(
+                KeyCode::Char('c'),
+                KeyModifiers::CONTROL,
+            )),
+            None
+        );
+        assert_eq!(
+            apply_confirmation_key_to_input(KeyEvent::new(
+                KeyCode::Char('a'),
+                KeyModifiers::CONTROL,
+            )),
+            Some(ApplyConfirmationInput::Home)
+        );
+        assert_eq!(
+            apply_confirmation_key_to_input(KeyEvent::new(
+                KeyCode::Char('e'),
+                KeyModifiers::CONTROL,
+            )),
+            Some(ApplyConfirmationInput::End)
+        );
+        assert_eq!(
+            apply_confirmation_key_to_input(KeyEvent::new(
+                KeyCode::Char('b'),
+                KeyModifiers::CONTROL,
+            )),
+            Some(ApplyConfirmationInput::Left)
+        );
+        assert_eq!(
+            apply_confirmation_key_to_input(KeyEvent::new(
+                KeyCode::Char('f'),
+                KeyModifiers::CONTROL,
+            )),
+            Some(ApplyConfirmationInput::Right)
         );
     }
 }
