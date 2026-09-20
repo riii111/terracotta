@@ -441,7 +441,6 @@ Plan: 0 to add, 1 to change, 0 to destroy.
         result.observed("plan_text");
         result.observed("apply_confirmation");
         result.observed("apply_result");
-        scenario.clean();
     }
 
     struct BasicScenario {
@@ -489,18 +488,11 @@ Plan: 0 to add, 1 to change, 0 to destroy.
             );
             PtyResult::parse(&String::from_utf8_lossy(&output.stdout))
         }
-
-        fn clean(mut self) {
-            clean_basic_scenario(&self.directory);
-            self.directory.clear();
-        }
     }
 
     impl Drop for BasicScenario {
         fn drop(&mut self) {
-            if !self.directory.as_os_str().is_empty() {
-                clean_basic_scenario(&self.directory);
-            }
+            clean_basic_scenario(&self.directory);
         }
     }
 
