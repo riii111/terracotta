@@ -692,6 +692,54 @@ mod tests {
     }
 
     #[test]
+    fn production_execution_scrollbars_reach_offsets_after_resize_and_single_overflow() {
+        let (state, now) = apply_state(ApplyStatus::Succeeded);
+        let mut previous_body = None;
+        for area in [Rect::new(0, 0, 80, 24), Rect::new(0, 0, 88, 24)] {
+            let layout = execution_layout(area, &state);
+            assert!(layout.vertical_scrollbar());
+            assert!(layout.horizontal_scrollbar());
+            assert!(layout.max_vertical() > 1);
+            assert!(layout.max_horizontal() > 1);
+            assert_ne!(previous_body, Some(layout.body()));
+            previous_body = Some(layout.body());
+
+            for (vertical, horizontal) in [
+                (0, 0),
+                (layout.max_vertical() / 2, layout.max_horizontal() / 2),
+                (layout.max_vertical(), layout.max_horizontal()),
+            ] {
+                let (layout, buffer) = execution_buffer_at(area, &state, now, vertical, horizontal);
+                assert_scrollbar_positions(&buffer, &layout, vertical, horizontal);
+            }
+        }
+
+        let area = Rect::new(0, 0, 80, 24);
+        let (base_state, _) = applying_state_with_content(1, 1);
+        let available = execution_layout(area, &base_state).chunks[1];
+
+        let (vertical_state, vertical_now) = applying_state_with_content(
+            available.height.saturating_add(1),
+            available.width.saturating_sub(1),
+        );
+        let (vertical_layout, vertical_buffer) =
+            execution_buffer_at(area, &vertical_state, vertical_now, 1, 0);
+        assert_eq!(vertical_layout.max_vertical(), 1);
+        assert!(!vertical_layout.horizontal_scrollbar());
+        assert_scrollbar_positions(&vertical_buffer, &vertical_layout, 1, 0);
+
+        let (horizontal_state, horizontal_now) = applying_state_with_content(
+            available.height.saturating_sub(1),
+            available.width.saturating_add(1),
+        );
+        let (horizontal_layout, horizontal_buffer) =
+            execution_buffer_at(area, &horizontal_state, horizontal_now, 0, 1);
+        assert_eq!(horizontal_layout.max_horizontal(), 1);
+        assert!(!horizontal_layout.vertical_scrollbar());
+        assert_scrollbar_positions(&horizontal_buffer, &horizontal_layout, 0, 1);
+    }
+
+    #[test]
     fn production_execution_failure_render_draws_diagnostic_color() {
         let (state, now) = apply_state(ApplyStatus::Failed);
         let buffer = render_to_buffer((80, 24), |frame| {
@@ -820,6 +868,165 @@ mod tests {
                 "case: {}",
                 case.name
             );
+        }
+    }
+
+    fn execution_buffer_at(
+        area: Rect,
+        state: &ExecutionState,
+        now: Instant,
+        vertical: u16,
+        horizontal: u16,
+    ) -> (ExecutionLayout, Buffer) {
+        let layout = execution_layout(area, state);
+        let mut view = ExecutionViewState::default();
+        let mut current_vertical = 0;
+        view.apply_scroll(
+            super::super::ExecutionScroll::Top,
+            current_vertical,
+            layout.max_vertical(),
+            layout.body().height,
+        );
+        for _ in 0..vertical {
+            view.apply_scroll(
+                super::super::ExecutionScroll::Down,
+                current_vertical,
+                layout.max_vertical(),
+                layout.body().height,
+            );
+            current_vertical = current_vertical
+                .saturating_add(1)
+                .min(layout.max_vertical());
+        }
+        let mut current_horizontal = 0;
+        view.apply_horizontal_scroll(
+            super::super::ExecutionScroll::LeftEdge,
+            current_horizontal,
+            layout.max_horizontal(),
+            current_vertical,
+        );
+        for _ in 0..horizontal {
+            view.apply_horizontal_scroll(
+                super::super::ExecutionScroll::Right,
+                current_horizontal,
+                layout.max_horizontal(),
+                current_vertical,
+            );
+            current_horizontal = current_horizontal
+                .saturating_add(1)
+                .min(layout.max_horizontal());
+        }
+        let buffer = render_to_buffer((area.width, area.height), |frame| {
+            render_execution_with_view(frame, state, view, now);
+        });
+        (layout, buffer)
+    }
+
+    fn applying_state_with_content(line_count: u16, line_width: u16) -> (ExecutionState, Instant) {
+        let now = Instant::now();
+        let mut state = ExecutionState::applying(now, ExecutionContext::loading("/repo"));
+        let text = "x".repeat(usize::from(line_width));
+        for _ in 0..line_count {
+            state.record(ExecutionEvent {
+                received_at: now,
+                kind: ExecutionEventKind::Log(ExecutionLogLine {
+                    stream: EventStream::Stdout,
+                    text: text.clone(),
+                }),
+            });
+        }
+        (state, now)
+    }
+
+    fn assert_scrollbar_positions(
+        buffer: &Buffer,
+        layout: &ExecutionLayout,
+        vertical: u16,
+        horizontal: u16,
+    ) {
+        let body = layout.body();
+        if layout.vertical_scrollbar() {
+            let height = body.height + u16::from(layout.horizontal_scrollbar());
+            let symbols = (body.y..body.y + height)
+                .map(|y| {
+                    buffer
+                        .cell((body.x + body.width, y))
+                        .expect("vertical cell")
+                        .symbol()
+                        .to_owned()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(symbols.first().map(String::as_str), Some("↑"));
+            assert_thumb_segments(
+                &symbols[1..symbols.len() - 1],
+                "│",
+                "█",
+                usize::from(vertical),
+                usize::from(layout.max_vertical()),
+            );
+        }
+        if layout.horizontal_scrollbar() {
+            let width = body.width + u16::from(layout.vertical_scrollbar());
+            let symbols = (body.x..body.x + width)
+                .map(|x| {
+                    buffer
+                        .cell((x, body.y + body.height))
+                        .expect("horizontal cell")
+                        .symbol()
+                        .to_owned()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(symbols.first().map(String::as_str), Some("←"));
+            assert_eq!(symbols.last().map(String::as_str), Some("→"));
+            assert_thumb_segments(
+                &symbols[1..symbols.len() - 1],
+                "─",
+                "═",
+                usize::from(horizontal),
+                usize::from(layout.max_horizontal()),
+            );
+        }
+    }
+
+    fn assert_thumb_segments(
+        track: &[String],
+        track_symbol: &str,
+        thumb_symbol: &str,
+        position: usize,
+        max_position: usize,
+    ) {
+        let thumb_start = track
+            .iter()
+            .position(|symbol| symbol == thumb_symbol)
+            .expect("scrollbar should contain a thumb");
+        let thumb_end = track
+            .iter()
+            .rposition(|symbol| symbol == thumb_symbol)
+            .expect("scrollbar should contain a thumb");
+        assert!(
+            track[thumb_start..=thumb_end]
+                .iter()
+                .all(|symbol| symbol == thumb_symbol)
+        );
+        assert!(
+            track[..thumb_start]
+                .iter()
+                .all(|symbol| symbol == track_symbol)
+        );
+        assert!(
+            track[thumb_end + 1..]
+                .iter()
+                .all(|symbol| symbol == track_symbol)
+        );
+        if position == 0 {
+            assert_eq!(thumb_start, 0);
+        } else {
+            assert!(thumb_start > 0);
+        }
+        if position == max_position {
+            assert_eq!(thumb_end, track.len() - 1);
+        } else {
+            assert!(thumb_end < track.len() - 1);
         }
     }
 }

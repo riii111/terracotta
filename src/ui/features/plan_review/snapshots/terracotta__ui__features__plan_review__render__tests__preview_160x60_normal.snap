@@ -31,18 +31,18 @@ expression: buffer_text(buffer)
                     │      + new_checksum = (known after apply)                                                                           █│
                     │    }                                                                                                                █│
                     │                                                                                                                     █│
-                    │  # terraform_data.old will be destroyed                                                                             ││
-                    │  - resource "terraform_data" "old" {                                                                                ││
-                    │      id = "old-20260920"                                                                                            ││
-                    │    }                                                                                                                ││
-                    │                                                                                                                     ││
-                    │  # terraform_data.new will be created                                                                               ││
-                    │  + resource "terraform_data" "new" {                                                                                ││
-                    │      input = "new-value"                                                                                            ││
-                    │      note  = "A deliberately long synthetic value keeps horizontal scrolling visible"                               ││
-                    │    }                                                                                                                ││
-                    │                                                                                                                     ││
-                    │Changes to Outputs:                                                                                                  ││
+                    │  # terraform_data.old will be destroyed                                                                             █│
+                    │  - resource "terraform_data" "old" {                                                                                █│
+                    │      id = "old-20260920"                                                                                            █│
+                    │    }                                                                                                                █│
+                    │                                                                                                                     █│
+                    │  # terraform_data.new will be created                                                                               █│
+                    │  + resource "terraform_data" "new" {                                                                                █│
+                    │      input = "new-value"                                                                                            █│
+                    │      note  = "A deliberately long synthetic value keeps horizontal scrolling visible"                               █│
+                    │    }                                                                                                                █│
+                    │                                                                                                                     █│
+                    │Changes to Outputs:                                                                                                  █│
                     │  + endpoint = (known after apply)                                                                                   ││
                     │  ~ summary  = "old summary" -> "new summary with a deliberately long value for review"                              ││
                     │                                                                                                                     ││

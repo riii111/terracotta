@@ -814,6 +814,51 @@ End of synthetic plan body."#;
     }
 
     #[test]
+    fn production_review_scrollbars_reach_offsets_after_resize_and_single_overflow() {
+        let state = review_state(review());
+        let mut previous_body = None;
+        for area in [Rect::new(0, 0, 80, 24), Rect::new(0, 0, 88, 24)] {
+            let layout = layout(area, false, &state);
+            assert!(layout.vertical_scrollbar());
+            assert!(layout.horizontal_scrollbar());
+            assert!(layout.max_vertical() > 1);
+            assert!(layout.max_horizontal() > 1);
+            assert_ne!(previous_body, Some(layout.body()));
+            previous_body = Some(layout.body());
+
+            for (vertical, horizontal) in [
+                (0, 0),
+                (layout.max_vertical() / 2, layout.max_horizontal() / 2),
+                (layout.max_vertical(), layout.max_horizontal()),
+            ] {
+                let (layout, buffer) = review_buffer_at(area, &state, vertical, horizontal);
+                assert_scrollbar_positions(&buffer, &layout, vertical, horizontal);
+            }
+        }
+
+        let area = Rect::new(0, 0, 80, 24);
+        let available = layout(area, false, &state).shell.content_inner();
+        let vertical_state = review_state(review_with_content(
+            available.height.saturating_add(1),
+            available.width.saturating_sub(1),
+        ));
+        let (vertical_layout, vertical_buffer) = review_buffer_at(area, &vertical_state, 1, 0);
+        assert_eq!(vertical_layout.max_vertical(), 1);
+        assert!(!vertical_layout.horizontal_scrollbar());
+        assert_scrollbar_positions(&vertical_buffer, &vertical_layout, 1, 0);
+
+        let horizontal_state = review_state(review_with_content(
+            available.height.saturating_sub(1),
+            available.width.saturating_add(1),
+        ));
+        let (horizontal_layout, horizontal_buffer) =
+            review_buffer_at(area, &horizontal_state, 0, 1);
+        assert_eq!(horizontal_layout.max_horizontal(), 1);
+        assert!(!horizontal_layout.vertical_scrollbar());
+        assert_scrollbar_positions(&horizontal_buffer, &horizontal_layout, 0, 1);
+    }
+
+    #[test]
     fn production_search_render_draws_search_input_and_match_color() {
         let mut plan = review();
         plan.set_search_query(SEARCH_TERM.to_owned());
@@ -1066,6 +1111,151 @@ End of synthetic plan body."#;
             lines[1].to_string(),
             "Plan: 1 to add, 0 to change, 0 to destroy."
         );
+    }
+
+    fn review_buffer_at(
+        area: Rect,
+        state: &ReviewSessionState,
+        vertical: u16,
+        horizontal: u16,
+    ) -> (PlanReviewLayout, Buffer) {
+        let layout = layout(area, false, state);
+        let mut view = PlanReviewViewState::default();
+        for _ in 0..vertical {
+            view.apply(
+                PlanReviewInput::Down,
+                layout.body(),
+                layout.max_vertical(),
+                layout.max_horizontal(),
+                "",
+            );
+        }
+        for _ in 0..horizontal {
+            view.apply(
+                PlanReviewInput::Right,
+                layout.body(),
+                layout.max_vertical(),
+                layout.max_horizontal(),
+                "",
+            );
+        }
+        let buffer = render_to_buffer((area.width, area.height), |frame| {
+            render(frame, state, &view, Instant::now());
+        });
+        (layout, buffer)
+    }
+
+    fn review_with_content(line_count: u16, line_width: u16) -> PlanReview {
+        let line = "x".repeat(usize::from(line_width));
+        let text = (0..line_count)
+            .map(|_| line.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        PlanReview::new(
+            PathBuf::from("/repo"),
+            "default".to_owned(),
+            PlanDocument::with_blocks(
+                text,
+                vec![PlanBlock::new(
+                    0..usize::from(line_count),
+                    PlanBlockKind::Common,
+                )],
+            ),
+            PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, true),
+            Vec::new(),
+        )
+    }
+
+    fn assert_scrollbar_positions(
+        buffer: &Buffer,
+        layout: &PlanReviewLayout,
+        vertical: u16,
+        horizontal: u16,
+    ) {
+        let body = layout.body();
+        if layout.vertical_scrollbar() {
+            let height = body.height + u16::from(layout.horizontal_scrollbar());
+            let symbols = (body.y..body.y + height)
+                .map(|y| {
+                    buffer
+                        .cell((body.x + body.width, y))
+                        .expect("vertical cell")
+                        .symbol()
+                        .to_owned()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(symbols.first().map(String::as_str), Some("↑"));
+            assert_thumb_segments(
+                &symbols[1..symbols.len() - 1],
+                "│",
+                "█",
+                usize::from(vertical),
+                usize::from(layout.max_vertical()),
+            );
+        }
+        if layout.horizontal_scrollbar() {
+            let width = body.width + u16::from(layout.vertical_scrollbar());
+            let symbols = (body.x..body.x + width)
+                .map(|x| {
+                    buffer
+                        .cell((x, body.y + body.height))
+                        .expect("horizontal cell")
+                        .symbol()
+                        .to_owned()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(symbols.first().map(String::as_str), Some("←"));
+            assert_eq!(symbols.last().map(String::as_str), Some("→"));
+            assert_thumb_segments(
+                &symbols[1..symbols.len() - 1],
+                "─",
+                "═",
+                usize::from(horizontal),
+                usize::from(layout.max_horizontal()),
+            );
+        }
+    }
+
+    fn assert_thumb_segments(
+        track: &[String],
+        track_symbol: &str,
+        thumb_symbol: &str,
+        position: usize,
+        max_position: usize,
+    ) {
+        let thumb_start = track
+            .iter()
+            .position(|symbol| symbol == thumb_symbol)
+            .expect("scrollbar should contain a thumb");
+        let thumb_end = track
+            .iter()
+            .rposition(|symbol| symbol == thumb_symbol)
+            .expect("scrollbar should contain a thumb");
+        assert!(
+            track[thumb_start..=thumb_end]
+                .iter()
+                .all(|symbol| symbol == thumb_symbol)
+        );
+        assert!(
+            track[..thumb_start]
+                .iter()
+                .all(|symbol| symbol == track_symbol)
+        );
+        assert!(
+            track[thumb_end + 1..]
+                .iter()
+                .all(|symbol| symbol == track_symbol)
+        );
+        if position == 0 {
+            assert_eq!(thumb_start, 0);
+        } else {
+            assert!(thumb_start > 0);
+        }
+        if position == max_position {
+            assert_eq!(thumb_end, track.len() - 1);
+        } else {
+            assert!(thumb_end < track.len() - 1);
+        }
     }
 
     fn assert_area_unchanged(before: &Buffer, after: &Buffer, area: Rect) {

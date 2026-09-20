@@ -17,7 +17,8 @@ pub(crate) fn render_vertical(
     if content_length <= viewport_length {
         return;
     }
-    let mut state = ScrollbarState::new(content_length)
+    let position = position.min(max_scroll_position(content_length, viewport_length));
+    let mut state = ScrollbarState::new(scrollbar_content_length(content_length, viewport_length))
         .viewport_content_length(viewport_length)
         .position(position);
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
@@ -44,13 +45,14 @@ pub(crate) fn render_horizontal(
     if content_length <= viewport_length {
         return;
     }
-    let mut state = ScrollbarState::new(content_length)
+    let position = position.min(max_scroll_position(content_length, viewport_length));
+    let mut state = ScrollbarState::new(scrollbar_content_length(content_length, viewport_length))
         .viewport_content_length(viewport_length)
         .position(position);
     let scrollbar = Scrollbar::new(ScrollbarOrientation::HorizontalBottom)
         .symbols(Set {
             track: "─",
-            thumb: "█",
+            thumb: "═",
             begin: "←",
             end: "→",
         })
@@ -59,6 +61,14 @@ pub(crate) fn render_horizontal(
         .begin_style(begin_style(position))
         .end_style(end_style(position, content_length, viewport_length));
     frame.render_stateful_widget(scrollbar, area, &mut state);
+}
+
+const fn scrollbar_content_length(content_length: usize, viewport_length: usize) -> usize {
+    max_scroll_position(content_length, viewport_length).saturating_add(1)
+}
+
+const fn max_scroll_position(content_length: usize, viewport_length: usize) -> usize {
+    content_length.saturating_sub(viewport_length)
 }
 
 fn begin_style(position: usize) -> ratatui::style::Style {
