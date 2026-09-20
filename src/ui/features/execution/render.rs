@@ -2,7 +2,6 @@ use std::time::{Duration, Instant};
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -17,9 +16,6 @@ use super::ExecutionViewState;
 const MIN_HEIGHT: u16 = 9;
 const MIN_WIDTH: u16 = 32;
 const STATUS_HEIGHT: u16 = 3;
-const FLASH_BACKGROUND: Color = Color::Rgb(0xf4, 0x9e, 0x4c);
-const FLASH_FOREGROUND: Color = Color::Rgb(0x11, 0x14, 0x19);
-
 struct PreparedContent<'a> {
     lines: Vec<Line<'a>>,
     max_width: usize,
@@ -367,10 +363,9 @@ fn max_line_width(lines: &[Line<'_>]) -> usize {
 }
 
 fn flash_lines(lines: Vec<Line<'_>>) -> Vec<Line<'static>> {
-    let style = Style::default().fg(FLASH_FOREGROUND).bg(FLASH_BACKGROUND);
     lines
         .into_iter()
-        .map(|line| Line::from(Span::styled(line.to_string(), style)))
+        .map(|line| Line::from(Span::styled(line.to_string(), theme::copy_flash_style())))
         .collect()
 }
 
@@ -401,13 +396,17 @@ fn format_elapsed(elapsed: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::{buffer::Buffer, style::Modifier};
+    use ratatui::{
+        buffer::Buffer,
+        style::{Color, Modifier},
+    };
 
     use super::*;
-    use crate::app::copy::CopyTarget;
+    use crate::app::copy::{CopyResult, CopyTarget};
     use crate::app::execution::{
         ApplyStatus, ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionLogLine,
     };
+    use crate::app::session::{self, Action, SessionState};
     use crate::ui::test_support::{
         assert_shell_frame_and_footer, buffer_text, render_to_buffer, write_buffer_captures,
     };
@@ -777,6 +776,84 @@ mod tests {
             return;
         }
         panic!("diagnostic row should be visible");
+    }
+
+    #[test]
+    fn production_execution_copy_flash_uses_accent_background_then_restores_log_style() {
+        let started_at = Instant::now();
+        let mut state = ExecutionState::applying(started_at, ExecutionContext::loading("/repo"));
+        state.record(ExecutionEvent {
+            received_at: started_at,
+            kind: ExecutionEventKind::Log(ExecutionLogLine {
+                stream: EventStream::Stdout,
+                text: "terraform apply review.tfplan".to_owned(),
+            }),
+        });
+        state.record(ExecutionEvent {
+            received_at: started_at,
+            kind: ExecutionEventKind::Log(ExecutionLogLine {
+                stream: EventStream::Stdout,
+                text: "apply output".to_owned(),
+            }),
+        });
+        let mut session = SessionState::new(state);
+        let before = render_to_buffer((80, 24), |frame| {
+            render_execution_with_view(
+                frame,
+                session.execution().expect("execution should be visible"),
+                ExecutionViewState::default(),
+                started_at,
+            );
+        });
+        session::update(
+            &mut session,
+            Action::CopyCompleted {
+                target: CopyTarget::Execution,
+                result: CopyResult::Written,
+            },
+            started_at,
+        );
+        let state = session.execution().expect("execution should be visible");
+        let flash = render_to_buffer((80, 24), |frame| {
+            render_execution_with_view(frame, state, ExecutionViewState::default(), started_at);
+        });
+        let after = render_to_buffer((80, 24), |frame| {
+            render_execution_with_view(
+                frame,
+                state,
+                ExecutionViewState::default(),
+                started_at + Duration::from_millis(201),
+            );
+        });
+
+        let body = execution_layout(Rect::new(0, 0, 80, 24), state).body();
+        let flash_cell = find_text_cell(&flash, body, "terraform apply review.tfplan");
+        assert_eq!(flash_cell.fg, Color::Rgb(0x11, 0x14, 0x19));
+        assert_eq!(flash_cell.bg, Color::Rgb(0xf4, 0x9e, 0x4c));
+        let before_cell = find_text_cell(&before, body, "terraform apply review.tfplan");
+        let after_cell = find_text_cell(&after, body, "terraform apply review.tfplan");
+        assert_eq!(after_cell, before_cell);
+    }
+
+    fn find_text_cell<'a>(buffer: &'a Buffer, area: Rect, text: &str) -> &'a ratatui::buffer::Cell {
+        for y in area.y..area.bottom() {
+            let symbols = (area.x..area.right())
+                .map(|x| buffer.cell((x, y)).expect("execution cell").symbol())
+                .collect::<Vec<_>>();
+            let Some(start) = (0..symbols.len()).find(|&start| {
+                symbols[start..]
+                    .iter()
+                    .copied()
+                    .collect::<String>()
+                    .starts_with(text)
+            }) else {
+                continue;
+            };
+            return buffer
+                .cell((area.x + u16::try_from(start).expect("execution offset"), y))
+                .expect("execution cell");
+        }
+        panic!("text should be visible: {text}");
     }
 
     #[test]

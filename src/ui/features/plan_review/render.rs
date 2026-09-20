@@ -3,7 +3,6 @@ use std::time::Instant;
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Wrap},
 };
@@ -21,9 +20,6 @@ use super::{ApplyConfirmationViewState, PlanReviewViewState};
 
 const MIN_WIDTH: u16 = 24;
 const MIN_HEIGHT: u16 = 6;
-const FLASH_BACKGROUND: Color = Color::Rgb(0xf4, 0x9e, 0x4c);
-const FLASH_FOREGROUND: Color = Color::Rgb(0x11, 0x14, 0x19);
-
 struct PreparedContent<'a> {
     lines: Vec<Line<'a>>,
     max_width: usize,
@@ -169,9 +165,9 @@ pub(crate) fn render_apply_confirmation(
     let after = view.input()[cursor..].to_owned();
     lines.push(Line::from(vec![
         Span::raw("Apply this plan? (yes/no): "),
-        Span::styled(before, search_input_style()),
-        Span::styled("|", search_input_style()),
-        Span::styled(after, search_input_style()),
+        Span::styled(before, theme::body_style()),
+        Span::styled("|", theme::accent_style()),
+        Span::styled(after, theme::body_style()),
     ]));
     frame.render_widget(
         Paragraph::new(lines)
@@ -346,7 +342,7 @@ fn plan_line<'a>(line: &'a str, query: &str) -> Line<'a> {
             result.push_span(Span::styled(before, theme::plan_line_style(line)));
         }
         let (matched, after) = matched_and_after.split_at(query.len());
-        result.push_span(Span::styled(matched, search_match_style()));
+        result.push_span(Span::styled(matched, theme::search_match_style()));
         rest = after;
     }
     if !rest.is_empty() {
@@ -356,10 +352,9 @@ fn plan_line<'a>(line: &'a str, query: &str) -> Line<'a> {
 }
 
 fn flash_lines(lines: Vec<Line<'_>>) -> Vec<Line<'static>> {
-    let style = Style::default().fg(FLASH_FOREGROUND).bg(FLASH_BACKGROUND);
     lines
         .into_iter()
-        .map(|line| Line::from(Span::styled(line.to_string(), style)))
+        .map(|line| Line::from(Span::styled(line.to_string(), theme::copy_flash_style())))
         .collect()
 }
 
@@ -394,7 +389,7 @@ fn visible_plan_lines<'a>(review: &'a PlanReview, filtered: &FilteredPlan<'a>) -
         if !query.is_empty() && line.starts_with("Plan:") {
             lines.push(Line::from(Span::styled(
                 "Plan total (full plan):",
-                theme::warning_style(),
+                theme::secondary_style(),
             )));
         }
         lines.push(plan_line(line, query));
@@ -412,10 +407,10 @@ fn search_prompt(view: &PlanReviewViewState, width: u16) -> Option<(Line<'static
     let before = query[..cursor].to_owned();
     let after = query[cursor..].to_owned();
     let line = Line::from(vec![
-        Span::styled("/", theme::footer_key_style()),
-        Span::styled(before.clone(), search_input_style()),
-        Span::styled("|", search_input_style()),
-        Span::styled(after, search_input_style()),
+        Span::styled("/", theme::accent_style()),
+        Span::styled(before.clone(), theme::body_style()),
+        Span::styled("|", theme::accent_style()),
+        Span::styled(after, theme::body_style()),
     ]);
     let cursor = 1 + Line::from(before).width();
     let horizontal = u16::try_from(
@@ -448,19 +443,6 @@ fn footer_items(searching: bool, applyable: bool) -> Vec<Line<'static>> {
     }
 }
 
-fn search_input_style() -> Style {
-    Style::default()
-        .fg(Color::Rgb(0x88, 0xc0, 0xd0))
-        .add_modifier(Modifier::BOLD)
-}
-
-fn search_match_style() -> Style {
-    Style::default()
-        .fg(FLASH_FOREGROUND)
-        .bg(FLASH_BACKGROUND)
-        .add_modifier(Modifier::BOLD)
-}
-
 const fn severity_label(severity: DiagnosticSeverity) -> &'static str {
     match severity {
         DiagnosticSeverity::Error => "Error",
@@ -474,7 +456,10 @@ const fn severity_label(severity: DiagnosticSeverity) -> &'static str {
 mod tests {
     use std::path::PathBuf;
 
-    use ratatui::buffer::Buffer;
+    use ratatui::{
+        buffer::Buffer,
+        style::{Color, Modifier},
+    };
 
     use crate::app::{
         copy::{CopyResult, CopyTarget},
@@ -485,7 +470,7 @@ mod tests {
         session::{self, Action, SessionState},
     };
     use crate::ui::{
-        features::plan_review::PlanReviewInput,
+        features::plan_review::{ApplyConfirmationInput, PlanReviewInput},
         test_support::{
             assert_shell_frame_and_footer, buffer_text, render_to_buffer, write_buffer_captures,
         },
@@ -679,6 +664,26 @@ End of synthetic plan body."#;
         background: Color,
         modifier: Modifier,
     ) {
+        assert_text_segment_uses_style(
+            buffer,
+            text,
+            0,
+            styled_prefix.chars().count(),
+            foreground,
+            background,
+            modifier,
+        );
+    }
+
+    fn assert_text_segment_uses_style(
+        buffer: &Buffer,
+        text: &str,
+        segment_start: usize,
+        segment_length: usize,
+        foreground: Color,
+        background: Color,
+        modifier: Modifier,
+    ) {
         let area = buffer.area();
         for y in area.y..area.bottom() {
             let symbols = (area.x..area.right())
@@ -693,16 +698,16 @@ End of synthetic plan body."#;
             }) else {
                 continue;
             };
-            for offset in 0..styled_prefix.chars().count() {
+            for offset in segment_start..segment_start + segment_length {
                 let cell = buffer
                     .cell((
                         area.x + u16::try_from(start + offset).expect("search offset"),
                         y,
                     ))
                     .expect("search cell");
-                assert_eq!(cell.fg, foreground, "{styled_prefix}");
-                assert_eq!(cell.bg, background, "{styled_prefix}");
-                assert!(cell.modifier.contains(modifier), "{styled_prefix}");
+                assert_eq!(cell.fg, foreground, "{text}");
+                assert_eq!(cell.bg, background, "{text}");
+                assert_eq!(cell.modifier, modifier, "{text}");
             }
             return;
         }
@@ -876,6 +881,33 @@ End of synthetic plan body."#;
         });
 
         assert!(buffer_text(&buffer).contains("/terraform_data|"));
+        assert_text_segment_uses_style(
+            &buffer,
+            "/terraform_data|",
+            0,
+            1,
+            Color::Rgb(0xf4, 0x9e, 0x4c),
+            Color::Reset,
+            Modifier::empty(),
+        );
+        assert_text_segment_uses_style(
+            &buffer,
+            "/terraform_data|",
+            1,
+            SEARCH_TERM.chars().count(),
+            Color::Rgb(0xe9, 0xdb, 0xdb),
+            Color::Reset,
+            Modifier::empty(),
+        );
+        assert_text_segment_uses_style(
+            &buffer,
+            "/terraform_data|",
+            1 + SEARCH_TERM.chars().count(),
+            1,
+            Color::Rgb(0xf4, 0x9e, 0x4c),
+            Color::Reset,
+            Modifier::empty(),
+        );
         assert_text_prefix_uses_style(
             &buffer,
             "terraform_data.api",
@@ -887,8 +919,62 @@ End of synthetic plan body."#;
     }
 
     #[test]
+    fn production_apply_confirmation_uses_body_input_and_accent_cursor() {
+        let state = confirmation_state(review());
+        let mut view = ApplyConfirmationViewState::default();
+        for character in "yes".chars() {
+            view.apply(ApplyConfirmationInput::Character(character));
+        }
+        let buffer = render_to_buffer((120, 40), |frame| {
+            render_apply_confirmation(frame, &state, &view);
+        });
+
+        assert_text_prefix_uses_style(
+            &buffer,
+            "yes|",
+            "yes",
+            Color::Rgb(0xe9, 0xdb, 0xdb),
+            Color::Reset,
+            Modifier::empty(),
+        );
+        assert_text_segment_uses_style(
+            &buffer,
+            "yes|",
+            3,
+            1,
+            Color::Rgb(0xf4, 0x9e, 0x4c),
+            Color::Reset,
+            Modifier::empty(),
+        );
+    }
+
+    #[test]
+    fn production_search_uses_support_style_for_full_plan_total() {
+        let mut plan = review();
+        plan.set_search_query(SEARCH_TERM.to_owned());
+        let state = review_state(plan);
+        let buffer = render_to_buffer((160, 60), |frame| {
+            render(
+                frame,
+                &state,
+                &PlanReviewViewState::default(),
+                Instant::now(),
+            );
+        });
+
+        assert_text_prefix_uses_style(
+            &buffer,
+            "Plan total (full plan):",
+            "Plan total (full plan):",
+            Color::Rgb(0xc0, 0xb8, 0xb8),
+            Color::Reset,
+            Modifier::empty(),
+        );
+    }
+
+    #[test]
     fn copy_flash_styles_plan_cells_without_changing_the_review_shell() {
-        let (before, flash, flash_at_100ms, layout) = copy_flash_buffers();
+        let (before, flash, flash_at_100ms, after, layout) = copy_flash_buffers();
 
         assert_eq!(buffer_text(&flash), buffer_text(&flash_at_100ms));
         assert!(buffer_text(&flash).contains("Copied."));
@@ -896,18 +982,19 @@ End of synthetic plan body."#;
             &flash,
             "terraform_data.api",
             "terraform_data",
-            FLASH_FOREGROUND,
-            FLASH_BACKGROUND,
+            Color::Rgb(0x11, 0x14, 0x19),
+            Color::Rgb(0xf4, 0x9e, 0x4c),
             Modifier::empty(),
         );
         assert_text_prefix_uses_style(
             &flash_at_100ms,
             "terraform_data.api",
             "terraform_data",
-            FLASH_FOREGROUND,
-            FLASH_BACKGROUND,
+            Color::Rgb(0x11, 0x14, 0x19),
+            Color::Rgb(0xf4, 0x9e, 0x4c),
             Modifier::empty(),
         );
+        assert_area_restored_after_flash(&before, &after, layout.body());
 
         assert_area_unchanged(&before, &flash, layout.shell.header());
         assert_area_unchanged(&before, &flash, layout.shell.footer());
@@ -940,7 +1027,7 @@ End of synthetic plan body."#;
         assert_flash_body_cells(&before, &flash, layout.body());
     }
 
-    fn copy_flash_buffers() -> (Buffer, Buffer, Buffer, PlanReviewLayout) {
+    fn copy_flash_buffers() -> (Buffer, Buffer, Buffer, Buffer, PlanReviewLayout) {
         let area = Rect::new(0, 0, 80, 24);
         let mut plan = review();
         plan.set_search_query(SEARCH_TERM.to_owned());
@@ -1013,7 +1100,15 @@ End of synthetic plan body."#;
                 started_at + std::time::Duration::from_millis(100),
             );
         });
-        (before, flash, flash_at_100ms, layout)
+        let after = render_to_buffer((area.width, area.height), |frame| {
+            render(
+                frame,
+                session.review().expect("review should be visible"),
+                &view,
+                started_at + std::time::Duration::from_millis(201),
+            );
+        });
+        (before, flash, flash_at_100ms, after, layout)
     }
 
     #[test]
@@ -1327,12 +1422,24 @@ End of synthetic plan body."#;
                 if x > last_content || before_cell.symbol().is_empty() {
                     assert_eq!(before_cell, after_cell, "blank cell changed at ({x}, {y})");
                 } else {
-                    assert_eq!(after_cell.fg, FLASH_FOREGROUND);
-                    assert_eq!(after_cell.bg, FLASH_BACKGROUND);
+                    assert_eq!(after_cell.fg, Color::Rgb(0x11, 0x14, 0x19));
+                    assert_eq!(after_cell.bg, Color::Rgb(0xf4, 0x9e, 0x4c));
                     flashed_cells += 1;
                 }
             }
         }
         assert!(flashed_cells > 0);
+    }
+
+    fn assert_area_restored_after_flash(before: &Buffer, after: &Buffer, body: Rect) {
+        for y in body.y.saturating_add(1)..body.bottom() {
+            for x in body.x..body.right() {
+                assert_eq!(
+                    before.cell((x, y)).expect("before plan cell"),
+                    after.cell((x, y)).expect("after plan cell"),
+                    "plan body should restore after flash at ({x}, {y})"
+                );
+            }
+        }
     }
 }

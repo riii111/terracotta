@@ -1,7 +1,7 @@
 use ratatui::style::{Color, Modifier, Style};
 
 pub(crate) fn footer_key_style() -> Style {
-    Style::default().fg(Color::Rgb(0xd4, 0xa4, 0x85))
+    body_style()
 }
 
 pub(crate) fn footer_key_separator_style() -> Style {
@@ -18,6 +18,23 @@ pub(crate) fn body_style() -> Style {
 
 pub(crate) fn secondary_style() -> Style {
     Style::default().fg(Color::Rgb(0xc0, 0xb8, 0xb8))
+}
+
+pub(crate) fn accent_style() -> Style {
+    Style::default().fg(Color::Rgb(0xf4, 0x9e, 0x4c))
+}
+
+pub(crate) fn search_match_style() -> Style {
+    Style::default()
+        .fg(Color::Rgb(0x11, 0x14, 0x19))
+        .bg(Color::Rgb(0xf4, 0x9e, 0x4c))
+        .add_modifier(Modifier::BOLD)
+}
+
+pub(crate) fn copy_flash_style() -> Style {
+    Style::default()
+        .fg(Color::Rgb(0x11, 0x14, 0x19))
+        .bg(Color::Rgb(0xf4, 0x9e, 0x4c))
 }
 
 pub(crate) fn frame_style() -> Style {
