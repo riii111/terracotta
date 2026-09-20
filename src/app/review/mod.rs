@@ -65,18 +65,6 @@ impl PlanMetadata {
     }
 
     #[must_use]
-    #[cfg(test)]
-    pub(crate) fn resource_addresses(&self) -> &[String] {
-        &self.resource_addresses
-    }
-
-    #[must_use]
-    #[cfg(test)]
-    pub(crate) fn output_names(&self) -> &[String] {
-        &self.output_names
-    }
-
-    #[must_use]
     pub(crate) const fn additions(&self) -> usize {
         self.additions
     }
@@ -89,18 +77,6 @@ impl PlanMetadata {
     #[must_use]
     pub(crate) const fn deletions(&self) -> usize {
         self.deletions
-    }
-
-    #[must_use]
-    #[cfg(test)]
-    pub(crate) const fn contains_deletions(&self) -> bool {
-        self.deletions > 0
-    }
-
-    #[must_use]
-    #[cfg(test)]
-    pub(crate) const fn applyable(&self) -> bool {
-        self.applyable
     }
 
     #[must_use]
@@ -170,7 +146,29 @@ pub(crate) enum PlanReviewMessage {
 }
 
 #[cfg(test)]
+pub(crate) mod test_support {
+    use super::PlanMetadata;
+
+    pub(crate) fn resource_addresses(metadata: &PlanMetadata) -> &[String] {
+        &metadata.resource_addresses
+    }
+
+    pub(crate) fn output_names(metadata: &PlanMetadata) -> &[String] {
+        &metadata.output_names
+    }
+
+    pub(crate) const fn contains_deletions(metadata: &PlanMetadata) -> bool {
+        metadata.deletions > 0
+    }
+
+    pub(crate) const fn applyable(metadata: &PlanMetadata) -> bool {
+        metadata.applyable
+    }
+}
+
+#[cfg(test)]
 mod tests {
+    use super::test_support::{applyable, contains_deletions, output_names};
     use super::*;
 
     #[test]
@@ -196,8 +194,8 @@ mod tests {
 
         assert_eq!(metadata.additions(), 1);
         assert_eq!(metadata.deletions(), 1);
-        assert!(metadata.contains_deletions());
-        assert!(metadata.applyable());
-        assert_eq!(metadata.output_names(), ["endpoint"]);
+        assert!(contains_deletions(&metadata));
+        assert!(applyable(&metadata));
+        assert_eq!(output_names(&metadata), ["endpoint"]);
     }
 }

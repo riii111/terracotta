@@ -15,13 +15,10 @@ pub(crate) use command::SystemProcessRunner;
 pub(crate) use plan::{SavedPlan, run_review};
 
 #[cfg(test)]
-pub(crate) use command::{ProcessRunner, TerraformExecutionError};
-#[cfg(test)]
-pub(crate) use plan::run_plan;
-#[cfg(test)]
-pub(crate) use workspace::read_workspace_with_runner;
-
-#[cfg(test)]
-pub(crate) mod tests {
-    pub(crate) use super::command::{ProcessOutput, ProcessStatus, RunningProcess};
+pub(crate) mod test_support {
+    pub(crate) use super::command::{
+        ProcessOutput, ProcessRunner, ProcessStatus, RunningProcess, TerraformExecutionError,
+    };
+    pub(crate) use super::plan::test_support::run_plan;
+    pub(crate) use super::workspace::read_workspace_with_runner;
 }

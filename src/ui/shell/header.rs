@@ -36,8 +36,6 @@ pub(crate) fn render_execution(frame: &mut Frame<'_>, area: Rect, context: &Exec
     let workspace = match context.workspace() {
         ExecutionContextValue::Known(workspace) => Some(workspace.as_str()),
         ExecutionContextValue::Loading => Some("loading..."),
-        #[cfg(test)]
-        ExecutionContextValue::Unavailable => None,
     };
     render(
         frame,

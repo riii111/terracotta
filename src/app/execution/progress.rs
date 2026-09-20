@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-#[cfg(test)]
-use super::event::DiagnosticSeverity;
 use super::event::{
     Diagnostic, EventStream, ExecutionEvent, ExecutionEventKind, ExecutionLogLine,
     ProcessTermination, ResourceEventKind,
@@ -73,17 +71,8 @@ impl ExecutionProgress {
             ExecutionEventKind::Phase(_)
             | ExecutionEventKind::Workspace(_)
             | ExecutionEventKind::Informational { message: None, .. } => {}
-            #[cfg(test)]
-            ExecutionEventKind::RepositoryRoot(_) | ExecutionEventKind::Git(_) => {}
             ExecutionEventKind::Terminated(termination) => self.termination = Some(termination),
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn resources(&self) -> impl Iterator<Item = (&str, ResourceEventKind)> {
-        self.resources
-            .iter()
-            .map(|(address, kind)| (address.as_str(), *kind))
     }
 
     #[must_use]
@@ -99,21 +88,6 @@ impl ExecutionProgress {
     #[must_use]
     pub(crate) const fn first_error_line(&self) -> Option<usize> {
         self.first_error_line
-    }
-
-    #[cfg(test)]
-    pub(crate) fn take_review_diagnostics(&mut self) -> Vec<Diagnostic> {
-        std::mem::take(&mut self.diagnostics)
-            .into_iter()
-            .filter(|diagnostic| {
-                matches!(
-                    diagnostic.severity,
-                    DiagnosticSeverity::Warning
-                        | DiagnosticSeverity::Error
-                        | DiagnosticSeverity::Unknown
-                )
-            })
-            .collect()
     }
 
     #[must_use]
@@ -134,9 +108,17 @@ fn rendered_line_count(log: &[ExecutionLogLine]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::super::event::{
-        DiagnosticSource, ExecutionSummary, ProcessExitStatus, ResourceEvent,
+        DiagnosticSeverity, DiagnosticSource, ExecutionSummary, ProcessExitStatus, ResourceEvent,
     };
     use super::*;
+
+    fn resources(progress: &ExecutionProgress) -> Vec<(&str, ResourceEventKind)> {
+        progress
+            .resources
+            .iter()
+            .map(|(address, kind)| (address.as_str(), *kind))
+            .collect()
+    }
 
     fn event(kind: ExecutionEventKind) -> ExecutionEvent {
         ExecutionEvent {
@@ -175,7 +157,7 @@ mod tests {
         })));
 
         assert_eq!(
-            progress.resources().collect::<Vec<_>>(),
+            resources(&progress),
             vec![
                 ("aws_vpc.main", ResourceEventKind::ApplyComplete,),
                 ("aws_subnet.private[0]", ResourceEventKind::RefreshStart,),
@@ -203,7 +185,7 @@ mod tests {
         })));
 
         assert_eq!(
-            progress.resources().collect::<Vec<_>>(),
+            resources(&progress),
             vec![("aws_vpc.main", ResourceEventKind::ApplyStart)]
         );
     }
@@ -230,10 +212,7 @@ mod tests {
         let hundred = progress_after_repeated_events(100);
         let ten_thousand = progress_after_repeated_events(10_000);
 
-        assert_eq!(
-            hundred.resources().collect::<Vec<_>>(),
-            ten_thousand.resources().collect::<Vec<_>>()
-        );
+        assert_eq!(resources(&hundred), resources(&ten_thousand));
         assert_eq!(hundred.diagnostics(), ten_thousand.diagnostics());
         assert_eq!(hundred.termination(), ten_thousand.termination());
     }
@@ -312,35 +291,5 @@ mod tests {
                 "Plan: 0 to add, 1 to change, 0 to destroy."
             ]
         );
-    }
-
-    #[test]
-    fn takes_review_diagnostics_in_receive_order_and_discards_info() {
-        let mut progress = ExecutionProgress::default();
-        for (severity, summary) in [
-            (DiagnosticSeverity::Info, "info"),
-            (DiagnosticSeverity::Warning, "warning"),
-            (DiagnosticSeverity::Error, "error"),
-            (DiagnosticSeverity::Unknown, "unknown"),
-        ] {
-            progress.record(event(ExecutionEventKind::Diagnostic(Diagnostic {
-                severity,
-                summary: summary.to_owned(),
-                detail: None,
-                position: None,
-                source: DiagnosticSource::Terraform,
-            })));
-        }
-
-        let diagnostics = progress.take_review_diagnostics();
-
-        assert_eq!(
-            diagnostics
-                .iter()
-                .map(|diagnostic| diagnostic.summary.as_str())
-                .collect::<Vec<_>>(),
-            vec!["warning", "error", "unknown"]
-        );
-        assert!(progress.diagnostics().is_empty());
     }
 }

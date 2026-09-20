@@ -19,8 +19,6 @@ pub(crate) enum ExecutionStage {
     Initializing,
     Planning,
     Reading,
-    #[cfg(test)]
-    Matching,
     Failed,
 }
 
@@ -31,8 +29,6 @@ impl ExecutionStage {
             Self::Initializing => "Initializing",
             Self::Planning => "Planning",
             Self::Reading => "Reading",
-            #[cfg(test)]
-            Self::Matching => "Matching",
             Self::Failed => "Failed",
         }
     }
@@ -130,24 +126,8 @@ impl ExecutionState {
                 self.stage = ExecutionStage::Reading;
                 self.active_phase = ExecutionStage::Reading;
             }
-            #[cfg(test)]
-            ExecutionEventKind::Phase(ExecutionPhase::Matching) => {
-                self.stage = ExecutionStage::Matching;
-                self.active_phase = ExecutionStage::Matching;
-            }
-            #[cfg(test)]
-            ExecutionEventKind::RepositoryRoot(repository_root) => {
-                self.context = self
-                    .context
-                    .clone()
-                    .with_repository_root(repository_root.clone());
-            }
             ExecutionEventKind::Workspace(workspace) => {
                 self.context = self.context.clone().with_workspace(workspace.clone());
-            }
-            #[cfg(test)]
-            ExecutionEventKind::Git(git) => {
-                self.context = self.context.clone().with_git(git.clone());
             }
             ExecutionEventKind::Terminated(termination)
                 if !termination.interrupted
@@ -256,16 +236,11 @@ impl ExecutionState {
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
-
     use super::*;
 
     impl ExecutionState {
         pub(crate) fn new(started_at: Instant) -> Self {
-            Self::with_context(
-                started_at,
-                ExecutionContext::loading("loading...", "loading..."),
-            )
+            Self::with_context(started_at, ExecutionContext::loading("loading..."))
         }
     }
 
@@ -484,42 +459,5 @@ mod tests {
             ExecutionEventKind::Phase(ExecutionPhase::Reading),
         ));
         assert_eq!(state.stage(), ExecutionStage::Reading);
-
-        state.record(event(
-            started_at,
-            ExecutionEventKind::Phase(ExecutionPhase::Matching),
-        ));
-        assert_eq!(state.stage(), ExecutionStage::Matching);
-    }
-
-    #[test]
-    fn repository_root_moves_from_loading_to_known_or_unavailable() {
-        let started_at = Instant::now();
-        let mut state = ExecutionState::new(started_at);
-
-        assert_eq!(
-            state.context.repository_root(),
-            &ExecutionContextValue::Loading
-        );
-
-        state.record(event(
-            started_at,
-            ExecutionEventKind::RepositoryRoot(Some(PathBuf::from("/repo"))),
-        ));
-        assert_eq!(
-            state.context.repository_root(),
-            &ExecutionContextValue::Known("/repo".to_owned())
-        );
-        assert_eq!(
-            state.context.repository_root_path(),
-            Some(Path::new("/repo"))
-        );
-
-        state.record(event(started_at, ExecutionEventKind::RepositoryRoot(None)));
-        assert_eq!(
-            state.context.repository_root(),
-            &ExecutionContextValue::Unavailable
-        );
-        assert_eq!(state.context.repository_root_path(), None);
     }
 }

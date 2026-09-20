@@ -1,6 +1,4 @@
 use std::fmt::{Debug, Formatter};
-#[cfg(test)]
-use std::path::PathBuf;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,11 +144,7 @@ pub(crate) enum ExecutionEventKind {
     Summary(ExecutionSummary),
     Diagnostic(Diagnostic),
     Phase(ExecutionPhase),
-    #[cfg(test)]
-    RepositoryRoot(Option<PathBuf>),
     Workspace(String),
-    #[cfg(test)]
-    Git(Option<String>),
     Informational {
         event_type: String,
         message: Option<String>,
@@ -163,8 +157,6 @@ pub(crate) enum ExecutionPhase {
     Initializing,
     Planning,
     Reading,
-    #[cfg(test)]
-    Matching,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -194,11 +186,7 @@ impl Debug for ExecutionEventKind {
                 .field(diagnostic)
                 .finish(),
             Self::Phase(phase) => formatter.debug_tuple("Phase").field(phase).finish(),
-            #[cfg(test)]
-            Self::RepositoryRoot(_) => formatter.write_str("RepositoryRoot(<redacted>)"),
             Self::Workspace(_) => formatter.write_str("Workspace(<redacted>)"),
-            #[cfg(test)]
-            Self::Git(_) => formatter.write_str("Git(<redacted>)"),
             Self::Informational { event_type, .. } => formatter
                 .debug_struct("Informational")
                 .field("event_type", event_type)
