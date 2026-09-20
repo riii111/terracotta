@@ -206,22 +206,14 @@ pub(crate) fn render(
 ) {
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
-        terminal_notice::render_wrapped(
-            frame,
-            area,
-            "Terminal too small. Resize or press q to quit.",
-        );
+        terminal_notice::render_wrapped(frame, area, terminal_notice_message(view.searching()));
         return;
     }
 
     let content = prepare_content(state);
     let layout = layout_with_content(area, view.searching(), state, &content);
     if layout.body().width == 0 || layout.body().height == 0 {
-        terminal_notice::render_wrapped(
-            frame,
-            area,
-            "Terminal too small. Resize or press q to quit.",
-        );
+        terminal_notice::render_wrapped(frame, area, terminal_notice_message(view.searching()));
         return;
     }
     header::render_review(frame, layout.shell.header(), state.review());
@@ -443,6 +435,14 @@ fn filter_active(searching: bool, state: &ReviewSessionState) -> bool {
     searching || !state.review().search_query().is_empty()
 }
 
+const fn terminal_notice_message(searching: bool) -> &'static str {
+    if searching {
+        "Terminal too small. Resize or press Esc to cancel filter."
+    } else {
+        "Terminal too small. Resize or press q to quit."
+    }
+}
+
 fn filter_details_lines(state: &ReviewSessionState, width: u16) -> Vec<Line<'static>> {
     let filtered = state.review().filtered_document();
     let matches = format!(
@@ -569,6 +569,7 @@ const fn severity_label(severity: DiagnosticSeverity) -> &'static str {
 mod tests {
     use std::path::PathBuf;
 
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::{
         buffer::Buffer,
         style::{Color, Modifier},
@@ -583,7 +584,7 @@ mod tests {
         session::{self, Action, SessionState},
     };
     use crate::ui::{
-        features::plan_review::{ApplyConfirmationInput, PlanReviewInput},
+        features::plan_review::{ApplyConfirmationInput, PlanReviewInput, key_to_input},
         test_support::{
             assert_shell_frame_and_footer, buffer_terminal_capture, buffer_text, render_to_buffer,
             write_buffer_captures,
@@ -1238,6 +1239,54 @@ End of synthetic plan body."#;
         });
         write_buffer_captures("ux02-filter-terminal-too-small", &tiny_buffer);
         assert!(buffer_text(&tiny_buffer).contains("Terminal too small"));
+    }
+
+    #[test]
+    fn production_filter_resize_notice_keeps_escape_cancel_available() {
+        let area = Rect::new(0, 0, 24, 6);
+        let state = review_state(review());
+        let mut view = PlanReviewViewState::default();
+        let initial_layout = layout(area, false, &state);
+        view.apply(
+            PlanReviewInput::SearchStart,
+            initial_layout.body(),
+            initial_layout.max_vertical(),
+            initial_layout.max_horizontal(),
+            state.review().search_query(),
+        );
+
+        let searching_layout = layout(area, view.searching(), &state);
+        assert_eq!(searching_layout.body().height, 0);
+        let buffer = render_to_buffer((area.width, area.height), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        write_buffer_captures("ux02-filter-input-terminal-too-small", &buffer);
+        assert!(buffer_text(&buffer).contains("press Esc"));
+        assert!(buffer_text(&buffer).contains("cancel"));
+        assert_eq!(
+            key_to_input(
+                KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+                view.searching()
+            ),
+            Some(PlanReviewInput::SearchCancel)
+        );
+
+        let input = key_to_input(
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            view.searching(),
+        )
+        .expect("Esc should cancel the filter");
+        assert_eq!(
+            view.apply(
+                input,
+                searching_layout.body(),
+                searching_layout.max_vertical(),
+                searching_layout.max_horizontal(),
+                state.review().search_query(),
+            ),
+            Some(String::new())
+        );
+        assert!(!view.searching());
     }
 
     #[test]
