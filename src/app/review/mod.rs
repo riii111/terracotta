@@ -49,6 +49,23 @@ pub(crate) struct PlanDocument {
     blocks: Vec<PlanBlock>,
 }
 
+pub(crate) struct FilteredPlan<'a> {
+    lines: Vec<&'a str>,
+    matching_blocks: usize,
+}
+
+impl<'a> FilteredPlan<'a> {
+    #[must_use]
+    pub(crate) fn lines(&self) -> &[&'a str] {
+        &self.lines
+    }
+
+    #[must_use]
+    pub(crate) const fn matching_blocks(&self) -> usize {
+        self.matching_blocks
+    }
+}
+
 impl PlanDocument {
     #[must_use]
     pub(crate) const fn with_blocks(text: String, blocks: Vec<PlanBlock>) -> Self {
@@ -61,42 +78,29 @@ impl PlanDocument {
     }
 
     #[must_use]
-    pub(crate) fn visible_lines(&self, query: &str) -> Vec<&str> {
+    pub(crate) fn filter(&self, query: &str) -> FilteredPlan<'_> {
         let lines = self.text.split('\n').collect::<Vec<_>>();
-        self.blocks
-            .iter()
-            .filter(|block| {
-                query.is_empty()
-                    || block.is_common()
-                    || block
-                        .lines()
-                        .clone()
-                        .any(|line| lines[line].contains(query))
-            })
-            .flat_map(|block| block.lines().clone().map(|line| lines[line]))
-            .collect()
-    }
-
-    #[must_use]
-    pub(crate) fn matching_block_count(&self, query: &str) -> usize {
-        if query.is_empty() {
-            return self
-                .blocks
-                .iter()
-                .filter(|block| !block.is_common())
-                .count();
+        let mut filtered = Vec::new();
+        let mut matching_blocks = 0;
+        for block in &self.blocks {
+            let matches = query.is_empty()
+                || block.is_common()
+                || block
+                    .lines()
+                    .clone()
+                    .any(|line| lines[line].contains(query));
+            if !matches {
+                continue;
+            }
+            if !block.is_common() {
+                matching_blocks += 1;
+            }
+            filtered.extend(block.lines().clone().map(|line| lines[line]));
         }
-        let lines = self.text.split('\n').collect::<Vec<_>>();
-        self.blocks
-            .iter()
-            .filter(|block| {
-                !block.is_common()
-                    && block
-                        .lines()
-                        .clone()
-                        .any(|line| lines[line].contains(query))
-            })
-            .count()
+        FilteredPlan {
+            lines: filtered,
+            matching_blocks,
+        }
     }
 }
 
@@ -242,13 +246,8 @@ impl PlanReview {
     }
 
     #[must_use]
-    pub(crate) fn visible_document_lines(&self) -> Vec<&str> {
-        self.document.visible_lines(&self.search_query)
-    }
-
-    #[must_use]
-    pub(crate) fn matching_block_count(&self) -> usize {
-        self.document.matching_block_count(&self.search_query)
+    pub(crate) fn filtered_document(&self) -> FilteredPlan<'_> {
+        self.document.filter(&self.search_query)
     }
 }
 
@@ -337,11 +336,13 @@ mod tests {
             ],
         );
 
+        let filtered = document.filter("worker");
+
         assert_eq!(
-            document.visible_lines("worker"),
+            filtered.lines(),
             ["preamble", "resource worker", "worker value", "summary", ""]
         );
-        assert_eq!(document.matching_block_count("worker"), 1);
+        assert_eq!(filtered.matching_blocks(), 1);
     }
 
     #[test]

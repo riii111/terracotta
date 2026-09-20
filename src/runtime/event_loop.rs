@@ -232,11 +232,10 @@ fn handle_execution_key_event<B: Backend>(
             }
             Some(execution::ExecutionInput::Scroll(scroll)) => {
                 let size = terminal.size()?;
-                let body =
-                    execution::execution_layout(Rect::new(0, 0, size.width, size.height), state)
-                        .body();
+                let layout =
+                    execution::execution_layout(Rect::new(0, 0, size.width, size.height), state);
                 let (current_vertical, _) =
-                    execution::execution_scroll_position_with_view(state, *execution_view, body);
+                    execution::execution_scroll_position_with_view(state, *execution_view, &layout);
                 match scroll {
                     execution::ExecutionScroll::Left
                     | execution::ExecutionScroll::Right
@@ -244,9 +243,8 @@ fn handle_execution_key_event<B: Backend>(
                     | execution::ExecutionScroll::RightEdge => {
                         let (current, max) =
                             execution::execution_horizontal_scroll_position_with_view(
-                                state,
                                 *execution_view,
-                                body,
+                                &layout,
                             );
                         execution_view.apply_horizontal_scroll(
                             scroll,
@@ -259,9 +257,9 @@ fn handle_execution_key_event<B: Backend>(
                         let (current, max) = execution::execution_scroll_position_with_view(
                             state,
                             *execution_view,
-                            body,
+                            &layout,
                         );
-                        execution_view.apply_scroll(scroll, current, max, body.height);
+                        execution_view.apply_scroll(scroll, current, max, layout.body().height);
                     }
                 }
                 None

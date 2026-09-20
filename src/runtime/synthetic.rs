@@ -171,27 +171,25 @@ fn synthetic_execution_key(
         }
         Some(execution::ExecutionInput::Scroll(scroll)) => {
             let size = terminal.size()?;
-            let body = execution::execution_layout(
+            let layout = execution::execution_layout(
                 ratatui::layout::Rect::new(0, 0, size.width, size.height),
                 state,
-            )
-            .body();
+            );
             let (current_vertical, _) =
-                execution::execution_scroll_position_with_view(state, *view, body);
+                execution::execution_scroll_position_with_view(state, *view, &layout);
             match scroll {
                 execution::ExecutionScroll::Left
                 | execution::ExecutionScroll::Right
                 | execution::ExecutionScroll::LeftEdge
                 | execution::ExecutionScroll::RightEdge => {
-                    let (current, max) = execution::execution_horizontal_scroll_position_with_view(
-                        state, *view, body,
-                    );
+                    let (current, max) =
+                        execution::execution_horizontal_scroll_position_with_view(*view, &layout);
                     view.apply_horizontal_scroll(scroll, current, max, current_vertical);
                 }
                 _ => {
                     let (current, max) =
-                        execution::execution_scroll_position_with_view(state, *view, body);
-                    view.apply_scroll(scroll, current, max, body.height);
+                        execution::execution_scroll_position_with_view(state, *view, &layout);
+                    view.apply_scroll(scroll, current, max, layout.body().height);
                 }
             }
             Ok(false)

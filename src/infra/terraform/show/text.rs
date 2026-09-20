@@ -453,7 +453,7 @@ mod tests {
         assert_eq!(blocks[1].lines(), &(8..13));
         assert_eq!(blocks[2].lines(), &(13..15));
         assert_eq!(
-            document.visible_lines("worker"),
+            document.filter("worker").lines(),
             vec![
                 "  # terraform_data.worker will be updated in-place",
                 "  ~ resource \"terraform_data\" \"worker\" {",
