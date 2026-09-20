@@ -205,17 +205,17 @@ pub(crate) fn render(
         return;
     }
     header::render_review(frame, layout.shell.header(), state.review());
-    let inner = shell_layout::render_content_block(
-        frame,
-        layout.shell.content(),
-        if view.searching() {
-            "Plan | Search".to_owned()
-        } else if state.review().search_query().is_empty() {
-            "Plan".to_owned()
-        } else {
-            format!("Plan | Search: {}", state.review().search_query())
-        },
-    );
+    let title = if view.searching() {
+        Line::from("Plan | Search")
+    } else if state.review().search_query().is_empty() {
+        Line::from("Plan")
+    } else {
+        Line::from(vec![
+            Span::raw("Plan | Search: "),
+            Span::styled(state.review().search_query(), theme::secondary_style()),
+        ])
+    };
+    let inner = shell_layout::render_content_block_line(frame, layout.shell.content(), title);
     debug_assert_eq!(inner, layout.shell.content_inner());
 
     if let Some(search_area) = layout.search()
@@ -472,7 +472,8 @@ mod tests {
     use crate::ui::{
         features::plan_review::{ApplyConfirmationInput, PlanReviewInput},
         test_support::{
-            assert_shell_frame_and_footer, buffer_text, render_to_buffer, write_buffer_captures,
+            assert_shell_frame_and_footer, buffer_terminal_capture, buffer_text, render_to_buffer,
+            write_buffer_captures,
         },
     };
 
@@ -916,6 +917,26 @@ End of synthetic plan body."#;
             Color::Rgb(0xf4, 0x9e, 0x4c),
             Modifier::BOLD,
         );
+        let confirmed_buffer = render_to_buffer((80, 24), |frame| {
+            render(
+                frame,
+                &state,
+                &PlanReviewViewState::default(),
+                Instant::now(),
+            );
+        });
+        assert_text_segment_uses_style(
+            &confirmed_buffer,
+            "Plan | Search: terraform_data",
+            "Plan | Search: ".chars().count(),
+            SEARCH_TERM.chars().count(),
+            Color::Rgb(0xc0, 0xb8, 0xb8),
+            Color::Reset,
+            Modifier::empty(),
+        );
+        let capture = buffer_terminal_capture(&buffer);
+        assert!(capture.contains("\x1b[48;2;244;158;76m"));
+        assert!(capture.contains("\x1b[48;2;244;158;76m\x1b[1m"));
     }
 
     #[test]

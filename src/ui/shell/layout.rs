@@ -99,11 +99,19 @@ pub(crate) fn render_content_block(
     area: Rect,
     title: impl Into<String>,
 ) -> Rect {
+    render_content_block_line(frame, area, Line::from(title.into()))
+}
+
+pub(crate) fn render_content_block_line(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    title: Line<'_>,
+) -> Rect {
     let block = Block::new()
         .borders(Borders::ALL)
         .border_style(theme::frame_style())
         .style(theme::body_style())
-        .title(title.into());
+        .title(title);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     inner
