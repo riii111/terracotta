@@ -668,17 +668,17 @@ mod tests {
         let vertical_x = body.x.saturating_add(body.width);
         let horizontal_y = body.y.saturating_add(body.height);
         let horizontal_end_x = vertical_x;
-        assert_eq!(buffer[(vertical_x, body.y)].symbol(), "↑");
+        assert_eq!(buffer[(vertical_x, body.y)].symbol(), "▲");
         assert_eq!(
             buffer[(vertical_x, body.y)].fg,
             Color::Rgb(0xc0, 0xb8, 0xb0)
         );
-        assert_eq!(buffer[(body.x, horizontal_y)].symbol(), "←");
+        assert_eq!(buffer[(body.x, horizontal_y)].symbol(), "◀︎");
         assert_eq!(
             buffer[(body.x, horizontal_y)].fg,
             Color::Rgb(0x50, 0x52, 0x5e)
         );
-        assert_eq!(buffer[(horizontal_end_x, horizontal_y)].symbol(), "→");
+        assert_eq!(buffer[(horizontal_end_x, horizontal_y)].symbol(), "▶︎");
         assert_eq!(
             buffer[(horizontal_end_x, horizontal_y)].fg,
             Color::Rgb(0xc0, 0xb8, 0xb0)
@@ -956,11 +956,11 @@ mod tests {
                         .to_owned()
                 })
                 .collect::<Vec<_>>();
-            assert_eq!(symbols.first().map(String::as_str), Some("↑"));
+            assert_eq!(symbols.first().map(String::as_str), Some("▲"));
             assert_thumb_segments(
                 &symbols[1..symbols.len() - 1],
                 "│",
-                "█",
+                "┃",
                 usize::from(vertical),
                 usize::from(layout.max_vertical()),
             );
@@ -976,8 +976,8 @@ mod tests {
                         .to_owned()
                 })
                 .collect::<Vec<_>>();
-            assert_eq!(symbols.first().map(String::as_str), Some("←"));
-            assert_eq!(symbols.last().map(String::as_str), Some("→"));
+            assert_eq!(symbols.first().map(String::as_str), Some("◀︎"));
+            assert_eq!(symbols.last().map(String::as_str), Some("▶︎"));
             assert_thumb_segments(
                 &symbols[1..symbols.len() - 1],
                 "─",

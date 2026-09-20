@@ -24,9 +24,9 @@ pub(crate) fn render_vertical(
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
         .symbols(Set {
             track: "│",
-            thumb: "█",
-            begin: "↑",
-            end: "↓",
+            thumb: "┃",
+            begin: "▲",
+            end: "▼",
         })
         .thumb_style(theme::scrollbar_thumb_style())
         .track_style(theme::scrollbar_track_style())
@@ -53,8 +53,8 @@ pub(crate) fn render_horizontal(
         .symbols(Set {
             track: "─",
             thumb: "═",
-            begin: "←",
-            end: "→",
+            begin: "◀︎",
+            end: "▶︎",
         })
         .thumb_style(theme::scrollbar_thumb_style())
         .track_style(theme::scrollbar_track_style())
