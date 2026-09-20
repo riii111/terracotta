@@ -8,7 +8,7 @@ use std::{
 };
 
 use crossterm::event::{self, Event, KeyEvent};
-use ratatui::{DefaultTerminal, layout::Rect};
+use ratatui::{DefaultTerminal, Terminal, backend::Backend, layout::Rect};
 
 use crate::{
     app::{
@@ -60,28 +60,15 @@ pub(crate) fn run_connected(
         }
 
         let now = Instant::now();
-        let clear_copy_flash = state
-            .review()
-            .is_some_and(|review| review.copy_flash_pending() && !review.copy_flash_active(now));
-        let clear_apply_copy_flash = state
-            .apply()
-            .is_some_and(|apply| apply.copy_flash_pending() && !apply.copy_flash_active(now));
-        if should_draw(&state, dirty, now) {
-            draw(
-                &state,
-                terminal,
-                execution_view,
-                &review_view,
-                &confirmation_view,
-            )?;
-            if clear_copy_flash && let SessionState::Review(review) = &mut state {
-                review.clear_copy_flash();
-            }
-            if clear_apply_copy_flash && let SessionState::Apply(apply) = &mut state {
-                apply.clear_copy_flash();
-            }
-            dirty = false;
-        }
+        draw_if_needed(
+            &mut state,
+            terminal,
+            execution_view,
+            &review_view,
+            &confirmation_view,
+            &mut dirty,
+            now,
+        )?;
 
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {
@@ -99,19 +86,19 @@ pub(crate) fn run_connected(
                         if let Some(outcome) = dispatch(&mut state, action, &mut effects) {
                             return Ok(outcome);
                         }
-                        if should_draw(&state, false, Instant::now())
-                            && state
-                                .apply()
-                                .is_some_and(|apply| apply.stage() == ExecutionStage::Applying)
+                        if state
+                            .apply()
+                            .is_some_and(|apply| apply.stage() == ExecutionStage::Applying)
                         {
-                            draw(
-                                &state,
+                            draw_if_needed(
+                                &mut state,
                                 terminal,
                                 execution_view,
                                 &review_view,
                                 &confirmation_view,
+                                &mut dirty,
+                                Instant::now(),
                             )?;
-                            dirty = false;
                         }
                     }
                 }
@@ -133,14 +120,64 @@ fn should_draw(state: &SessionState, dirty: bool, now: Instant) -> bool {
             .is_some_and(|apply| apply.copy_flash_active(now) || apply.copy_flash_pending())
 }
 
-fn handle_key_event(
-    terminal: &DefaultTerminal,
+fn draw_if_needed<B: Backend>(
+    state: &mut SessionState,
+    terminal: &mut Terminal<B>,
+    execution_view: execution::ExecutionViewState,
+    review_view: &plan_review::PlanReviewViewState,
+    confirmation_view: &plan_review::ApplyConfirmationViewState,
+    dirty: &mut bool,
+    now: Instant,
+) -> io::Result<()>
+where
+    B::Error: std::fmt::Debug,
+{
+    if !should_draw(state, *dirty, now) {
+        return Ok(());
+    }
+
+    draw(
+        state,
+        terminal,
+        execution_view,
+        review_view,
+        confirmation_view,
+    )?;
+    clear_expired_copy_flash(state, now);
+    *dirty = false;
+    Ok(())
+}
+
+fn clear_expired_copy_flash(state: &mut SessionState, now: Instant) {
+    match state {
+        SessionState::Review(review)
+            if review.copy_flash_pending() && !review.copy_flash_active(now) =>
+        {
+            review.clear_copy_flash();
+        }
+        SessionState::Apply(apply)
+            if apply.copy_flash_pending() && !apply.copy_flash_active(now) =>
+        {
+            apply.clear_copy_flash();
+        }
+        SessionState::Execution(_)
+        | SessionState::ApplyConfirmation(_)
+        | SessionState::Review(_)
+        | SessionState::Apply(_) => {}
+    }
+}
+
+fn handle_key_event<B: Backend>(
+    terminal: &Terminal<B>,
     state: &SessionState,
     execution_view: &mut execution::ExecutionViewState,
     review_view: &mut plan_review::PlanReviewViewState,
     confirmation_view: &mut plan_review::ApplyConfirmationViewState,
     key: KeyEvent,
-) -> io::Result<Option<Action>> {
+) -> io::Result<Option<Action>>
+where
+    B::Error: std::fmt::Debug,
+{
     if let Some(execution) = state.execution() {
         return handle_execution_key_event(terminal, execution, execution_view, key);
     }
@@ -163,7 +200,9 @@ fn handle_key_event(
             Some(plan_review::PlanReviewInput::Apply) => Some(Action::OpenApplyConfirmation),
             Some(plan_review::PlanReviewInput::Copy) => Some(Action::Copy(CopyTarget::Plan)),
             Some(input) => {
-                let size = terminal.size()?;
+                let size = terminal
+                    .size()
+                    .map_err(|error| io::Error::other(format!("{error:?}")))?;
                 let body = plan_review::layout(
                     Rect::new(0, 0, size.width, size.height),
                     review_view.searching(),
@@ -184,12 +223,15 @@ fn handle_key_event(
     )
 }
 
-fn handle_execution_key_event(
-    terminal: &DefaultTerminal,
+fn handle_execution_key_event<B: Backend>(
+    terminal: &Terminal<B>,
     state: &ExecutionState,
     execution_view: &mut execution::ExecutionViewState,
     key: KeyEvent,
-) -> io::Result<Option<Action>> {
+) -> io::Result<Option<Action>>
+where
+    B::Error: std::fmt::Debug,
+{
     Ok(
         match execution::execution_key_to_input(key, state.stage()) {
             Some(execution::ExecutionInput::Quit) => Some(Action::Quit),
@@ -199,7 +241,9 @@ fn handle_execution_key_event(
                 None
             }
             Some(execution::ExecutionInput::Scroll(scroll)) => {
-                let size = terminal.size()?;
+                let size = terminal
+                    .size()
+                    .map_err(|error| io::Error::other(format!("{error:?}")))?;
                 let body =
                     execution::execution_layout(Rect::new(0, 0, size.width, size.height), state)
                         .body();
@@ -240,43 +284,54 @@ fn handle_execution_key_event(
     )
 }
 
-fn draw(
+fn draw<B: Backend>(
     state: &SessionState,
-    terminal: &mut DefaultTerminal,
+    terminal: &mut Terminal<B>,
     execution_view: execution::ExecutionViewState,
     review_view: &plan_review::PlanReviewViewState,
     confirmation_view: &plan_review::ApplyConfirmationViewState,
-) -> io::Result<()> {
+) -> io::Result<()>
+where
+    B::Error: std::fmt::Debug,
+{
     match state {
         SessionState::Execution(execution) => {
-            terminal.draw(|frame| {
-                execution::render_execution_with_view(
-                    frame,
-                    execution,
-                    execution_view,
-                    Instant::now(),
-                );
-            })?;
+            terminal
+                .draw(|frame| {
+                    execution::render_execution_with_view(
+                        frame,
+                        execution,
+                        execution_view,
+                        Instant::now(),
+                    );
+                })
+                .map_err(|error| io::Error::other(format!("{error:?}")))?;
         }
         SessionState::Review(review) => {
-            terminal.draw(|frame| {
-                plan_review::render(frame, review, review_view, Instant::now());
-            })?;
+            terminal
+                .draw(|frame| {
+                    plan_review::render(frame, review, review_view, Instant::now());
+                })
+                .map_err(|error| io::Error::other(format!("{error:?}")))?;
         }
         SessionState::ApplyConfirmation(confirmation) => {
-            terminal.draw(|frame| {
-                plan_review::render_apply_confirmation(frame, confirmation, confirmation_view);
-            })?;
+            terminal
+                .draw(|frame| {
+                    plan_review::render_apply_confirmation(frame, confirmation, confirmation_view);
+                })
+                .map_err(|error| io::Error::other(format!("{error:?}")))?;
         }
         SessionState::Apply(execution) => {
-            terminal.draw(|frame| {
-                execution::render_execution_with_view(
-                    frame,
-                    execution,
-                    execution_view,
-                    Instant::now(),
-                );
-            })?;
+            terminal
+                .draw(|frame| {
+                    execution::render_execution_with_view(
+                        frame,
+                        execution,
+                        execution_view,
+                        Instant::now(),
+                    );
+                })
+                .map_err(|error| io::Error::other(format!("{error:?}")))?;
         }
     }
     Ok(())
@@ -387,6 +442,9 @@ struct RuntimeEffects<'a> {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use ratatui::backend::TestBackend;
 
     use super::*;
     use crate::app::{
@@ -528,19 +586,95 @@ mod tests {
     }
 
     #[test]
-    fn expired_copy_flash_draws_once_then_static_result_stops() {
+    fn confirmation_input_is_drawn_through_the_runtime_step() {
+        let now = Instant::now();
+        let mut state = confirmation_state();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+        let mut execution_view = execution::ExecutionViewState::default();
+        let mut review_view = plan_review::PlanReviewViewState::default();
+        let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
+        let mut dirty = true;
+
+        let action = handle_key_event(
+            &terminal,
+            &state,
+            &mut execution_view,
+            &mut review_view,
+            &mut confirmation_view,
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+        )
+        .expect("confirmation input should be handled");
+
+        assert_eq!(action, None);
+        assert_eq!(confirmation_view.input(), "y");
+
+        draw_if_needed(
+            &mut state,
+            &mut terminal,
+            execution_view,
+            &review_view,
+            &confirmation_view,
+            &mut dirty,
+            now,
+        )
+        .expect("confirmation should render");
+
+        assert!(!dirty);
+        assert!(terminal_text(&terminal).contains("Apply this plan? (yes/no): y|"));
+    }
+
+    #[test]
+    fn expired_copy_flash_draws_once_through_the_runtime_step() {
         let started_at = Instant::now();
         let expired_at = started_at + Duration::from_millis(200);
         let mut state = apply_state(started_at, Some(ApplyStatus::Succeeded));
         record_copy(&mut state, CopyTarget::Execution, started_at);
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+        let mut dirty = false;
+        let execution_view = execution::ExecutionViewState::default();
+        let review_view = plan_review::PlanReviewViewState::default();
+        let confirmation_view = plan_review::ApplyConfirmationViewState::default();
 
-        assert!(should_draw(&state, false, expired_at));
+        draw_if_needed(
+            &mut state,
+            &mut terminal,
+            execution_view,
+            &review_view,
+            &confirmation_view,
+            &mut dirty,
+            expired_at,
+        )
+        .expect("expired flash should render");
 
-        if let SessionState::Apply(execution) = &mut state {
-            execution.clear_copy_flash();
-        }
-
+        assert!(!state.apply().expect("apply state").copy_flash_pending());
         assert!(!should_draw(&state, false, expired_at));
+        assert!(terminal_text(&terminal).contains("Apply complete"));
+
+        let rendered = terminal_text(&terminal);
+        draw_if_needed(
+            &mut state,
+            &mut terminal,
+            execution_view,
+            &review_view,
+            &confirmation_view,
+            &mut dirty,
+            expired_at,
+        )
+        .expect("static result should remain rendered");
+        assert_eq!(terminal_text(&terminal), rendered);
+    }
+
+    fn terminal_text(terminal: &Terminal<TestBackend>) -> String {
+        let buffer = terminal.backend().buffer();
+        let area = buffer.area();
+        let mut text = String::new();
+        for y in area.y..area.bottom() {
+            for x in area.x..area.right() {
+                text.push_str(buffer.cell((x, y)).expect("test cell").symbol());
+            }
+            text.push('\n');
+        }
+        text
     }
 
     fn review_state() -> SessionState {
