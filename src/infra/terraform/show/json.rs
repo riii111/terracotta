@@ -594,8 +594,7 @@ mod tests {
             resource("aws_vpc.main", "managed", json!(["create"])),
             resource("aws_subnet.private", "managed", json!(["update"])),
             resource("aws_instance.api", "managed", json!(["create", "delete"])),
-            resource("aws_instance.worker", "data", json!(["delete"])),
-            resource("aws_instance.noop", "managed", json!(["no-op"]))
+            resource("aws_instance.worker", "data", json!(["delete"]))
         ]));
 
         let plan = parse_plan_json(&input).expect("plan should parse");
@@ -945,6 +944,8 @@ mod tests {
             json!(["no-op"])
         )])))
         .expect("no-op plan should parse");
+        assert!(!noops.has_changes());
+        assert_eq!(noops.summary.total(), 0);
         assert!(noops.changes.is_empty());
         assert!(noops.unsupported_changes.is_empty());
     }

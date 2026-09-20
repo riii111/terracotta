@@ -1030,11 +1030,12 @@ mod tests {
         write(&repository, "main.tf", "resource \"example\" \"one\" {}\n");
         repository.commit("initial");
         git(&repository.path, &["branch", "compare"]);
+        let expected_commit = git_output(&repository.path, &["rev-parse", "HEAD"]);
 
         let result =
             resolve_compare_ref_with_env(&repository.path, "compare", &[("GIT_TRACE", "1")]);
 
-        assert!(result.is_some_and(|commit| commit.len() == 40));
+        assert_eq!(result.as_deref(), Some(expected_commit.as_str()));
     }
 
     #[test]
@@ -1269,11 +1270,18 @@ mod tests {
         );
 
         let result = collect_diff(&repository.path);
+        let expected_path = repository
+            .path
+            .canonicalize()
+            .expect("repository root should be canonical")
+            .join("main.tf");
 
         assert_eq!(result.status(), &GitDiffStatus::Complete);
         assert_eq!(result.changed_lines().len(), 2);
         assert_eq!(result.changed_lines()[0].side(), SourceSide::Before);
         assert_eq!(result.changed_lines()[1].side(), SourceSide::After);
+        assert_eq!(result.changed_lines()[0].path(), expected_path);
+        assert_eq!(result.changed_lines()[1].path(), expected_path);
     }
 
     #[test]

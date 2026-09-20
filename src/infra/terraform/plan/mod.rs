@@ -333,14 +333,10 @@ pub(crate) mod test_support {
     use crate::app::plan::Plan;
 
     use super::{
-        CancellationToken, ExecutionEvent, ExecutionPhase, OpenOptions, OsString, Path, PathBuf,
-        ProcessRunner, ProcessStatus, SystemTime, TerraformCommand, TerraformExecutionError,
-        TerraformExecutionErrorKind, UNIX_EPOCH, env, fs, interrupted_error, io, non_zero_error,
-        run_command_with_events,
+        CancellationToken, ExecutionEvent, ExecutionPhase, OsString, Path, ProcessRunner,
+        ProcessStatus, SavedPlan, TerraformCommand, TerraformExecutionError,
+        TerraformExecutionErrorKind, interrupted_error, non_zero_error, run_command_with_events,
     };
-
-    #[cfg(unix)]
-    use std::os::unix::fs::OpenOptionsExt;
 
     #[derive(Debug)]
     pub(crate) enum PlanTestError {
@@ -391,21 +387,21 @@ pub(crate) mod test_support {
         event_sink: &mut dyn FnMut(ExecutionEvent),
         phase_sink: &mut dyn FnMut(ExecutionPhase),
     ) -> Result<Plan, PlanTestError> {
-        let temporary_plan = TemporaryPlan::create().map_err(|error| {
+        let saved_plan = SavedPlan::create().map_err(|error| {
             TerraformExecutionError::new(TerraformExecutionErrorKind::TemporaryPlan {
                 message: error.to_string(),
             })
         })?;
         let result = execute_plan(
             root,
-            &temporary_plan.path,
+            saved_plan.path(),
             cancellation,
             runner,
             event_sink,
             phase_sink,
         );
 
-        finish_plan(temporary_plan, result)
+        finish_plan(saved_plan, result)
     }
 
     pub(crate) fn execute_plan(
@@ -437,10 +433,10 @@ pub(crate) mod test_support {
     }
 
     pub(crate) fn finish_plan(
-        temporary_plan: TemporaryPlan,
+        saved_plan: SavedPlan,
         result: Result<Plan, TerraformExecutionError>,
     ) -> Result<Plan, PlanTestError> {
-        match temporary_plan.cleanup() {
+        match saved_plan.cleanup() {
             Ok(()) => result.map_err(PlanTestError::from),
             Err(error) => match result {
                 Ok(_) => Err(PlanTestError::Cleanup {
@@ -463,49 +459,6 @@ pub(crate) mod test_support {
             output,
         ]
     }
-
-    pub(crate) struct TemporaryPlan {
-        pub(crate) path: PathBuf,
-    }
-
-    impl TemporaryPlan {
-        pub(crate) fn create() -> io::Result<Self> {
-            let directory = env::temp_dir();
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos();
-            let process_id = std::process::id();
-
-            for attempt in 0..100 {
-                let path = directory.join(format!(
-                    "terracotta-{process_id}-{timestamp}-{attempt}.tfplan"
-                ));
-                let mut options = OpenOptions::new();
-                options.write(true).create_new(true);
-                #[cfg(unix)]
-                options.mode(0o600);
-                match options.open(&path) {
-                    Ok(_) => return Ok(Self { path }),
-                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-                    Err(error) => return Err(error),
-                }
-            }
-
-            Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "could not allocate a unique Terraform plan path",
-            ))
-        }
-
-        pub(crate) fn cleanup(self) -> io::Result<()> {
-            match fs::remove_file(self.path) {
-                Ok(()) => Ok(()),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-                Err(error) => Err(error),
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -521,7 +474,7 @@ mod tests {
     use crate::app::execution::{ResourceEvent, ResourceEventKind};
 
     use super::super::command::{ProcessOutput, ProcessOutputChunk, RunningProcess};
-    use super::test_support::{TemporaryPlan, execute_plan, finish_plan, run_plan};
+    use super::test_support::{execute_plan, finish_plan, run_plan};
     use super::*;
     use crate::app::execution::{EventStream, ProcessExitStatus, ProcessTermination};
     use crate::app::plan::Plan;
@@ -738,7 +691,7 @@ mod tests {
         }
     }
 
-    fn temporary_plan_with_space() -> (TemporaryPlan, PathBuf) {
+    fn saved_plan_with_space() -> (SavedPlan, PathBuf) {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -762,21 +715,21 @@ mod tests {
             .create_new(true)
             .open(&path)
             .expect("test plan should be created");
-        (TemporaryPlan { path }, directory)
+        (SavedPlan { path: Some(path) }, directory)
     }
 
     fn run_fake(
         runner: &FakeRunner,
-        temporary_plan: TemporaryPlan,
+        saved_plan: SavedPlan,
         cancellation: &CancellationToken,
     ) -> Result<Plan, test_support::PlanTestError> {
         let result = execute_plan_without_events(
             Path::new("/root with spaces"),
-            &temporary_plan.path,
+            saved_plan.path(),
             cancellation,
             runner,
         );
-        finish_plan(temporary_plan, result)
+        finish_plan(saved_plan, result)
     }
 
     fn argument_strings(arguments: &[OsString]) -> Vec<String> {
@@ -985,10 +938,10 @@ mod tests {
     fn runs_plan_then_show_in_explicit_root_with_argument_boundaries() {
         let runner = FakeRunner::new([successful_process(), show_process()]);
         let cancellation = CancellationToken::new();
-        let (temporary_plan, directory) = temporary_plan_with_space();
-        let plan_path = temporary_plan.path.clone();
+        let (saved_plan, directory) = saved_plan_with_space();
+        let plan_path = saved_plan.path().to_owned();
 
-        let result = run_fake(&runner, temporary_plan, &cancellation)
+        let result = run_fake(&runner, saved_plan, &cancellation)
             .expect("Terraform plan should be returned");
 
         assert!(result.changes.is_empty());
@@ -1035,18 +988,18 @@ mod tests {
             show_process(),
         ]);
         let cancellation = CancellationToken::new();
-        let (temporary_plan, directory) = temporary_plan_with_space();
+        let (saved_plan, directory) = saved_plan_with_space();
         let mut events = Vec::new();
 
         let result = execute_plan(
             Path::new("/root"),
-            &temporary_plan.path,
+            saved_plan.path(),
             &cancellation,
             &runner,
             &mut |event| events.push(event),
             &mut |_| {},
         );
-        let result = finish_plan(temporary_plan, result).expect("plan should be returned");
+        let result = finish_plan(saved_plan, result).expect("plan should be returned");
 
         assert!(result.changes.is_empty());
         assert!(matches!(
@@ -1088,10 +1041,10 @@ mod tests {
     fn distinguishes_plan_launch_failure_and_skips_show() {
         let runner = FakeRunner::new([FakeResponse::LaunchError("not found")]);
         let cancellation = CancellationToken::new();
-        let (temporary_plan, directory) = temporary_plan_with_space();
+        let (saved_plan, directory) = saved_plan_with_space();
 
         let error =
-            run_fake(&runner, temporary_plan, &cancellation).expect_err("plan launch should fail");
+            run_fake(&runner, saved_plan, &cancellation).expect_err("plan launch should fail");
 
         assert!(matches!(
             error.kind(),
@@ -1115,10 +1068,10 @@ mod tests {
             ),
         }]);
         let cancellation = CancellationToken::new();
-        let (temporary_plan, directory) = temporary_plan_with_space();
+        let (saved_plan, directory) = saved_plan_with_space();
 
-        let error = run_fake(&runner, temporary_plan, &cancellation)
-            .expect_err("non-zero plan should fail");
+        let error =
+            run_fake(&runner, saved_plan, &cancellation).expect_err("non-zero plan should fail");
 
         let TerraformExecutionErrorKind::NonZero { output, .. } = error.kind() else {
             panic!("expected a non-zero process error");
@@ -1138,10 +1091,10 @@ mod tests {
             FakeResponse::LaunchError("show unavailable"),
         ]);
         let cancellation = CancellationToken::new();
-        let (temporary_plan, directory) = temporary_plan_with_space();
+        let (saved_plan, directory) = saved_plan_with_space();
 
         let error =
-            run_fake(&runner, temporary_plan, &cancellation).expect_err("show launch should fail");
+            run_fake(&runner, saved_plan, &cancellation).expect_err("show launch should fail");
 
         assert!(matches!(
             error.kind(),
@@ -1164,10 +1117,10 @@ mod tests {
             },
         ]);
         let cancellation = CancellationToken::new();
-        let (temporary_plan, directory) = temporary_plan_with_space();
+        let (saved_plan, directory) = saved_plan_with_space();
 
-        let error = run_fake(&runner, temporary_plan, &cancellation)
-            .expect_err("non-zero show should fail");
+        let error =
+            run_fake(&runner, saved_plan, &cancellation).expect_err("non-zero show should fail");
 
         assert!(matches!(
             error.kind(),
@@ -1189,10 +1142,10 @@ mod tests {
             output: ProcessOutput::empty(),
             interrupt_count: interrupt_count.clone(),
         }]);
-        let (temporary_plan, directory) = temporary_plan_with_space();
+        let (saved_plan, directory) = saved_plan_with_space();
 
-        let error = run_fake(&runner, temporary_plan, &cancellation)
-            .expect_err("cancelled plan should fail");
+        let error =
+            run_fake(&runner, saved_plan, &cancellation).expect_err("cancelled plan should fail");
 
         assert!(matches!(
             error.kind(),
@@ -1223,10 +1176,10 @@ mod tests {
                 interrupt_count: interrupt_count.clone(),
             },
         ]);
-        let (temporary_plan, directory) = temporary_plan_with_space();
+        let (saved_plan, directory) = saved_plan_with_space();
 
-        let error = run_fake(&runner, temporary_plan, &cancellation)
-            .expect_err("cancelled show should fail");
+        let error =
+            run_fake(&runner, saved_plan, &cancellation).expect_err("cancelled show should fail");
 
         assert!(matches!(
             error.kind(),
@@ -1248,10 +1201,10 @@ mod tests {
     fn reports_cleanup_failure_separately() {
         let runner = FakeRunner::new([FakeResponse::MakePlanPathDirectory, show_process()]);
         let cancellation = CancellationToken::new();
-        let (temporary_plan, directory) = temporary_plan_with_space();
-        let plan_path = temporary_plan.path.clone();
+        let (saved_plan, directory) = saved_plan_with_space();
+        let plan_path = saved_plan.path().to_owned();
 
-        let error = run_fake(&runner, temporary_plan, &cancellation)
+        let error = run_fake(&runner, saved_plan, &cancellation)
             .expect_err("cleanup of a directory should fail");
 
         assert!(matches!(error, test_support::PlanTestError::Cleanup { .. }));
@@ -1278,9 +1231,9 @@ mod tests {
             },
         ]);
         let cancellation = CancellationToken::new();
-        let (temporary_plan, directory) = temporary_plan_with_space();
+        let (saved_plan, directory) = saved_plan_with_space();
 
-        let error = run_fake(&runner, temporary_plan, &cancellation)
+        let error = run_fake(&runner, saved_plan, &cancellation)
             .expect_err("unsupported plan format should fail");
 
         assert!(matches!(

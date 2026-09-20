@@ -16,7 +16,6 @@ clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
 ratatui = "0.30"
 serde_json = { version = "1", features = ["arbitrary_precision"] }
-hcl = { package = "hcl-rs", version = "0.19.8" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -25,6 +24,7 @@ libc = "0.2"
 windows-sys = { version = "0.61", features = ["Win32_System_Console", "Win32_System_Threading"] }
 
 [dev-dependencies]
+hcl = { package = "hcl-rs", version = "0.19.8" }
 insta = "1"
 rstest = "0.26"
 
