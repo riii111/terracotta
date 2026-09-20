@@ -228,8 +228,6 @@ fn status_lines(
             ExecutionStage::Initializing => "Initializing...".to_owned(),
             ExecutionStage::Planning => "Planning...".to_owned(),
             ExecutionStage::Reading => "Reading plan...".to_owned(),
-            #[cfg(test)]
-            ExecutionStage::Matching => "Matching Git...".to_owned(),
             ExecutionStage::Failed => state.result().map_or_else(
                 || "Terraform failed.".to_owned(),
                 |result| format!("Terraform failed: {:?}", result.termination().status),
@@ -324,10 +322,7 @@ mod tests {
     #[test]
     fn append_only_log_is_rendered_in_receive_order() {
         let now = Instant::now();
-        let mut state = ExecutionState::with_context(
-            now,
-            ExecutionContext::loading("/project", "Git comparison paused"),
-        );
+        let mut state = ExecutionState::with_context(now, ExecutionContext::loading("/project"));
         for (stream, text) in [
             (EventStream::Stdout, "first"),
             (EventStream::Stderr, "second"),

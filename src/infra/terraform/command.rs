@@ -148,10 +148,6 @@ pub(crate) enum TerraformExecutionErrorKind {
     InvalidWorkspace {
         message: String,
     },
-    #[cfg(test)]
-    Cleanup {
-        message: String,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -210,13 +206,6 @@ impl Display for TerraformExecutionError {
                 write!(
                     formatter,
                     "terraform workspace output could not be parsed: {message}"
-                )
-            }
-            #[cfg(test)]
-            TerraformExecutionErrorKind::Cleanup { message } => {
-                write!(
-                    formatter,
-                    "failed to remove the temporary Terraform plan: {message}"
                 )
             }
         }?;

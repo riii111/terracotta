@@ -14,8 +14,6 @@ use crate::app::execution::{
     Diagnostic, DiagnosticSeverity, DiagnosticSource, ExecutionEvent, ExecutionEventKind,
     ExecutionPhase,
 };
-#[cfg(test)]
-use crate::app::plan::Plan;
 use crate::app::review::PlanReview;
 use crate::infra::CancellationToken;
 
@@ -28,9 +26,6 @@ use super::{
     show::read_review,
     workspace::read_workspace_with_runner,
 };
-
-#[cfg(test)]
-use super::show::read_plan;
 
 pub(crate) struct PlannedReview {
     review: PlanReview,
@@ -332,130 +327,183 @@ fn create_plan_path() -> io::Result<PathBuf> {
 }
 
 #[cfg(test)]
-pub(crate) fn run_plan(
-    root: &Path,
-    cancellation: &CancellationToken,
-    runner: &dyn ProcessRunner,
-    event_sink: &mut dyn FnMut(ExecutionEvent),
-    phase_sink: &mut dyn FnMut(ExecutionPhase),
-) -> Result<Plan, TerraformExecutionError> {
-    let temporary_plan = TemporaryPlan::create().map_err(|error| {
-        TerraformExecutionError::new(TerraformExecutionErrorKind::TemporaryPlan {
-            message: error.to_string(),
-        })
-    })?;
-    let result = execute_plan(
-        root,
-        &temporary_plan.path,
-        cancellation,
-        runner,
-        event_sink,
-        phase_sink,
-    );
+pub(crate) mod test_support {
+    use std::fmt::{Display, Formatter};
 
-    finish_plan(temporary_plan, result)
-}
+    use crate::app::plan::Plan;
 
-#[cfg(test)]
-fn execute_plan(
-    root: &Path,
-    plan_path: &Path,
-    cancellation: &CancellationToken,
-    runner: &dyn ProcessRunner,
-    event_sink: &mut dyn FnMut(ExecutionEvent),
-    phase_sink: &mut dyn FnMut(ExecutionPhase),
-) -> Result<Plan, TerraformExecutionError> {
-    let plan_arguments = plan_arguments(plan_path);
-    let plan_output = run_command_with_events(
-        root,
-        TerraformCommand::Plan,
-        &plan_arguments,
-        cancellation,
-        runner,
-        Some(event_sink),
-    )?;
-    if plan_output.interrupted {
-        return Err(interrupted_error(TerraformCommand::Plan, plan_output));
-    }
-    if !plan_output.status.is_some_and(ProcessStatus::is_success) {
-        return Err(non_zero_error(TerraformCommand::Plan, plan_output));
+    use super::{
+        CancellationToken, ExecutionEvent, ExecutionPhase, OpenOptions, OsString, Path, PathBuf,
+        ProcessRunner, ProcessStatus, SystemTime, TerraformCommand, TerraformExecutionError,
+        TerraformExecutionErrorKind, UNIX_EPOCH, env, fs, interrupted_error, io, non_zero_error,
+        run_command_with_events,
+    };
+
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt;
+
+    #[derive(Debug)]
+    pub(crate) enum PlanTestError {
+        Terraform(TerraformExecutionError),
+        Cleanup { message: String },
     }
 
-    phase_sink(ExecutionPhase::Reading);
-    read_plan(root, plan_path, cancellation, runner)
-}
-
-#[cfg(test)]
-fn finish_plan(
-    temporary_plan: TemporaryPlan,
-    result: Result<Plan, TerraformExecutionError>,
-) -> Result<Plan, TerraformExecutionError> {
-    match temporary_plan.cleanup() {
-        Ok(()) => result,
-        Err(error) => match result {
-            Ok(_) => Err(TerraformExecutionError::new(
-                TerraformExecutionErrorKind::Cleanup {
-                    message: error.to_string(),
-                },
-            )),
-            Err(execution_error) => Err(execution_error.with_cleanup_error(&error)),
-        },
+    impl From<TerraformExecutionError> for PlanTestError {
+        fn from(error: TerraformExecutionError) -> Self {
+            Self::Terraform(error)
+        }
     }
-}
 
-#[cfg(test)]
-fn plan_arguments(plan_path: &Path) -> Vec<OsString> {
-    let mut output = OsString::from("-out=");
-    output.push(plan_path.as_os_str());
-    vec![
-        OsString::from("plan"),
-        OsString::from("-input=false"),
-        OsString::from("-json"),
-        output,
-    ]
-}
+    impl Display for PlanTestError {
+        fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Self::Terraform(error) => Display::fmt(error, formatter),
+                Self::Cleanup { message } => write!(
+                    formatter,
+                    "failed to remove the temporary Terraform plan: {message}"
+                ),
+            }
+        }
+    }
 
-#[cfg(test)]
-struct TemporaryPlan {
-    path: PathBuf,
-}
+    impl std::error::Error for PlanTestError {}
 
-#[cfg(test)]
-impl TemporaryPlan {
-    fn create() -> io::Result<Self> {
-        let directory = env::temp_dir();
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let process_id = std::process::id();
-
-        for attempt in 0..100 {
-            let path = directory.join(format!(
-                "terracotta-{process_id}-{timestamp}-{attempt}.tfplan"
-            ));
-            let mut options = OpenOptions::new();
-            options.write(true).create_new(true);
-            #[cfg(unix)]
-            options.mode(0o600);
-            match options.open(&path) {
-                Ok(_) => return Ok(Self { path }),
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-                Err(error) => return Err(error),
+    impl PlanTestError {
+        pub(crate) const fn kind(&self) -> &TerraformExecutionErrorKind {
+            match self {
+                Self::Terraform(error) => error.kind(),
+                Self::Cleanup { .. } => panic!("cleanup errors have no Terraform error kind"),
             }
         }
 
-        Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            "could not allocate a unique Terraform plan path",
-        ))
+        pub(crate) fn cleanup_error(&self) -> Option<&str> {
+            match self {
+                Self::Terraform(error) => error.cleanup_error(),
+                Self::Cleanup { .. } => None,
+            }
+        }
     }
 
-    fn cleanup(self) -> io::Result<()> {
-        match fs::remove_file(self.path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error),
+    pub(crate) fn run_plan(
+        root: &Path,
+        cancellation: &CancellationToken,
+        runner: &dyn ProcessRunner,
+        event_sink: &mut dyn FnMut(ExecutionEvent),
+        phase_sink: &mut dyn FnMut(ExecutionPhase),
+    ) -> Result<Plan, PlanTestError> {
+        let temporary_plan = TemporaryPlan::create().map_err(|error| {
+            TerraformExecutionError::new(TerraformExecutionErrorKind::TemporaryPlan {
+                message: error.to_string(),
+            })
+        })?;
+        let result = execute_plan(
+            root,
+            &temporary_plan.path,
+            cancellation,
+            runner,
+            event_sink,
+            phase_sink,
+        );
+
+        finish_plan(temporary_plan, result)
+    }
+
+    pub(crate) fn execute_plan(
+        root: &Path,
+        plan_path: &Path,
+        cancellation: &CancellationToken,
+        runner: &dyn ProcessRunner,
+        event_sink: &mut dyn FnMut(ExecutionEvent),
+        phase_sink: &mut dyn FnMut(ExecutionPhase),
+    ) -> Result<Plan, TerraformExecutionError> {
+        let plan_arguments = plan_arguments(plan_path);
+        let plan_output = run_command_with_events(
+            root,
+            TerraformCommand::Plan,
+            &plan_arguments,
+            cancellation,
+            runner,
+            Some(event_sink),
+        )?;
+        if plan_output.interrupted {
+            return Err(interrupted_error(TerraformCommand::Plan, plan_output));
+        }
+        if !plan_output.status.is_some_and(ProcessStatus::is_success) {
+            return Err(non_zero_error(TerraformCommand::Plan, plan_output));
+        }
+
+        phase_sink(ExecutionPhase::Reading);
+        super::super::show::test_support::read_plan(root, plan_path, cancellation, runner)
+    }
+
+    pub(crate) fn finish_plan(
+        temporary_plan: TemporaryPlan,
+        result: Result<Plan, TerraformExecutionError>,
+    ) -> Result<Plan, PlanTestError> {
+        match temporary_plan.cleanup() {
+            Ok(()) => result.map_err(PlanTestError::from),
+            Err(error) => match result {
+                Ok(_) => Err(PlanTestError::Cleanup {
+                    message: error.to_string(),
+                }),
+                Err(execution_error) => Err(PlanTestError::Terraform(
+                    execution_error.with_cleanup_error(&error),
+                )),
+            },
+        }
+    }
+
+    fn plan_arguments(plan_path: &Path) -> Vec<OsString> {
+        let mut output = OsString::from("-out=");
+        output.push(plan_path.as_os_str());
+        vec![
+            OsString::from("plan"),
+            OsString::from("-input=false"),
+            OsString::from("-json"),
+            output,
+        ]
+    }
+
+    pub(crate) struct TemporaryPlan {
+        pub(crate) path: PathBuf,
+    }
+
+    impl TemporaryPlan {
+        pub(crate) fn create() -> io::Result<Self> {
+            let directory = env::temp_dir();
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            let process_id = std::process::id();
+
+            for attempt in 0..100 {
+                let path = directory.join(format!(
+                    "terracotta-{process_id}-{timestamp}-{attempt}.tfplan"
+                ));
+                let mut options = OpenOptions::new();
+                options.write(true).create_new(true);
+                #[cfg(unix)]
+                options.mode(0o600);
+                match options.open(&path) {
+                    Ok(_) => return Ok(Self { path }),
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                    Err(error) => return Err(error),
+                }
+            }
+
+            Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "could not allocate a unique Terraform plan path",
+            ))
+        }
+
+        pub(crate) fn cleanup(self) -> io::Result<()> {
+            match fs::remove_file(self.path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error),
+            }
         }
     }
 }
@@ -473,8 +521,10 @@ mod tests {
     use crate::app::execution::{ResourceEvent, ResourceEventKind};
 
     use super::super::command::{ProcessOutput, ProcessOutputChunk, RunningProcess};
+    use super::test_support::{TemporaryPlan, execute_plan, finish_plan, run_plan};
     use super::*;
     use crate::app::execution::{EventStream, ProcessExitStatus, ProcessTermination};
+    use crate::app::plan::Plan;
     use std::process::Command;
 
     fn execute_plan_without_events(
@@ -719,7 +769,7 @@ mod tests {
         runner: &FakeRunner,
         temporary_plan: TemporaryPlan,
         cancellation: &CancellationToken,
-    ) -> Result<Plan, TerraformExecutionError> {
+    ) -> Result<Plan, test_support::PlanTestError> {
         let result = execute_plan_without_events(
             Path::new("/root with spaces"),
             &temporary_plan.path,
@@ -1204,10 +1254,12 @@ mod tests {
         let error = run_fake(&runner, temporary_plan, &cancellation)
             .expect_err("cleanup of a directory should fail");
 
-        assert!(matches!(
-            error.kind(),
-            TerraformExecutionErrorKind::Cleanup { .. }
-        ));
+        assert!(matches!(error, test_support::PlanTestError::Cleanup { .. }));
+        assert!(
+            error
+                .to_string()
+                .starts_with("failed to remove the temporary Terraform plan: ")
+        );
         assert!(plan_path.is_dir());
         fs::remove_dir(plan_path).expect("test plan directory should be removed");
         fs::remove_dir(directory).expect("test directory should be empty");

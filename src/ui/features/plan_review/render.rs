@@ -593,7 +593,7 @@ mod tests {
         let now = Instant::now();
         let mut session = SessionState::new(ExecutionState::with_context(
             now,
-            ExecutionContext::loading("/project", "unavailable"),
+            ExecutionContext::loading("/project"),
         ));
         update(
             &mut session,

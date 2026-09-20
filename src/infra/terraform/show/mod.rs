@@ -17,10 +17,6 @@ mod json;
 mod metadata;
 mod text;
 
-#[cfg(test)]
-use crate::app::plan::Plan;
-#[cfg(test)]
-use json::parse_plan_json_bytes;
 use metadata::parse_metadata;
 use text::parse_document;
 
@@ -77,17 +73,6 @@ pub(super) fn read_review(
     Ok((document, metadata))
 }
 
-#[cfg(test)]
-pub(super) fn read_plan(
-    root: &Path,
-    plan_path: &Path,
-    cancellation: &CancellationToken,
-    runner: &dyn ProcessRunner,
-) -> Result<Plan, TerraformExecutionError> {
-    let output = run_show(root, plan_path, true, cancellation, runner)?;
-    parse_plan_json_bytes(&output.output.stdout).map_err(invalid_plan)
-}
-
 fn run_show(
     root: &Path,
     plan_path: &Path,
@@ -129,4 +114,23 @@ fn show_arguments(plan_path: &Path, json: bool) -> Vec<OsString> {
     arguments.push(OsString::from(if json { "-json" } else { "-no-color" }));
     arguments.push(plan_path.as_os_str().to_owned());
     arguments
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use crate::app::plan::Plan;
+
+    use super::{
+        CancellationToken, Path, ProcessRunner, TerraformExecutionError, invalid_plan, run_show,
+    };
+
+    pub(crate) fn read_plan(
+        root: &Path,
+        plan_path: &Path,
+        cancellation: &CancellationToken,
+        runner: &dyn ProcessRunner,
+    ) -> Result<Plan, TerraformExecutionError> {
+        let output = run_show(root, plan_path, true, cancellation, runner)?;
+        super::json::parse_plan_json_bytes(&output.output.stdout).map_err(invalid_plan)
+    }
 }
