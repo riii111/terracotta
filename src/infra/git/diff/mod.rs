@@ -146,12 +146,6 @@ impl GitDiff {
         self.comparison.compare_ref.as_deref()
     }
 
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn resolved_commit(&self) -> Option<&str> {
-        self.comparison.resolved_commit.as_deref()
-    }
-
     #[must_use]
     pub(crate) fn head_commit(&self) -> Option<&str> {
         self.comparison.head_commit.as_deref()
@@ -957,7 +951,10 @@ mod tests {
             result.after()[0].source(),
             "resource \"example\" \"one\" {\n  value = \"feature\"\n}\n"
         );
-        assert_eq!(result.resolved_commit(), result.merge_base());
+        assert_eq!(
+            result.comparison.resolved_commit.as_deref(),
+            result.merge_base()
+        );
         assert!(result.head_commit().is_some());
         assert_eq!(result.changed_lines().len(), 2);
         assert_eq!(result.changed_lines()[0].range(), SourceRange::new(2, 2));
@@ -978,7 +975,7 @@ mod tests {
                 if reference == "missing" && !message.is_empty()
         ));
         assert_eq!(result.compare_ref(), Some("missing"));
-        assert!(result.resolved_commit().is_none());
+        assert!(result.comparison.resolved_commit.is_none());
         assert!(result.head_commit().is_some());
     }
 
@@ -1004,7 +1001,7 @@ mod tests {
                     && message.contains("refs/tags/compare")
         ));
         assert_eq!(result.compare_ref(), Some("compare"));
-        assert!(result.resolved_commit().is_none());
+        assert!(result.comparison.resolved_commit.is_none());
         assert!(result.head_commit().is_some());
     }
 
@@ -1193,7 +1190,7 @@ mod tests {
             GitDiffStatus::CompareRefUnavailable { reference, message }
                 if reference == "CUSTOM_HEAD" && !message.is_empty()
         ));
-        assert!(result.resolved_commit().is_none());
+        assert!(result.comparison.resolved_commit.is_none());
         assert!(result.head_commit().is_some());
     }
 
@@ -1214,7 +1211,7 @@ mod tests {
             GitDiffStatus::NoCommonAncestor { reference, message }
                 if reference == "root" && !message.is_empty()
         ));
-        assert!(result.resolved_commit().is_some());
+        assert!(result.comparison.resolved_commit.is_some());
         assert!(result.head_commit().is_some());
         assert!(result.merge_base().is_none());
     }
@@ -1254,7 +1251,7 @@ mod tests {
                 message,
             } if reference == "branch-a" && merge_bases.len() == 2 && !message.is_empty()
         ));
-        assert!(result.resolved_commit().is_some());
+        assert!(result.comparison.resolved_commit.is_some());
         assert!(result.head_commit().is_some());
         assert!(result.merge_base().is_none());
     }

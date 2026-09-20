@@ -396,14 +396,14 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
 mod tests {
     use std::path::PathBuf;
 
-    use super::super::review::PlanDocument;
+    use super::super::review::test_support::plan_document;
     use super::*;
 
     fn review() -> PlanReview {
         PlanReview::new(
             PathBuf::from("/project"),
             "default".to_owned(),
-            PlanDocument::new("No changes.\n".to_owned()),
+            plan_document("No changes.\n".to_owned()),
             PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
             Vec::new(),
         )
@@ -413,7 +413,7 @@ mod tests {
         PlanReview::new(
             PathBuf::from("/project"),
             "default".to_owned(),
-            PlanDocument::new("Terraform will perform actions.\n".to_owned()),
+            plan_document("Terraform will perform actions.\n".to_owned()),
             PlanMetadata::new(Vec::new(), Vec::new(), 0, 1, 0, true),
             Vec::new(),
         )
