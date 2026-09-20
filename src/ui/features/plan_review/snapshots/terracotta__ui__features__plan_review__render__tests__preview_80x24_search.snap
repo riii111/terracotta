@@ -12,7 +12,7 @@ expression: buffer_text(buffer)
  │  # terraform_data.api will be updated in-place                            █│
  │  ~ resource "terraform_data" "api" {                                      █│
  │      id       = "api-20260920"                                            █│
- │      ~ input  = "before" -> "after"                                       ││
+ │      ~ input  = "before" -> "after"                                       █│
  │      # (4 unchanged attributes hidden)                                    ││
  │    }                                                                      ││
  │                                                                           ││
@@ -22,6 +22,6 @@ expression: buffer_text(buffer)
  │      - old_checksum = "sha256:0123456789abcdef0123456789abcdef0123456789ab││
  │      + new_checksum = (known after apply)                                 ││
  │    }                                                                      ││
- │←█████████████████████████████████─────────────────────────────────────────→│
+ │←════════════════════════════════════════════════════════════──────────────→│
  └────────────────────────────────────────────────────────────────────────────┘
  Enter confirm | Esc cancel | Ctrl-A/Ctrl-E move

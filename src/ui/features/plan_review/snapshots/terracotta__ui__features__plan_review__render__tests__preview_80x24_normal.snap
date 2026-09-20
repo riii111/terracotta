@@ -11,8 +11,8 @@ expression: buffer_text(buffer)
  │  # terraform_data.api will be updated in-place                            █│
  │  ~ resource "terraform_data" "api" {                                      █│
  │      id       = "api-20260920"                                            █│
- │      ~ input  = "before" -> "after"                                       ││
- │      # (4 unchanged attributes hidden)                                    ││
+ │      ~ input  = "before" -> "after"                                       █│
+ │      # (4 unchanged attributes hidden)                                    █│
  │    }                                                                      ││
  │                                                                           ││
  │  # terraform_data.worker must be replaced                                 ││
@@ -22,6 +22,6 @@ expression: buffer_text(buffer)
  │      + new_checksum = (known after apply)                                 ││
  │    }                                                                      ││
  │                                                                           ││
- │←█████████████████████████████████─────────────────────────────────────────→│
+ │←════════════════════════════════════════════════════════════──────────────→│
  └────────────────────────────────────────────────────────────────────────────┘
  ↑/↓/←/→ scroll | / search | y yank | a apply | q quit
