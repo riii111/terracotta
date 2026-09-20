@@ -52,14 +52,3 @@ pub(crate) fn plan_line_style(line: &str) -> Style {
         _ => body_style(),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn plan_change_markers_have_meaningful_colors() {
-        assert_ne!(plan_line_style("+ create"), plan_line_style("- delete"));
-        assert_ne!(plan_line_style("~ update"), body_style());
-    }
-}

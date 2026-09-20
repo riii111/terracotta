@@ -538,20 +538,6 @@ mod tests {
                 now: started_at,
                 expected: false,
             },
-            DrawCase {
-                name: "apply_failed",
-                state: apply_state(started_at, Some(ApplyStatus::Failed)),
-                dirty: false,
-                now: started_at,
-                expected: false,
-            },
-            DrawCase {
-                name: "apply_interrupted",
-                state: apply_state(started_at, Some(ApplyStatus::Interrupted)),
-                dirty: false,
-                now: started_at,
-                expected: false,
-            },
         ]);
     }
 

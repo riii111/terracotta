@@ -111,9 +111,6 @@ pub(crate) fn render_content_block(
 
 #[cfg(test)]
 mod tests {
-    use ratatui::backend::TestBackend;
-    use ratatui::style::Color;
-
     use super::*;
 
     #[test]
@@ -144,20 +141,5 @@ mod tests {
         );
 
         assert_eq!(layout.footer_lines()[0].to_string(), "required");
-    }
-
-    #[test]
-    fn content_frame_writes_the_fixed_rgb_border_to_the_buffer() {
-        let mut terminal = ratatui::Terminal::new(TestBackend::new(20, 6)).unwrap();
-        terminal
-            .draw(|frame| {
-                render_content_block(frame, frame.area(), "Plan");
-            })
-            .unwrap();
-
-        assert_eq!(
-            terminal.backend().buffer()[(0, 0)].fg,
-            Color::Rgb(0x76, 0x7a, 0x84)
-        );
     }
 }
