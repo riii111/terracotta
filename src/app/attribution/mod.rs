@@ -480,57 +480,101 @@ mod tests {
         )
     }
 
-    #[test]
-    fn create_matches_changed_lines_inside_after_block() {
-        let changes = [change("aws_instance.api", ResourceChangeKind::Create)];
-        let sources = [source_file(
-            "main.tf",
-            SourceSide::After,
-            vec![location(
-                "aws_instance",
-                "api",
-                "main.tf",
-                SourceSide::After,
-                10,
-                20,
-            )],
-            Vec::new(),
-        )];
-        let changed_lines = [changed_line("main.tf", SourceSide::After, 20, 20)];
-
-        let result = attribute_changes(&changes, &sources, &changed_lines);
-
-        assert_eq!(result[0].status(), AttributionStatus::Direct);
-        assert_eq!(result[0].evidence().len(), 1);
-        assert_eq!(result[0].evidence()[0].path(), Path::new("main.tf"));
-        assert_eq!(result[0].evidence()[0].side(), SourceSide::After);
-        assert_eq!(result[0].evidence()[0].range(), SourceRange::new(10, 20));
-        assert!(result[0].analysis().is_complete());
-        assert!(!result[0].needs_review());
+    struct AttributionCase {
+        name: &'static str,
+        address: &'static str,
+        kind: ResourceChangeKind,
+        resource_type: &'static str,
+        resource_name: &'static str,
+        side: SourceSide,
+        start_line: usize,
+        end_line: usize,
+        changed_start_line: usize,
+        changed_end_line: usize,
     }
 
     #[test]
-    fn delete_matches_changed_lines_inside_before_block() {
-        let changes = [change("aws_instance.old", ResourceChangeKind::Delete)];
-        let sources = [source_file(
-            "main.tf",
-            SourceSide::Before,
-            vec![location(
-                "aws_instance",
-                "old",
+    fn create_and_delete_match_changed_lines_inside_their_source_blocks() {
+        let cases = [
+            AttributionCase {
+                name: "create_after",
+                address: "aws_instance.api",
+                kind: ResourceChangeKind::Create,
+                resource_type: "aws_instance",
+                resource_name: "api",
+                side: SourceSide::After,
+                start_line: 10,
+                end_line: 20,
+                changed_start_line: 20,
+                changed_end_line: 20,
+            },
+            AttributionCase {
+                name: "delete_before",
+                address: "aws_instance.old",
+                kind: ResourceChangeKind::Delete,
+                resource_type: "aws_instance",
+                resource_name: "old",
+                side: SourceSide::Before,
+                start_line: 2,
+                end_line: 4,
+                changed_start_line: 2,
+                changed_end_line: 2,
+            },
+        ];
+
+        for case in cases {
+            let changes = [change(case.address, case.kind)];
+            let sources = [source_file(
                 "main.tf",
-                SourceSide::Before,
-                2,
-                4,
-            )],
-            Vec::new(),
-        )];
-        let changed_lines = [changed_line("main.tf", SourceSide::Before, 2, 2)];
+                case.side,
+                vec![location(
+                    case.resource_type,
+                    case.resource_name,
+                    "main.tf",
+                    case.side,
+                    case.start_line,
+                    case.end_line,
+                )],
+                Vec::new(),
+            )];
+            let changed_lines = [changed_line(
+                "main.tf",
+                case.side,
+                case.changed_start_line,
+                case.changed_end_line,
+            )];
 
-        let result = attribute_changes(&changes, &sources, &changed_lines);
+            let result = attribute_changes(&changes, &sources, &changed_lines);
+            let attribution = &result[0];
 
-        assert_eq!(result[0].status(), AttributionStatus::Direct);
-        assert_eq!(result[0].evidence()[0].side(), SourceSide::Before);
+            assert_eq!(
+                attribution.status(),
+                AttributionStatus::Direct,
+                "case: {}",
+                case.name
+            );
+            assert_eq!(attribution.evidence().len(), 1, "case: {}", case.name);
+            assert_eq!(
+                attribution.evidence()[0].path(),
+                Path::new("main.tf"),
+                "case: {}",
+                case.name
+            );
+            assert_eq!(
+                attribution.evidence()[0].side(),
+                case.side,
+                "case: {}",
+                case.name
+            );
+            assert_eq!(
+                attribution.evidence()[0].range(),
+                SourceRange::new(case.start_line, case.end_line),
+                "case: {}",
+                case.name
+            );
+            assert!(attribution.analysis().is_complete(), "case: {}", case.name);
+            assert!(!attribution.needs_review(), "case: {}", case.name);
+        }
     }
 
     #[test]

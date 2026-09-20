@@ -280,9 +280,9 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
             let SessionState::ApplyConfirmation(confirmation) = state else {
                 return None;
             };
-            let review = confirmation.review.clone();
-            let context = ExecutionContext::loading(review.root().display().to_string())
-                .with_workspace(review.workspace());
+            let context =
+                ExecutionContext::loading(confirmation.review.root().display().to_string())
+                    .with_workspace(confirmation.review.workspace().to_owned());
             *state = SessionState::Apply(Box::new(ExecutionState::applying(now, context)));
             Some(Effect::StartApply)
         }

@@ -771,12 +771,6 @@ mod tests {
         }
     }
 
-    impl AttributeDiffs {
-        fn total_count(&self) -> usize {
-            self.changed_count + self.unchanged_count
-        }
-    }
-
     fn plan_value(value: Value) -> PlanValue {
         match value {
             Value::Null => PlanValue::Null,
@@ -1109,7 +1103,6 @@ mod tests {
 
         let diffs = diff_resource_attributes(&change);
 
-        assert_eq!(diffs.total_count(), 2);
         assert_eq!(diffs.changed_count, 1);
         assert_eq!(diffs.unchanged_count, 1);
         assert_eq!(diffs.replace_paths, change.replace_paths);

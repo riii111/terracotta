@@ -50,15 +50,11 @@ fn split_blocks(
             section_boundaries.push(line);
         }
         if in_output_section {
-            if let Some(index) = output_header(text, &output_indices)
-                && let Some(name) = output_names.get(index)
-            {
-                candidates.push((line, PlanBlockKind::Output(name.clone())));
+            if output_header(text, &output_indices).is_some() {
+                candidates.push((line, PlanBlockKind::Output));
             }
-        } else if let Some(index) = resource_header(text, &resource_indices)
-            && let Some(address) = resource_addresses.get(index)
-        {
-            candidates.push((line, PlanBlockKind::Resource(address.clone())));
+        } else if resource_header(text, &resource_indices).is_some() {
+            candidates.push((line, PlanBlockKind::Resource));
         }
         heredoc_terminator = heredoc_start(text);
     }
@@ -75,12 +71,12 @@ fn split_blocks(
         let end = block_end(
             lines.len(),
             *start,
-            kind,
+            *kind,
             candidates.get(index + 1),
             &section_boundaries,
         );
         if *start < end {
-            push_block(&mut blocks, *start..end, kind.clone());
+            push_block(&mut blocks, *start..end, *kind);
             cursor = end;
         }
     }
@@ -109,7 +105,7 @@ fn push_block(blocks: &mut Vec<PlanBlock>, lines: Range<usize>, kind: PlanBlockK
 fn block_end(
     line_count: usize,
     start: usize,
-    kind: &PlanBlockKind,
+    kind: PlanBlockKind,
     next_candidate: Option<&(usize, PlanBlockKind)>,
     section_boundaries: &[usize],
 ) -> usize {
@@ -117,13 +113,12 @@ fn block_end(
         .filter(|(_, candidate_kind)| {
             matches!(
                 (kind, candidate_kind),
-                (PlanBlockKind::Resource(_), PlanBlockKind::Resource(_))
-                    | (PlanBlockKind::Output(_), PlanBlockKind::Output(_))
+                (PlanBlockKind::Resource, PlanBlockKind::Resource)
+                    | (PlanBlockKind::Output, PlanBlockKind::Output)
             )
         })
         .map(|(line, _)| *line);
-    let section_boundary = if matches!(kind, PlanBlockKind::Resource(_) | PlanBlockKind::Output(_))
-    {
+    let section_boundary = if matches!(kind, PlanBlockKind::Resource | PlanBlockKind::Output) {
         section_boundaries
             .get(section_boundaries.partition_point(|line| *line <= start))
             .copied()

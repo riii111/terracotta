@@ -547,25 +547,13 @@ End of synthetic plan body."#;
                 PLAN_TEXT.to_owned(),
                 vec![
                     PlanBlock::new(0..2, PlanBlockKind::Common),
-                    PlanBlock::new(
-                        2..8,
-                        PlanBlockKind::Resource("terraform_data.api".to_owned()),
-                    ),
+                    PlanBlock::new(2..8, PlanBlockKind::Resource),
                     PlanBlock::new(8..9, PlanBlockKind::Common),
-                    PlanBlock::new(
-                        9..15,
-                        PlanBlockKind::Resource("terraform_data.worker".to_owned()),
-                    ),
+                    PlanBlock::new(9..15, PlanBlockKind::Resource),
                     PlanBlock::new(15..16, PlanBlockKind::Common),
-                    PlanBlock::new(
-                        16..20,
-                        PlanBlockKind::Resource("terraform_data.old".to_owned()),
-                    ),
+                    PlanBlock::new(16..20, PlanBlockKind::Resource),
                     PlanBlock::new(20..21, PlanBlockKind::Common),
-                    PlanBlock::new(
-                        21..26,
-                        PlanBlockKind::Resource("terraform_data.new".to_owned()),
-                    ),
+                    PlanBlock::new(21..26, PlanBlockKind::Resource),
                     PlanBlock::new(26..43, PlanBlockKind::Common),
                 ],
             ),

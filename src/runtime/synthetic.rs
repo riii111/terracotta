@@ -105,7 +105,7 @@ fn synthetic_review() -> ReviewSessionState {
                 PlanBlock::new(0..2, PlanBlockKind::Common),
                 PlanBlock::new(
                     2..7,
-                    PlanBlockKind::Resource("terraform_data.example".to_owned()),
+                    PlanBlockKind::Resource,
                 ),
                 PlanBlock::new(7..10, PlanBlockKind::Common),
             ],
