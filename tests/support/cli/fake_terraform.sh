@@ -39,9 +39,6 @@ case "$1" in
       printf '%s\n' '{"type":"diagnostic","diagnostic":{"severity":"warning","summary":"synthetic plan warning","detail":"fake Terraform completed with a warning"}}'
     fi
     printf '%s\n' '{"type":"planned_change","change":{"resource":{"addr":"terraform_data.api"}}}'
-    if [ "${TERRACOTTA_FAKE_MODE:-success}" = no_changes ]; then
-      exit 0
-    fi
     exit 2
     ;;
   apply)

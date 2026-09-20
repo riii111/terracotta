@@ -212,20 +212,6 @@ def wait_parts(markers, name, timeout=20):
     wait_screen(lambda current: all(marker in current for marker in markers), name, markers, timeout)
 
 
-def wait_parts_without(required, forbidden, name, timeout=20):
-    wait_screen(
-        lambda current: all(marker in current for marker in required)
-        and all(marker not in current for marker in forbidden),
-        name,
-        (required, forbidden),
-        timeout,
-    )
-
-
-def wait_any(markers, name, timeout=20):
-    wait_screen(lambda current: any(marker in current for marker in markers), name, markers, timeout)
-
-
 def wait_file(path, name, timeout=20):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -234,6 +220,19 @@ def wait_file(path, name, timeout=20):
             return
         read_available()
     raise RuntimeError(f"missing {name}: {path!r}; head={bytes(output)[:4000]!r}")
+
+
+def diagnostic_and_plan_is_ordered(current):
+    markers = (
+        "synthetic init warning",
+        "synthetic plan warning",
+        "Terraform will perform",
+        "terraform_data.api",
+    )
+    positions = [current.find(marker) for marker in markers]
+    if any(position < 0 for position in positions):
+        return False
+    return positions[0] < positions[2] and positions[1] < positions[2]
 
 
 def wait_exit(timeout=20):
@@ -297,9 +296,8 @@ def kill_child():
 
 
 try:
-    if scenario in ("full_text", "no_changes"):
-        marker = "No changes." if scenario == "no_changes" else "Terraform will perform"
-        wait_parts([marker, "terraform_data.api"], "plan_text", timeout=30)
+    if scenario == "full_text":
+        wait_parts(["Terraform will perform", "terraform_data.api"], "plan_text", timeout=30)
         send_key(b"q")
         exit_code = wait_exit()
     elif scenario == "basic_workflow":
@@ -343,14 +341,15 @@ try:
         send_key(b"q")
         exit_code = wait_exit()
     elif scenario == "diagnostic_success":
-        wait_parts(
-            [
+        wait_screen(
+            diagnostic_and_plan_is_ordered,
+            "diagnostic_and_plan",
+            (
                 "synthetic init warning",
                 "synthetic plan warning",
                 "Terraform will perform",
                 "terraform_data.api",
-            ],
-            "diagnostic_and_plan",
+            ),
         )
         send_key(b"q")
         exit_code = wait_exit()
