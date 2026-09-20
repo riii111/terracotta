@@ -1,6 +1,7 @@
 mod apply;
 mod command;
 mod events;
+mod line_buffer;
 // HCL parsing is dormant with Git attribution and remains covered by unit tests.
 #[cfg(test)]
 #[allow(
