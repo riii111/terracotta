@@ -10,7 +10,7 @@ use ratatui::{
 
 use crate::app::{
     execution::DiagnosticSeverity,
-    review::PlanReview,
+    review::{FilteredPlan, PlanReview},
     session::{ApplyConfirmationState, ReviewSessionState},
 };
 use crate::ui::primitives::{atoms::scrollbar, molecules::terminal_notice};
@@ -23,6 +23,11 @@ const MIN_WIDTH: u16 = 24;
 const MIN_HEIGHT: u16 = 6;
 const FLASH_BACKGROUND: Color = Color::Rgb(0xf4, 0x9e, 0x4c);
 const FLASH_FOREGROUND: Color = Color::Rgb(0x11, 0x14, 0x19);
+
+struct PreparedContent<'a> {
+    lines: Vec<Line<'a>>,
+    max_width: usize,
+}
 
 pub(crate) struct PlanReviewLayout {
     shell: shell_layout::ShellLayout,
@@ -61,6 +66,16 @@ impl PlanReviewLayout {
 }
 
 pub(crate) fn layout(area: Rect, searching: bool, state: &ReviewSessionState) -> PlanReviewLayout {
+    let content = prepare_content(state);
+    layout_with_content(area, searching, state, &content)
+}
+
+fn layout_with_content(
+    area: Rect,
+    searching: bool,
+    state: &ReviewSessionState,
+    content: &PreparedContent<'_>,
+) -> PlanReviewLayout {
     let panel = shell_layout::centered_area(area);
     let footer_lines = footer::layout(
         footer_items(searching, state.review().metadata().applyable()),
@@ -83,8 +98,8 @@ pub(crate) fn layout(area: Rect, searching: bool, state: &ReviewSessionState) ->
         inner.width,
         inner.height.saturating_sub(search_height),
     );
-    let lines = review_lines_for_limits(state);
-    let (vertical_scrollbar, horizontal_scrollbar) = scrollbar_reservations(&lines, available);
+    let (vertical_scrollbar, horizontal_scrollbar) =
+        scrollbar_reservations(content.lines.len(), content.max_width, available);
     let body = Rect::new(
         available.x,
         available.y,
@@ -95,7 +110,7 @@ pub(crate) fn layout(area: Rect, searching: bool, state: &ReviewSessionState) ->
             .height
             .saturating_sub(u16::from(horizontal_scrollbar)),
     );
-    let (max_vertical, max_horizontal) = limits(&lines, body);
+    let (max_vertical, max_horizontal) = limits(content.lines.len(), content.max_width, body);
     PlanReviewLayout {
         shell,
         body,
@@ -183,7 +198,8 @@ pub(crate) fn render(
         return;
     }
 
-    let layout = layout(area, view.searching(), state);
+    let content = prepare_content(state);
+    let layout = layout_with_content(area, view.searching(), state, &content);
     if layout.body().width == 0 || layout.body().height == 0 {
         terminal_notice::render_wrapped(
             frame,
@@ -217,19 +233,20 @@ pub(crate) fn render(
         );
     }
 
-    let lines = review_lines(state);
+    let line_count = content.lines.len();
+    let max_line_width = content.max_width;
     let max_vertical = layout.max_vertical();
     let max_horizontal = layout.max_horizontal();
     let (vertical, horizontal) = view.scroll();
     let vertical = vertical.min(max_vertical);
     let horizontal = horizontal.min(max_horizontal);
     let lines = if state.copy_flash_active(now) {
-        flash_lines(lines)
+        flash_lines(content.lines)
     } else {
-        lines
+        content.lines
     };
     frame.render_widget(
-        Paragraph::new(lines.clone())
+        Paragraph::new(lines)
             .style(theme::body_style())
             .scroll((vertical, horizontal)),
         layout.body(),
@@ -253,7 +270,7 @@ pub(crate) fn render(
         scrollbar::render_vertical(
             frame,
             scrollbar_area,
-            lines.len(),
+            line_count,
             usize::from(body.height),
             usize::from(vertical),
         );
@@ -262,7 +279,7 @@ pub(crate) fn render(
         scrollbar::render_horizontal(
             frame,
             scrollbar_area,
-            max_line_width(&lines),
+            max_line_width,
             usize::from(body.width),
             usize::from(horizontal),
         );
@@ -274,37 +291,41 @@ pub(crate) fn render(
     );
 }
 
-fn review_lines(state: &ReviewSessionState) -> Vec<Line<'static>> {
+fn prepare_content(state: &ReviewSessionState) -> PreparedContent<'_> {
     let review = state.review();
+    let filtered = review.filtered_document();
+    let lines = review_lines(review, &filtered);
+    let max_width = max_line_width(&lines);
+    PreparedContent { lines, max_width }
+}
+
+fn review_lines<'a>(review: &'a PlanReview, filtered: &FilteredPlan<'a>) -> Vec<Line<'a>> {
     let mut lines = diagnostic_lines(review);
-    if review.matching_block_count() == 0 && !review.search_query().is_empty() {
+    if filtered.matching_blocks() == 0 && !review.search_query().is_empty() {
         lines.push(Line::from(Span::styled(
             "No matches.",
             theme::warning_style(),
         )));
         lines.push(Line::default());
     }
-    lines.extend(visible_plan_lines(review));
+    lines.extend(visible_plan_lines(review, filtered));
     lines
 }
 
-fn diagnostic_lines(review: &PlanReview) -> Vec<Line<'static>> {
+fn diagnostic_lines(review: &PlanReview) -> Vec<Line<'_>> {
     let mut lines = Vec::new();
     for diagnostic in review.diagnostics() {
         let style = match diagnostic.severity {
             DiagnosticSeverity::Error => theme::error_style(),
             _ => theme::warning_style(),
         };
-        lines.push(Line::from(Span::styled(
-            format!(
-                "{}: {}",
-                severity_label(diagnostic.severity),
-                diagnostic.summary
-            ),
-            style,
-        )));
-        if let Some(detail) = &diagnostic.detail {
-            lines.extend(detail.lines().map(|line| Line::from(line.to_owned())));
+        lines.push(Line::from(vec![
+            Span::styled(severity_label(diagnostic.severity), style),
+            Span::styled(": ", style),
+            Span::styled(diagnostic.summary.as_str(), style),
+        ]));
+        if let Some(detail) = diagnostic.detail.as_deref() {
+            lines.extend(detail.lines().map(Line::from));
         }
     }
     if !lines.is_empty() && !review.document().text().is_empty() {
@@ -313,31 +334,28 @@ fn diagnostic_lines(review: &PlanReview) -> Vec<Line<'static>> {
     lines
 }
 
-fn plan_line(line: &str, query: &str) -> Line<'static> {
+fn plan_line<'a>(line: &'a str, query: &str) -> Line<'a> {
     if query.is_empty() {
-        return Line::from(Span::styled(line.to_owned(), theme::plan_line_style(line)));
+        return Line::from(Span::styled(line, theme::plan_line_style(line)));
     }
     let mut result = Line::default();
     let mut rest = line;
     while let Some(index) = rest.find(query) {
         let (before, matched_and_after) = rest.split_at(index);
         if !before.is_empty() {
-            result.push_span(Span::styled(
-                before.to_owned(),
-                theme::plan_line_style(line),
-            ));
+            result.push_span(Span::styled(before, theme::plan_line_style(line)));
         }
         let (matched, after) = matched_and_after.split_at(query.len());
-        result.push_span(Span::styled(matched.to_owned(), search_match_style()));
+        result.push_span(Span::styled(matched, search_match_style()));
         rest = after;
     }
     if !rest.is_empty() {
-        result.push_span(Span::styled(rest.to_owned(), theme::plan_line_style(line)));
+        result.push_span(Span::styled(rest, theme::plan_line_style(line)));
     }
     result
 }
 
-fn flash_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
+fn flash_lines(lines: Vec<Line<'_>>) -> Vec<Line<'static>> {
     let style = Style::default().fg(FLASH_FOREGROUND).bg(FLASH_BACKGROUND);
     lines
         .into_iter()
@@ -345,20 +363,17 @@ fn flash_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
         .collect()
 }
 
-fn limits(lines: &[Line<'static>], body: Rect) -> (u16, u16) {
+fn limits(line_count: usize, line_width: usize, body: Rect) -> (u16, u16) {
     let max_vertical =
-        u16::try_from(lines.len().saturating_sub(usize::from(body.height))).unwrap_or(u16::MAX);
+        u16::try_from(line_count.saturating_sub(usize::from(body.height))).unwrap_or(u16::MAX);
     let max_horizontal =
-        u16::try_from(max_line_width(lines).saturating_sub(usize::from(body.width)))
-            .unwrap_or(u16::MAX);
+        u16::try_from(line_width.saturating_sub(usize::from(body.width))).unwrap_or(u16::MAX);
     (max_vertical, max_horizontal)
 }
 
-fn scrollbar_reservations(lines: &[Line<'static>], area: Rect) -> (bool, bool) {
+fn scrollbar_reservations(line_count: usize, line_width: usize, area: Rect) -> (bool, bool) {
     let mut vertical = false;
     let mut horizontal = false;
-    let line_count = lines.len();
-    let line_width = max_line_width(lines);
     loop {
         let next_vertical =
             line_count > usize::from(area.height.saturating_sub(u16::from(horizontal)));
@@ -372,20 +387,10 @@ fn scrollbar_reservations(lines: &[Line<'static>], area: Rect) -> (bool, bool) {
     }
 }
 
-fn review_lines_for_limits(state: &ReviewSessionState) -> Vec<Line<'static>> {
-    let mut lines = diagnostic_lines(state.review());
-    if state.review().matching_block_count() == 0 && !state.review().search_query().is_empty() {
-        lines.push(Line::from("No matches."));
-        lines.push(Line::default());
-    }
-    lines.extend(visible_plan_lines(state.review()));
-    lines
-}
-
-fn visible_plan_lines(review: &PlanReview) -> Vec<Line<'static>> {
+fn visible_plan_lines<'a>(review: &'a PlanReview, filtered: &FilteredPlan<'a>) -> Vec<Line<'a>> {
     let query = review.search_query();
     let mut lines = Vec::new();
-    for line in review.visible_document_lines() {
+    for &line in filtered.lines() {
         if !query.is_empty() && line.starts_with("Plan:") {
             lines.push(Line::from(Span::styled(
                 "Plan total (full plan):",
@@ -397,7 +402,7 @@ fn visible_plan_lines(review: &PlanReview) -> Vec<Line<'static>> {
     lines
 }
 
-fn max_line_width(lines: &[Line<'static>]) -> usize {
+fn max_line_width(lines: &[Line<'_>]) -> usize {
     lines.iter().map(Line::width).max().unwrap_or(0)
 }
 
@@ -845,7 +850,8 @@ End of synthetic plan body."#;
         );
         review.set_search_query("api".to_owned());
 
-        let lines = visible_plan_lines(&review);
+        let filtered = review.filtered_document();
+        let lines = visible_plan_lines(&review, &filtered);
         assert_eq!(lines[0].to_string(), "Plan total (full plan):");
         assert_eq!(
             lines[1].to_string(),

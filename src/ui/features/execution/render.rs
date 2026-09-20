@@ -20,6 +20,11 @@ const STATUS_HEIGHT: u16 = 3;
 const FLASH_BACKGROUND: Color = Color::Rgb(0xf4, 0x9e, 0x4c);
 const FLASH_FOREGROUND: Color = Color::Rgb(0x11, 0x14, 0x19);
 
+struct PreparedContent<'a> {
+    lines: Vec<Line<'a>>,
+    max_width: usize,
+}
+
 pub(crate) fn render_execution_with_view(
     frame: &mut Frame<'_>,
     state: &ExecutionState,
@@ -27,7 +32,8 @@ pub(crate) fn render_execution_with_view(
     now: Instant,
 ) {
     let area = frame.area();
-    let layout = execution_layout(area, state);
+    let content = prepare_content(state);
+    let layout = execution_layout_with_content(area, state, &content);
     if area.width < MIN_WIDTH
         || area.height < MIN_HEIGHT
         || layout.body().width == 0
@@ -49,16 +55,18 @@ pub(crate) fn render_execution_with_view(
     }
 
     header::render_execution(frame, layout.shell.header(), state.context());
-    let content =
+    let content_area =
         shell_layout::render_content_block(frame, layout.shell.content(), state.stage().title());
-    debug_assert_eq!(content, layout.shell.content_inner());
+    debug_assert_eq!(content_area, layout.shell.content_inner());
     frame.render_widget(
         Paragraph::new(status_lines(state, view, now)).style(theme::body_style()),
         layout.chunks[0],
     );
 
-    let lines = execution_lines(state);
-    let (max_vertical, max_horizontal) = scroll_limits(&lines, layout.body());
+    let line_count = content.lines.len();
+    let max_line_width = content.max_width;
+    let max_vertical = layout.max_vertical();
+    let max_horizontal = layout.max_horizontal();
     let scroll = if view.follows_latest() {
         preferred_scroll(state, max_vertical)
     } else {
@@ -66,12 +74,12 @@ pub(crate) fn render_execution_with_view(
     };
     let horizontal = view.horizontal().min(max_horizontal);
     let lines = if state.copy_flash_active(now) {
-        flash_lines(lines)
+        flash_lines(content.lines)
     } else {
-        lines
+        content.lines
     };
     frame.render_widget(
-        Paragraph::new(lines.clone())
+        Paragraph::new(lines)
             .style(theme::body_style())
             .scroll((scroll, horizontal)),
         layout.chunks[1],
@@ -89,7 +97,7 @@ pub(crate) fn render_execution_with_view(
         scrollbar::render_vertical(
             frame,
             scrollbar_area,
-            lines.len(),
+            line_count,
             usize::from(body.height),
             usize::from(scroll),
         );
@@ -98,7 +106,7 @@ pub(crate) fn render_execution_with_view(
         scrollbar::render_horizontal(
             frame,
             scrollbar_area,
-            max_line_width(&lines),
+            max_line_width,
             usize::from(body.width),
             usize::from(horizontal),
         );
@@ -123,6 +131,8 @@ pub(crate) struct ExecutionLayout {
     body: Rect,
     vertical_scrollbar: bool,
     horizontal_scrollbar: bool,
+    max_vertical: u16,
+    max_horizontal: u16,
 }
 
 impl ExecutionLayout {
@@ -137,9 +147,26 @@ impl ExecutionLayout {
     pub(crate) const fn horizontal_scrollbar(&self) -> bool {
         self.horizontal_scrollbar
     }
+
+    pub(crate) const fn max_vertical(&self) -> u16 {
+        self.max_vertical
+    }
+
+    pub(crate) const fn max_horizontal(&self) -> u16 {
+        self.max_horizontal
+    }
 }
 
 pub(crate) fn execution_layout(area: Rect, state: &ExecutionState) -> ExecutionLayout {
+    let content = prepare_content(state);
+    execution_layout_with_content(area, state, &content)
+}
+
+fn execution_layout_with_content(
+    area: Rect,
+    state: &ExecutionState,
+    content: &PreparedContent<'_>,
+) -> ExecutionLayout {
     let shell_area = shell_layout::centered_area(area);
     let footer_lines = footer_lines(state, shell_area.width);
     let shell = shell_layout::layout(shell_area, footer_lines.clone(), footer_lines, 1);
@@ -155,8 +182,8 @@ pub(crate) fn execution_layout(area: Rect, state: &ExecutionState) -> ExecutionL
         .split(shell.content_inner())
         .to_vec();
     let available = chunks[1];
-    let lines = execution_lines(state);
-    let (vertical_scrollbar, horizontal_scrollbar) = scrollbar_reservations(&lines, available);
+    let (vertical_scrollbar, horizontal_scrollbar) =
+        scrollbar_reservations(content.lines.len(), content.max_width, available);
     let body = Rect::new(
         available.x,
         available.y,
@@ -167,21 +194,25 @@ pub(crate) fn execution_layout(area: Rect, state: &ExecutionState) -> ExecutionL
             .height
             .saturating_sub(u16::from(horizontal_scrollbar)),
     );
+    let (max_vertical, max_horizontal) =
+        scroll_limits(content.lines.len(), content.max_width, body);
     ExecutionLayout {
         shell,
         chunks,
         body,
         vertical_scrollbar,
         horizontal_scrollbar,
+        max_vertical,
+        max_horizontal,
     }
 }
 
 pub(crate) fn execution_scroll_position_with_view(
     state: &ExecutionState,
     view: ExecutionViewState,
-    body: Rect,
+    layout: &ExecutionLayout,
 ) -> (u16, u16) {
-    let (max, _) = scroll_limits(&execution_lines(state), body);
+    let max = layout.max_vertical();
     let current = if view.follows_latest() {
         preferred_scroll(state, max)
     } else {
@@ -191,32 +222,28 @@ pub(crate) fn execution_scroll_position_with_view(
 }
 
 pub(crate) fn execution_horizontal_scroll_position_with_view(
-    state: &ExecutionState,
     view: ExecutionViewState,
-    body: Rect,
+    layout: &ExecutionLayout,
 ) -> (u16, u16) {
-    let (_, max) = scroll_limits(&execution_lines(state), body);
+    let max = layout.max_horizontal();
     (view.horizontal().min(max), max)
 }
 
-fn execution_lines(state: &ExecutionState) -> Vec<Line<'static>> {
+fn prepare_content(state: &ExecutionState) -> PreparedContent<'_> {
     let log = state.progress().log();
-    let mut lines = log
-        .iter()
-        .flat_map(|line| {
+    let mut lines = Vec::new();
+    for line in log {
+        let style = if line.stream == EventStream::Stderr {
+            theme::warning_style()
+        } else {
+            theme::body_style()
+        };
+        lines.extend(
             line.text
                 .lines()
-                .map(|text| {
-                    let style = if line.stream == EventStream::Stderr {
-                        theme::warning_style()
-                    } else {
-                        theme::body_style()
-                    };
-                    Line::from(Span::styled(text.to_owned(), style))
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
+                .map(|text| Line::from(Span::styled(text, style))),
+        );
+    }
     let summary_is_in_log = state
         .result()
         .and_then(|result| result.summary_line())
@@ -228,13 +255,13 @@ fn execution_lines(state: &ExecutionState) -> Vec<Line<'static>> {
         && !summary_is_in_log
     {
         lines.push(Line::default());
-        lines.push(Line::from(summary.to_owned()));
+        lines.push(Line::from(summary));
     }
     if lines.is_empty() {
-        vec![Line::from("Waiting for Terraform output...")]
-    } else {
-        lines
+        lines.push(Line::from("Waiting for Terraform output..."));
     }
+    let max_width = max_line_width(&lines);
+    PreparedContent { lines, max_width }
 }
 
 fn status_lines(
@@ -319,19 +346,17 @@ fn footer_lines(state: &ExecutionState, width: u16) -> Vec<Line<'static>> {
     footer::layout(items, width)
 }
 
-fn scroll_limits(lines: &[Line<'static>], body: Rect) -> (u16, u16) {
+fn scroll_limits(line_count: usize, line_width: usize, body: Rect) -> (u16, u16) {
     let vertical =
-        u16::try_from(lines.len().saturating_sub(usize::from(body.height))).unwrap_or(u16::MAX);
-    let horizontal = u16::try_from(max_line_width(lines).saturating_sub(usize::from(body.width)))
-        .unwrap_or(u16::MAX);
+        u16::try_from(line_count.saturating_sub(usize::from(body.height))).unwrap_or(u16::MAX);
+    let horizontal =
+        u16::try_from(line_width.saturating_sub(usize::from(body.width))).unwrap_or(u16::MAX);
     (vertical, horizontal)
 }
 
-fn scrollbar_reservations(lines: &[Line<'static>], area: Rect) -> (bool, bool) {
+fn scrollbar_reservations(line_count: usize, line_width: usize, area: Rect) -> (bool, bool) {
     let mut vertical = false;
     let mut horizontal = false;
-    let line_count = lines.len();
-    let line_width = max_line_width(lines);
     loop {
         let next_vertical =
             line_count > usize::from(area.height.saturating_sub(u16::from(horizontal)));
@@ -345,11 +370,11 @@ fn scrollbar_reservations(lines: &[Line<'static>], area: Rect) -> (bool, bool) {
     }
 }
 
-fn max_line_width(lines: &[Line<'static>]) -> usize {
+fn max_line_width(lines: &[Line<'_>]) -> usize {
     lines.iter().map(Line::width).max().unwrap_or(0)
 }
 
-fn flash_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
+fn flash_lines(lines: Vec<Line<'_>>) -> Vec<Line<'static>> {
     let style = Style::default().fg(FLASH_FOREGROUND).bg(FLASH_BACKGROUND);
     lines
         .into_iter()
@@ -637,7 +662,8 @@ mod tests {
         }
 
         assert_eq!(
-            execution_lines(&state)
+            prepare_content(&state)
+                .lines
                 .iter()
                 .map(Line::to_string)
                 .collect::<Vec<_>>(),
@@ -688,7 +714,8 @@ mod tests {
             state.finish_apply(case.status, None, None, now + Duration::from_secs(1));
 
             assert_eq!(
-                execution_lines(&state)
+                prepare_content(&state)
+                    .lines
                     .iter()
                     .map(Line::to_string)
                     .collect::<Vec<_>>(),
