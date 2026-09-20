@@ -25,11 +25,11 @@ fn split_blocks(
     let lines = text.split('\n').collect::<Vec<_>>();
     let mut candidates = Vec::new();
     let mut section_boundaries = Vec::new();
-    let mut heredoc_terminator = None;
+    let mut heredoc_terminator: Option<String> = None;
     let mut in_output_section = false;
     for (line, text) in lines.iter().enumerate() {
         if let Some(terminator) = &heredoc_terminator {
-            if text.trim() == terminator {
+            if heredoc_end(text, terminator) {
                 heredoc_terminator = None;
             }
             continue;
@@ -191,6 +191,16 @@ fn heredoc_start(line: &str) -> Option<String> {
     .then(|| terminator.to_owned())
 }
 
+fn heredoc_end(line: &str, terminator: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed == terminator {
+        return true;
+    }
+    trimmed
+        .strip_prefix(terminator)
+        .is_some_and(|suffix| suffix.trim_start().starts_with("->"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,5 +296,36 @@ mod tests {
         assert_eq!(document.blocks().len(), 2);
         assert_eq!(document.blocks()[0].lines(), &(0..5));
         assert_eq!(document.blocks()[1].lines(), &(5..10));
+    }
+
+    #[test]
+    fn recognizes_heredoc_termination_with_deleted_value() {
+        let source = "  # terraform_data.api will be updated in-place\n  ~ resource \"terraform_data\" \"api\" {\n      value = <<-EOT\n      first\n      second\n      EOT -> null\n    }\n\n  # terraform_data.worker will be updated in-place\n  ~ resource \"terraform_data\" \"worker\" {\n      input = \"new\"\n    }\n\nPlan: 0 to add, 2 to change, 0 to destroy.\n";
+        let document = parse_document(
+            source.as_bytes().to_vec(),
+            &[
+                "terraform_data.api".to_owned(),
+                "terraform_data.worker".to_owned(),
+            ],
+            &[],
+        )
+        .expect("text should parse");
+
+        assert_eq!(document.blocks().len(), 3);
+        assert_eq!(document.blocks()[0].lines(), &(0..8));
+        assert_eq!(document.blocks()[1].lines(), &(8..13));
+        assert_eq!(document.blocks()[2].lines(), &(13..15));
+        assert_eq!(
+            document.visible_lines("worker"),
+            vec![
+                "  # terraform_data.worker will be updated in-place",
+                "  ~ resource \"terraform_data\" \"worker\" {",
+                "      input = \"new\"",
+                "    }",
+                "",
+                "Plan: 0 to add, 2 to change, 0 to destroy.",
+                "",
+            ]
+        );
     }
 }

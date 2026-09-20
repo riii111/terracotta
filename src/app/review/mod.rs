@@ -51,6 +51,7 @@ pub(crate) struct PlanDocument {
 
 impl PlanDocument {
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn new(text: String) -> Self {
         let end = line_count(&text);
         Self {
@@ -115,6 +116,7 @@ impl PlanDocument {
     }
 }
 
+#[cfg(test)]
 fn line_count(text: &str) -> usize {
     text.split('\n').count()
 }

@@ -42,6 +42,10 @@ impl ReviewSessionState {
         &self.review
     }
 
+    pub(crate) fn set_search_query(&mut self, query: String) {
+        self.review.set_search_query(query);
+    }
+
     #[must_use]
     pub(crate) const fn copy_notice(&self) -> Option<CopyNotice> {
         self.copy_notice

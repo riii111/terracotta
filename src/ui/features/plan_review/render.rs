@@ -400,12 +400,7 @@ fn review_lines(state: &ReviewSessionState) -> Vec<Line<'static>> {
         )));
         lines.push(Line::default());
     }
-    lines.extend(
-        review
-            .visible_document_lines()
-            .into_iter()
-            .map(|line| plan_line(line, review.search_query())),
-    );
+    lines.extend(visible_plan_lines(review));
     lines
 }
 
@@ -500,13 +495,22 @@ fn review_lines_for_limits(state: &ReviewSessionState) -> Vec<Line<'static>> {
         lines.push(Line::from("No matches."));
         lines.push(Line::default());
     }
-    lines.extend(
-        state
-            .review()
-            .visible_document_lines()
-            .into_iter()
-            .map(|line| Line::from(line.to_owned())),
-    );
+    lines.extend(visible_plan_lines(state.review()));
+    lines
+}
+
+fn visible_plan_lines(review: &PlanReview) -> Vec<Line<'static>> {
+    let query = review.search_query();
+    let mut lines = Vec::new();
+    for line in review.visible_document_lines() {
+        if !query.is_empty() && line.starts_with("Plan:") {
+            lines.push(Line::from(Span::styled(
+                "Plan total (full plan):",
+                theme::warning_style(),
+            )));
+        }
+        lines.push(plan_line(line, query));
+    }
     lines
 }
 
@@ -684,5 +688,24 @@ mod tests {
         };
         assert_eq!(line.to_string(), "/abcdefgh|");
         assert_eq!(horizontal, 4);
+    }
+
+    #[test]
+    fn search_labels_the_plan_total_as_unfiltered() {
+        let mut review = PlanReview::new(
+            PathBuf::from("/project"),
+            "default".to_owned(),
+            PlanDocument::new("Plan: 1 to add, 0 to change, 0 to destroy.\n".to_owned()),
+            PlanMetadata::new(Vec::new(), Vec::new(), 1, 0, 0, true),
+            Vec::new(),
+        );
+        review.set_search_query("api".to_owned());
+
+        let lines = visible_plan_lines(&review);
+        assert_eq!(lines[0].to_string(), "Plan total (full plan):");
+        assert_eq!(
+            lines[1].to_string(),
+            "Plan: 1 to add, 0 to change, 0 to destroy."
+        );
     }
 }
