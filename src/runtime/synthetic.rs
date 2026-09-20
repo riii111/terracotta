@@ -9,6 +9,7 @@ use ratatui::DefaultTerminal;
 
 use crate::{
     app::{
+        copy::CopyNotice,
         execution::{
             ApplyStatus, EventStream, ExecutionContext, ExecutionEvent, ExecutionEventKind,
             ExecutionLogLine, ExecutionPhase, ExecutionState,
@@ -24,7 +25,8 @@ pub(super) fn run_synthetic() -> io::Result<()> {
     let mut view = plan_review::PlanReviewViewState::default();
     let mut confirmation_input = String::new();
     let mut confirmation_cursor = 0;
-    let mut complete_apply_at = None;
+    let mut complete_apply_at: Option<Instant> = None;
+    let mut execution_view = execution::ExecutionViewState::default();
 
     ratatui::run(|terminal| {
         loop {
@@ -35,6 +37,7 @@ pub(super) fn run_synthetic() -> io::Result<()> {
                     &view,
                     &confirmation_input,
                     confirmation_cursor,
+                    execution_view,
                 );
             })?;
 
@@ -44,10 +47,18 @@ pub(super) fn run_synthetic() -> io::Result<()> {
                 continue;
             }
 
-            if let Event::Key(key) = event::read()?
-                && key.is_press()
-            {
-                let action = match &state {
+            let timeout = complete_apply_at.map_or(Duration::from_millis(100), |at| {
+                at.saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(100))
+            });
+            if event::poll(timeout)? {
+                let Event::Key(key) = event::read()? else {
+                    continue;
+                };
+                if !key.is_press() {
+                    continue;
+                }
+                let action = match &mut state {
                     SessionState::Review(review) => {
                         synthetic_review_key(terminal, &mut view, review, key)?
                     }
@@ -57,10 +68,7 @@ pub(super) fn run_synthetic() -> io::Result<()> {
                         key,
                     ),
                     SessionState::Apply(execution) => {
-                        if matches!(
-                            execution::execution_key_to_input(key, execution.stage()),
-                            Some(execution::ExecutionInput::Quit)
-                        ) {
+                        if synthetic_execution_key(terminal, execution, &mut execution_view, key)? {
                             Some(Action::Quit)
                         } else {
                             None
@@ -79,8 +87,6 @@ pub(super) fn run_synthetic() -> io::Result<()> {
                 {
                     complete_apply_at = Some(Instant::now() + Duration::from_millis(250));
                 }
-            } else if complete_apply_at.is_some() {
-                std::thread::sleep(Duration::from_millis(100));
             }
         }
     })
@@ -120,6 +126,7 @@ fn render_synthetic(
     view: &plan_review::PlanReviewViewState,
     confirmation_input: &str,
     confirmation_cursor: usize,
+    execution_view: execution::ExecutionViewState,
 ) {
     match state {
         SessionState::Review(review) => plan_review::render(frame, review, view, Instant::now()),
@@ -130,12 +137,7 @@ fn render_synthetic(
             confirmation_cursor,
         ),
         SessionState::Apply(execution) | SessionState::Execution(execution) => {
-            execution::render_execution_with_view(
-                frame,
-                execution,
-                execution::ExecutionViewState::default(),
-                Instant::now(),
-            );
+            execution::render_execution_with_view(frame, execution, execution_view, Instant::now());
         }
     }
 }
@@ -162,6 +164,53 @@ fn synthetic_review_key(
         }
         None => None,
     })
+}
+
+fn synthetic_execution_key(
+    terminal: &DefaultTerminal,
+    state: &mut ExecutionState,
+    view: &mut execution::ExecutionViewState,
+    key: KeyEvent,
+) -> io::Result<bool> {
+    match execution::execution_key_to_input(key, state.stage()) {
+        Some(execution::ExecutionInput::Quit) => Ok(true),
+        Some(execution::ExecutionInput::End) => {
+            view.end();
+            Ok(false)
+        }
+        Some(execution::ExecutionInput::Scroll(scroll)) => {
+            let size = terminal.size()?;
+            let body = execution::execution_layout(
+                ratatui::layout::Rect::new(0, 0, size.width, size.height),
+                state,
+            )
+            .body();
+            let (current_vertical, _) =
+                execution::execution_scroll_position_with_view(state, *view, body);
+            match scroll {
+                execution::ExecutionScroll::Left
+                | execution::ExecutionScroll::Right
+                | execution::ExecutionScroll::LeftEdge
+                | execution::ExecutionScroll::RightEdge => {
+                    let (current, max) = execution::execution_horizontal_scroll_position_with_view(
+                        state, *view, body,
+                    );
+                    view.apply_horizontal_scroll(scroll, current, max, current_vertical);
+                }
+                _ => {
+                    let (current, max) =
+                        execution::execution_scroll_position_with_view(state, *view, body);
+                    view.apply_scroll(scroll, current, max, body.height);
+                }
+            }
+            Ok(false)
+        }
+        Some(execution::ExecutionInput::Copy(target)) => {
+            state.set_copy_notice(CopyNotice::Copied { target }, Instant::now());
+            Ok(false)
+        }
+        Some(execution::ExecutionInput::Action(_)) | None => Ok(false),
+    }
 }
 
 fn synthetic_confirmation_key(
