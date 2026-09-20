@@ -1,0 +1,27 @@
+---
+source: src/ui/preview.rs
+expression: buffer_text(&buffer)
+---
+
+ Terracotta | infra/prod
+
+ ┌Apply complete──────────────────────────────────────────────────────────────┐
+ │Resources: 2 added, 2 changed, 1 destroyed.                                ↑│
+ │────────────────────────────────────────────────                           █│
+ │Apply finished successfully.                                               █│
+ │                                                                           █│
+ │Terraform will perform the following actions:                              █│
+ │                                                                           ││
+ │  # terraform_data.api will be updated in-place                            ││
+ │  ~ resource "terraform_data" "api" {                                      ││
+ │      id       = "api-20260920"                                            ││
+ │      ~ input  = "before" -> "after"                                       ││
+ │      # (4 unchanged attributes hidden)                                    ││
+ │    }                                                                      ││
+ │                                                                           ││
+ │  # terraform_data.worker must be replaced                                 ││
+ │-/+ resource "terraform_data" "worker" {                                   ││
+ │      ~ input = "worker-before" -> "worker-after" # forces replacement     ││
+ │←████████████████████████████████──────────────────────────────────────────→│
+ └────────────────────────────────────────────────────────────────────────────┘
+ ↑/↓/←/→ scroll | y yank | q quit

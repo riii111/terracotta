@@ -38,6 +38,27 @@ pub(super) fn buffer_text(buffer: &Buffer) -> String {
         .join("\n")
 }
 
+pub(super) fn buffer_terminal_capture(buffer: &Buffer) -> String {
+    let area = buffer.area();
+    let mut capture = String::new();
+    for y in area.y..area.bottom() {
+        for x in area.x..area.right() {
+            let cell = buffer.cell((x, y)).expect("capture cell");
+            capture.push_str(&foreground_escape(cell.fg));
+            capture.push_str(cell.symbol());
+        }
+        capture.push_str("\x1b[0m\n");
+    }
+    capture
+}
+
+fn foreground_escape(color: Color) -> String {
+    match color {
+        Color::Rgb(red, green, blue) => format!("\x1b[38;2;{red};{green};{blue}m"),
+        _ => "\x1b[39m".to_owned(),
+    }
+}
+
 pub(super) fn assert_shell_frame_and_footer(
     buffer: &Buffer,
     content: Rect,
