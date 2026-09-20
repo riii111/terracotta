@@ -23,22 +23,14 @@ use crate::{
 pub(super) fn run_synthetic() -> io::Result<()> {
     let mut state = SessionState::Review(Box::new(synthetic_review()));
     let mut view = plan_review::PlanReviewViewState::default();
-    let mut confirmation_input = String::new();
-    let mut confirmation_cursor = 0;
+    let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
     let mut complete_apply_at: Option<Instant> = None;
     let mut execution_view = execution::ExecutionViewState::default();
 
     ratatui::run(|terminal| {
         loop {
             terminal.draw(|frame| {
-                render_synthetic(
-                    frame,
-                    &state,
-                    &view,
-                    &confirmation_input,
-                    confirmation_cursor,
-                    execution_view,
-                );
+                render_synthetic(frame, &state, &view, &confirmation_view, execution_view);
             })?;
 
             if complete_apply_at.is_some_and(|at| Instant::now() >= at) {
@@ -62,11 +54,9 @@ pub(super) fn run_synthetic() -> io::Result<()> {
                     SessionState::Review(review) => {
                         synthetic_review_key(terminal, &mut view, review, key)?
                     }
-                    SessionState::ApplyConfirmation(_) => synthetic_confirmation_key(
-                        &mut confirmation_input,
-                        &mut confirmation_cursor,
-                        key,
-                    ),
+                    SessionState::ApplyConfirmation(_) => {
+                        synthetic_confirmation_key(&mut confirmation_view, key)
+                    }
                     SessionState::Apply(execution) => {
                         if synthetic_execution_key(terminal, execution, &mut execution_view, key)? {
                             Some(Action::Quit)
@@ -124,18 +114,14 @@ fn render_synthetic(
     frame: &mut ratatui::Frame<'_>,
     state: &SessionState,
     view: &plan_review::PlanReviewViewState,
-    confirmation_input: &str,
-    confirmation_cursor: usize,
+    confirmation_view: &plan_review::ApplyConfirmationViewState,
     execution_view: execution::ExecutionViewState,
 ) {
     match state {
         SessionState::Review(review) => plan_review::render(frame, review, view, Instant::now()),
-        SessionState::ApplyConfirmation(confirmation) => plan_review::render_apply_confirmation(
-            frame,
-            confirmation,
-            confirmation_input,
-            confirmation_cursor,
-        ),
+        SessionState::ApplyConfirmation(confirmation) => {
+            plan_review::render_apply_confirmation(frame, confirmation, confirmation_view);
+        }
         SessionState::Apply(execution) | SessionState::Execution(execution) => {
             execution::render_execution_with_view(frame, execution, execution_view, Instant::now());
         }
@@ -153,14 +139,19 @@ fn synthetic_review_key(
         Some(plan_review::PlanReviewInput::Apply) => Some(Action::OpenApplyConfirmation),
         Some(input) => {
             let size = terminal.size()?;
-            let body = ratatui::layout::Rect::new(
-                1,
-                3,
-                size.width.saturating_sub(2),
-                size.height.saturating_sub(5),
+            let layout = plan_review::layout(
+                ratatui::layout::Rect::new(0, 0, size.width, size.height),
+                view.searching(),
+                review,
             );
-            view.apply(input, body, review)
-                .map(Action::ReviewSearchChanged)
+            view.apply(
+                input,
+                layout.body(),
+                layout.max_vertical(),
+                layout.max_horizontal(),
+                review.review().search_query(),
+            )
+            .map(Action::ReviewSearchChanged)
         }
         None => None,
     })
@@ -214,66 +205,10 @@ fn synthetic_execution_key(
 }
 
 fn synthetic_confirmation_key(
-    input: &mut String,
-    cursor: &mut usize,
+    view: &mut plan_review::ApplyConfirmationViewState,
     key: KeyEvent,
 ) -> Option<Action> {
-    match plan_review::apply_confirmation_key_to_input(key) {
-        Some(plan_review::ApplyConfirmationInput::Character(character)) => {
-            input.insert(*cursor, character);
-            *cursor += character.len_utf8();
-            None
-        }
-        Some(plan_review::ApplyConfirmationInput::Backspace) => {
-            if *cursor > 0 {
-                let previous = input[..*cursor]
-                    .char_indices()
-                    .next_back()
-                    .map_or(0, |(index, _)| index);
-                input.drain(previous..*cursor);
-                *cursor = previous;
-            }
-            None
-        }
-        Some(plan_review::ApplyConfirmationInput::Left) => {
-            *cursor = input[..*cursor]
-                .char_indices()
-                .next_back()
-                .map_or(0, |(index, _)| index);
-            None
-        }
-        Some(plan_review::ApplyConfirmationInput::Right) => {
-            *cursor = input[*cursor..]
-                .char_indices()
-                .nth(1)
-                .map_or(input.len(), |(index, _)| *cursor + index);
-            None
-        }
-        Some(plan_review::ApplyConfirmationInput::Home) => {
-            *cursor = 0;
-            None
-        }
-        Some(plan_review::ApplyConfirmationInput::End) => {
-            *cursor = input.len();
-            None
-        }
-        Some(plan_review::ApplyConfirmationInput::Confirm) if input == "yes" => {
-            input.clear();
-            *cursor = 0;
-            Some(Action::ConfirmApply)
-        }
-        Some(plan_review::ApplyConfirmationInput::Confirm) if input == "no" => {
-            input.clear();
-            *cursor = 0;
-            Some(Action::CancelApply)
-        }
-        Some(plan_review::ApplyConfirmationInput::Cancel) => {
-            input.clear();
-            *cursor = 0;
-            Some(Action::CancelApply)
-        }
-        _ => None,
-    }
+    plan_review::apply_confirmation_key_to_input(key).and_then(|input| view.apply(input))
 }
 
 fn finish_synthetic_apply(state: &mut SessionState) {
