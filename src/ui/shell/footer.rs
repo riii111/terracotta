@@ -103,7 +103,7 @@ mod tests {
             buffer,
             "[",
             0,
-            Color::Rgb(0xd4, 0xa4, 0x85),
+            Color::Rgb(0xe9, 0xdb, 0xdb),
             Color::Reset,
             Modifier::empty(),
         );
@@ -111,7 +111,7 @@ mod tests {
             buffer,
             "]",
             0,
-            Color::Rgb(0xd4, 0xa4, 0x85),
+            Color::Rgb(0xe9, 0xdb, 0xdb),
             Color::Reset,
             Modifier::empty(),
         );
@@ -127,7 +127,7 @@ mod tests {
             buffer,
             "/",
             2,
-            Color::Rgb(0xd4, 0xa4, 0x85),
+            Color::Rgb(0xe9, 0xdb, 0xdb),
             Color::Reset,
             Modifier::empty(),
         );

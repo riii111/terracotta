@@ -1,9 +1,9 @@
-use std::{env, fs, path::PathBuf};
+use std::{env, fmt::Write, fs, path::PathBuf};
 
 use ratatui::backend::TestBackend;
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::Rect;
-use ratatui::style::Color;
+use ratatui::style::{Color, Modifier};
 use ratatui::{Frame, Terminal};
 
 pub(super) fn render_to_buffer(
@@ -37,7 +37,10 @@ pub(super) fn buffer_terminal_capture(buffer: &Buffer) -> String {
     for y in area.y..area.bottom() {
         for x in area.x..area.right() {
             let cell = buffer.cell((x, y)).expect("capture cell");
+            capture.push_str("\x1b[0m");
             capture.push_str(&foreground_escape(cell.fg));
+            capture.push_str(&background_escape(cell.bg));
+            capture.push_str(&modifier_escape(cell.modifier));
             capture.push_str(cell.symbol());
         }
         capture.push_str("\x1b[0m\n");
@@ -64,6 +67,33 @@ fn foreground_escape(color: Color) -> String {
         Color::Rgb(red, green, blue) => format!("\x1b[38;2;{red};{green};{blue}m"),
         _ => "\x1b[39m".to_owned(),
     }
+}
+
+fn background_escape(color: Color) -> String {
+    match color {
+        Color::Rgb(red, green, blue) => format!("\x1b[48;2;{red};{green};{blue}m"),
+        _ => "\x1b[49m".to_owned(),
+    }
+}
+
+fn modifier_escape(modifier: Modifier) -> String {
+    let mut escape = String::new();
+    for (flag, code) in [
+        (Modifier::BOLD, 1),
+        (Modifier::DIM, 2),
+        (Modifier::ITALIC, 3),
+        (Modifier::UNDERLINED, 4),
+        (Modifier::SLOW_BLINK, 5),
+        (Modifier::RAPID_BLINK, 6),
+        (Modifier::REVERSED, 7),
+        (Modifier::HIDDEN, 8),
+        (Modifier::CROSSED_OUT, 9),
+    ] {
+        if modifier.contains(flag) {
+            let _ = write!(escape, "\x1b[{code}m");
+        }
+    }
+    escape
 }
 
 pub(super) fn assert_shell_frame_and_footer(
