@@ -40,4 +40,4 @@ expression: buffer_text(buffer)
  │Warning: Value for "pending" is not known until apply                                                              ││
  │                                                                                                                   ▼│
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- ↑/↓/←/→ scroll | / search | y yank | a apply | q quit
+ ↑/↓/←/→ scroll | / filter | y yank | a apply | q quit

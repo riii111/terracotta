@@ -51,7 +51,10 @@ pub(crate) struct PlanDocument {
 
 pub(crate) struct FilteredPlan<'a> {
     lines: Vec<&'a str>,
-    matching_blocks: usize,
+    resource_count: usize,
+    matching_resources: usize,
+    output_count: usize,
+    matching_outputs: usize,
 }
 
 impl<'a> FilteredPlan<'a> {
@@ -61,8 +64,23 @@ impl<'a> FilteredPlan<'a> {
     }
 
     #[must_use]
-    pub(crate) const fn matching_blocks(&self) -> usize {
-        self.matching_blocks
+    pub(crate) const fn resource_count(&self) -> usize {
+        self.resource_count
+    }
+
+    #[must_use]
+    pub(crate) const fn matching_resources(&self) -> usize {
+        self.matching_resources
+    }
+
+    #[must_use]
+    pub(crate) const fn output_count(&self) -> usize {
+        self.output_count
+    }
+
+    #[must_use]
+    pub(crate) const fn matching_outputs(&self) -> usize {
+        self.matching_outputs
     }
 }
 
@@ -81,8 +99,16 @@ impl PlanDocument {
     pub(crate) fn filter(&self, query: &str) -> FilteredPlan<'_> {
         let lines = self.text.split('\n').collect::<Vec<_>>();
         let mut filtered = Vec::new();
-        let mut matching_blocks = 0;
+        let mut resource_count = 0;
+        let mut matching_resources = 0;
+        let mut output_count = 0;
+        let mut matching_outputs = 0;
         for block in &self.blocks {
+            match block.kind {
+                PlanBlockKind::Resource => resource_count += 1,
+                PlanBlockKind::Output => output_count += 1,
+                PlanBlockKind::Common => {}
+            }
             let matches = query.is_empty()
                 || block.is_common()
                 || block
@@ -92,14 +118,19 @@ impl PlanDocument {
             if !matches {
                 continue;
             }
-            if !block.is_common() {
-                matching_blocks += 1;
+            match block.kind {
+                PlanBlockKind::Resource => matching_resources += 1,
+                PlanBlockKind::Output => matching_outputs += 1,
+                PlanBlockKind::Common => {}
             }
             filtered.extend(block.lines().clone().map(|line| lines[line]));
         }
         FilteredPlan {
             lines: filtered,
-            matching_blocks,
+            resource_count,
+            matching_resources,
+            output_count,
+            matching_outputs,
         }
     }
 }
@@ -313,7 +344,82 @@ mod tests {
             filtered.lines(),
             ["preamble", "resource worker", "worker value", "summary", ""]
         );
-        assert_eq!(filtered.matching_blocks(), 1);
+        assert_eq!(filtered.resource_count(), 2);
+        assert_eq!(filtered.matching_resources(), 1);
+        assert_eq!(filtered.output_count(), 0);
+        assert_eq!(filtered.matching_outputs(), 0);
+    }
+
+    #[test]
+    fn filter_counts_each_resource_and_output_block_once() {
+        let document = PlanDocument::with_blocks(
+            "common api\nresource api api api\nresource worker\noutput endpoint\nunknown endpoint\n"
+                .to_owned(),
+            vec![
+                PlanBlock::new(0..1, PlanBlockKind::Common),
+                PlanBlock::new(1..2, PlanBlockKind::Resource),
+                PlanBlock::new(2..3, PlanBlockKind::Resource),
+                PlanBlock::new(3..4, PlanBlockKind::Output),
+                PlanBlock::new(4..6, PlanBlockKind::Common),
+            ],
+        );
+
+        let resource = document.filter("api");
+        assert_eq!(
+            resource.lines(),
+            ["common api", "resource api api api", "unknown endpoint", ""]
+        );
+        assert_eq!(resource.resource_count(), 2);
+        assert_eq!(resource.matching_resources(), 1);
+        assert_eq!(resource.output_count(), 1);
+        assert_eq!(resource.matching_outputs(), 0);
+
+        let output = document.filter("endpoint");
+        assert_eq!(
+            output.lines(),
+            ["common api", "output endpoint", "unknown endpoint", ""]
+        );
+        assert_eq!(output.resource_count(), 2);
+        assert_eq!(output.matching_resources(), 0);
+        assert_eq!(output.output_count(), 1);
+        assert_eq!(output.matching_outputs(), 1);
+
+        let mixed = document.filter("e");
+        assert_eq!(mixed.matching_resources(), 2);
+        assert_eq!(mixed.matching_outputs(), 1);
+        assert_eq!(mixed.matching_resources() + mixed.matching_outputs(), 3);
+
+        let empty = document.filter("");
+        assert_eq!(empty.resource_count(), 2);
+        assert_eq!(empty.matching_resources(), 2);
+        assert_eq!(empty.output_count(), 1);
+        assert_eq!(empty.matching_outputs(), 1);
+    }
+
+    #[test]
+    fn filter_keeps_common_text_when_no_searchable_block_matches() {
+        let document = PlanDocument::with_blocks(
+            "diagnostic only\nresource api\noutput endpoint\nunknown boundary text\n".to_owned(),
+            vec![
+                PlanBlock::new(0..1, PlanBlockKind::Common),
+                PlanBlock::new(1..2, PlanBlockKind::Resource),
+                PlanBlock::new(2..3, PlanBlockKind::Output),
+                PlanBlock::new(3..5, PlanBlockKind::Common),
+            ],
+        );
+
+        let filtered = document.filter("missing");
+
+        assert_eq!(
+            filtered.lines(),
+            ["diagnostic only", "unknown boundary text", ""]
+        );
+        assert_eq!(
+            filtered.matching_resources() + filtered.matching_outputs(),
+            0
+        );
+        assert_eq!(filtered.resource_count(), 1);
+        assert_eq!(filtered.output_count(), 1);
     }
 
     #[test]

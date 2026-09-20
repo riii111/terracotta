@@ -5,14 +5,16 @@ expression: buffer_text(buffer)
 
  Terracotta | main
 
- ┌Plan | Search───────────────────────────────────────────────────────────────┐
+ ┌Plan | Filter───────────────────────────────────────────────────────────────┐
  │/terraform_data|                                                            │
+ │Filter matches: resources 4/4 | outputs 0/2                                 │
+ │Scope: full plan (apply / yank)                                             │
  │Terraform will perform the following actions:                              ▲│
  │                                                                           ┃│
  │  # terraform_data.api will be updated in-place                            ┃│
  │  ~ resource "terraform_data" "api" {                                      ┃│
  │      id       = "api-20260920"                                            ┃│
- │      ~ input  = "before" -> "after"                                       ┃│
+ │      ~ input  = "before" -> "after"                                       ││
  │      # (4 unchanged attributes hidden)                                    ││
  │    }                                                                      ││
  │                                                                           ││
@@ -20,8 +22,6 @@ expression: buffer_text(buffer)
  │-/+ resource "terraform_data" "worker" {                                   ││
  │      ~ input = "worker-before" -> "worker-after" # forces replacement     ││
  │      - old_checksum = "sha256:0123456789abcdef0123456789abcdef0123456789ab││
- │      + new_checksum = (known after apply)                                 ││
- │    }                                                                      ││
  │◀︎════════════════════════════════════════════════════════════──────────────▶︎│
  └────────────────────────────────────────────────────────────────────────────┘
  Enter confirm | Esc cancel | Ctrl-A/Ctrl-E move

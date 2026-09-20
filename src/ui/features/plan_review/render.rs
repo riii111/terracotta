@@ -29,6 +29,7 @@ pub(crate) struct PlanReviewLayout {
     shell: shell_layout::ShellLayout,
     body: Rect,
     search: Option<Rect>,
+    filter_details: Option<Rect>,
     vertical_scrollbar: bool,
     horizontal_scrollbar: bool,
     max_vertical: u16,
@@ -42,6 +43,10 @@ impl PlanReviewLayout {
 
     pub(crate) const fn search(&self) -> Option<Rect> {
         self.search
+    }
+
+    pub(crate) const fn filter_details(&self) -> Option<Rect> {
+        self.filter_details
     }
 
     pub(crate) const fn vertical_scrollbar(&self) -> bool {
@@ -86,13 +91,27 @@ fn layout_with_content(
     );
     let shell = shell_layout::layout(panel, footer_lines, required, 1);
     let inner = shell.content_inner();
-    let search = searching.then(|| Rect::new(inner.x, inner.y, inner.width, 1));
-    let search_height = u16::from(searching);
+    let filter_visible = filter_active(searching, state);
+    let search = filter_visible.then(|| Rect::new(inner.x, inner.y, inner.width, 1));
+    let filter_details_height = if filter_visible {
+        u16::try_from(filter_details_lines(state, inner.width).len()).unwrap_or(u16::MAX)
+    } else {
+        0
+    };
+    let filter_details = filter_visible.then(|| {
+        Rect::new(
+            inner.x,
+            inner.y.saturating_add(1),
+            inner.width,
+            filter_details_height,
+        )
+    });
+    let filter_height = u16::from(filter_visible).saturating_add(filter_details_height);
     let available = Rect::new(
         inner.x,
-        inner.y.saturating_add(search_height),
+        inner.y.saturating_add(filter_height),
         inner.width,
-        inner.height.saturating_sub(search_height),
+        inner.height.saturating_sub(filter_height),
     );
     let (vertical_scrollbar, horizontal_scrollbar) =
         scrollbar_reservations(content.lines.len(), content.max_width, available);
@@ -111,6 +130,7 @@ fn layout_with_content(
         shell,
         body,
         search,
+        filter_details,
         vertical_scrollbar,
         horizontal_scrollbar,
         max_vertical,
@@ -186,48 +206,26 @@ pub(crate) fn render(
 ) {
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
-        terminal_notice::render_wrapped(
-            frame,
-            area,
-            "Terminal too small. Resize or press q to quit.",
-        );
+        terminal_notice::render_wrapped(frame, area, terminal_notice_message(view.searching()));
         return;
     }
 
     let content = prepare_content(state);
     let layout = layout_with_content(area, view.searching(), state, &content);
     if layout.body().width == 0 || layout.body().height == 0 {
-        terminal_notice::render_wrapped(
-            frame,
-            area,
-            "Terminal too small. Resize or press q to quit.",
-        );
+        terminal_notice::render_wrapped(frame, area, terminal_notice_message(view.searching()));
         return;
     }
     header::render_review(frame, layout.shell.header(), state.review());
-    let title = if view.searching() {
-        Line::from("Plan | Search")
-    } else if state.review().search_query().is_empty() {
-        Line::from("Plan")
+    let title = if filter_active(view.searching(), state) {
+        Line::from("Plan | Filter")
     } else {
-        Line::from(vec![
-            Span::raw("Plan | Search: "),
-            Span::styled(state.review().search_query(), theme::secondary_style()),
-        ])
+        Line::from("Plan")
     };
     let inner = shell_layout::render_content_block_line(frame, layout.shell.content(), title);
     debug_assert_eq!(inner, layout.shell.content_inner());
 
-    if let Some(search_area) = layout.search()
-        && let Some((line, horizontal)) = search_prompt(view, search_area.width)
-    {
-        frame.render_widget(
-            Paragraph::new(line)
-                .style(theme::body_style())
-                .scroll((0, horizontal)),
-            search_area,
-        );
-    }
+    render_filter_header(frame, &layout, state, view);
 
     let line_count = content.lines.len();
     let max_line_width = content.max_width;
@@ -295,11 +293,43 @@ fn prepare_content(state: &ReviewSessionState) -> PreparedContent<'_> {
     PreparedContent { lines, max_width }
 }
 
+fn render_filter_header(
+    frame: &mut Frame<'_>,
+    layout: &PlanReviewLayout,
+    state: &ReviewSessionState,
+    view: &PlanReviewViewState,
+) {
+    if !filter_active(view.searching(), state) {
+        return;
+    }
+    if let Some(search_area) = layout.search()
+        && let Some((line, horizontal)) =
+            filter_prompt(view, state, view.searching(), search_area.width)
+    {
+        frame.render_widget(
+            Paragraph::new(line)
+                .style(theme::body_style())
+                .scroll((0, horizontal)),
+            search_area,
+        );
+    }
+    if let Some(filter_details) = layout.filter_details() {
+        frame.render_widget(
+            Paragraph::new(filter_details_lines(state, filter_details.width))
+                .style(theme::secondary_style()),
+            filter_details,
+        );
+    }
+}
+
 fn review_lines<'a>(review: &'a PlanReview, filtered: &FilteredPlan<'a>) -> Vec<Line<'a>> {
     let mut lines = diagnostic_lines(review);
-    if filtered.matching_blocks() == 0 && !review.search_query().is_empty() {
+    if filtered.matching_resources() == 0
+        && filtered.matching_outputs() == 0
+        && !review.search_query().is_empty()
+    {
         lines.push(Line::from(Span::styled(
-            "No matches.",
+            "No matching resources or outputs.",
             theme::warning_style(),
         )));
         lines.push(Line::default());
@@ -401,6 +431,89 @@ fn max_line_width(lines: &[Line<'_>]) -> usize {
     lines.iter().map(Line::width).max().unwrap_or(0)
 }
 
+fn filter_active(searching: bool, state: &ReviewSessionState) -> bool {
+    searching || !state.review().search_query().is_empty()
+}
+
+const fn terminal_notice_message(searching: bool) -> &'static str {
+    if searching {
+        "Terminal too small. Resize or press Esc to cancel filter."
+    } else {
+        "Terminal too small. Resize or press q to quit."
+    }
+}
+
+fn filter_details_lines(state: &ReviewSessionState, width: u16) -> Vec<Line<'static>> {
+    let filtered = state.review().filtered_document();
+    let matches = format!(
+        "Filter matches: resources {}/{} | outputs {}/{}",
+        filtered.matching_resources(),
+        filtered.resource_count(),
+        filtered.matching_outputs(),
+        filtered.output_count(),
+    );
+    let mut lines = wrap_filter_line(&matches, width);
+    lines.extend(wrap_filter_line("Scope: full plan (apply / yank)", width));
+    lines
+}
+
+fn wrap_filter_line(text: &str, width: u16) -> Vec<Line<'static>> {
+    let width = usize::from(width).max(1);
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        if word.chars().count() > width {
+            if !current.is_empty() {
+                chunks.push(current);
+                current = String::new();
+            }
+            chunks.extend(
+                word.chars()
+                    .collect::<Vec<_>>()
+                    .chunks(width)
+                    .map(|chunk| chunk.iter().collect()),
+            );
+        } else if current.is_empty() {
+            current.push_str(word);
+        } else if current.chars().count() + 1 + word.chars().count() <= width {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            chunks.push(std::mem::take(&mut current));
+            current.push_str(word);
+        }
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    chunks
+        .into_iter()
+        .map(|chunk| Line::from(Span::styled(chunk, theme::secondary_style())))
+        .collect()
+}
+
+fn filter_prompt(
+    view: &PlanReviewViewState,
+    state: &ReviewSessionState,
+    searching: bool,
+    width: u16,
+) -> Option<(Line<'static>, u16)> {
+    if searching {
+        return search_prompt(view, width);
+    }
+    let query = state.review().search_query();
+    if query.is_empty() {
+        return None;
+    }
+    Some((
+        Line::from(vec![
+            Span::styled("/", theme::secondary_style()),
+            Span::styled(query.to_owned(), theme::secondary_style()),
+        ]),
+        0,
+    ))
+}
+
 fn search_prompt(view: &PlanReviewViewState, width: u16) -> Option<(Line<'static>, u16)> {
     let query = view.search_query()?;
     let cursor = view.search_cursor()?;
@@ -432,7 +545,7 @@ fn footer_items(searching: bool, applyable: bool) -> Vec<Line<'static>> {
     } else {
         let mut items = vec![
             footer::hint(&["↑", "↓", "←", "→"], "scroll"),
-            footer::hint(&["/"], "search"),
+            footer::hint(&["/"], "filter"),
             footer::hint(&["y"], "yank"),
         ];
         if applyable {
@@ -456,6 +569,7 @@ const fn severity_label(severity: DiagnosticSeverity) -> &'static str {
 mod tests {
     use std::path::PathBuf;
 
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::{
         buffer::Buffer,
         style::{Color, Modifier},
@@ -470,7 +584,7 @@ mod tests {
         session::{self, Action, SessionState},
     };
     use crate::ui::{
-        features::plan_review::{ApplyConfirmationInput, PlanReviewInput},
+        features::plan_review::{ApplyConfirmationInput, PlanReviewInput, key_to_input},
         test_support::{
             assert_shell_frame_and_footer, buffer_terminal_capture, buffer_text, render_to_buffer,
             write_buffer_captures,
@@ -544,7 +658,10 @@ End of synthetic plan body."#;
                     PlanBlock::new(16..20, PlanBlockKind::Resource),
                     PlanBlock::new(20..21, PlanBlockKind::Common),
                     PlanBlock::new(21..26, PlanBlockKind::Resource),
-                    PlanBlock::new(26..43, PlanBlockKind::Common),
+                    PlanBlock::new(26..28, PlanBlockKind::Common),
+                    PlanBlock::new(28..29, PlanBlockKind::Output),
+                    PlanBlock::new(29..30, PlanBlockKind::Output),
+                    PlanBlock::new(30..43, PlanBlockKind::Common),
                 ],
             ),
             PlanMetadata::new(
@@ -593,6 +710,38 @@ End of synthetic plan body."#;
                     source: DiagnosticSource::Terraform,
                 },
             ],
+        )
+    }
+
+    fn zero_match_review() -> PlanReview {
+        PlanReview::new(
+            PathBuf::from("/repo/environments/production/main"),
+            "default".to_owned(),
+            PlanDocument::with_blocks(
+                "Warning: synthetic diagnostic\nCommon context stays visible\n  # terraform_data.api will be created\n  + resource \"terraform_data\" \"api\" {\n  + endpoint = (known after apply)\nPlan: 1 to add, 0 to change, 0 to destroy.\n"
+                    .to_owned(),
+                vec![
+                    PlanBlock::new(0..2, PlanBlockKind::Common),
+                    PlanBlock::new(2..4, PlanBlockKind::Resource),
+                    PlanBlock::new(4..5, PlanBlockKind::Output),
+                    PlanBlock::new(5..7, PlanBlockKind::Common),
+                ],
+            ),
+            PlanMetadata::new(
+                vec!["terraform_data.api".to_owned()],
+                vec!["endpoint".to_owned()],
+                1,
+                0,
+                0,
+                true,
+            ),
+            vec![Diagnostic {
+                severity: DiagnosticSeverity::Warning,
+                summary: "Synthetic diagnostic".to_owned(),
+                detail: None,
+                position: None,
+                source: DiagnosticSource::Terraform,
+            }],
         )
     }
 
@@ -927,9 +1076,17 @@ End of synthetic plan body."#;
         });
         assert_text_segment_uses_style(
             &confirmed_buffer,
-            "Plan | Search: terraform_data",
-            "Plan | Search: ".chars().count(),
-            SEARCH_TERM.chars().count(),
+            "/terraform_data",
+            0,
+            "/terraform_data".chars().count(),
+            Color::Rgb(0xc0, 0xb8, 0xb8),
+            Color::Reset,
+            Modifier::empty(),
+        );
+        assert_text_prefix_uses_style(
+            &confirmed_buffer,
+            "Filter matches: resources 4/4 | outputs 0/2",
+            "Filter matches: resources 4/4 | outputs 0/2",
             Color::Rgb(0xc0, 0xb8, 0xb8),
             Color::Reset,
             Modifier::empty(),
@@ -937,6 +1094,199 @@ End of synthetic plan body."#;
         let capture = buffer_terminal_capture(&buffer);
         assert!(capture.contains("\x1b[48;2;244;158;76m"));
         assert!(capture.contains("\x1b[48;2;244;158;76m\x1b[1m"));
+    }
+
+    #[test]
+    fn production_filter_states_show_fixed_scope_and_kind_counts() {
+        let mut input_view = PlanReviewViewState::default();
+        input_view.apply(
+            PlanReviewInput::SearchStart,
+            Rect::new(0, 0, 120, 40),
+            0,
+            0,
+            "",
+        );
+        let input_buffer = render_to_buffer((120, 40), |frame| {
+            render(frame, &review_state(review()), &input_view, Instant::now());
+        });
+        let input_text = buffer_text(&input_buffer);
+        write_buffer_captures("ux02-filter-input", &input_buffer);
+        assert!(input_text.contains("Plan | Filter"));
+        assert!(input_text.contains("/|"));
+        assert!(input_text.contains("Filter matches: resources 4/4 | outputs 2/2"));
+        assert!(input_text.contains("Scope: full plan (apply / yank)"));
+
+        let mut confirmed = review();
+        confirmed.set_search_query("worker".to_owned());
+        let confirmed_state = review_state(confirmed);
+        let confirmed_buffer = render_to_buffer((120, 40), |frame| {
+            render(
+                frame,
+                &confirmed_state,
+                &PlanReviewViewState::default(),
+                Instant::now(),
+            );
+        });
+        let confirmed_text = buffer_text(&confirmed_buffer);
+        write_buffer_captures("ux02-filter-confirmed", &confirmed_buffer);
+        assert!(confirmed_text.contains("Plan | Filter"));
+        assert!(confirmed_text.contains("/worker"));
+        assert!(confirmed_text.contains("Filter matches: resources 1/4 | outputs 0/2"));
+        assert!(confirmed_text.contains("Scope: full plan (apply / yank)"));
+        assert!(!confirmed_text.contains("terraform_data.api will be updated"));
+
+        let cleared_buffer = render_to_buffer((120, 40), |frame| {
+            render(
+                frame,
+                &review_state(review()),
+                &PlanReviewViewState::default(),
+                Instant::now(),
+            );
+        });
+        let cleared_text = buffer_text(&cleared_buffer);
+        assert!(cleared_text.contains("┌Plan"));
+        assert!(!cleared_text.contains("Plan | Filter"));
+        assert!(!cleared_text.contains("Filter matches:"));
+        assert!(!cleared_text.contains("Scope: full plan"));
+    }
+
+    #[test]
+    fn production_filter_keeps_common_content_and_reports_zero_matches() {
+        let mut plan = zero_match_review();
+        plan.set_search_query("Common".to_owned());
+        let state = review_state(plan);
+        let buffer = render_to_buffer((120, 40), |frame| {
+            render(
+                frame,
+                &state,
+                &PlanReviewViewState::default(),
+                Instant::now(),
+            );
+        });
+        let text = buffer_text(&buffer);
+        write_buffer_captures("ux02-filter-zero-match", &buffer);
+
+        assert!(text.contains("No matching resources or outputs."));
+        assert!(text.contains("Warning: Synthetic diagnostic"));
+        assert!(text.contains("Common context stays visible"));
+        assert!(text.contains("Plan total (full plan):"));
+        assert!(!text.contains("terraform_data.api will be created"));
+        assert!(!text.contains("endpoint = (known after apply)"));
+    }
+
+    #[test]
+    fn production_confirmed_filter_shows_the_query_prefix_without_expanding_the_title() {
+        let mut plan = review();
+        plan.set_search_query("long-query-".repeat(20));
+        let state = review_state(plan);
+        let buffer = render_to_buffer((80, 24), |frame| {
+            render(
+                frame,
+                &state,
+                &PlanReviewViewState::default(),
+                Instant::now(),
+            );
+        });
+        let text = buffer_text(&buffer);
+        write_buffer_captures("ux02-filter-long-query", &buffer);
+
+        assert!(text.contains("┌Plan | Filter"));
+        assert!(text.contains("/long-query-long-query-"));
+        assert!(!text.contains("Plan | Filter: long-query"));
+    }
+
+    #[test]
+    fn production_filter_layout_wraps_details_and_keeps_scope_at_bottom() {
+        let mut plan = review();
+        plan.set_search_query("worker".to_owned());
+        let state = review_state(plan);
+        let area = Rect::new(0, 0, 40, 20);
+        let layout = layout(area, false, &state);
+        let search = layout.search().expect("filter query should be visible");
+        let details = layout
+            .filter_details()
+            .expect("filter details should be visible");
+        assert!(details.height > 2);
+        assert_eq!(details.y, search.y + search.height);
+        assert_eq!(layout.body().y, details.y + details.height);
+        assert!(layout.body().height > 0);
+
+        let mut view = PlanReviewViewState::default();
+        for _ in 0..layout.max_vertical() {
+            view.apply(
+                PlanReviewInput::Down,
+                layout.body(),
+                layout.max_vertical(),
+                layout.max_horizontal(),
+                "worker",
+            );
+        }
+        let buffer = render_to_buffer((area.width, area.height), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        let text = buffer_text(&buffer);
+        write_buffer_captures("ux02-filter-narrow", &buffer);
+        assert!(text.contains("Filter matches:"));
+        assert!(text.contains("Scope: full plan"));
+
+        let tiny_buffer = render_to_buffer((24, 6), |frame| {
+            render(
+                frame,
+                &state,
+                &PlanReviewViewState::default(),
+                Instant::now(),
+            );
+        });
+        write_buffer_captures("ux02-filter-terminal-too-small", &tiny_buffer);
+        assert!(buffer_text(&tiny_buffer).contains("Terminal too small"));
+    }
+
+    #[test]
+    fn production_filter_resize_notice_keeps_escape_cancel_available() {
+        let area = Rect::new(0, 0, 24, 6);
+        let state = review_state(review());
+        let mut view = PlanReviewViewState::default();
+        let initial_layout = layout(area, false, &state);
+        view.apply(
+            PlanReviewInput::SearchStart,
+            initial_layout.body(),
+            initial_layout.max_vertical(),
+            initial_layout.max_horizontal(),
+            state.review().search_query(),
+        );
+
+        let searching_layout = layout(area, view.searching(), &state);
+        assert_eq!(searching_layout.body().height, 0);
+        let buffer = render_to_buffer((area.width, area.height), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        write_buffer_captures("ux02-filter-input-terminal-too-small", &buffer);
+        assert!(buffer_text(&buffer).contains("press Esc"));
+        assert!(buffer_text(&buffer).contains("cancel"));
+        assert_eq!(
+            key_to_input(
+                KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+                view.searching()
+            ),
+            Some(PlanReviewInput::SearchCancel)
+        );
+
+        let input = key_to_input(
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            view.searching(),
+        )
+        .expect("Esc should cancel the filter");
+        assert_eq!(
+            view.apply(
+                input,
+                searching_layout.body(),
+                searching_layout.max_vertical(),
+                searching_layout.max_horizontal(),
+                state.review().search_query(),
+            ),
+            Some(String::new())
+        );
+        assert!(!view.searching());
     }
 
     #[test]
@@ -1024,6 +1374,13 @@ End of synthetic plan body."#;
             &before,
             &flash,
             layout.search().expect("search input should be visible"),
+        );
+        assert_area_unchanged(
+            &before,
+            &flash,
+            layout
+                .filter_details()
+                .expect("filter details should be visible"),
         );
         assert_area_unchanged(
             &before,
@@ -1189,7 +1546,7 @@ End of synthetic plan body."#;
         }
 
         assert!(!footer_text.contains("a apply"), "{footer_text}");
-        assert!(footer_text.contains("/ search"), "{footer_text}");
+        assert!(footer_text.contains("/ filter"), "{footer_text}");
         assert!(footer_text.contains("y yank"), "{footer_text}");
         assert!(footer_text.contains("q quit"), "{footer_text}");
     }
