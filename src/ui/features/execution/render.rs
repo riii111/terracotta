@@ -15,6 +15,7 @@ use super::ExecutionViewState;
 
 const MIN_HEIGHT: u16 = 9;
 const MIN_WIDTH: u16 = 32;
+const STATUS_HEIGHT: u16 = 3;
 struct PreparedContent<'a> {
     lines: Vec<Line<'a>>,
     max_width: usize,
@@ -58,7 +59,10 @@ pub(crate) fn render_execution_with_view(
     };
     let content_area = shell_layout::render_content_block(frame, layout.shell.content(), title);
     debug_assert_eq!(content_area, layout.shell.content_inner());
-    frame.render_widget(status_paragraph(status), layout.status());
+    frame.render_widget(
+        status_paragraph(status, finished_apply(state)),
+        layout.status(),
+    );
 
     let line_count = content.lines.len();
     let max_line_width = content.max_width;
@@ -188,7 +192,11 @@ fn execution_layout_with_content(
     let footer_lines = footer_lines(state, shell_area.width);
     let shell = shell_layout::layout(shell_area, footer_lines.clone(), footer_lines, 1);
     let notice_height = u16::from(state.copy_notice().is_some());
-    let status_height = status_line_count(status, shell.content_inner().width);
+    let status_height = if finished_apply(state) {
+        status_line_count(status, shell.content_inner().width)
+    } else {
+        STATUS_HEIGHT
+    };
     let constraints = if finished_apply(state) {
         [
             Constraint::Length(status_height),
@@ -389,14 +397,17 @@ const fn finished_apply(state: &ExecutionState) -> bool {
     )
 }
 
-fn status_paragraph(status: Vec<Line<'static>>) -> Paragraph<'static> {
-    Paragraph::new(status)
-        .wrap(Wrap { trim: false })
-        .style(theme::body_style())
+fn status_paragraph(status: Vec<Line<'static>>, wrap: bool) -> Paragraph<'static> {
+    let paragraph = Paragraph::new(status).style(theme::body_style());
+    if wrap {
+        paragraph.wrap(Wrap { trim: false })
+    } else {
+        paragraph
+    }
 }
 
 fn status_line_count(status: &[Line<'static>], width: u16) -> u16 {
-    status_paragraph(status.to_vec())
+    status_paragraph(status.to_vec(), true)
         .line_count(width)
         .try_into()
         .unwrap_or(u16::MAX)
@@ -1090,6 +1101,31 @@ mod tests {
         assert_eq!(layout.separator().y + 1, layout.log_area().y);
         assert!(text.contains("Elapsed 1.0s"));
         assert!(text.contains("log output"));
+    }
+
+    #[test]
+    fn running_status_keeps_fixed_height_when_following_is_off() {
+        let started_at = Instant::now();
+        let now = started_at + Duration::from_secs(10_000);
+        let state = ExecutionState::with_context(started_at, ExecutionContext::loading("/project"));
+        let area = Rect::new(0, 0, 32, 24);
+        let layout = execution_layout(area, &state);
+        let mut view = ExecutionViewState::default();
+        view.apply_scroll(
+            super::super::ExecutionScroll::Down,
+            0,
+            layout.max_vertical(),
+            layout.body().height,
+        );
+        let buffer = render_to_buffer((area.width, area.height), |frame| {
+            render_execution_with_view(frame, &state, view, now);
+        });
+
+        assert_eq!(layout.status().height, STATUS_HEIGHT);
+        assert_eq!(layout.log_area().y, layout.status().bottom());
+        assert_eq!(layout.separator().y, layout.log_area().bottom());
+        let text = buffer_text(&buffer);
+        assert!(text.contains("Elapsed 10000.0s"), "{text}");
     }
 
     #[test]
