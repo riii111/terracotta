@@ -44,8 +44,21 @@ pub(crate) fn run_connected(
             return Ok(outcome);
         }
 
-        if dirty || state.execution().is_some() {
+        let now = Instant::now();
+        let clear_copy_flash = state
+            .review()
+            .is_some_and(|review| review.copy_flash_pending() && !review.copy_flash_active(now));
+        if dirty
+            || state.execution().is_some()
+            || state
+                .review()
+                .is_some_and(|review| review.copy_flash_active(now))
+            || clear_copy_flash
+        {
             draw(&state, terminal, execution_view, &review_view)?;
+            if clear_copy_flash && let SessionState::Review(review) = &mut state {
+                review.clear_copy_flash();
+            }
             dirty = false;
         }
 
@@ -108,7 +121,18 @@ fn handle_key_event(
                                     *execution_view,
                                     body,
                                 );
-                            execution_view.apply_horizontal_scroll(scroll, current, max);
+                            let (current_vertical, _) =
+                                execution::execution_scroll_position_with_view(
+                                    execution,
+                                    *execution_view,
+                                    body,
+                                );
+                            execution_view.apply_horizontal_scroll(
+                                scroll,
+                                current,
+                                max,
+                                current_vertical,
+                            );
                         }
                         _ => {
                             let (current, max) = execution::execution_scroll_position_with_view(
@@ -139,6 +163,7 @@ fn handle_key_event(
                 let body = plan_review::layout(
                     Rect::new(0, 0, size.width, size.height),
                     review_view.searching(),
+                    review,
                 )
                 .body();
                 review_view

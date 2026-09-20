@@ -51,6 +51,15 @@ impl ReviewSessionState {
     pub(crate) fn copy_flash_active(&self, now: Instant) -> bool {
         self.copy_flash_until.is_some_and(|until| now < until)
     }
+
+    #[must_use]
+    pub(crate) const fn copy_flash_pending(&self) -> bool {
+        self.copy_flash_until.is_some()
+    }
+
+    pub(crate) const fn clear_copy_flash(&mut self) {
+        self.copy_flash_until = None;
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -299,5 +308,37 @@ mod tests {
             update(&mut state, Action::Quit, now),
             Some(Effect::Finish(SessionOutcome::Reviewed(_)))
         ));
+    }
+
+    #[test]
+    fn review_copy_flash_expires_without_clearing_the_notice() {
+        let now = Instant::now();
+        let mut state = SessionState::new(ExecutionState::with_context(
+            now,
+            ExecutionContext::loading("/project", "comparison unavailable"),
+        ));
+        update(&mut state, Action::ReviewCompleted(review()), now);
+        update(
+            &mut state,
+            Action::CopyCompleted {
+                target: CopyTarget::Plan,
+                result: CopyResult::Written,
+            },
+            now,
+        );
+
+        let SessionState::Review(review) = &state else {
+            panic!("review should be visible");
+        };
+        assert!(review.copy_flash_active(now + std::time::Duration::from_millis(100)));
+        assert!(review.copy_flash_pending());
+        assert!(review.copy_notice().is_some());
+
+        let SessionState::Review(review) = &mut state else {
+            panic!("review should be visible");
+        };
+        review.clear_copy_flash();
+        assert!(!review.copy_flash_pending());
+        assert!(review.copy_notice().is_some());
     }
 }

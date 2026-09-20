@@ -60,7 +60,11 @@ impl ExecutionViewState {
         action: ExecutionScroll,
         current_offset: u16,
         max_offset: u16,
+        current_vertical: u16,
     ) {
+        if self.follow {
+            self.scroll = current_vertical;
+        }
         self.horizontal = match action {
             ExecutionScroll::Left => current_offset.saturating_sub(1),
             ExecutionScroll::Right => current_offset.saturating_add(1).min(max_offset),
@@ -97,3 +101,19 @@ pub(crate) use render::{
     execution_horizontal_scroll_position_with_view, execution_layout,
     execution_scroll_position_with_view, render_execution_with_view,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn horizontal_scroll_keeps_the_effective_follow_position() {
+        let mut view = ExecutionViewState::default();
+
+        view.apply_horizontal_scroll(ExecutionScroll::Right, 0, 5, 42);
+
+        assert_eq!(view.scroll(), 42);
+        assert_eq!(view.horizontal(), 1);
+        assert!(!view.follows_latest());
+    }
+}

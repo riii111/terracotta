@@ -24,6 +24,7 @@ fn split_blocks(
 ) -> Vec<PlanBlock> {
     let lines = text.split('\n').collect::<Vec<_>>();
     let mut candidates = Vec::new();
+    let mut section_boundaries = Vec::new();
     let mut heredoc_terminator = None;
     let mut in_output_section = false;
     for (line, text) in lines.iter().enumerate() {
@@ -35,8 +36,10 @@ fn split_blocks(
         }
         if *text == "Changes to Outputs:" {
             in_output_section = true;
+            section_boundaries.push(line);
         } else if text.starts_with("Plan:") {
             in_output_section = false;
+            section_boundaries.push(line);
         }
         if in_output_section {
             if let Some(name) = output_names.iter().find(|name| output_header(text, name)) {
@@ -61,7 +64,13 @@ fn split_blocks(
         if cursor < *start {
             push_block(&mut blocks, cursor..*start, PlanBlockKind::Common);
         }
-        let end = block_end(&lines, *start, kind, candidates.get(index + 1));
+        let end = block_end(
+            lines.len(),
+            *start,
+            kind,
+            candidates.get(index + 1),
+            &section_boundaries,
+        );
         if *start < end {
             push_block(&mut blocks, *start..end, kind.clone());
             cursor = end;
@@ -90,10 +99,11 @@ fn push_block(blocks: &mut Vec<PlanBlock>, lines: Range<usize>, kind: PlanBlockK
 }
 
 fn block_end(
-    lines: &[&str],
+    line_count: usize,
     start: usize,
     kind: &PlanBlockKind,
     next_candidate: Option<&(usize, PlanBlockKind)>,
+    section_boundaries: &[usize],
 ) -> usize {
     let next_same_kind = next_candidate
         .filter(|(_, candidate_kind)| {
@@ -104,30 +114,31 @@ fn block_end(
             )
         })
         .map(|(line, _)| *line);
-    let section_boundary = lines
-        .iter()
-        .enumerate()
-        .skip(start + 1)
-        .find_map(|(line, text)| match kind {
-            PlanBlockKind::Resource(_) if *text == "Changes to Outputs:" => Some(line),
-            PlanBlockKind::Output(_) if text.starts_with("Plan:") => Some(line),
-            _ => None,
-        });
+    let section_boundary = section_boundaries.iter().copied().find(|line| {
+        *line > start && matches!(kind, PlanBlockKind::Resource(_) | PlanBlockKind::Output(_))
+    });
     next_same_kind
         .into_iter()
         .chain(section_boundary)
         .min()
-        .unwrap_or(lines.len())
+        .unwrap_or(line_count)
 }
 
 fn resource_header(line: &str, address: &str) -> bool {
     let Some(rest) = line.strip_prefix("  # ") else {
         return false;
     };
-    let Some(suffix) = rest.strip_prefix(address) else {
-        return false;
-    };
-    suffix.starts_with(' ') && (suffix.contains(" will be ") || suffix.contains(" must be "))
+    let is_action = rest.contains(" will be ")
+        || rest.contains(" must be ")
+        || rest.contains(" has moved to ")
+        || rest.contains(" will no longer be managed ");
+    let mentions_address = rest
+        .strip_prefix(address)
+        .is_some_and(|suffix| suffix.starts_with(' ') || suffix.starts_with(','))
+        || rest
+            .split_whitespace()
+            .any(|word| word.trim_matches(',') == address);
+    is_action && mentions_address
 }
 
 fn output_header(line: &str, name: &str) -> bool {
@@ -148,11 +159,36 @@ fn output_header(line: &str, name: &str) -> bool {
 }
 
 fn heredoc_start(line: &str) -> Option<String> {
-    let marker = line.find("<<")?;
+    let mut quoted = false;
+    let mut escaped = false;
+    let marker = line.char_indices().find_map(|(index, character)| {
+        if quoted {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                quoted = false;
+            }
+            return None;
+        }
+        if character == '"' {
+            quoted = true;
+            return None;
+        }
+        (character == '<'
+            && line[index..].starts_with("<<")
+            && line[..index].trim_end().ends_with('='))
+        .then_some(index)
+    })?;
     let mut value = line[marker + 2..].trim_start();
     value = value.strip_prefix('-').unwrap_or(value).trim_start();
-    let terminator = value.split_whitespace().next()?.trim_matches(['"', '\'']);
-    (!terminator.is_empty()).then(|| terminator.to_owned())
+    let terminator = value.split_whitespace().next()?;
+    (!terminator.is_empty()
+        && terminator
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-')))
+    .then(|| terminator.to_owned())
 }
 
 #[cfg(test)]
@@ -199,5 +235,56 @@ mod tests {
         assert_eq!(document.blocks()[1].lines(), &(2..9));
         assert_eq!(document.blocks()[2].lines(), &(9..10));
         assert_eq!(document.blocks()[3].lines(), &(10..12));
+    }
+
+    #[test]
+    fn keeps_plan_summary_outside_the_last_resource_block() {
+        let source = "  # terraform_data.api will be updated in-place\n  ~ resource \"terraform_data\" \"api\" {\n      input = \"after\"\n    }\n\nPlan: 0 to add, 1 to change, 0 to destroy.\n";
+        let document = parse_document(
+            source.as_bytes().to_vec(),
+            &["terraform_data.api".to_owned()],
+            &[],
+        )
+        .expect("text should parse");
+
+        assert_eq!(document.blocks().len(), 2);
+        assert_eq!(document.blocks()[0].lines(), &(0..5));
+        assert_eq!(document.blocks()[1].lines(), &(5..7));
+    }
+
+    #[test]
+    fn ignores_shift_markers_inside_quoted_values() {
+        let source = "  # terraform_data.api will be updated in-place\n  ~ resource \"terraform_data\" \"api\" {\n      input = \"a << b\"\n    }\n\n  # terraform_data.worker will be created\n  + resource \"terraform_data\" \"worker\" {\n      input = \"worker\"\n    }\n";
+        let document = parse_document(
+            source.as_bytes().to_vec(),
+            &[
+                "terraform_data.api".to_owned(),
+                "terraform_data.worker".to_owned(),
+            ],
+            &[],
+        )
+        .expect("text should parse");
+
+        assert_eq!(document.blocks().len(), 2);
+        assert_eq!(document.blocks()[0].lines(), &(0..5));
+        assert_eq!(document.blocks()[1].lines(), &(5..10));
+    }
+
+    #[test]
+    fn recognizes_moved_and_removed_resource_headers() {
+        let source = "  # terraform_data.old has moved to terraform_data.new\n  ~ resource \"terraform_data\" \"new\" {\n      input = \"new\"\n    }\n\n  # terraform_data.removed will no longer be managed by Terraform, but will not be destroyed\n  - resource \"terraform_data\" \"removed\" {\n      input = \"removed\"\n    }\n";
+        let document = parse_document(
+            source.as_bytes().to_vec(),
+            &[
+                "terraform_data.new".to_owned(),
+                "terraform_data.removed".to_owned(),
+            ],
+            &[],
+        )
+        .expect("text should parse");
+
+        assert_eq!(document.blocks().len(), 2);
+        assert_eq!(document.blocks()[0].lines(), &(0..5));
+        assert_eq!(document.blocks()[1].lines(), &(5..10));
     }
 }

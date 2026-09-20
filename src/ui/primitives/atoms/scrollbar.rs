@@ -14,6 +14,9 @@ pub(crate) fn render_vertical(
     viewport_length: usize,
     position: usize,
 ) {
+    if content_length <= viewport_length {
+        return;
+    }
     let mut state = ScrollbarState::new(content_length)
         .viewport_content_length(viewport_length)
         .position(position);
@@ -38,6 +41,9 @@ pub(crate) fn render_horizontal(
     viewport_length: usize,
     position: usize,
 ) {
+    if content_length <= viewport_length {
+        return;
+    }
     let mut state = ScrollbarState::new(content_length)
         .viewport_content_length(viewport_length)
         .position(position);

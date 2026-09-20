@@ -51,6 +51,12 @@ pub(crate) fn execution_key_to_input(
     if key.code == KeyCode::Char('>') && key.modifiers.contains(KeyModifiers::ALT) {
         return Some(ExecutionInput::End);
     }
+    if key.code == KeyCode::Char('v') && key.modifiers.contains(KeyModifiers::ALT) {
+        return Some(ExecutionInput::Scroll(ExecutionScroll::PageUp));
+    }
+    if key.code == KeyCode::Char('v') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        return Some(ExecutionInput::Scroll(ExecutionScroll::PageDown));
+    }
 
     match key.code {
         KeyCode::Up | KeyCode::Char('k') => Some(ExecutionInput::Scroll(ExecutionScroll::Up)),
@@ -119,6 +125,18 @@ mod tests {
                 key(KeyCode::Char('y'), KeyModifiers::NONE),
                 ExecutionStage::Failed,
                 Some(ExecutionInput::Copy(CopyTarget::Diagnostic)),
+            ),
+            (
+                "alt_v_pages_up",
+                key(KeyCode::Char('v'), KeyModifiers::ALT),
+                ExecutionStage::Planning,
+                Some(ExecutionInput::Scroll(ExecutionScroll::PageUp)),
+            ),
+            (
+                "control_v_pages_down",
+                key(KeyCode::Char('v'), KeyModifiers::CONTROL),
+                ExecutionStage::Planning,
+                Some(ExecutionInput::Scroll(ExecutionScroll::PageDown)),
             ),
         ];
 

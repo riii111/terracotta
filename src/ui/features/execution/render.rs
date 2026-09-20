@@ -25,7 +25,11 @@ pub(crate) fn render_execution_with_view(
 ) {
     let area = frame.area();
     let layout = execution_layout(area, state);
-    if area.width < MIN_WIDTH || area.height < MIN_HEIGHT || layout.body().height == 0 {
+    if area.width < MIN_WIDTH
+        || area.height < MIN_HEIGHT
+        || layout.body().width == 0
+        || layout.body().height == 0
+    {
         let message = if state.stage() == ExecutionStage::Failed {
             "Terminal too small. Resize or press q to quit."
         } else {
@@ -58,20 +62,33 @@ pub(crate) fn render_execution_with_view(
             .scroll((scroll, horizontal)),
         layout.chunks[1],
     );
-    scrollbar::render_vertical(
-        frame,
-        layout.chunks[1],
-        lines.len(),
-        usize::from(layout.body().height),
-        usize::from(scroll),
+    let body = layout.body();
+    let scrollbar_area = Rect::new(
+        body.x,
+        body.y,
+        body.width
+            .saturating_add(u16::from(layout.vertical_scrollbar())),
+        body.height
+            .saturating_add(u16::from(layout.horizontal_scrollbar())),
     );
-    scrollbar::render_horizontal(
-        frame,
-        layout.chunks[1],
-        max_line_width(&lines),
-        usize::from(layout.body().width),
-        usize::from(horizontal),
-    );
+    if layout.vertical_scrollbar() {
+        scrollbar::render_vertical(
+            frame,
+            scrollbar_area,
+            lines.len(),
+            usize::from(body.height),
+            usize::from(scroll),
+        );
+    }
+    if layout.horizontal_scrollbar() {
+        scrollbar::render_horizontal(
+            frame,
+            scrollbar_area,
+            max_line_width(&lines),
+            usize::from(body.width),
+            usize::from(horizontal),
+        );
+    }
     frame.render_widget(separator::render(layout.chunks[2].width), layout.chunks[2]);
     if let Some(notice) = state.copy_notice() {
         frame.render_widget(
@@ -89,17 +106,22 @@ pub(crate) fn render_execution_with_view(
 pub(crate) struct ExecutionLayout {
     shell: shell_layout::ShellLayout,
     chunks: Vec<Rect>,
+    body: Rect,
+    vertical_scrollbar: bool,
+    horizontal_scrollbar: bool,
 }
 
 impl ExecutionLayout {
-    pub(crate) fn body(&self) -> Rect {
-        let body = self.chunks[1];
-        Rect::new(
-            body.x,
-            body.y,
-            body.width.saturating_sub(1),
-            body.height.saturating_sub(1),
-        )
+    pub(crate) const fn body(&self) -> Rect {
+        self.body
+    }
+
+    pub(crate) const fn vertical_scrollbar(&self) -> bool {
+        self.vertical_scrollbar
+    }
+
+    pub(crate) const fn horizontal_scrollbar(&self) -> bool {
+        self.horizontal_scrollbar
     }
 }
 
@@ -118,7 +140,26 @@ pub(crate) fn execution_layout(area: Rect, state: &ExecutionState) -> ExecutionL
         ])
         .split(shell.content_inner())
         .to_vec();
-    ExecutionLayout { shell, chunks }
+    let available = chunks[1];
+    let lines = execution_lines(state);
+    let (vertical_scrollbar, horizontal_scrollbar) = scrollbar_reservations(&lines, available);
+    let body = Rect::new(
+        available.x,
+        available.y,
+        available
+            .width
+            .saturating_sub(u16::from(vertical_scrollbar)),
+        available
+            .height
+            .saturating_sub(u16::from(horizontal_scrollbar)),
+    );
+    ExecutionLayout {
+        shell,
+        chunks,
+        body,
+        vertical_scrollbar,
+        horizontal_scrollbar,
+    }
 }
 
 pub(crate) fn execution_scroll_position_with_view(
@@ -232,6 +273,24 @@ fn scroll_limits(lines: &[Line<'static>], body: Rect) -> (u16, u16) {
     let horizontal = u16::try_from(max_line_width(lines).saturating_sub(usize::from(body.width)))
         .unwrap_or(u16::MAX);
     (vertical, horizontal)
+}
+
+fn scrollbar_reservations(lines: &[Line<'static>], area: Rect) -> (bool, bool) {
+    let mut vertical = false;
+    let mut horizontal = false;
+    let line_count = lines.len();
+    let line_width = max_line_width(lines);
+    loop {
+        let next_vertical =
+            line_count > usize::from(area.height.saturating_sub(u16::from(horizontal)));
+        let next_horizontal =
+            line_width > usize::from(area.width.saturating_sub(u16::from(vertical)));
+        if next_vertical == vertical && next_horizontal == horizontal {
+            return (vertical, horizontal);
+        }
+        vertical = next_vertical;
+        horizontal = next_horizontal;
+    }
 }
 
 fn max_line_width(lines: &[Line<'static>]) -> usize {
