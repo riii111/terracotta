@@ -314,24 +314,42 @@ mod tests {
             resource_indices.entry(address.as_str()).or_insert(index);
         }
 
-        for (line, expected) in [
-            ("  # terraform_data.api_extra will be created", Some(1)),
-            ("  # module.service[\"a, b\"] will be created", Some(2)),
+        for (case_name, line, expected) in [
             (
+                "prefix_collision",
+                "  # terraform_data.api_extra will be created",
+                Some(1),
+            ),
+            (
+                "quoted_comma",
+                "  # module.service[\"a, b\"] will be created",
+                Some(2),
+            ),
+            (
+                "quoted_action_phrase",
                 "  # module.service[\"will be here\"] will be created",
                 Some(3),
             ),
             (
+                "moved_uses_metadata_order",
                 "  # terraform_data.moved_old has moved to terraform_data.moved_new",
                 Some(4),
             ),
-            ("  # terraform_data.unknown will be created", None),
-            ("  # terraform_data.api is unchanged", None),
+            (
+                "unknown_address",
+                "  # terraform_data.unknown will be created",
+                None,
+            ),
+            (
+                "non_action_heading",
+                "  # terraform_data.api is unchanged",
+                None,
+            ),
         ] {
             assert_eq!(
                 resource_header(line, &resource_indices),
                 expected,
-                "line: {line}"
+                "case: {case_name}; line: {line}"
             );
         }
 
@@ -357,17 +375,21 @@ mod tests {
             output_indices.entry(name.as_str()).or_insert(index);
         }
 
-        for (line, expected) in [
-            ("  + endpoint_extra = (known after apply)", Some(1)),
-            ("  ~ endpoint = \"new\"", Some(0)),
-            ("  + endpoint_extra", None),
-            ("  + endpoint_extra.value = \"new\"", None),
-            ("  endpoint = \"new\"", None),
+        for (case_name, line, expected) in [
+            (
+                "prefix_collision",
+                "  + endpoint_extra = (known after apply)",
+                Some(1),
+            ),
+            ("known_output", "  ~ endpoint = \"new\"", Some(0)),
+            ("missing_assignment", "  + endpoint_extra", None),
+            ("nested_name", "  + endpoint_extra.value = \"new\"", None),
+            ("missing_action_marker", "  endpoint = \"new\"", None),
         ] {
             assert_eq!(
                 output_header(line, &output_indices),
                 expected,
-                "line: {line}"
+                "case: {case_name}; line: {line}"
             );
         }
 
