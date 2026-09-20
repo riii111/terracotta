@@ -1,13 +1,13 @@
 ---
-source: src/ui/preview.rs
-expression: buffer_text(&buffer)
+source: src/ui/features/plan_review/render.rs
+expression: buffer_text(buffer)
 ---
 
- Terracotta | infra/prod
+ Terracotta | main
 
- ┌Plan | Search: terraform_data───────────────────────────────────────────────────────────────────────────────────────┐
- │Search: terraform_data (filtered; plan summary remains global)                                                     ↑│
- │Terraform will perform the following actions:                                                                      █│
+ ┌Plan | Search───────────────────────────────────────────────────────────────────────────────────────────────────────┐
+ │/terraform_data|                                                                                                    │
+ │Terraform will perform the following actions:                                                                      ↑│
  │                                                                                                                   █│
  │  # terraform_data.api will be updated in-place                                                                    █│
  │  ~ resource "terraform_data" "api" {                                                                              █│
@@ -20,7 +20,7 @@ expression: buffer_text(&buffer)
  │-/+ resource "terraform_data" "worker" {                                                                           █│
  │      ~ input = "worker-before" -> "worker-after" # forces replacement                                             █│
  │      - old_checksum = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef"                                   █│
- │      + new_checksum = (known after apply)                                                                         ││
+ │      + new_checksum = (known after apply)                                                                         █│
  │    }                                                                                                              ││
  │                                                                                                                   ││
  │  # terraform_data.old will be destroyed                                                                           ││
@@ -38,6 +38,6 @@ expression: buffer_text(&buffer)
  │  + endpoint = (known after apply)                                                                                 ││
  │  ~ summary  = "old summary" -> "new summary with a deliberately long value for review"                            ││
  │                                                                                                                   ││
- │←█████████████████████████████████████████████████████████████─────────────────────────────────────────────────────→│
+ │Warning: Value for "pending" is not known until apply                                                              ↓│
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- / terraform_data | Enter confirm | Esc cancel | y yank | q quit
+ Enter confirm | Esc cancel | Ctrl-A/Ctrl-E move

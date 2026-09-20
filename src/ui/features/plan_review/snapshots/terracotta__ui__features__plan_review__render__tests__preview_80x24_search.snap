@@ -1,11 +1,12 @@
 ---
-source: src/ui/preview.rs
-expression: buffer_text(&buffer)
+source: src/ui/features/plan_review/render.rs
+expression: buffer_text(buffer)
 ---
 
- Terracotta | infra/prod
+ Terracotta | main
 
- ┌Plan────────────────────────────────────────────────────────────────────────┐
+ ┌Plan | Search───────────────────────────────────────────────────────────────┐
+ │/terraform_data|                                                            │
  │Terraform will perform the following actions:                              ↑│
  │                                                                           █│
  │  # terraform_data.api will be updated in-place                            █│
@@ -21,7 +22,6 @@ expression: buffer_text(&buffer)
  │      - old_checksum = "sha256:0123456789abcdef0123456789abcdef0123456789ab││
  │      + new_checksum = (known after apply)                                 ││
  │    }                                                                      ││
- │                                                                           ││
- │←████████████████████████████████──────────────────────────────────────────→│
+ │←█████████████████████████████████─────────────────────────────────────────→│
  └────────────────────────────────────────────────────────────────────────────┘
- ↑/↓/←/→ scroll | / search | a apply | y yank | q quit
+ Enter confirm | Esc cancel | Ctrl-A/Ctrl-E move

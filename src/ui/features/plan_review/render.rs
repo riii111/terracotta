@@ -469,10 +469,353 @@ const fn severity_label(severity: DiagnosticSeverity) -> &'static str {
 mod tests {
     use std::path::PathBuf;
 
-    use crate::app::review::{PlanDocument, PlanMetadata};
-    use crate::ui::features::plan_review::PlanReviewInput;
+    use ratatui::buffer::Buffer;
+
+    use crate::app::{
+        execution::{ExecutionContext, ExecutionState},
+        review::{PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata},
+        session::{self, Action, SessionState},
+    };
+    use crate::ui::{
+        features::plan_review::PlanReviewInput,
+        test_support::{
+            assert_shell_frame_and_footer, buffer_text, render_to_buffer, write_buffer_captures,
+        },
+    };
 
     use super::*;
+
+    const SIZES: [(u16, u16); 3] = [(80, 24), (120, 40), (160, 60)];
+    const SEARCH_TERM: &str = "terraform_data";
+    const PLAN_TEXT: &str = r#"Terraform will perform the following actions:
+
+  # terraform_data.api will be updated in-place
+  ~ resource "terraform_data" "api" {
+      id       = "api-20260920"
+      ~ input  = "before" -> "after"
+      # (4 unchanged attributes hidden)
+    }
+
+  # terraform_data.worker must be replaced
+-/+ resource "terraform_data" "worker" {
+      ~ input = "worker-before" -> "worker-after" # forces replacement
+      - old_checksum = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef"
+      + new_checksum = (known after apply)
+    }
+
+  # terraform_data.old will be destroyed
+  - resource "terraform_data" "old" {
+      id = "old-20260920"
+    }
+
+  # terraform_data.new will be created
+  + resource "terraform_data" "new" {
+      input = "new-value"
+      note  = "A deliberately long synthetic value keeps horizontal scrolling visible"
+    }
+
+Changes to Outputs:
+  + endpoint = (known after apply)
+  ~ summary  = "old summary" -> "new summary with a deliberately long value for review"
+
+Warning: Value for "pending" is not known until apply
+
+Plan: 2 to add, 2 to change, 1 to destroy.
+
+Synthetic review text continues below so the viewport and scrollbar remain meaningful.
+The same long body is intentionally reused across every review state and terminal size.
+No Terraform process, provider, state file, or cloud credential is used by this fixture.
+The review surface preserves Terraform order, attributes, output values, and diagnostics.
+Long lines remain unwrapped in the plan body; horizontal movement exposes the hidden suffix.
+Vertical movement exposes later lines in this synthetic plan body.
+
+End of synthetic plan body."#;
+
+    fn review() -> PlanReview {
+        PlanReview::new(
+            PathBuf::from("/repo/environments/production/main"),
+            "default".to_owned(),
+            PlanDocument::with_blocks(
+                PLAN_TEXT.to_owned(),
+                vec![
+                    PlanBlock::new(0..2, PlanBlockKind::Common),
+                    PlanBlock::new(
+                        2..8,
+                        PlanBlockKind::Resource("terraform_data.api".to_owned()),
+                    ),
+                    PlanBlock::new(8..9, PlanBlockKind::Common),
+                    PlanBlock::new(
+                        9..15,
+                        PlanBlockKind::Resource("terraform_data.worker".to_owned()),
+                    ),
+                    PlanBlock::new(15..16, PlanBlockKind::Common),
+                    PlanBlock::new(
+                        16..20,
+                        PlanBlockKind::Resource("terraform_data.old".to_owned()),
+                    ),
+                    PlanBlock::new(20..21, PlanBlockKind::Common),
+                    PlanBlock::new(
+                        21..26,
+                        PlanBlockKind::Resource("terraform_data.new".to_owned()),
+                    ),
+                    PlanBlock::new(26..43, PlanBlockKind::Common),
+                ],
+            ),
+            PlanMetadata::new(
+                vec![
+                    "terraform_data.api".to_owned(),
+                    "terraform_data.worker".to_owned(),
+                    "terraform_data.old".to_owned(),
+                    "terraform_data.new".to_owned(),
+                ],
+                vec!["endpoint".to_owned(), "summary".to_owned()],
+                2,
+                2,
+                1,
+                true,
+            ),
+            Vec::new(),
+        )
+    }
+
+    fn review_state(plan: PlanReview) -> ReviewSessionState {
+        let now = Instant::now();
+        let mut session = SessionState::new(ExecutionState::with_context(
+            now,
+            ExecutionContext::loading("/repo"),
+        ));
+        session::update(&mut session, Action::ReviewCompleted(plan), now);
+        session
+            .review()
+            .expect("review should be available")
+            .clone()
+    }
+
+    fn confirmation_state(plan: PlanReview) -> ApplyConfirmationState {
+        let now = Instant::now();
+        let mut session = SessionState::new(ExecutionState::with_context(
+            now,
+            ExecutionContext::loading("/repo"),
+        ));
+        session::update(&mut session, Action::ReviewCompleted(plan), now);
+        session::update(&mut session, Action::OpenApplyConfirmation, now);
+        session
+            .apply_confirmation()
+            .expect("confirmation should be available")
+            .clone()
+    }
+
+    fn snapshot(name: &str, buffer: &Buffer) {
+        insta::assert_snapshot!(name.to_string(), buffer_text(buffer));
+        write_buffer_captures(name, buffer);
+    }
+
+    fn assert_text_color(buffer: &Buffer, text: &str, color: Color) {
+        let area = buffer.area();
+        for y in area.y..area.bottom() {
+            let symbols = (area.x..area.right())
+                .map(|x| buffer.cell((x, y)).expect("plan cell").symbol())
+                .collect::<Vec<_>>();
+            let Some(start) = (0..symbols.len()).find(|&start| {
+                symbols[start..]
+                    .iter()
+                    .copied()
+                    .collect::<String>()
+                    .starts_with(text)
+            }) else {
+                continue;
+            };
+            for offset in 0..text.chars().count() {
+                let cell = buffer
+                    .cell((
+                        area.x + u16::try_from(start + offset).expect("plan offset"),
+                        y,
+                    ))
+                    .expect("plan cell");
+                assert_eq!(cell.fg, color, "{text}");
+            }
+            return;
+        }
+        panic!("text should be visible: {text}");
+    }
+
+    fn assert_text_prefix_uses_style(
+        buffer: &Buffer,
+        text: &str,
+        styled_prefix: &str,
+        foreground: Color,
+        background: Color,
+        modifier: Modifier,
+    ) {
+        let area = buffer.area();
+        for y in area.y..area.bottom() {
+            let symbols = (area.x..area.right())
+                .map(|x| buffer.cell((x, y)).expect("search cell").symbol())
+                .collect::<Vec<_>>();
+            let Some(start) = (0..symbols.len()).find(|&start| {
+                symbols[start..]
+                    .iter()
+                    .copied()
+                    .collect::<String>()
+                    .starts_with(text)
+            }) else {
+                continue;
+            };
+            for offset in 0..styled_prefix.chars().count() {
+                let cell = buffer
+                    .cell((
+                        area.x + u16::try_from(start + offset).expect("search offset"),
+                        y,
+                    ))
+                    .expect("search cell");
+                assert_eq!(cell.fg, foreground, "{styled_prefix}");
+                assert_eq!(cell.bg, background, "{styled_prefix}");
+                assert!(cell.modifier.contains(modifier), "{styled_prefix}");
+            }
+            return;
+        }
+        panic!("text should be visible: {text}");
+    }
+
+    #[test]
+    fn renders_plan_review_normal_at_all_supported_sizes() {
+        for &(width, height) in &SIZES {
+            let state = review_state(review());
+            let view = PlanReviewViewState::default();
+            let buffer = render_to_buffer((width, height), |frame| {
+                render(frame, &state, &view, Instant::now());
+            });
+
+            snapshot(&format!("preview_{width}x{height}_normal"), &buffer);
+        }
+    }
+
+    #[test]
+    fn renders_plan_review_search_at_all_supported_sizes() {
+        for &(width, height) in &SIZES {
+            let mut plan = review();
+            plan.set_search_query(SEARCH_TERM.to_owned());
+            let state = review_state(plan);
+            let mut view = PlanReviewViewState::default();
+            view.apply(
+                PlanReviewInput::SearchStart,
+                Rect::new(0, 0, width, height),
+                0,
+                0,
+                SEARCH_TERM,
+            );
+            let buffer = render_to_buffer((width, height), |frame| {
+                render(frame, &state, &view, Instant::now());
+            });
+
+            snapshot(&format!("preview_{width}x{height}_search"), &buffer);
+        }
+    }
+
+    #[test]
+    fn renders_apply_confirmation_at_all_supported_sizes() {
+        for &(width, height) in &SIZES {
+            let state = confirmation_state(review());
+            let view = ApplyConfirmationViewState::default();
+            let buffer = render_to_buffer((width, height), |frame| {
+                render_apply_confirmation(frame, &state, &view);
+            });
+
+            snapshot(
+                &format!("preview_{width}x{height}_apply-confirmation"),
+                &buffer,
+            );
+        }
+    }
+
+    #[test]
+    fn production_review_render_draws_shell_scrollbars_and_plan_colors() {
+        let state = review_state(review());
+        let view = PlanReviewViewState::default();
+        let area = Rect::new(0, 0, 80, 24);
+        let layout = layout(area, false, &state);
+        let buffer = render_to_buffer((area.width, area.height), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+
+        assert_shell_frame_and_footer(
+            &buffer,
+            layout.shell.content(),
+            layout.shell.footer(),
+            "q quit",
+        );
+        let text = buffer_text(&buffer);
+        assert!(text.contains("Terraform will perform the following actions:"));
+        assert!(layout.vertical_scrollbar());
+        assert!(layout.horizontal_scrollbar());
+        let body = layout.body();
+        let vertical_x = body.x.saturating_add(body.width);
+        let horizontal_y = body.y.saturating_add(body.height);
+        let horizontal_end_x = vertical_x;
+        assert_eq!(buffer[(vertical_x, body.y)].symbol(), "↑");
+        assert_eq!(
+            buffer[(vertical_x, body.y)].fg,
+            Color::Rgb(0x50, 0x52, 0x5e)
+        );
+        assert_eq!(buffer[(body.x, horizontal_y)].symbol(), "←");
+        assert_eq!(
+            buffer[(body.x, horizontal_y)].fg,
+            Color::Rgb(0x50, 0x52, 0x5e)
+        );
+        assert_eq!(buffer[(horizontal_end_x, horizontal_y)].symbol(), "→");
+        assert_eq!(
+            buffer[(horizontal_end_x, horizontal_y)].fg,
+            Color::Rgb(0xc0, 0xb8, 0xb0)
+        );
+        assert_text_color(
+            &buffer,
+            "~ resource \"terraform_data\" \"api\"",
+            Color::Rgb(0xeb, 0xcb, 0x8b),
+        );
+        assert_text_color(&buffer, "- old_checksum", Color::Rgb(0xbf, 0x61, 0x6a));
+        assert_text_color(&buffer, "+ new_checksum", Color::Rgb(0xa3, 0xbe, 0x8c));
+    }
+
+    #[test]
+    fn production_search_render_draws_search_input_and_match_color() {
+        let mut plan = review();
+        plan.set_search_query(SEARCH_TERM.to_owned());
+        let state = review_state(plan);
+        let mut view = PlanReviewViewState::default();
+        view.apply(
+            PlanReviewInput::SearchStart,
+            Rect::new(0, 0, 80, 24),
+            0,
+            0,
+            SEARCH_TERM,
+        );
+        let buffer = render_to_buffer((80, 24), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+
+        assert!(buffer_text(&buffer).contains("/terraform_data|"));
+        assert_text_prefix_uses_style(
+            &buffer,
+            "terraform_data.api",
+            SEARCH_TERM,
+            Color::Rgb(0x11, 0x14, 0x19),
+            Color::Rgb(0xf4, 0x9e, 0x4c),
+            Modifier::BOLD,
+        );
+    }
+
+    #[test]
+    fn production_confirmation_render_draws_deletion_warning_and_footer() {
+        let state = confirmation_state(review());
+        let view = ApplyConfirmationViewState::default();
+        let area = Rect::new(0, 0, 80, 24);
+        let buffer = render_to_buffer((area.width, area.height), |frame| {
+            render_apply_confirmation(frame, &state, &view);
+        });
+
+        assert!(buffer_text(&buffer).contains("This plan includes resource deletion."));
+        assert!(buffer_text(&buffer).contains("Enter confirm"));
+    }
 
     #[test]
     fn search_prompt_keeps_the_cursor_visible() {
