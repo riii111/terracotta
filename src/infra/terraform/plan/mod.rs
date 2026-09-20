@@ -121,52 +121,43 @@ fn execute_review(
 ) -> Result<PlanReview, TerraformExecutionError> {
     let mut diagnostics = Vec::new();
     let (workspace, document, metadata) = {
-        let mut sink = |event: ExecutionEvent| {
-            if let ExecutionEventKind::Diagnostic(diagnostic) = &event.kind
-                && matches!(
-                    diagnostic.severity,
-                    DiagnosticSeverity::Warning
-                        | DiagnosticSeverity::Error
-                        | DiagnosticSeverity::Unknown
-                )
-            {
-                diagnostics.push(diagnostic.clone());
-            }
-            event_sink(event);
-        };
-
         phase_sink(ExecutionPhase::Initializing);
-        let init_output = run_required_command(
-            root,
-            TerraformCommand::Init,
-            &["init", "-input=false", "-no-color"],
-            cancellation,
-            runner,
-            &mut sink,
-            true,
-        )?;
-        for diagnostic in init_warning_diagnostics(&init_output.output) {
-            sink(ExecutionEvent {
-                received_at: std::time::Instant::now(),
-                kind: ExecutionEventKind::Diagnostic(diagnostic),
-            });
-        }
+        let init_output = {
+            let mut sink = |event| {
+                collect_and_forward_review_event(event, &mut diagnostics, event_sink);
+            };
+            run_required_command(
+                root,
+                TerraformCommand::Init,
+                &["init", "-input=false", "-no-color"],
+                cancellation,
+                runner,
+                &mut sink,
+                true,
+            )?
+        };
+        diagnostics.extend(init_warning_diagnostics(&init_output.output));
         let workspace = read_workspace_with_runner(root, cancellation, runner)?;
-        sink(ExecutionEvent {
+        event_sink(ExecutionEvent {
             received_at: std::time::Instant::now(),
             kind: ExecutionEventKind::Workspace(workspace.clone()),
         });
 
         phase_sink(ExecutionPhase::Planning);
         let plan_arguments = review_plan_arguments(plan_path);
-        let output = run_command_with_events(
-            root,
-            TerraformCommand::Plan,
-            &plan_arguments,
-            cancellation,
-            runner,
-            Some(&mut sink),
-        )?;
+        let output = {
+            let mut sink = |event| {
+                collect_and_forward_review_event(event, &mut diagnostics, event_sink);
+            };
+            run_command_with_events(
+                root,
+                TerraformCommand::Plan,
+                &plan_arguments,
+                cancellation,
+                runner,
+                Some(&mut sink),
+            )?
+        };
         if output.interrupted {
             return Err(interrupted_error(TerraformCommand::Plan, output));
         }
@@ -187,6 +178,22 @@ fn execute_review(
         metadata,
         diagnostics,
     ))
+}
+
+fn collect_and_forward_review_event(
+    event: ExecutionEvent,
+    diagnostics: &mut Vec<Diagnostic>,
+    event_sink: &mut dyn FnMut(ExecutionEvent),
+) {
+    if let ExecutionEventKind::Diagnostic(diagnostic) = &event.kind
+        && matches!(
+            diagnostic.severity,
+            DiagnosticSeverity::Warning | DiagnosticSeverity::Error | DiagnosticSeverity::Unknown
+        )
+    {
+        diagnostics.push(diagnostic.clone());
+    }
+    event_sink(event);
 }
 
 #[allow(
@@ -800,6 +807,13 @@ mod tests {
                 &event.kind,
                 ExecutionEventKind::Log(line)
                     if line.stream == EventStream::Stdout && line.text == "init out"
+            )
+        }));
+        assert!(!events.iter().any(|event| {
+            matches!(
+                &event.kind,
+                ExecutionEventKind::Diagnostic(diagnostic)
+                    if diagnostic.summary == "Provider development overrides are in effect"
             )
         }));
         assert!(events.iter().any(|event| {

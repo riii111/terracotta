@@ -431,6 +431,16 @@ mod tests {
         state.record(event(
             started_at,
             ExecutionEventKind::Diagnostic(Diagnostic {
+                severity: DiagnosticSeverity::Warning,
+                summary: "Provider warning".to_owned(),
+                detail: Some("Warning detail".to_owned()),
+                position: None,
+                source: DiagnosticSource::Terraform,
+            }),
+        ));
+        state.record(event(
+            started_at,
+            ExecutionEventKind::Diagnostic(Diagnostic {
                 severity: DiagnosticSeverity::Error,
                 summary: "Invalid configuration".to_owned(),
                 detail: None,
@@ -449,9 +459,10 @@ mod tests {
 
         let result = state.result().expect("failure result should exist");
         assert_eq!(result.phase(), ExecutionStage::Planning);
-        assert_eq!(result.first_error_line(), Some(0));
-        assert_eq!(result.log()[0].text, "Invalid configuration");
-        assert_eq!(result.log()[1].text, "Terraform plan failed");
+        assert_eq!(result.first_error_line(), Some(2));
+        assert_eq!(result.log()[0].text, "Provider warning\nWarning detail");
+        assert_eq!(result.log()[1].text, "Invalid configuration");
+        assert_eq!(result.log()[2].text, "Terraform plan failed");
     }
 
     #[test]

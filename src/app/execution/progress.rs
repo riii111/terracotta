@@ -41,8 +41,10 @@ impl ExecutionProgress {
                 }
             }
             ExecutionEventKind::Diagnostic(diagnostic) => {
-                if diagnostic.severity == super::event::DiagnosticSeverity::Error {
-                    self.first_error_line.get_or_insert(self.log.len());
+                if diagnostic.severity == super::event::DiagnosticSeverity::Error
+                    && self.first_error_line.is_none()
+                {
+                    self.first_error_line = Some(rendered_line_count(&self.log));
                 }
                 self.log.push(ExecutionLogLine {
                     stream: EventStream::Stderr,
@@ -123,6 +125,10 @@ impl ExecutionProgress {
     pub(crate) const fn termination(&self) -> Option<ProcessTermination> {
         self.termination
     }
+}
+
+fn rendered_line_count(log: &[ExecutionLogLine]) -> usize {
+    log.iter().map(|line| line.text.lines().count()).sum()
 }
 
 #[cfg(test)]
