@@ -15,18 +15,23 @@ pub(crate) enum ExecutionScroll {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VerticalScroll {
+    Initial,
+    FollowLatest,
+    Manual(u16),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ExecutionViewState {
-    scroll: u16,
+    vertical: VerticalScroll,
     horizontal: u16,
-    follow: bool,
 }
 
 impl Default for ExecutionViewState {
     fn default() -> Self {
         Self {
-            scroll: 0,
+            vertical: VerticalScroll::Initial,
             horizontal: 0,
-            follow: true,
         }
     }
 }
@@ -51,8 +56,7 @@ impl ExecutionViewState {
             | ExecutionScroll::LeftEdge
             | ExecutionScroll::RightEdge => current_offset,
         };
-        self.follow = false;
-        self.scroll = offset;
+        self.vertical = VerticalScroll::Manual(offset);
     }
 
     pub(crate) fn apply_horizontal_scroll(
@@ -62,9 +66,7 @@ impl ExecutionViewState {
         max_offset: u16,
         current_vertical: u16,
     ) {
-        if self.follow {
-            self.scroll = current_vertical;
-        }
+        self.vertical = VerticalScroll::Manual(current_vertical);
         self.horizontal = match action {
             ExecutionScroll::Left => current_offset.saturating_sub(1),
             ExecutionScroll::Right => current_offset.saturating_add(1).min(max_offset),
@@ -72,27 +74,41 @@ impl ExecutionViewState {
             ExecutionScroll::RightEdge => max_offset,
             _ => current_offset,
         };
-        self.follow = false;
     }
 
     pub(crate) const fn end(&mut self) {
-        self.follow = true;
-        self.scroll = 0;
+        self.vertical = VerticalScroll::FollowLatest;
     }
 
     #[must_use]
     pub(crate) const fn follows_latest(self) -> bool {
-        self.follow
-    }
-
-    #[must_use]
-    pub(crate) const fn scroll(self) -> u16 {
-        self.scroll
+        !matches!(self.vertical, VerticalScroll::Manual(_))
     }
 
     #[must_use]
     pub(crate) const fn horizontal(self) -> u16 {
         self.horizontal
+    }
+
+    #[must_use]
+    pub(crate) const fn vertical_offset(self, initial: u16, max: u16) -> u16 {
+        match self.vertical {
+            VerticalScroll::Initial => {
+                if initial < max {
+                    initial
+                } else {
+                    max
+                }
+            }
+            VerticalScroll::FollowLatest => max,
+            VerticalScroll::Manual(offset) => {
+                if offset < max {
+                    offset
+                } else {
+                    max
+                }
+            }
+        }
     }
 }
 
@@ -112,8 +128,28 @@ mod tests {
 
         view.apply_horizontal_scroll(ExecutionScroll::Right, 0, 5, 42);
 
-        assert_eq!(view.scroll(), 42);
+        assert_eq!(view.vertical_offset(0, 42), 42);
         assert_eq!(view.horizontal(), 1);
         assert!(!view.follows_latest());
+    }
+
+    #[test]
+    fn initial_and_follow_latest_use_different_vertical_modes() {
+        let mut view = ExecutionViewState::default();
+
+        assert_eq!(view.vertical_offset(2, 90), 2);
+        view.end();
+        assert_eq!(view.vertical_offset(2, 90), 90);
+    }
+
+    #[test]
+    fn horizontal_scroll_preserves_manual_vertical_position() {
+        let mut view = ExecutionViewState::default();
+        view.apply_scroll(ExecutionScroll::Down, 4, 10, 5);
+
+        view.apply_horizontal_scroll(ExecutionScroll::Right, 0, 5, 5);
+
+        assert_eq!(view.vertical_offset(0, 5), 5);
+        assert_eq!(view.horizontal(), 1);
     }
 }

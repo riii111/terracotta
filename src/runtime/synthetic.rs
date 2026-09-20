@@ -9,13 +9,13 @@ use ratatui::DefaultTerminal;
 
 use crate::{
     app::{
-        copy::CopyNotice,
+        copy::CopyResult,
         execution::{
             ApplyStatus, EventStream, ExecutionContext, ExecutionEvent, ExecutionEventKind,
             ExecutionLogLine, ExecutionPhase, ExecutionState,
         },
         review::{PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata, PlanReview},
-        session::{self, Action, Effect, ReviewSessionState, SessionState},
+        session::{Action, Effect, ReviewSessionState, SessionState},
     },
     ui::features::{execution, plan_review},
 };
@@ -34,7 +34,7 @@ pub(super) fn run_synthetic() -> io::Result<()> {
             })?;
 
             if complete_apply_at.is_some_and(|at| Instant::now() >= at) {
-                finish_synthetic_apply(&mut state);
+                finish_synthetic_apply(&mut state, &mut execution_view);
                 complete_apply_at = None;
                 continue;
             }
@@ -58,24 +58,36 @@ pub(super) fn run_synthetic() -> io::Result<()> {
                         synthetic_confirmation_key(&mut confirmation_view, key)
                     }
                     SessionState::Apply(execution) => {
-                        if synthetic_execution_key(terminal, execution, &mut execution_view, key)? {
-                            Some(Action::Quit)
-                        } else {
-                            None
-                        }
+                        synthetic_execution_key(terminal, execution, &mut execution_view, key)?
                     }
                     SessionState::Execution(_) => None,
                 };
-                if action == Some(Action::Quit) {
-                    return Ok(());
-                }
-                if let Some(action) = action
-                    && matches!(
-                        session::update(&mut state, action, Instant::now()),
-                        Some(Effect::StartApply)
-                    )
-                {
-                    complete_apply_at = Some(Instant::now() + Duration::from_millis(250));
+                let Some(action) = action else {
+                    continue;
+                };
+                match super::event_loop::update_session(
+                    &mut state,
+                    action,
+                    &mut execution_view,
+                    Instant::now(),
+                ) {
+                    Some(Effect::StartApply) => {
+                        complete_apply_at = Some(Instant::now() + Duration::from_millis(250));
+                    }
+                    Some(Effect::WriteClipboard(effect)) => {
+                        let target = effect.target();
+                        let _ = super::event_loop::update_session(
+                            &mut state,
+                            Action::CopyCompleted {
+                                target,
+                                result: CopyResult::Written,
+                            },
+                            &mut execution_view,
+                            Instant::now(),
+                        );
+                    }
+                    Some(Effect::Finish(_)) => return Ok(()),
+                    Some(Effect::CancelExecution) | None => {}
                 }
             }
         }
@@ -159,15 +171,15 @@ fn synthetic_review_key(
 
 fn synthetic_execution_key(
     terminal: &DefaultTerminal,
-    state: &mut ExecutionState,
+    state: &ExecutionState,
     view: &mut execution::ExecutionViewState,
     key: KeyEvent,
-) -> io::Result<bool> {
+) -> io::Result<Option<Action>> {
     match execution::execution_key_to_input(key, state.stage()) {
-        Some(execution::ExecutionInput::Quit) => Ok(true),
+        Some(execution::ExecutionInput::Quit) => Ok(Some(Action::Quit)),
         Some(execution::ExecutionInput::End) => {
             view.end();
-            Ok(false)
+            Ok(None)
         }
         Some(execution::ExecutionInput::Scroll(scroll)) => {
             let size = terminal.size()?;
@@ -192,13 +204,11 @@ fn synthetic_execution_key(
                     view.apply_scroll(scroll, current, max, layout.body().height);
                 }
             }
-            Ok(false)
+            Ok(None)
         }
-        Some(execution::ExecutionInput::Copy(target)) => {
-            state.set_copy_notice(CopyNotice::Copied { target }, Instant::now());
-            Ok(false)
-        }
-        Some(execution::ExecutionInput::Action(_)) | None => Ok(false),
+        Some(execution::ExecutionInput::Copy(target)) => Ok(Some(Action::Copy(target))),
+        Some(execution::ExecutionInput::Action(action)) => Ok(Some(Action::Execution(action))),
+        None => Ok(None),
     }
 }
 
@@ -209,8 +219,11 @@ fn synthetic_confirmation_key(
     plan_review::apply_confirmation_key_to_input(key).and_then(|input| view.apply(input))
 }
 
-fn finish_synthetic_apply(state: &mut SessionState) {
-    let _ = session::update(
+fn finish_synthetic_apply(
+    state: &mut SessionState,
+    execution_view: &mut execution::ExecutionViewState,
+) {
+    let _ = super::event_loop::update_session(
         state,
         Action::ApplyCompleted {
             status: ApplyStatus::Succeeded,
@@ -218,6 +231,7 @@ fn finish_synthetic_apply(state: &mut SessionState) {
                 "Apply complete! Resources: 0 added, 1 changed, 0 destroyed.".to_owned(),
             ),
         },
+        execution_view,
         Instant::now(),
     );
 }

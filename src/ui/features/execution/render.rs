@@ -67,11 +67,7 @@ pub(crate) fn render_execution_with_view(
     let max_line_width = content.max_width;
     let max_vertical = layout.max_vertical();
     let max_horizontal = layout.max_horizontal();
-    let scroll = if view.follows_latest() {
-        preferred_scroll(state, max_vertical)
-    } else {
-        view.scroll().min(max_vertical)
-    };
+    let scroll = view.vertical_offset(initial_scroll(state, max_vertical), max_vertical);
     let horizontal = view.horizontal().min(max_horizontal);
     let lines = if state.copy_flash_active(now) {
         flash_lines(content.lines)
@@ -213,11 +209,7 @@ pub(crate) fn execution_scroll_position_with_view(
     layout: &ExecutionLayout,
 ) -> (u16, u16) {
     let max = layout.max_vertical();
-    let current = if view.follows_latest() {
-        preferred_scroll(state, max)
-    } else {
-        view.scroll().min(max)
-    };
+    let current = view.vertical_offset(initial_scroll(state, max), max);
     (current, max)
 }
 
@@ -382,10 +374,18 @@ fn flash_lines(lines: Vec<Line<'_>>) -> Vec<Line<'static>> {
         .collect()
 }
 
-fn preferred_scroll(state: &ExecutionState, max: u16) -> u16 {
+fn initial_scroll(state: &ExecutionState, max: u16) -> u16 {
+    if !matches!(
+        state.stage(),
+        ExecutionStage::Failed | ExecutionStage::ApplyFailed
+    ) {
+        return max;
+    }
+
     state
         .result()
         .and_then(ExecutionResult::first_error_line)
+        .or_else(|| state.progress().first_error_line())
         .and_then(|line| u16::try_from(line).ok())
         .unwrap_or(max)
         .min(max)
@@ -497,6 +497,37 @@ mod tests {
         (state, finished_at)
     }
 
+    fn long_apply_state(status: ApplyStatus) -> (ExecutionState, Instant) {
+        let started_at = Instant::now();
+        let finished_at = started_at + Duration::from_secs(4);
+        let mut state = ExecutionState::applying(
+            started_at,
+            ExecutionContext::loading("/repo/environments/production/main")
+                .with_workspace("default"),
+        );
+        for index in 0..40 {
+            let text = match index {
+                3 => "Error: initial failure".to_owned(),
+                39 => "tail marker".to_owned(),
+                _ => format!("log line {index}"),
+            };
+            state.record(ExecutionEvent {
+                received_at: started_at,
+                kind: ExecutionEventKind::Log(ExecutionLogLine {
+                    stream: EventStream::Stdout,
+                    text,
+                }),
+            });
+        }
+        state.finish_apply(
+            status,
+            None,
+            (status == ApplyStatus::Failed).then(|| "apply failed".to_owned()),
+            finished_at,
+        );
+        (state, finished_at)
+    }
+
     fn snapshot(name: &str, buffer: &Buffer) {
         insta::assert_snapshot!(name.to_string(), buffer_text(buffer));
         write_buffer_captures(name, buffer);
@@ -554,6 +585,63 @@ mod tests {
 
             snapshot(&format!("preview_{width}x{height}_apply-failure"), &buffer);
         }
+    }
+
+    #[test]
+    fn initial_execution_position_depends_on_the_completed_result() {
+        struct InitialPositionCase {
+            name: &'static str,
+            status: ApplyStatus,
+            expected_marker: &'static str,
+            tail_is_visible: bool,
+        }
+
+        for case in [
+            InitialPositionCase {
+                name: "success_follows_tail",
+                status: ApplyStatus::Succeeded,
+                expected_marker: "tail marker",
+                tail_is_visible: true,
+            },
+            InitialPositionCase {
+                name: "failure_starts_at_first_error",
+                status: ApplyStatus::Failed,
+                expected_marker: "Error: initial failure",
+                tail_is_visible: false,
+            },
+            InitialPositionCase {
+                name: "interrupted_follows_tail",
+                status: ApplyStatus::Interrupted,
+                expected_marker: "tail marker",
+                tail_is_visible: true,
+            },
+        ] {
+            let (state, now) = long_apply_state(case.status);
+            let buffer = render_to_buffer((80, 24), |frame| {
+                render_execution_with_view(frame, &state, ExecutionViewState::default(), now);
+            });
+            let text = buffer_text(&buffer);
+
+            assert!(text.contains(case.expected_marker), "case: {}", case.name);
+            assert_eq!(
+                text.contains("tail marker"),
+                case.tail_is_visible,
+                "case: {}",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn end_uses_the_log_tail_after_a_failed_apply() {
+        let (state, now) = long_apply_state(ApplyStatus::Failed);
+        let mut view = ExecutionViewState::default();
+        view.end();
+        let buffer = render_to_buffer((80, 24), |frame| {
+            render_execution_with_view(frame, &state, view, now);
+        });
+
+        assert!(buffer_text(&buffer).contains("tail marker"));
     }
 
     #[test]
