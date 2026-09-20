@@ -14,8 +14,10 @@ expression: buffer_text(buffer)
 
                     Terracotta | main
 
-                    ┌Plan | Search─────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+                    ┌Plan | Filter─────────────────────────────────────────────────────────────────────────────────────────────────────────┐
                     │/terraform_data|                                                                                                      │
+                    │Filter matches: resources 4/4 | outputs 0/2                                                                           │
+                    │Scope: full plan (apply / yank)                                                                                       │
                     │Terraform will perform the following actions:                                                                        ▲│
                     │                                                                                                                     ┃│
                     │  # terraform_data.api will be updated in-place                                                                      ┃│
@@ -40,12 +42,10 @@ expression: buffer_text(buffer)
                     │  # terraform_data.new will be created                                                                               ┃│
                     │  + resource "terraform_data" "new" {                                                                                ┃│
                     │      input = "new-value"                                                                                            ┃│
-                    │      note  = "A deliberately long synthetic value keeps horizontal scrolling visible"                               ┃│
-                    │    }                                                                                                                ┃│
+                    │      note  = "A deliberately long synthetic value keeps horizontal scrolling visible"                               ││
+                    │    }                                                                                                                ││
                     │                                                                                                                     ││
                     │Changes to Outputs:                                                                                                  ││
-                    │  + endpoint = (known after apply)                                                                                   ││
-                    │  ~ summary  = "old summary" -> "new summary with a deliberately long value for review"                              ││
                     │                                                                                                                     ││
                     │Warning: Value for "pending" is not known until apply                                                                ││
                     │                                                                                                                     ││

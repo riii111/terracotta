@@ -471,6 +471,27 @@ mod tests {
     }
 
     #[test]
+    fn filtered_review_copy_still_contains_the_full_document() {
+        let now = Instant::now();
+        let mut filtered = review();
+        filtered.set_search_query("not-present".to_owned());
+        let full_text = filtered.document().text().to_owned();
+        let mut state = SessionState::new(ExecutionState::with_context(
+            now,
+            ExecutionContext::loading("/project"),
+        ));
+        update(&mut state, Action::ReviewCompleted(filtered), now);
+
+        let Some(Effect::WriteClipboard(effect)) =
+            update(&mut state, Action::Copy(CopyTarget::Plan), now)
+        else {
+            panic!("plan copy should be available");
+        };
+
+        assert_eq!(effect.text(), full_text);
+    }
+
+    #[test]
     fn review_copy_flash_expires_without_clearing_the_notice() {
         let now = Instant::now();
         let mut state = SessionState::new(ExecutionState::with_context(
@@ -557,6 +578,29 @@ mod tests {
                 status: ApplyStatus::Succeeded,
                 ..
             }))
+        ));
+    }
+
+    #[test]
+    fn filtered_review_keeps_full_plan_metadata_for_apply_confirmation() {
+        let now = Instant::now();
+        let mut filtered = applyable_review();
+        filtered.set_search_query("not-present".to_owned());
+        let mut state = SessionState::new(ExecutionState::with_context(
+            now,
+            ExecutionContext::loading("/project"),
+        ));
+        update(&mut state, Action::ReviewCompleted(filtered), now);
+        update(&mut state, Action::OpenApplyConfirmation, now);
+
+        let confirmation = state
+            .apply_confirmation()
+            .expect("confirmation should be available");
+        assert_eq!(confirmation.review().search_query(), "not-present");
+        assert_eq!(confirmation.review().metadata().changes(), 1);
+        assert!(matches!(
+            update(&mut state, Action::ConfirmApply, now),
+            Some(Effect::StartApply)
         ));
     }
 

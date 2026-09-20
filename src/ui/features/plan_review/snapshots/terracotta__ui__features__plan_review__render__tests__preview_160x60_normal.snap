@@ -51,4 +51,4 @@ expression: buffer_text(buffer)
                     │Plan: 2 to add, 2 to change, 1 to destroy.                                                                           ││
                     │                                                                                                                     ▼│
                     └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-                    ↑/↓/←/→ scroll | / search | y yank | a apply | q quit
+                    ↑/↓/←/→ scroll | / filter | y yank | a apply | q quit
