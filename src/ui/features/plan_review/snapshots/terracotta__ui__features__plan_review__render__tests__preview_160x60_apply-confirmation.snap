@@ -14,41 +14,29 @@ expression: buffer_text(buffer)
 
                     Terracotta | main
 
-                    ┌Apply─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-                    │Apply this reviewed plan?                                                                                             │
-                    │Target: /repo/environments/production/main                                                                            │
-                    │Workspace: default                                                                                                    │
-                    │Plan: 2 to add, 2 to change, 1 to destroy.                                                                            │
-                    │                                                                                                                      │
-                    │This plan includes resource deletion.                                                                                 │
-                    │                                                                                                                      │
-                    │Apply this plan? (yes/no): |                                                                                          │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    │                                                                                                                      │
-                    └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-                    Enter confirm | Esc back
+
+
+
+
+
+
+
+
+
+
+
+                                        ┌──────────────────────────────────────────────────────────────────────────────┐
+                                        │                                                                              │
+                                        │ Apply this reviewed plan?                                                    │
+                                        │                                                                              │
+                                        │ Target: /repo/environments/production/main                                   │
+                                        │ Workspace: default                                                           │
+                                        │ Plan: 2 to add, 2 to change, 1 to destroy.                                   │
+                                        │                                                                              │
+                                        │ This plan includes resource deletion.                                        │
+                                        │                                                                              │
+                                        │ Apply this plan? (yes/no):                                                   │
+                                        │ |                                                                            │
+                                        │                                                                              │
+                                        └──────────────────────────────────────────────────────────────────────────────┘
+                                        Enter confirm | Esc back

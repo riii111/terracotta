@@ -4,7 +4,7 @@ use ratatui::{
     Frame,
     layout::Rect,
     text::{Line, Span},
-    widgets::{Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph, Wrap},
 };
 
 use crate::app::{
@@ -20,9 +20,62 @@ use super::{ApplyConfirmationViewState, PlanReviewViewState};
 
 const MIN_WIDTH: u16 = 24;
 const MIN_HEIGHT: u16 = 6;
+const CONFIRMATION_MAX_WIDTH: u16 = 80;
+const CONFIRMATION_HEADER_HEIGHT: u16 = 2;
+const CONFIRMATION_NOTICE: &str = "Terminal too small. Resize or press Esc to go back.";
 struct PreparedContent<'a> {
     lines: Vec<Line<'a>>,
     max_width: usize,
+}
+
+pub(crate) struct ApplyConfirmationLayout {
+    header: Rect,
+    notice: Rect,
+    frame: Rect,
+    footer: Rect,
+    inner: Rect,
+    input: Rect,
+    lines: Vec<Line<'static>>,
+    footer_lines: Vec<Line<'static>>,
+    renderable: bool,
+}
+
+impl ApplyConfirmationLayout {
+    pub(crate) const fn header(&self) -> Rect {
+        self.header
+    }
+
+    pub(crate) const fn notice(&self) -> Rect {
+        self.notice
+    }
+
+    pub(crate) const fn frame(&self) -> Rect {
+        self.frame
+    }
+
+    pub(crate) const fn footer(&self) -> Rect {
+        self.footer
+    }
+
+    pub(crate) const fn inner(&self) -> Rect {
+        self.inner
+    }
+
+    pub(crate) const fn input(&self) -> Rect {
+        self.input
+    }
+
+    pub(crate) fn lines(&self) -> &[Line<'static>] {
+        &self.lines
+    }
+
+    pub(crate) fn footer_lines(&self) -> &[Line<'static>] {
+        &self.footer_lines
+    }
+
+    pub(crate) const fn renderable(&self) -> bool {
+        self.renderable
+    }
 }
 
 pub(crate) struct PlanReviewLayout {
@@ -144,58 +197,162 @@ pub(crate) fn render_apply_confirmation(
     view: &ApplyConfirmationViewState,
 ) {
     let area = frame.area();
-    if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
-        terminal_notice::render_wrapped(
-            frame,
-            area,
-            "Terminal too small. Resize or press Esc to go back.",
-        );
+    let layout = apply_confirmation_layout(area, state);
+    if layout.header().height > 0 {
+        header::render_review(frame, layout.header(), state.review());
+    }
+    if !layout.renderable() {
+        terminal_notice::render_wrapped(frame, layout.notice(), CONFIRMATION_NOTICE);
         return;
     }
-    let panel = shell_layout::centered_area(area);
-    let footer_lines = footer::layout(
-        vec![
-            footer::hint(&["Enter"], "confirm"),
-            footer::hint(&["Esc"], "back"),
-        ],
-        panel.width,
+
+    let block_inner =
+        shell_layout::render_content_block_line(frame, layout.frame(), Line::default());
+    let inner = padded_confirmation_inner(block_inner);
+    debug_assert_eq!(inner, layout.inner());
+    let info_area = Rect::new(
+        inner.x,
+        inner.y,
+        inner.width,
+        inner.height.saturating_sub(1),
     );
-    let shell = shell_layout::layout(panel, footer_lines.clone(), footer_lines, 1);
-    header::render_review(frame, shell.header(), state.review());
-    let inner = shell_layout::render_content_block(frame, shell.content(), "Apply");
+    frame.render_widget(
+        Paragraph::new(layout.lines().to_owned())
+            .style(theme::body_style())
+            .wrap(Wrap { trim: false }),
+        info_area,
+    );
+    frame.render_widget(
+        Paragraph::new(confirmation_input_line(view))
+            .style(theme::body_style())
+            .scroll((0, confirmation_input_scroll(view, layout.input().width))),
+        layout.input(),
+    );
+    footer::render(frame, layout.footer(), layout.footer_lines().to_owned());
+}
+
+pub(crate) fn apply_confirmation_layout(
+    area: Rect,
+    state: &ApplyConfirmationState,
+) -> ApplyConfirmationLayout {
+    let panel = shell_layout::centered_area(area);
+    let header_height = panel.height.min(CONFIRMATION_HEADER_HEIGHT);
+    let header = Rect::new(panel.x, panel.y, panel.width, header_height);
+    let available = Rect::new(
+        panel.x,
+        panel.y.saturating_add(header_height),
+        panel.width,
+        panel.height.saturating_sub(header_height),
+    );
+    let frame_width = panel.width.min(CONFIRMATION_MAX_WIDTH);
+    let footer_items = vec![
+        footer::hint(&["Enter"], "confirm"),
+        footer::hint(&["Esc"], "back"),
+    ];
+    let footer_lines = footer::layout(footer_items.clone(), frame_width);
+    let footer_required_width = footer_items.iter().map(Line::width).sum::<usize>() + 3;
+    let footer_fits = footer_lines.len() == 1
+        && footer_lines
+            .first()
+            .is_some_and(|line| line.width() == footer_required_width);
+    let inner_width = frame_width.saturating_sub(4);
+    let lines = confirmation_lines(state);
+    let body = Paragraph::new(lines.clone()).wrap(Wrap { trim: false });
+    let body_height = body.line_count(inner_width).saturating_add(1);
+    let frame_height = u16::try_from(body_height)
+        .unwrap_or(u16::MAX)
+        .saturating_add(4);
+    let group_height = frame_height.saturating_add(1);
+    let renderable =
+        inner_width > 0 && footer_fits && group_height <= available.height && frame_width >= 5;
+    let frame_x = panel.x + panel.width.saturating_sub(frame_width) / 2;
+    let group_y = available.y + available.height.saturating_sub(group_height) / 2;
+    let frame = Rect::new(frame_x, group_y, frame_width, frame_height);
+    let footer = Rect::new(frame.x, frame.bottom(), frame.width, 1);
+    let inner = padded_confirmation_inner(Block::new().borders(Borders::ALL).inner(frame));
+    let input = Rect::new(
+        inner.x,
+        inner.y.saturating_add(inner.height.saturating_sub(1)),
+        inner.width,
+        u16::from(inner.height > 0),
+    );
+    ApplyConfirmationLayout {
+        header,
+        notice: available,
+        frame,
+        footer,
+        inner,
+        input,
+        lines,
+        footer_lines,
+        renderable,
+    }
+}
+
+const fn padded_confirmation_inner(inner: Rect) -> Rect {
+    Rect::new(
+        inner.x.saturating_add(1),
+        inner.y.saturating_add(1),
+        inner.width.saturating_sub(2),
+        inner.height.saturating_sub(2),
+    )
+}
+
+fn confirmation_lines(state: &ApplyConfirmationState) -> Vec<Line<'static>> {
     let metadata = state.review().metadata();
     let mut lines = vec![
         Line::from("Apply this reviewed plan?"),
-        Line::from(format!("Target: {}", state.review().root().display())),
-        Line::from(format!("Workspace: {}", state.review().workspace())),
+        Line::default(),
+        Line::from(vec![
+            Span::styled("Target: ", theme::secondary_style()),
+            Span::styled(
+                state.review().root().display().to_string(),
+                theme::body_style(),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Workspace: ", theme::secondary_style()),
+            Span::styled(state.review().workspace().to_owned(), theme::body_style()),
+        ]),
         Line::from(format!(
             "Plan: {} to add, {} to change, {} to destroy.",
             metadata.additions(),
             metadata.changes(),
             metadata.deletions()
         )),
-        Line::default(),
     ];
+    if !state.review().search_query().is_empty() {
+        lines.push(Line::from(Span::styled(
+            "Scope: full plan (filter does not limit apply).",
+            theme::secondary_style(),
+        )));
+    }
     if metadata.deletions() > 0 {
-        lines.push(Line::from("This plan includes resource deletion."));
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(
+            "This plan includes resource deletion.",
+            theme::warning_style(),
+        )));
         lines.push(Line::default());
     }
+    lines.push(Line::from("Apply this plan? (yes/no):"));
+    lines
+}
+
+fn confirmation_input_line(view: &ApplyConfirmationViewState) -> Line<'static> {
     let cursor = view.cursor().min(view.input().len());
-    let before = view.input()[..cursor].to_owned();
-    let after = view.input()[cursor..].to_owned();
-    lines.push(Line::from(vec![
-        Span::raw("Apply this plan? (yes/no): "),
-        Span::styled(before, theme::body_style()),
+    Line::from(vec![
+        Span::styled(view.input()[..cursor].to_owned(), theme::body_style()),
         Span::styled("|", theme::accent_style()),
-        Span::styled(after, theme::body_style()),
-    ]));
-    frame.render_widget(
-        Paragraph::new(lines)
-            .style(theme::body_style())
-            .wrap(Wrap { trim: false }),
-        inner,
-    );
-    footer::render(frame, shell.footer(), shell.footer_lines().to_owned());
+        Span::styled(view.input()[cursor..].to_owned(), theme::body_style()),
+    ])
+}
+
+fn confirmation_input_scroll(view: &ApplyConfirmationViewState, width: u16) -> u16 {
+    let width = usize::from(width);
+    let cursor = view.cursor().min(view.input().len());
+    let cursor_width = Line::from(view.input()[..cursor].to_owned()).width();
+    u16::try_from(cursor_width.saturating_sub(width.saturating_sub(1))).unwrap_or(u16::MAX)
 }
 
 pub(crate) fn render(
@@ -677,6 +834,22 @@ End of synthetic plan body."#;
                 1,
                 applyable,
             ),
+            Vec::new(),
+        )
+    }
+
+    fn confirmation_review(
+        root: &str,
+        workspace: &str,
+        additions: usize,
+        changes: usize,
+        deletions: usize,
+    ) -> PlanReview {
+        PlanReview::new(
+            PathBuf::from(root),
+            workspace.to_owned(),
+            plan_document("Plan: 0 to add, 0 to change, 0 to destroy.\n".to_owned()),
+            PlanMetadata::new(Vec::new(), Vec::new(), additions, changes, deletions, true),
             Vec::new(),
         )
     }
@@ -1317,6 +1490,172 @@ End of synthetic plan body."#;
             Color::Reset,
             Modifier::empty(),
         );
+    }
+
+    #[test]
+    fn production_confirmation_layout_keeps_the_footer_adjacent_to_a_compact_frame() {
+        for &(width, height) in &SIZES {
+            let layout = apply_confirmation_layout(
+                Rect::new(0, 0, width, height),
+                &confirmation_state(review()),
+            );
+
+            assert!(layout.renderable());
+            assert_eq!(
+                layout.frame().width,
+                width.saturating_sub(2).min(CONFIRMATION_MAX_WIDTH)
+            );
+            assert_eq!(layout.footer().y, layout.frame().bottom());
+            assert_eq!(layout.footer().x, layout.frame().x);
+            assert_eq!(layout.inner().width, layout.frame().width - 4);
+            assert_eq!(layout.inner().height, layout.frame().height - 4);
+            assert_eq!(layout.input().height, 1);
+            assert!(layout.frame().height < height);
+        }
+    }
+
+    #[test]
+    fn production_confirmation_wraps_target_and_preserves_scope_and_workspace() {
+        let mut plan = confirmation_review(
+            "/repo/environments/production/東京/with-a-very-long-target-name-that-must-wrap",
+            "staging",
+            0,
+            1,
+            0,
+        );
+        plan.set_search_query("worker".to_owned());
+        let state = confirmation_state(plan);
+        let area = Rect::new(0, 0, 48, 30);
+        let layout = apply_confirmation_layout(area, &state);
+        assert!(layout.renderable());
+        assert!(layout.frame().height > 12);
+        let too_short = Rect::new(0, 0, area.width, 12);
+        assert!(!apply_confirmation_layout(too_short, &state).renderable());
+        let too_short_buffer = render_to_buffer((too_short.width, too_short.height), |frame| {
+            render_apply_confirmation(frame, &state, &ApplyConfirmationViewState::default());
+        });
+        assert!(buffer_text(&too_short_buffer).contains("Terminal too small"));
+
+        let buffer = render_to_buffer((area.width, area.height), |frame| {
+            render_apply_confirmation(frame, &state, &ApplyConfirmationViewState::default());
+        });
+        let text = buffer_text(&buffer);
+        let flat = text.replace('\n', "");
+        let compact = flat
+            .chars()
+            .filter(|character| !character.is_whitespace() && *character != '│')
+            .collect::<String>();
+        assert!(text.contains("Target:"));
+        assert!(compact.contains("/repo"));
+        assert!(compact.contains("environments/production"));
+        assert!(compact.contains("東京"));
+        assert!(compact.contains("with-a-very-long-target-name-that-must-wrap"));
+        assert!(text.contains("Workspace: staging"));
+        assert!(text.contains("Plan: 0 to add, 1 to change, 0 to destroy."));
+        assert!(text.contains("Scope: full plan (filter does not limit"));
+        assert!(text.contains("apply)."));
+        assert!(!text.contains("This plan includes resource deletion."));
+        assert_eq!(layout.footer().y, layout.frame().bottom());
+    }
+
+    #[test]
+    fn production_confirmation_requires_a_complete_footer_and_keeps_notice_below_header() {
+        let state = confirmation_state(review());
+        let narrow = Rect::new(0, 0, 24, 30);
+        assert!(!apply_confirmation_layout(narrow, &state).renderable());
+
+        let area = Rect::new(0, 0, 48, 12);
+        let layout = apply_confirmation_layout(area, &state);
+        assert!(!layout.renderable());
+        let buffer = render_to_buffer((area.width, area.height), |frame| {
+            render_apply_confirmation(frame, &state, &ApplyConfirmationViewState::default());
+        });
+        let text = buffer_text(&buffer);
+        let lines = text.lines().collect::<Vec<_>>();
+        assert!(lines[usize::from(layout.header().y)].contains("Terracotta |"));
+        assert!(!lines[usize::from(layout.header().y)].contains("Terminal too small"));
+        assert!(lines[usize::from(layout.notice().y)].contains("Terminal too small"));
+    }
+
+    #[test]
+    fn production_confirmation_uses_role_styles_for_labels_values_scope_and_warning() {
+        let state = confirmation_state(review());
+        let buffer = render_to_buffer((120, 40), |frame| {
+            render_apply_confirmation(frame, &state, &ApplyConfirmationViewState::default());
+        });
+        assert_text_segment_uses_style(
+            &buffer,
+            "Target: /repo/environments/production/main",
+            0,
+            "Target: ".chars().count(),
+            Color::Rgb(0xc0, 0xb8, 0xb8),
+            Color::Reset,
+            Modifier::empty(),
+        );
+        assert_text_segment_uses_style(
+            &buffer,
+            "Target: /repo/environments/production/main",
+            "Target: ".chars().count(),
+            "/repo/environments/production/main".chars().count(),
+            Color::Rgb(0xe9, 0xdb, 0xdb),
+            Color::Reset,
+            Modifier::empty(),
+        );
+        assert_text_segment_uses_style(
+            &buffer,
+            "Workspace: default",
+            0,
+            "Workspace: ".chars().count(),
+            Color::Rgb(0xc0, 0xb8, 0xb8),
+            Color::Reset,
+            Modifier::empty(),
+        );
+        assert_text_prefix_uses_style(
+            &buffer,
+            "This plan includes resource deletion.",
+            "This plan includes resource deletion.",
+            Color::Rgb(0xeb, 0xcb, 0x8b),
+            Color::Reset,
+            Modifier::BOLD,
+        );
+
+        let mut filtered = confirmation_review("/repo", "staging", 0, 1, 0);
+        filtered.set_search_query("worker".to_owned());
+        let filtered_state = confirmation_state(filtered);
+        let filtered_buffer = render_to_buffer((120, 40), |frame| {
+            render_apply_confirmation(
+                frame,
+                &filtered_state,
+                &ApplyConfirmationViewState::default(),
+            );
+        });
+        assert_text_prefix_uses_style(
+            &filtered_buffer,
+            "Scope: full plan (filter does not limit apply).",
+            "Scope: full plan (filter does not limit apply).",
+            Color::Rgb(0xc0, 0xb8, 0xb8),
+            Color::Reset,
+            Modifier::empty(),
+        );
+    }
+
+    #[test]
+    fn production_confirmation_scrolls_long_input_to_the_cursor() {
+        let state = confirmation_state(review());
+        let mut view = ApplyConfirmationViewState::default();
+        for character in "this-is-a-long-invalid-confirmation-input"
+            .repeat(3)
+            .chars()
+        {
+            view.apply(ApplyConfirmationInput::Character(character));
+        }
+        let layout = apply_confirmation_layout(Rect::new(0, 0, 80, 24), &state);
+        assert!(confirmation_input_scroll(&view, layout.input().width) > 0);
+
+        let buffer = render_to_buffer((80, 24), |frame| {
+            render_apply_confirmation(frame, &state, &view);
+        });
+        assert!(buffer_text(&buffer).contains("input|"));
     }
 
     #[test]

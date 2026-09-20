@@ -185,8 +185,21 @@ fn handle_key_event<B: Backend>(
     }
 
     if state.apply_confirmation().is_some() {
-        return Ok(plan_review::apply_confirmation_key_to_input(key)
-            .and_then(|input| confirmation_view.apply(input)));
+        let confirmation = state
+            .apply_confirmation()
+            .expect("confirmation state should still be available");
+        let size = terminal.size()?;
+        let layout = plan_review::apply_confirmation_layout(
+            Rect::new(0, 0, size.width, size.height),
+            confirmation,
+        );
+        let input = plan_review::apply_confirmation_key_to_input(key);
+        let input = match input {
+            Some(plan_review::ApplyConfirmationInput::Cancel) => input,
+            Some(_) if layout.renderable() => input,
+            _ => None,
+        };
+        return Ok(input.and_then(|input| confirmation_view.apply(input)));
     }
 
     if let Some(apply) = state.apply() {
@@ -651,7 +664,169 @@ mod tests {
         );
 
         assert!(!dirty);
-        assert!(terminal_text(&terminal).contains("Apply this plan? (yes/no): y|"));
+        let text = terminal_text(&terminal);
+        assert!(text.contains("Apply this plan? (yes/no):"));
+        assert!(text.contains("│ y|"), "{text}");
+    }
+
+    #[test]
+    fn confirmation_yes_waits_for_a_resized_terminal_before_starting_apply() {
+        let now = Instant::now();
+        let mut state = applyable_review_state();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+        let mut execution_view = execution::ExecutionViewState::default();
+        let mut review_view = plan_review::PlanReviewViewState::default();
+        let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
+
+        let open = handle_key_event(
+            &terminal,
+            &state,
+            &mut execution_view,
+            &mut review_view,
+            &mut confirmation_view,
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+        )
+        .expect("apply key should be handled")
+        .expect("apply key should open confirmation");
+        update_session(&mut state, open, &mut execution_view, now);
+
+        for character in "yes".chars() {
+            assert!(
+                handle_key_event(
+                    &terminal,
+                    &state,
+                    &mut execution_view,
+                    &mut review_view,
+                    &mut confirmation_view,
+                    KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+                )
+                .expect("confirmation character should be handled")
+                .is_none()
+            );
+        }
+
+        terminal.backend_mut().resize(24, 6);
+        assert_eq!(
+            handle_key_event(
+                &terminal,
+                &state,
+                &mut execution_view,
+                &mut review_view,
+                &mut confirmation_view,
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            )
+            .expect("small confirmation should be handled"),
+            None
+        );
+        assert_eq!(confirmation_view.input(), "yes");
+
+        terminal.backend_mut().resize(80, 24);
+        let confirm = handle_key_event(
+            &terminal,
+            &state,
+            &mut execution_view,
+            &mut review_view,
+            &mut confirmation_view,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        )
+        .expect("resized confirmation should be handled")
+        .expect("yes should confirm after resize");
+        assert!(matches!(
+            update_session(&mut state, confirm, &mut execution_view, now),
+            Some(Effect::StartApply)
+        ));
+        assert!(state.apply().is_some());
+
+        assert_eq!(
+            handle_key_event(
+                &terminal,
+                &state,
+                &mut execution_view,
+                &mut review_view,
+                &mut confirmation_view,
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            )
+            .expect("apply state should consume the second Enter"),
+            None
+        );
+    }
+
+    #[test]
+    fn cancelling_confirmation_preserves_filtered_review_position() {
+        let now = Instant::now();
+        let mut plan = PlanReview::new(
+            PathBuf::from("/project"),
+            "staging".to_owned(),
+            plan_document(
+                (0..60)
+                    .map(|index| format!("review line {index}"))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            PlanMetadata::new(Vec::new(), Vec::new(), 0, 1, 0, true),
+            Vec::new(),
+        );
+        plan.set_search_query("worker".to_owned());
+        let mut state = SessionState::Review(Box::new(ReviewSessionState::new(plan)));
+        let terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+        let mut execution_view = execution::ExecutionViewState::default();
+        let mut review_view = plan_review::PlanReviewViewState::default();
+        let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
+        let review = state.review().expect("review state");
+        let layout = plan_review::layout(Rect::new(0, 0, 80, 24), false, review);
+        review_view.apply(
+            plan_review::PlanReviewInput::Down,
+            layout.body(),
+            layout.max_vertical(),
+            layout.max_horizontal(),
+            review.review().search_query(),
+        );
+        review_view.apply(
+            plan_review::PlanReviewInput::Right,
+            layout.body(),
+            layout.max_vertical(),
+            layout.max_horizontal(),
+            review.review().search_query(),
+        );
+        let position = review_view.scroll();
+
+        let open = handle_key_event(
+            &terminal,
+            &state,
+            &mut execution_view,
+            &mut review_view,
+            &mut confirmation_view,
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+        )
+        .expect("apply key should be handled")
+        .expect("apply key should open confirmation");
+        update_session(&mut state, open, &mut execution_view, now);
+        for character in "no".chars() {
+            handle_key_event(
+                &terminal,
+                &state,
+                &mut execution_view,
+                &mut review_view,
+                &mut confirmation_view,
+                KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+            )
+            .expect("confirmation character should be handled");
+        }
+        let cancel = handle_key_event(
+            &terminal,
+            &state,
+            &mut execution_view,
+            &mut review_view,
+            &mut confirmation_view,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        )
+        .expect("no confirmation should be handled")
+        .expect("no should cancel");
+        update_session(&mut state, cancel, &mut execution_view, now);
+
+        let review = state.review().expect("cancel should restore review");
+        assert_eq!(review.review().search_query(), "worker");
+        assert_eq!(review_view.scroll(), position);
     }
 
     #[rstest]

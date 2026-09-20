@@ -330,6 +330,33 @@ try:
             wait_parts(["Stopping apply", "Apply interrupted"], "apply_interrupted")
             send_key(b"q")
             exit_code = wait_exit()
+    elif scenario == "apply_resize":
+        wait_parts(["Terraform will perform", "terraform_data.api"], "plan_text", timeout=30)
+        send_key(b"a")
+        wait_new("Apply this reviewed plan?", "apply_confirmation")
+        send_key(b"y")
+        wait_parts(["Apply this plan? (yes/no):", "y"], "apply_input_y")
+        send_key(b"e")
+        wait_parts(["Apply this plan? (yes/no):", "ye"], "apply_input_ye")
+        send_key(b"s")
+        wait_parts(["Apply this plan? (yes/no):", "yes"], "apply_input_yes")
+        resize(24, 6)
+        wait_new("Terminal too small", "apply_confirmation_narrow")
+        send_key(b"\r")
+        time.sleep(0.2)
+        read_available()
+        if "Applying..." in screen.text():
+            raise RuntimeError("apply started while confirmation was not renderable")
+        resize(100, 24)
+        wait_parts(
+            ["Apply this plan? (yes/no):", "yes"],
+            "apply_confirmation_resized",
+        )
+        send_key(b"\r")
+        wait_new("Applying...", "apply_started")
+        wait_new("Apply complete", "apply_result", timeout=60)
+        send_key(b"q")
+        exit_code = wait_exit()
     elif scenario in ("apply_no", "apply_escape"):
         wait_parts(["Terraform will perform", "terraform_data.api"], "plan_text", timeout=30)
         send_key(b"a")

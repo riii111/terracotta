@@ -421,6 +421,20 @@ Plan: 0 to add, 1 to change, 0 to destroy.
     }
 
     #[test]
+    fn pty_apply_confirmation_waits_for_resize_before_starting() {
+        let fixture = Fixture::new();
+        let result = fixture.run("apply_resize", 100, 24);
+
+        assert_eq!(result.exit_code, 0);
+        result.assert_restored();
+        result.observed("apply_confirmation_narrow");
+        result.observed("apply_confirmation_resized");
+        result.observed("apply_started");
+        result.observed("apply_result");
+        fixture.assert_saved_plan_removed();
+    }
+
+    #[test]
     fn pty_panic_restores_terminal_and_cleans_any_created_plan() {
         let fixture = Fixture::new();
         let result = fixture.run("panic", 100, 24);
