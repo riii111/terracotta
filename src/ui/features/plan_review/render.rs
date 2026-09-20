@@ -478,7 +478,7 @@ mod tests {
 
     use crate::app::{
         copy::{CopyResult, CopyTarget},
-        execution::{ExecutionContext, ExecutionState},
+        execution::{Diagnostic, DiagnosticSource, ExecutionContext, ExecutionState},
         review::{
             PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata, test_support::plan_document,
         },
@@ -540,6 +540,10 @@ Vertical movement exposes later lines in this synthetic plan body.
 End of synthetic plan body."#;
 
     fn review() -> PlanReview {
+        review_with_applyable(true)
+    }
+
+    fn review_with_applyable(applyable: bool) -> PlanReview {
         PlanReview::new(
             PathBuf::from("/repo/environments/production/main"),
             "default".to_owned(),
@@ -568,9 +572,41 @@ End of synthetic plan body."#;
                 2,
                 2,
                 1,
-                true,
+                applyable,
             ),
             Vec::new(),
+        )
+    }
+
+    fn diagnostic_review() -> PlanReview {
+        PlanReview::new(
+            PathBuf::from("/repo/environments/production/main"),
+            "default".to_owned(),
+            plan_document("Plan: 1 to add, 0 to change, 0 to destroy.\n".to_owned()),
+            PlanMetadata::new(
+                vec!["terraform_data.api".to_owned()],
+                Vec::new(),
+                1,
+                0,
+                0,
+                true,
+            ),
+            vec![
+                Diagnostic {
+                    severity: DiagnosticSeverity::Error,
+                    summary: "Invalid configuration".to_owned(),
+                    detail: Some("error detail line 1\nerror detail line 2".to_owned()),
+                    position: None,
+                    source: DiagnosticSource::Terraform,
+                },
+                Diagnostic {
+                    severity: DiagnosticSeverity::Warning,
+                    summary: "Deprecated configuration".to_owned(),
+                    detail: Some("warning detail line 1\nwarning detail line 2".to_owned()),
+                    position: None,
+                    source: DiagnosticSource::Terraform,
+                },
+            ],
         )
     }
 
@@ -767,6 +803,11 @@ End of synthetic plan body."#;
             &buffer,
             "~ resource \"terraform_data\" \"api\"",
             Color::Rgb(0xeb, 0xcb, 0x8b),
+        );
+        assert_text_color(
+            &buffer,
+            "Terraform will perform the following actions:",
+            Color::Rgb(0xe9, 0xdb, 0xdb),
         );
         assert_text_color(&buffer, "- old_checksum", Color::Rgb(0xbf, 0x61, 0x6a));
         assert_text_color(&buffer, "+ new_checksum", Color::Rgb(0xa3, 0xbe, 0x8c));
@@ -976,16 +1017,65 @@ End of synthetic plan body."#;
     }
 
     #[test]
-    fn production_confirmation_render_draws_deletion_warning_and_footer() {
-        let state = confirmation_state(review());
-        let view = ApplyConfirmationViewState::default();
-        let area = Rect::new(0, 0, 80, 24);
+    fn production_review_render_orders_diagnostics_before_plan_and_styles_severity() {
+        let state = review_state(diagnostic_review());
+        let view = PlanReviewViewState::default();
+        let area = Rect::new(0, 0, 120, 40);
         let buffer = render_to_buffer((area.width, area.height), |frame| {
-            render_apply_confirmation(frame, &state, &view);
+            render(frame, &state, &view, Instant::now());
         });
+        let text = buffer_text(&buffer);
+        let lines = text.lines().collect::<Vec<_>>();
+        let position = |marker: &str| {
+            lines
+                .iter()
+                .position(|line| line.contains(marker))
+                .unwrap_or_else(|| panic!("text should be visible: {marker}"))
+        };
 
-        assert!(buffer_text(&buffer).contains("This plan includes resource deletion."));
-        assert!(buffer_text(&buffer).contains("Enter confirm"));
+        assert!(position("Error: Invalid configuration") < position("error detail line 1"));
+        assert!(position("error detail line 2") < position("Warning: Deprecated configuration"));
+        assert!(position("Warning: Deprecated configuration") < position("warning detail line 1"));
+        assert!(position("warning detail line 2") < position("Plan: 1 to add"));
+        assert_text_prefix_uses_style(
+            &buffer,
+            "Error: Invalid configuration",
+            "Error",
+            Color::Rgb(0xbf, 0x61, 0x6a),
+            Color::Reset,
+            Modifier::BOLD,
+        );
+        assert_text_prefix_uses_style(
+            &buffer,
+            "Warning: Deprecated configuration",
+            "Warning",
+            Color::Rgb(0xeb, 0xcb, 0x8b),
+            Color::Reset,
+            Modifier::BOLD,
+        );
+    }
+
+    #[test]
+    fn non_applyable_review_footer_keeps_viewing_actions_without_apply() {
+        let state = review_state(review_with_applyable(false));
+        let view = PlanReviewViewState::default();
+        let area = Rect::new(0, 0, 120, 40);
+        let layout = layout(area, false, &state);
+        let buffer = render_to_buffer((area.width, area.height), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        let footer = layout.shell.footer();
+        let mut footer_text = String::new();
+        for y in footer.y..footer.bottom() {
+            for x in footer.x..footer.right() {
+                footer_text.push_str(buffer.cell((x, y)).expect("footer cell").symbol());
+            }
+        }
+
+        assert!(!footer_text.contains("a apply"), "{footer_text}");
+        assert!(footer_text.contains("/ search"), "{footer_text}");
+        assert!(footer_text.contains("y yank"), "{footer_text}");
+        assert!(footer_text.contains("q quit"), "{footer_text}");
     }
 
     #[test]

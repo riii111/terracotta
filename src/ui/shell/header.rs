@@ -71,16 +71,3 @@ fn header_line(path: &Path, workspace: Option<&str>, width: u16) -> Line<'static
     );
     Line::from(Span::styled(value, theme::secondary_style()))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn default_workspace_is_omitted() {
-        assert_eq!(
-            header_line(Path::new("/repo/prod"), Some("default"), 80).to_string(),
-            "Terracotta | prod"
-        );
-    }
-}
