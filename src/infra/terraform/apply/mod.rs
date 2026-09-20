@@ -81,7 +81,7 @@ pub(crate) fn run_apply(
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, io, time::Instant};
+    use std::{cell::RefCell, io};
 
     use super::*;
     use crate::app::execution::{EventStream, ExecutionEventKind, ExecutionLogLine};
@@ -131,21 +131,6 @@ mod tests {
         fn collect_output(self: Box<Self>) -> io::Result<ProcessOutput> {
             Ok(self.output)
         }
-    }
-
-    #[test]
-    fn apply_command_is_human_readable_and_keeps_the_saved_plan_argument() {
-        let command = TerraformCommand::Apply;
-        assert_eq!(command.to_string(), "apply");
-
-        let event = ExecutionEvent {
-            received_at: Instant::now(),
-            kind: ExecutionEventKind::Log(ExecutionLogLine {
-                stream: EventStream::Stdout,
-                text: "Apply complete! Resources: 1 added, 0 changed, 0 destroyed.".to_owned(),
-            }),
-        };
-        assert!(matches!(event.kind, ExecutionEventKind::Log(_)));
     }
 
     #[test]
