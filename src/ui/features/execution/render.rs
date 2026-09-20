@@ -58,12 +58,7 @@ pub(crate) fn render_execution_with_view(
     };
     let content_area = shell_layout::render_content_block(frame, layout.shell.content(), title);
     debug_assert_eq!(content_area, layout.shell.content_inner());
-    frame.render_widget(
-        Paragraph::new(status)
-            .wrap(Wrap { trim: false })
-            .style(theme::body_style()),
-        layout.chunks[0],
-    );
+    frame.render_widget(status_paragraph(status), layout.status());
 
     let line_count = content.lines.len();
     let max_line_width = content.max_width;
@@ -80,7 +75,7 @@ pub(crate) fn render_execution_with_view(
         Paragraph::new(lines)
             .style(theme::body_style())
             .scroll((scroll, horizontal)),
-        layout.chunks[1],
+        layout.log_area(),
     );
     let body = layout.body();
     let scrollbar_area = Rect::new(
@@ -109,11 +104,14 @@ pub(crate) fn render_execution_with_view(
             usize::from(horizontal),
         );
     }
-    frame.render_widget(separator::render(layout.chunks[2].width), layout.chunks[2]);
+    frame.render_widget(
+        separator::render(layout.separator().width),
+        layout.separator(),
+    );
     if let Some(notice) = state.copy_notice() {
         frame.render_widget(
             Paragraph::new(notice.message()).style(theme::secondary_style()),
-            layout.chunks[3],
+            layout.notice(),
         );
     }
     footer::render(
@@ -125,7 +123,10 @@ pub(crate) fn render_execution_with_view(
 
 pub(crate) struct ExecutionLayout {
     shell: shell_layout::ShellLayout,
-    chunks: Vec<Rect>,
+    status: Rect,
+    log_area: Rect,
+    separator: Rect,
+    notice: Rect,
     body: Rect,
     vertical_scrollbar: bool,
     horizontal_scrollbar: bool,
@@ -134,6 +135,22 @@ pub(crate) struct ExecutionLayout {
 }
 
 impl ExecutionLayout {
+    pub(crate) const fn status(&self) -> Rect {
+        self.status
+    }
+
+    pub(crate) const fn log_area(&self) -> Rect {
+        self.log_area
+    }
+
+    pub(crate) const fn separator(&self) -> Rect {
+        self.separator
+    }
+
+    pub(crate) const fn notice(&self) -> Rect {
+        self.notice
+    }
+
     pub(crate) const fn body(&self) -> Rect {
         self.body
     }
@@ -171,18 +188,32 @@ fn execution_layout_with_content(
     let footer_lines = footer_lines(state, shell_area.width);
     let shell = shell_layout::layout(shell_area, footer_lines.clone(), footer_lines, 1);
     let notice_height = u16::from(state.copy_notice().is_some());
-    let status_height = wrapped_line_count(status, shell.content_inner().width);
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
+    let status_height = status_line_count(status, shell.content_inner().width);
+    let constraints = if finished_apply(state) {
+        [
+            Constraint::Length(status_height),
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(notice_height),
+        ]
+    } else {
+        [
             Constraint::Length(status_height),
             Constraint::Min(1),
             Constraint::Length(1),
             Constraint::Length(notice_height),
-        ])
+        ]
+    };
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
         .split(shell.content_inner())
         .to_vec();
-    let available = chunks[1];
+    let (status_area, separator_area, available, notice_area) = if finished_apply(state) {
+        (chunks[0], chunks[1], chunks[2], chunks[3])
+    } else {
+        (chunks[0], chunks[2], chunks[1], chunks[3])
+    };
     let (vertical_scrollbar, horizontal_scrollbar) =
         scrollbar_reservations(content.lines.len(), content.max_width, available);
     let body = Rect::new(
@@ -199,7 +230,10 @@ fn execution_layout_with_content(
         scroll_limits(content.lines.len(), content.max_width, body);
     ExecutionLayout {
         shell,
-        chunks,
+        status: status_area,
+        log_area: available,
+        separator: separator_area,
+        notice: notice_area,
         body,
         vertical_scrollbar,
         horizontal_scrollbar,
@@ -355,14 +389,18 @@ const fn finished_apply(state: &ExecutionState) -> bool {
     )
 }
 
-fn wrapped_line_count(lines: &[Line<'_>], width: u16) -> u16 {
-    let width = usize::from(width.max(1));
-    lines
-        .iter()
-        .map(|line| line.width().max(1).div_ceil(width))
-        .sum::<usize>()
+fn status_paragraph(status: Vec<Line<'static>>) -> Paragraph<'static> {
+    Paragraph::new(status)
+        .wrap(Wrap { trim: false })
+        .style(theme::body_style())
+}
+
+fn status_line_count(status: &[Line<'static>], width: u16) -> u16 {
+    status_paragraph(status.to_vec())
+        .line_count(width)
         .try_into()
         .unwrap_or(u16::MAX)
+        .max(1)
 }
 
 fn footer_lines(state: &ExecutionState, width: u16) -> Vec<Line<'static>> {
@@ -784,7 +822,7 @@ mod tests {
 
         let area = Rect::new(0, 0, 80, 24);
         let (base_state, _) = applying_state_with_content(1, 1);
-        let available = execution_layout(area, &base_state).chunks[1];
+        let available = execution_layout(area, &base_state).log_area();
 
         let (vertical_state, vertical_now) = applying_state_with_content(
             available.height.saturating_add(1),
@@ -886,7 +924,7 @@ mod tests {
             let buffer = render_to_buffer((area.width, area.height), |frame| {
                 render_execution_with_view(frame, &state, ExecutionViewState::default(), now);
             });
-            let headline = find_text_cell(&buffer, layout.chunks[0], case.headline);
+            let headline = find_text_cell(&buffer, layout.status(), case.headline);
 
             assert_eq!(headline.fg, case.headline_color, "case: {}", case.name);
             assert!(
@@ -895,7 +933,7 @@ mod tests {
                 case.name
             );
             if let Some(warning) = case.warning {
-                let warning_cell = find_text_cell(&buffer, layout.chunks[0], warning);
+                let warning_cell = find_text_cell(&buffer, layout.status(), warning);
                 assert_eq!(
                     warning_cell.fg,
                     Color::Rgb(0xeb, 0xcb, 0x8b),
@@ -999,17 +1037,59 @@ mod tests {
         let text = buffer_text(&buffer);
 
         assert!(layout.body().height > 0);
-        assert!(layout.chunks[0].height > 3);
+        assert!(layout.status().height > 3);
         assert!(text.contains("Apply result"));
         assert!(text.contains("Changes may already be"));
-        assert!(layout.chunks[2].y > layout.chunks[0].y + 3);
-        assert!((layout.chunks[2].x..layout.chunks[2].right()).all(|x| {
+        assert_eq!(
+            layout.separator().y,
+            layout.status().y + layout.status().height
+        );
+        assert!(layout.log_area().y > layout.separator().y);
+        assert!((layout.separator().x..layout.separator().right()).all(|x| {
             buffer
-                .cell((x, layout.chunks[2].y))
+                .cell((x, layout.separator().y))
                 .expect("separator cell")
                 .symbol()
                 == "─"
         }));
+    }
+
+    #[test]
+    fn completed_apply_keeps_all_wrapped_summary_lines_before_the_log() {
+        let now = Instant::now();
+        let summary = "Resources: 12345 added, 67890 changed, 12345 destroyed.";
+        let mut state = ExecutionState::applying(now, ExecutionContext::loading("/project"));
+        state.record(ExecutionEvent {
+            received_at: now,
+            kind: ExecutionEventKind::Log(ExecutionLogLine {
+                stream: EventStream::Stdout,
+                text: "log output".to_owned(),
+            }),
+        });
+        state.finish_apply(
+            ApplyStatus::Succeeded,
+            Some(summary.to_owned()),
+            None,
+            now + Duration::from_secs(1),
+        );
+
+        let area = Rect::new(0, 0, 40, 24);
+        let layout = execution_layout(area, &state);
+        let buffer = render_to_buffer((area.width, area.height), |frame| {
+            render_execution_with_view(
+                frame,
+                &state,
+                ExecutionViewState::default(),
+                now + Duration::from_secs(1),
+            );
+        });
+        let text = buffer_text(&buffer);
+
+        assert!(layout.status().height > 2);
+        assert!(layout.log_area().height > 0);
+        assert_eq!(layout.separator().y + 1, layout.log_area().y);
+        assert!(text.contains("Elapsed 1.0s"));
+        assert!(text.contains("log output"));
     }
 
     #[test]

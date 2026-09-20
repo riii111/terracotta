@@ -18,6 +18,7 @@ expression: buffer_text(buffer)
                     │Apply failed                                                                                                          │
                     │Changes may already be applied.                                                                                       │
                     │Elapsed 4.0s                                                                                                          │
+                    │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
                     │terraform apply review.tfplan                                                                                         │
                     │terraform_data.api: Modifying... [id=api-20260920]                                                                    │
                     │terraform_data.api: Modifications complete after 1s [id=api-20260920]                                                 │
@@ -49,6 +50,5 @@ expression: buffer_text(buffer)
                     │                                                                                                                      │
                     │                                                                                                                      │
                     │                                                                                                                      │
-                    │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
                     └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
                     q/Ctrl-C quit | ↑/↓/PgUp/PgDn scroll | y yank result
