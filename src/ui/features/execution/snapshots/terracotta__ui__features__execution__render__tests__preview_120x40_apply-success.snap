@@ -5,10 +5,10 @@ expression: buffer_text(buffer)
 
  Terracotta | main
 
- ┌Apply complete──────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │Apply complete                                                                                                      │
+ ┌Apply result────────────────────────────────────────────────────────────────────────────────────────────────────────┐
  │Resources: 2 added, 2 changed, 1 destroyed.                                                                         │
  │Elapsed 4.0s                                                                                                        │
+ │────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
  │terraform apply review.tfplan                                                                                       │
  │terraform_data.api: Modifying... [id=api-20260920]                                                                  │
  │terraform_data.api: Modifications complete after 1s [id=api-20260920]                                               │
@@ -23,7 +23,6 @@ expression: buffer_text(buffer)
  │Outputs: endpoint = synthetic                                                                                       │
  │Apply log remains in receive order.                                                                                 │
  │                                                                                                                    │
- │Resources: 2 added, 2 changed, 1 destroyed.                                                                         │
  │                                                                                                                    │
  │                                                                                                                    │
  │                                                                                                                    │
@@ -38,6 +37,7 @@ expression: buffer_text(buffer)
  │                                                                                                                    │
  │                                                                                                                    │
  │                                                                                                                    │
- │────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
+ │                                                                                                                    │
+ │                                                                                                                    │
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  q/Ctrl-C quit | ↑/↓/PgUp/PgDn scroll | y yank result
