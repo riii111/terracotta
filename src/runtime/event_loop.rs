@@ -416,7 +416,7 @@ mod tests {
     use crate::app::{
         copy::CopyResult,
         execution::{ApplyStatus, ExecutionContext, ExecutionEvent, ExecutionEventKind},
-        review::{PlanDocument, PlanMetadata, PlanReview},
+        review::{PlanMetadata, PlanReview, test_support::plan_document},
         session::{ApplyConfirmationState, ReviewSessionState},
     };
 
@@ -688,7 +688,7 @@ mod tests {
         SessionState::Review(Box::new(ReviewSessionState::new(PlanReview::new(
             PathBuf::from("/project"),
             "default".to_owned(),
-            PlanDocument::new("No changes.\n".to_owned()),
+            plan_document("No changes.\n".to_owned()),
             PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
             Vec::new(),
         ))))

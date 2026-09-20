@@ -138,7 +138,7 @@ mod tests {
             ApplyStatus, DiagnosticSeverity, DiagnosticSource, EventStream, ExecutionContext,
             ExecutionEvent, ExecutionEventKind, ExecutionLogLine,
         },
-        review::{PlanDocument, PlanMetadata},
+        review::{PlanMetadata, test_support::plan_document},
     };
 
     use super::*;
@@ -148,7 +148,7 @@ mod tests {
         let review = PlanReview::new(
             PathBuf::from("/project"),
             "default".to_owned(),
-            PlanDocument::new("Terraform plan body\n".to_owned()),
+            plan_document("Terraform plan body\n".to_owned()),
             PlanMetadata::new(Vec::new(), Vec::new(), 0, 1, 0, true),
             vec![Diagnostic {
                 severity: DiagnosticSeverity::Warning,

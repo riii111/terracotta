@@ -231,76 +231,76 @@ mod tests {
     #[test]
     fn keeps_nested_heading_like_text_inside_the_resource_block() {
         let source = "Terraform will perform the following actions:\n\n  # terraform_data.api will be updated in-place\n  ~ resource \"terraform_data\" \"api\" {\n      value = <<EOF\n  # terraform_data.worker will be created\nEOF\n    }\n\nChanges to Outputs:\n  ~ endpoint = \"new\"\n\nPlan: 0 to add, 1 to change, 0 to destroy.\n";
-        let document = parse_document(
-            source.as_bytes().to_vec(),
+        let blocks = split_blocks(
+            source,
             &[
                 "terraform_data.api".to_owned(),
                 "terraform_data.worker".to_owned(),
             ],
             &["endpoint".to_owned()],
-        )
-        .expect("text should parse");
+        );
 
-        assert_eq!(document.blocks().len(), 5);
-        assert_eq!(document.blocks()[1].lines(), &(2..9));
-        assert_eq!(document.blocks()[2].lines(), &(9..10));
-        assert_eq!(document.blocks()[3].lines(), &(10..12));
+        assert_eq!(blocks.len(), 5);
+        assert_eq!(blocks[1].lines(), &(2..9));
+        assert_eq!(blocks[2].lines(), &(9..10));
+        assert_eq!(blocks[3].lines(), &(10..12));
     }
 
     #[test]
     fn keeps_plan_summary_outside_the_last_resource_block() {
         let source = "  # terraform_data.api will be updated in-place\n  ~ resource \"terraform_data\" \"api\" {\n      input = \"after\"\n    }\n\nPlan: 0 to add, 1 to change, 0 to destroy.\n";
-        let document = parse_document(
-            source.as_bytes().to_vec(),
-            &["terraform_data.api".to_owned()],
-            &[],
-        )
-        .expect("text should parse");
+        let blocks = split_blocks(source, &["terraform_data.api".to_owned()], &[]);
 
-        assert_eq!(document.blocks().len(), 2);
-        assert_eq!(document.blocks()[0].lines(), &(0..5));
-        assert_eq!(document.blocks()[1].lines(), &(5..7));
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].lines(), &(0..5));
+        assert_eq!(blocks[1].lines(), &(5..7));
     }
 
     #[test]
     fn ignores_shift_markers_inside_quoted_values() {
         let source = "  # terraform_data.api will be updated in-place\n  ~ resource \"terraform_data\" \"api\" {\n      input = \"a << b\"\n    }\n\n  # terraform_data.worker will be created\n  + resource \"terraform_data\" \"worker\" {\n      input = \"worker\"\n    }\n";
-        let document = parse_document(
-            source.as_bytes().to_vec(),
+        let blocks = split_blocks(
+            source,
             &[
                 "terraform_data.api".to_owned(),
                 "terraform_data.worker".to_owned(),
             ],
             &[],
-        )
-        .expect("text should parse");
+        );
 
-        assert_eq!(document.blocks().len(), 2);
-        assert_eq!(document.blocks()[0].lines(), &(0..5));
-        assert_eq!(document.blocks()[1].lines(), &(5..10));
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].lines(), &(0..5));
+        assert_eq!(blocks[1].lines(), &(5..10));
     }
 
     #[test]
     fn recognizes_moved_and_removed_resource_headers() {
         let source = "  # terraform_data.old has moved to terraform_data.new\n  ~ resource \"terraform_data\" \"new\" {\n      input = \"new\"\n    }\n\n  # terraform_data.removed will no longer be managed by Terraform, but will not be destroyed\n  - resource \"terraform_data\" \"removed\" {\n      input = \"removed\"\n    }\n";
-        let document = parse_document(
-            source.as_bytes().to_vec(),
+        let blocks = split_blocks(
+            source,
             &[
                 "terraform_data.new".to_owned(),
                 "terraform_data.removed".to_owned(),
             ],
             &[],
-        )
-        .expect("text should parse");
+        );
 
-        assert_eq!(document.blocks().len(), 2);
-        assert_eq!(document.blocks()[0].lines(), &(0..5));
-        assert_eq!(document.blocks()[1].lines(), &(5..10));
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].lines(), &(0..5));
+        assert_eq!(blocks[1].lines(), &(5..10));
     }
 
     #[test]
     fn recognizes_heredoc_termination_with_deleted_value() {
         let source = "  # terraform_data.api will be updated in-place\n  ~ resource \"terraform_data\" \"api\" {\n      value = <<-EOT\n      first\n      second\n      EOT -> null\n    }\n\n  # terraform_data.worker will be updated in-place\n  ~ resource \"terraform_data\" \"worker\" {\n      input = \"new\"\n    }\n\nPlan: 0 to add, 2 to change, 0 to destroy.\n";
+        let blocks = split_blocks(
+            source,
+            &[
+                "terraform_data.api".to_owned(),
+                "terraform_data.worker".to_owned(),
+            ],
+            &[],
+        );
         let document = parse_document(
             source.as_bytes().to_vec(),
             &[
@@ -311,10 +311,10 @@ mod tests {
         )
         .expect("text should parse");
 
-        assert_eq!(document.blocks().len(), 3);
-        assert_eq!(document.blocks()[0].lines(), &(0..8));
-        assert_eq!(document.blocks()[1].lines(), &(8..13));
-        assert_eq!(document.blocks()[2].lines(), &(13..15));
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[0].lines(), &(0..8));
+        assert_eq!(blocks[1].lines(), &(8..13));
+        assert_eq!(blocks[2].lines(), &(13..15));
         assert_eq!(
             document.visible_lines("worker"),
             vec![

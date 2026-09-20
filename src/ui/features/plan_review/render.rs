@@ -473,7 +473,9 @@ mod tests {
 
     use crate::app::{
         execution::{ExecutionContext, ExecutionState},
-        review::{PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata},
+        review::{
+            PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata, test_support::plan_document,
+        },
         session::{self, Action, SessionState},
     };
     use crate::ui::{
@@ -837,7 +839,7 @@ End of synthetic plan body."#;
         let mut review = PlanReview::new(
             PathBuf::from("/project"),
             "default".to_owned(),
-            PlanDocument::new("Plan: 1 to add, 0 to change, 0 to destroy.\n".to_owned()),
+            plan_document("Plan: 1 to add, 0 to change, 0 to destroy.\n".to_owned()),
             PlanMetadata::new(Vec::new(), Vec::new(), 1, 0, 0, true),
             Vec::new(),
         );

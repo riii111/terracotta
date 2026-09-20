@@ -51,16 +51,6 @@ pub(crate) struct PlanDocument {
 
 impl PlanDocument {
     #[must_use]
-    #[cfg(test)]
-    pub(crate) fn new(text: String) -> Self {
-        let end = line_count(&text);
-        Self {
-            text,
-            blocks: vec![PlanBlock::new(0..end, PlanBlockKind::Common)],
-        }
-    }
-
-    #[must_use]
     pub(crate) const fn with_blocks(text: String, blocks: Vec<PlanBlock>) -> Self {
         Self { text, blocks }
     }
@@ -68,12 +58,6 @@ impl PlanDocument {
     #[must_use]
     pub(crate) fn text(&self) -> &str {
         &self.text
-    }
-
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn blocks(&self) -> &[PlanBlock] {
-        &self.blocks
     }
 
     #[must_use]
@@ -114,11 +98,6 @@ impl PlanDocument {
             })
             .count()
     }
-}
-
-#[cfg(test)]
-fn line_count(text: &str) -> usize {
-    text.split('\n').count()
 }
 
 impl Debug for PlanDocument {
@@ -293,33 +272,22 @@ pub(crate) enum PlanReviewMessage {
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    use super::PlanMetadata;
+    use super::{PlanBlock, PlanBlockKind, PlanDocument};
 
-    pub(crate) const fn resource_count(metadata: &PlanMetadata) -> usize {
-        metadata.resource_addresses.len()
-    }
-
-    pub(crate) fn has_output(metadata: &PlanMetadata, name: &str) -> bool {
-        metadata.output_names.iter().any(|output| output == name)
-    }
-
-    pub(crate) const fn contains_deletions(metadata: &PlanMetadata) -> bool {
-        metadata.deletions > 0
-    }
-
-    pub(crate) const fn applyable(metadata: &PlanMetadata) -> bool {
-        metadata.applyable
+    pub(crate) fn plan_document(text: String) -> PlanDocument {
+        let end = text.split('\n').count();
+        PlanDocument::with_blocks(text, vec![PlanBlock::new(0..end, PlanBlockKind::Common)])
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::{applyable, contains_deletions, has_output};
+    use super::test_support::plan_document;
     use super::*;
 
     #[test]
     fn debug_output_never_contains_plan_text() {
-        let document = PlanDocument::new("password = secret".to_owned());
+        let document = plan_document("password = secret".to_owned());
 
         let debug = format!("{document:?}");
 
@@ -340,9 +308,14 @@ mod tests {
 
         assert_eq!(metadata.additions(), 1);
         assert_eq!(metadata.deletions(), 1);
-        assert!(contains_deletions(&metadata));
-        assert!(applyable(&metadata));
-        assert!(has_output(&metadata, "endpoint"));
+        assert!(metadata.deletions() > 0);
+        assert!(metadata.applyable());
+        assert!(
+            metadata
+                .output_names()
+                .iter()
+                .any(|output| output == "endpoint")
+        );
     }
 
     #[test]
@@ -376,7 +349,7 @@ mod tests {
         let mut review = PlanReview::new(
             PathBuf::from("/project"),
             "default".to_owned(),
-            PlanDocument::new("Terraform body\n".to_owned()),
+            plan_document("Terraform body\n".to_owned()),
             PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
             Vec::new(),
         );
