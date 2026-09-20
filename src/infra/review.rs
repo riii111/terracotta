@@ -1,25 +1,25 @@
 use std::{
     ffi::OsStr,
     fmt::{Display, Formatter},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use crate::app::{
     attribution::{AnalysisIssue, SourceFileAnalysis, attribute_changes, mark_analysis_incomplete},
-    execution::{ExecutionEvent, ExecutionEventKind, ExecutionPhase},
+    execution::{ExecutionEvent, ExecutionPhase},
     review::git::{PlanReview, ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus},
 };
 use crate::infra::CancellationToken;
 
 use super::{
     git::{self, ComparisonBasis, ConfigurationComparison, ConfigurationSnapshot, GitDiff},
-    terraform::{self, TerraformExecutionError, hcl},
+    terraform::{self, hcl},
 };
 
 #[derive(Debug)]
 pub(crate) enum ReviewError {
     Interrupted,
-    Terraform(TerraformExecutionError),
+    Terraform(terraform::test_support::PlanTestError),
 }
 
 impl Display for ReviewError {
@@ -33,9 +33,15 @@ impl Display for ReviewError {
 
 impl std::error::Error for ReviewError {}
 
-impl From<TerraformExecutionError> for ReviewError {
-    fn from(error: TerraformExecutionError) -> Self {
+impl From<terraform::test_support::PlanTestError> for ReviewError {
+    fn from(error: terraform::test_support::PlanTestError) -> Self {
         Self::Terraform(error)
+    }
+}
+
+impl From<terraform::test_support::CommandTerraformExecutionError> for ReviewError {
+    fn from(error: terraform::test_support::CommandTerraformExecutionError) -> Self {
+        Self::Terraform(terraform::test_support::PlanTestError::Terraform(error))
     }
 }
 
@@ -45,11 +51,19 @@ impl From<git::GitInterrupted> for ReviewError {
     }
 }
 
-pub(crate) fn run_review(
+#[derive(Debug)]
+enum ReviewEvent {
+    Terraform(ExecutionEvent),
+    RepositoryRoot(Option<PathBuf>),
+    Git(Option<String>),
+    Workspace(String),
+}
+
+fn run_review(
     root: &Path,
     compare_ref: Option<&str>,
     cancellation: &CancellationToken,
-    event_sink: &mut dyn FnMut(ExecutionEvent),
+    event_sink: &mut dyn FnMut(ReviewEvent),
     phase_sink: &mut dyn FnMut(ExecutionPhase),
 ) -> Result<PlanReview, ReviewError> {
     run_review_with_dependencies(
@@ -71,9 +85,9 @@ fn run_review_with_dependencies(
     root: &Path,
     compare_ref: Option<&str>,
     cancellation: &CancellationToken,
-    runner: &dyn terraform::ProcessRunner,
+    runner: &dyn terraform::test_support::ProcessRunner,
     after_git_diff: Option<&mut dyn FnMut()>,
-    event_sink: &mut dyn FnMut(ExecutionEvent),
+    event_sink: &mut dyn FnMut(ReviewEvent),
     phase_sink: &mut dyn FnMut(ExecutionPhase),
 ) -> Result<PlanReview, ReviewError> {
     let git_diff = collect_git_diff(root, compare_ref, cancellation)?;
@@ -88,10 +102,7 @@ fn run_review_with_dependencies(
     }
     let execution_root = git_diff.root().to_owned();
     let repository_root = git_diff.repository_root().map(Path::to_owned);
-    event_sink(ExecutionEvent {
-        received_at: std::time::Instant::now(),
-        kind: ExecutionEventKind::RepositoryRoot(repository_root.clone()),
-    });
+    event_sink(ReviewEvent::RepositoryRoot(repository_root.clone()));
     if cancellation.is_cancelled() {
         return Err(ReviewError::Interrupted);
     }
@@ -104,33 +115,25 @@ fn run_review_with_dependencies(
     if cancellation.is_cancelled() {
         return Err(ReviewError::Interrupted);
     }
-    event_sink(ExecutionEvent {
-        received_at: std::time::Instant::now(),
-        kind: ExecutionEventKind::Git(git_branch.clone()),
-    });
+    event_sink(ReviewEvent::Git(git_branch.clone()));
     if cancellation.is_cancelled() {
         return Err(ReviewError::Interrupted);
     }
 
-    let workspace = terraform::read_workspace_with_runner(&execution_root, cancellation, runner)?;
+    let workspace =
+        terraform::test_support::read_workspace_with_runner(&execution_root, cancellation, runner)?;
     if cancellation.is_cancelled() {
         return Err(ReviewError::Interrupted);
     }
-    event_sink(ExecutionEvent {
-        received_at: std::time::Instant::now(),
-        kind: ExecutionEventKind::Workspace(workspace.clone()),
-    });
-    let plan = terraform::run_plan(
+    event_sink(ReviewEvent::Workspace(workspace.clone()));
+    let mut terraform_event_sink = |event| event_sink(ReviewEvent::Terraform(event));
+    let plan = terraform::test_support::run_plan(
         &execution_root,
         cancellation,
         runner,
-        event_sink,
+        &mut terraform_event_sink,
         phase_sink,
     )?;
-    if cancellation.is_cancelled() {
-        return Err(ReviewError::Interrupted);
-    }
-    phase_sink(ExecutionPhase::Matching);
     if cancellation.is_cancelled() {
         return Err(ReviewError::Interrupted);
     }
@@ -321,14 +324,15 @@ mod tests {
         cell::RefCell,
         collections::VecDeque,
         fs, io,
-        path::PathBuf,
         process::Command,
         sync::atomic::{AtomicU64, Ordering},
     };
 
     use crate::{
         app::attribution::{AnalysisIssueKind, AttributionStatus},
-        infra::terraform::tests::{ProcessOutput, ProcessStatus, RunningProcess},
+        infra::terraform::test_support::{
+            ProcessOutput, ProcessRunner, ProcessStatus, RunningProcess,
+        },
     };
     use serde_json::json;
 
@@ -426,7 +430,7 @@ mod tests {
         }
     }
 
-    impl terraform::ProcessRunner for FakeRunner {
+    impl ProcessRunner for FakeRunner {
         fn start(
             &self,
             _root: &Path,
@@ -571,18 +575,12 @@ mod tests {
             Some(expected_repository_root.as_path())
         );
         assert!(matches!(
-            events.first().map(|event| &event.kind),
-            Some(ExecutionEventKind::RepositoryRoot(Some(root)))
+            events.first(),
+            Some(ReviewEvent::RepositoryRoot(Some(root)))
                 if root == &expected_repository_root
         ));
-        assert!(matches!(
-            events.get(1).map(|event| &event.kind),
-            Some(ExecutionEventKind::Git(_))
-        ));
-        assert!(matches!(
-            events.get(2).map(|event| &event.kind),
-            Some(ExecutionEventKind::Workspace(_))
-        ));
+        assert!(matches!(events.get(1), Some(ReviewEvent::Git(_))));
+        assert!(matches!(events.get(2), Some(ReviewEvent::Workspace(_))));
     }
 
     #[test]
@@ -607,8 +605,8 @@ mod tests {
 
         assert_eq!(review.repository_root(), None);
         assert!(matches!(
-            events.first().map(|event| &event.kind),
-            Some(ExecutionEventKind::RepositoryRoot(None))
+            events.first(),
+            Some(ReviewEvent::RepositoryRoot(None))
         ));
         fs::remove_dir(&root).expect("outside root should be removed");
     }

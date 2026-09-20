@@ -237,7 +237,7 @@ mod tests {
         let now = Instant::now();
         let mut state = SessionState::new(ExecutionState::with_context(
             now,
-            ExecutionContext::loading("/project", "comparison unavailable"),
+            ExecutionContext::loading("/project"),
         ));
 
         assert!(matches!(
@@ -267,7 +267,7 @@ mod tests {
         let now = Instant::now();
         let mut state = SessionState::new(ExecutionState::with_context(
             now,
-            ExecutionContext::loading("/project", "comparison unavailable"),
+            ExecutionContext::loading("/project"),
         ));
         update(&mut state, Action::ReviewCompleted(review()), now);
 

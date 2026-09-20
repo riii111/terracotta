@@ -118,6 +118,8 @@ fn required_string<'a>(
 mod tests {
     use serde_json::json;
 
+    use crate::app::review::test_support::{applyable, has_output, resource_count};
+
     use super::*;
 
     #[test]
@@ -137,9 +139,9 @@ mod tests {
         assert_eq!(metadata.additions(), 1);
         assert_eq!(metadata.changes(), 1);
         assert_eq!(metadata.deletions(), 1);
-        assert_eq!(metadata.resource_addresses().len(), 2);
-        assert_eq!(metadata.output_names(), ["endpoint"]);
-        assert!(metadata.applyable());
+        assert_eq!(resource_count(&metadata), 2);
+        assert!(has_output(&metadata, "endpoint"));
+        assert!(applyable(&metadata));
         let debug = format!("{metadata:?}");
         assert!(!debug.contains("secret"));
     }
@@ -147,18 +149,14 @@ mod tests {
     #[test]
     fn errored_plan_is_never_applyable_and_exit_zero_is_no_change() {
         let errored = json!({"format_version": "1.0", "errored": true, "applyable": true});
-        assert!(
-            !parse_metadata(errored.to_string().as_bytes(), true)
-                .expect("metadata should parse")
-                .applyable()
-        );
+        let errored_metadata =
+            parse_metadata(errored.to_string().as_bytes(), true).expect("metadata should parse");
+        assert!(!applyable(&errored_metadata));
 
         let no_change = json!({"format_version": "1.0"});
-        assert!(
-            !parse_metadata(no_change.to_string().as_bytes(), false)
-                .expect("metadata should parse")
-                .applyable()
-        );
+        let no_change_metadata =
+            parse_metadata(no_change.to_string().as_bytes(), false).expect("metadata should parse");
+        assert!(!applyable(&no_change_metadata));
     }
 
     #[test]
@@ -181,7 +179,7 @@ mod tests {
         assert_eq!(metadata.additions(), 0);
         assert_eq!(metadata.changes(), 0);
         assert_eq!(metadata.deletions(), 0);
-        assert_eq!(metadata.output_names(), ["endpoint"]);
-        assert!(metadata.applyable());
+        assert!(has_output(&metadata, "endpoint"));
+        assert!(applyable(&metadata));
     }
 }

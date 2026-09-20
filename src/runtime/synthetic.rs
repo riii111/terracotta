@@ -62,10 +62,7 @@ pub(super) fn run_synthetic() -> io::Result<()> {
 
 pub(super) fn run_synthetic_execution() -> io::Result<()> {
     let started = Instant::now();
-    let mut state = ExecutionState::with_context(
-        started,
-        ExecutionContext::loading("infra/prod", "Git comparison paused"),
-    );
+    let mut state = ExecutionState::with_context(started, ExecutionContext::loading("infra/prod"));
     state.record(ExecutionEvent {
         received_at: started,
         kind: ExecutionEventKind::Phase(ExecutionPhase::Planning),

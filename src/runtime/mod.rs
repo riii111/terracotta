@@ -62,7 +62,7 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
         handle: Some(worker),
     };
     let mut clipboard = ClipboardExecutor::new();
-    let context = ExecutionContext::loading(root.display().to_string(), "Git comparison paused");
+    let context = ExecutionContext::loading(root.display().to_string());
     let ui_result = run_terminal(|terminal| {
         #[cfg(feature = "test-support")]
         if test_support::panic_after_draw_requested() {
