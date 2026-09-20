@@ -81,6 +81,8 @@ impl ApplyConfirmationViewState {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
     fn enter(view: &mut ApplyConfirmationViewState, value: &str) {
@@ -123,6 +125,19 @@ mod tests {
         );
         assert_eq!(view.input(), "");
         assert_eq!(view.cursor(), 0);
+    }
+
+    #[rstest]
+    #[case::empty("")]
+    #[case::invalid("maybe")]
+    fn confirmation_requires_exact_yes_or_no(#[case] value: &str) {
+        let mut view = ApplyConfirmationViewState::default();
+        enter(&mut view, value);
+        let cursor = view.cursor();
+
+        assert_eq!(view.apply(ApplyConfirmationInput::Confirm), None);
+        assert_eq!(view.input(), value);
+        assert_eq!(view.cursor(), cursor);
     }
 
     #[test]
