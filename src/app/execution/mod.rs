@@ -102,26 +102,19 @@ impl ExecutionResult {
 impl ExecutionState {
     #[must_use]
     pub(crate) fn with_context(started_at: Instant, context: ExecutionContext) -> Self {
-        Self {
-            stage: ExecutionStage::Initializing,
-            active_phase: ExecutionStage::Initializing,
-            context,
-            started_at,
-            finished_at: None,
-            progress: ExecutionProgress::default(),
-            cancellation_requested: false,
-            failure_message: None,
-            copy_notice: None,
-            copy_flash_until: None,
-            result: None,
-        }
+        Self::at_stage(started_at, context, ExecutionStage::Initializing)
     }
 
     #[must_use]
     pub(crate) fn applying(started_at: Instant, context: ExecutionContext) -> Self {
+        Self::at_stage(started_at, context, ExecutionStage::Applying)
+    }
+
+    #[must_use]
+    fn at_stage(started_at: Instant, context: ExecutionContext, stage: ExecutionStage) -> Self {
         Self {
-            stage: ExecutionStage::Applying,
-            active_phase: ExecutionStage::Applying,
+            stage,
+            active_phase: stage,
             context,
             started_at,
             finished_at: None,

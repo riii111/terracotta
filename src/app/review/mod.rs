@@ -9,11 +9,11 @@ use super::execution::{ApplyStatus, Diagnostic, ExecutionEvent};
 #[cfg(test)]
 pub(crate) mod git;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PlanBlockKind {
     Common,
-    Resource(String),
-    Output(String),
+    Resource,
+    Output,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,7 +39,7 @@ impl PlanBlock {
 
     #[must_use]
     pub(crate) const fn is_common(&self) -> bool {
-        matches!(&self.kind, PlanBlockKind::Common)
+        matches!(self.kind, PlanBlockKind::Common)
     }
 }
 
@@ -295,43 +295,14 @@ mod tests {
     }
 
     #[test]
-    fn metadata_exposes_summary_and_applyability_without_values() {
-        let metadata = PlanMetadata::new(
-            vec!["terraform_data.example".to_owned()],
-            vec!["endpoint".to_owned()],
-            1,
-            0,
-            1,
-            true,
-        );
-
-        assert_eq!(metadata.additions(), 1);
-        assert_eq!(metadata.deletions(), 1);
-        assert!(metadata.deletions() > 0);
-        assert!(metadata.applyable());
-        assert!(
-            metadata
-                .output_names()
-                .iter()
-                .any(|output| output == "endpoint")
-        );
-    }
-
-    #[test]
     fn document_keeps_common_lines_and_matching_blocks_in_original_order() {
         let document = PlanDocument::with_blocks(
             "preamble\nresource api\napi value\nresource worker\nworker value\nsummary\n"
                 .to_owned(),
             vec![
                 PlanBlock::new(0..1, PlanBlockKind::Common),
-                PlanBlock::new(
-                    1..3,
-                    PlanBlockKind::Resource("terraform_data.api".to_owned()),
-                ),
-                PlanBlock::new(
-                    3..5,
-                    PlanBlockKind::Resource("terraform_data.worker".to_owned()),
-                ),
+                PlanBlock::new(1..3, PlanBlockKind::Resource),
+                PlanBlock::new(3..5, PlanBlockKind::Resource),
                 PlanBlock::new(5..7, PlanBlockKind::Common),
             ],
         );

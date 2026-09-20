@@ -88,9 +88,12 @@ mod tests {
                 expected: "a.b",
             },
             AttributePathCase {
-                name: "special_key_with_dot",
-                path: vec![AttributePathSegment::Key("a.b".to_owned())],
-                expected: r#"["a.b"]"#,
+                name: "special_key_with_dot_and_array_index",
+                path: vec![
+                    AttributePathSegment::Key("a.b".to_owned()),
+                    AttributePathSegment::Index(0),
+                ],
+                expected: r#"["a.b"][0]"#,
             },
             AttributePathCase {
                 name: "empty_key",
@@ -156,9 +159,12 @@ mod tests {
                 expected: "a.b",
             },
             ReplacePathCase {
-                name: "special_key_with_dot",
-                path: vec![ReplacePathSegment::Attribute("a.b".to_owned())],
-                expected: r#"["a.b"]"#,
+                name: "special_key_with_dot_and_array_index",
+                path: vec![
+                    ReplacePathSegment::Attribute("a.b".to_owned()),
+                    ReplacePathSegment::Index(0),
+                ],
+                expected: r#"["a.b"][0]"#,
             },
             ReplacePathCase {
                 name: "empty_key",
@@ -198,22 +204,5 @@ mod tests {
                 case.name
             );
         }
-    }
-
-    #[test]
-    fn formatters_share_key_quoting_rules() {
-        let attribute_path = vec![
-            AttributePathSegment::Key("a.b".to_owned()),
-            AttributePathSegment::Index(0),
-        ];
-        let replace_path = vec![
-            ReplacePathSegment::Attribute("a.b".to_owned()),
-            ReplacePathSegment::Index(0),
-        ];
-
-        assert_eq!(
-            format_attribute_path(&attribute_path),
-            format_replace_path(&replace_path)
-        );
     }
 }
