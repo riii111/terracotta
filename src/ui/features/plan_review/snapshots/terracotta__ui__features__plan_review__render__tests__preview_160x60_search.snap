@@ -1,6 +1,6 @@
 ---
-source: src/ui/preview.rs
-expression: buffer_text(&buffer)
+source: src/ui/features/plan_review/render.rs
+expression: buffer_text(buffer)
 ---
 
 
@@ -12,11 +12,11 @@ expression: buffer_text(&buffer)
 
 
 
-                    Terracotta | infra/prod
+                    Terracotta | main
 
-                    ┌Plan | Search: terraform_data─────────────────────────────────────────────────────────────────────────────────────────┐
-                    │Search: terraform_data (filtered; plan summary remains global)                                                       ↑│
-                    │Terraform will perform the following actions:                                                                        █│
+                    ┌Plan | Search─────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+                    │/terraform_data|                                                                                                      │
+                    │Terraform will perform the following actions:                                                                        ↑│
                     │                                                                                                                     █│
                     │  # terraform_data.api will be updated in-place                                                                      █│
                     │  ~ resource "terraform_data" "api" {                                                                                █│
@@ -49,6 +49,6 @@ expression: buffer_text(&buffer)
                     │                                                                                                                     ││
                     │Warning: Value for "pending" is not known until apply                                                                ││
                     │                                                                                                                     ││
-                    │←███████████████████████████████████████████████████████████████─────────────────────────────────────────────────────→│
+                    │Plan total (full plan):                                                                                              ↓│
                     └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-                    / terraform_data | Enter confirm | Esc cancel | y yank | q quit
+                    Enter confirm | Esc cancel | Ctrl-A/Ctrl-E move

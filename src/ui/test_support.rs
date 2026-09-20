@@ -1,17 +1,10 @@
+use std::{env, fs, path::PathBuf};
+
 use ratatui::backend::TestBackend;
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 use ratatui::{Frame, Terminal};
-
-pub(super) const REPRESENTATIVE_TERMINAL_SIZE: (u16, u16) = (165, 51);
-pub(super) const REALISTIC_REPOSITORY_ROOT: &str = "/repo";
-pub(super) const REALISTIC_EXECUTION_ROOT: &str = "/repo/environments/development/main";
-pub(super) const REALISTIC_DEVELOPMENT_SOURCE: &str =
-    "/repo/environments/development/main/service.tf";
-pub(super) const REALISTIC_PRODUCTION_SOURCE: &str =
-    "/repo/environments/production/main/service.tf";
-pub(super) const REALISTIC_COMMON_SOURCE: &str = "/repo/common/main/service.tf";
 
 pub(super) fn render_to_buffer(
     (width, height): (u16, u16),
@@ -50,6 +43,20 @@ pub(super) fn buffer_terminal_capture(buffer: &Buffer) -> String {
         capture.push_str("\x1b[0m\n");
     }
     capture
+}
+
+pub(super) fn write_buffer_captures(name: &str, buffer: &Buffer) {
+    let Some(directory) = env::var_os("TERRACOTTA_PREVIEW_CAPTURE_DIR").map(PathBuf::from) else {
+        return;
+    };
+    fs::create_dir_all(&directory).expect("capture directory should be writable");
+    fs::write(
+        directory.join(format!("{name}.ansi")),
+        buffer_terminal_capture(buffer),
+    )
+    .expect("ANSI capture should be writable");
+    fs::write(directory.join(format!("{name}.txt")), buffer_text(buffer))
+        .expect("text capture should be writable");
 }
 
 fn foreground_escape(color: Color) -> String {

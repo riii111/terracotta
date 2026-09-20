@@ -376,11 +376,157 @@ fn format_elapsed(elapsed: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
+    use ratatui::{buffer::Buffer, style::Modifier};
+
     use super::*;
     use crate::app::copy::CopyTarget;
     use crate::app::execution::{
         ApplyStatus, ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionLogLine,
     };
+    use crate::ui::test_support::{
+        assert_shell_frame_and_footer, buffer_text, render_to_buffer, write_buffer_captures,
+    };
+
+    const SIZES: [(u16, u16); 3] = [(80, 24), (120, 40), (160, 60)];
+    const APPLY_LOG: &[(&str, EventStream)] = &[
+        ("terraform apply review.tfplan", EventStream::Stdout),
+        (
+            "terraform_data.api: Modifying... [id=api-20260920]",
+            EventStream::Stdout,
+        ),
+        (
+            "terraform_data.api: Modifications complete after 1s [id=api-20260920]",
+            EventStream::Stdout,
+        ),
+        (
+            "Warning: synthetic provider emitted a non-blocking diagnostic",
+            EventStream::Stderr,
+        ),
+        (
+            "terraform_data.worker: Replacing... [id=worker-20260920]",
+            EventStream::Stdout,
+        ),
+        (
+            "terraform_data.worker: Destruction complete after 1s",
+            EventStream::Stdout,
+        ),
+        (
+            "terraform_data.worker: Creation complete after 1s [id=worker-20260920]",
+            EventStream::Stdout,
+        ),
+        (
+            "terraform_data.old: Destruction complete after 1s",
+            EventStream::Stdout,
+        ),
+        (
+            "terraform_data.new: Creation complete after 1s [id=new-20260920]",
+            EventStream::Stdout,
+        ),
+        (
+            "A deliberately long synthetic apply line keeps horizontal scrolling visible in the production renderer",
+            EventStream::Stdout,
+        ),
+        ("Apply finished successfully.", EventStream::Stdout),
+        ("Outputs: endpoint = synthetic", EventStream::Stdout),
+        ("Apply log remains in receive order.", EventStream::Stdout),
+    ];
+
+    fn apply_state(status: ApplyStatus) -> (ExecutionState, Instant) {
+        let started_at = Instant::now();
+        let finished_at = started_at + Duration::from_secs(4);
+        let mut state = ExecutionState::applying(
+            started_at,
+            ExecutionContext::loading("/repo/environments/production/main")
+                .with_workspace("default"),
+        );
+        for (text, stream) in APPLY_LOG {
+            state.record(ExecutionEvent {
+                received_at: started_at,
+                kind: ExecutionEventKind::Log(ExecutionLogLine {
+                    stream: *stream,
+                    text: (*text).to_owned(),
+                }),
+            });
+        }
+        state.finish_apply(
+            status,
+            (status == ApplyStatus::Succeeded)
+                .then(|| "Resources: 2 added, 2 changed, 1 destroyed.".to_owned()),
+            (status == ApplyStatus::Failed)
+                .then(|| "AccessDenied: synthetic provider rejected the request".to_owned()),
+            finished_at,
+        );
+        (state, finished_at)
+    }
+
+    fn snapshot(name: &str, buffer: &Buffer) {
+        insta::assert_snapshot!(name.to_string(), buffer_text(buffer));
+        write_buffer_captures(name, buffer);
+    }
+
+    #[test]
+    fn renders_apply_success_at_all_supported_sizes() {
+        for &(width, height) in &SIZES {
+            let (state, now) = apply_state(ApplyStatus::Succeeded);
+            let buffer = render_to_buffer((width, height), |frame| {
+                render_execution_with_view(frame, &state, ExecutionViewState::default(), now);
+            });
+
+            snapshot(&format!("preview_{width}x{height}_apply-success"), &buffer);
+        }
+    }
+
+    #[test]
+    fn renders_apply_failure_at_all_supported_sizes() {
+        for &(width, height) in &SIZES {
+            let (state, now) = apply_state(ApplyStatus::Failed);
+            let buffer = render_to_buffer((width, height), |frame| {
+                render_execution_with_view(frame, &state, ExecutionViewState::default(), now);
+            });
+
+            snapshot(&format!("preview_{width}x{height}_apply-failure"), &buffer);
+        }
+    }
+
+    #[test]
+    fn production_execution_render_draws_shell_scrollbars_and_stream_colors() {
+        let (state, now) = apply_state(ApplyStatus::Succeeded);
+        let area = Rect::new(0, 0, 80, 24);
+        let layout = execution_layout(area, &state);
+        let buffer = render_to_buffer((area.width, area.height), |frame| {
+            render_execution_with_view(frame, &state, ExecutionViewState::default(), now);
+        });
+
+        assert_shell_frame_and_footer(
+            &buffer,
+            layout.shell.content(),
+            layout.shell.footer(),
+            "y yank result",
+        );
+        let text = buffer_text(&buffer);
+        assert!(text.contains("Apply complete"));
+        assert!(text.contains("Apply finished successfully."));
+        assert!(buffer.content().iter().any(|cell| cell.symbol() == "↑"));
+        assert!(buffer.content().iter().any(|cell| cell.symbol() == "→"));
+        assert!(buffer.content().iter().any(|cell| {
+            cell.fg == Color::Rgb(0xeb, 0xcb, 0x8b) && cell.modifier.contains(Modifier::BOLD)
+        }));
+    }
+
+    #[test]
+    fn production_execution_failure_render_draws_diagnostic_color() {
+        let (state, now) = apply_state(ApplyStatus::Failed);
+        let buffer = render_to_buffer((80, 24), |frame| {
+            render_execution_with_view(frame, &state, ExecutionViewState::default(), now);
+        });
+
+        assert!(
+            buffer_text(&buffer).contains("AccessDenied: synthetic provider rejected the request")
+        );
+        assert!(buffer.content().iter().any(|cell| {
+            cell.fg == Color::Rgb(0xeb, 0xcb, 0x8b) && cell.modifier.contains(Modifier::BOLD)
+        }));
+    }
 
     #[test]
     fn append_only_log_is_rendered_in_receive_order() {

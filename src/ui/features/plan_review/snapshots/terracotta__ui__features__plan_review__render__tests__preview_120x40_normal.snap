@@ -1,16 +1,12 @@
 ---
-source: src/ui/preview.rs
-expression: buffer_text(&buffer)
+source: src/ui/features/plan_review/render.rs
+expression: buffer_text(buffer)
 ---
 
- Terracotta | infra/prod
+ Terracotta | main
 
- ┌Apply failed────────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │Changes may already be applied.                                                                                    ↑│
- │Error: AccessDenied: synthetic provider rejected the request                                                       █│
- │Terraform diagnostic: inspect the log before retrying.                                                             █│
- │                                                                                                                   █│
- │Terraform will perform the following actions:                                                                      █│
+ ┌Plan────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+ │Terraform will perform the following actions:                                                                      ↑│
  │                                                                                                                   █│
  │  # terraform_data.api will be updated in-place                                                                    █│
  │  ~ resource "terraform_data" "api" {                                                                              █│
@@ -20,11 +16,11 @@ expression: buffer_text(&buffer)
  │    }                                                                                                              █│
  │                                                                                                                   █│
  │  # terraform_data.worker must be replaced                                                                         █│
- │-/+ resource "terraform_data" "worker" {                                                                           ││
- │      ~ input = "worker-before" -> "worker-after" # forces replacement                                             ││
- │      - old_checksum = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef"                                   ││
- │      + new_checksum = (known after apply)                                                                         ││
- │    }                                                                                                              ││
+ │-/+ resource "terraform_data" "worker" {                                                                           █│
+ │      ~ input = "worker-before" -> "worker-after" # forces replacement                                             █│
+ │      - old_checksum = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef"                                   █│
+ │      + new_checksum = (known after apply)                                                                         █│
+ │    }                                                                                                              █│
  │                                                                                                                   ││
  │  # terraform_data.old will be destroyed                                                                           ││
  │  - resource "terraform_data" "old" {                                                                              ││
@@ -38,6 +34,10 @@ expression: buffer_text(&buffer)
  │    }                                                                                                              ││
  │                                                                                                                   ││
  │Changes to Outputs:                                                                                                ││
- │←█████████████████████████████████████████████████████████████─────────────────────────────────────────────────────→│
+ │  + endpoint = (known after apply)                                                                                 ││
+ │  ~ summary  = "old summary" -> "new summary with a deliberately long value for review"                            ││
+ │                                                                                                                   ││
+ │Warning: Value for "pending" is not known until apply                                                              ││
+ │                                                                                                                   ↓│
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- ↑/↓/←/→ scroll | y yank | q quit
+ ↑/↓/←/→ scroll | / search | y yank | a apply | q quit

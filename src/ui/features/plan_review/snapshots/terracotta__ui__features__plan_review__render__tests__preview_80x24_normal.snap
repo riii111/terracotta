@@ -1,17 +1,16 @@
 ---
-source: src/ui/preview.rs
-expression: buffer_text(&buffer)
+source: src/ui/features/plan_review/render.rs
+expression: buffer_text(buffer)
 ---
 
- Terracotta | infra/prod
+ Terracotta | main
 
- ┌Plan | Search: terraform_data───────────────────────────────────────────────┐
- │Search: terraform_data (filtered; plan summary remains global)             ↑│
- │Terraform will perform the following actions:                              █│
+ ┌Plan────────────────────────────────────────────────────────────────────────┐
+ │Terraform will perform the following actions:                              ↑│
  │                                                                           █│
  │  # terraform_data.api will be updated in-place                            █│
  │  ~ resource "terraform_data" "api" {                                      █│
- │      id       = "api-20260920"                                            ││
+ │      id       = "api-20260920"                                            █│
  │      ~ input  = "before" -> "after"                                       ││
  │      # (4 unchanged attributes hidden)                                    ││
  │    }                                                                      ││
@@ -22,6 +21,7 @@ expression: buffer_text(&buffer)
  │      - old_checksum = "sha256:0123456789abcdef0123456789abcdef0123456789ab││
  │      + new_checksum = (known after apply)                                 ││
  │    }                                                                      ││
- │←████████████████████████████████──────────────────────────────────────────→│
+ │                                                                           ││
+ │←█████████████████████████████████─────────────────────────────────────────→│
  └────────────────────────────────────────────────────────────────────────────┘
- / terraform_data | Enter confirm | Esc cancel | y yank | q quit
+ ↑/↓/←/→ scroll | / search | y yank | a apply | q quit

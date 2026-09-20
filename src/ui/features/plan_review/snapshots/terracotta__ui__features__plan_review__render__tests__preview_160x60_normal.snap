@@ -1,6 +1,6 @@
 ---
-source: src/ui/preview.rs
-expression: buffer_text(&buffer)
+source: src/ui/features/plan_review/render.rs
+expression: buffer_text(buffer)
 ---
 
 
@@ -12,7 +12,7 @@ expression: buffer_text(&buffer)
 
 
 
-                    Terracotta | infra/prod
+                    Terracotta | main
 
                     ┌Plan──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
                     │Terraform will perform the following actions:                                                                        ↑│
@@ -49,6 +49,6 @@ expression: buffer_text(&buffer)
                     │Warning: Value for "pending" is not known until apply                                                                ││
                     │                                                                                                                     ││
                     │Plan: 2 to add, 2 to change, 1 to destroy.                                                                           ││
-                    │←███████████████████████████████████████████████████████████████─────────────────────────────────────────────────────→│
+                    │                                                                                                                     ↓│
                     └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-                    ↑/↓/←/→ scroll | / search | a apply | y yank | q quit
+                    ↑/↓/←/→ scroll | / search | y yank | a apply | q quit
