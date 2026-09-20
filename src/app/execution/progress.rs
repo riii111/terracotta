@@ -14,6 +14,7 @@ pub(crate) struct ExecutionProgress {
     resource_indices: BTreeMap<String, usize>,
     diagnostics: Vec<Diagnostic>,
     log: Vec<ExecutionLogLine>,
+    first_error_line: Option<usize>,
     termination: Option<ProcessTermination>,
     last_event_at: Option<Instant>,
 }
@@ -25,10 +26,12 @@ impl ExecutionProgress {
         match kind {
             ExecutionEventKind::Log(line) => self.log.push(line),
             ExecutionEventKind::Resource(resource) => {
-                self.log.push(ExecutionLogLine {
-                    stream: EventStream::Stdout,
-                    text: format!("{}: {:?}", resource.address, resource.kind),
-                });
+                if let Some(message) = resource.message.clone() {
+                    self.log.push(ExecutionLogLine {
+                        stream: EventStream::Stdout,
+                        text: message,
+                    });
+                }
                 if let Some(&index) = self.resource_indices.get(&resource.address) {
                     self.resources[index].1 = resource.kind;
                 } else {
@@ -38,6 +41,9 @@ impl ExecutionProgress {
                 }
             }
             ExecutionEventKind::Diagnostic(diagnostic) => {
+                if diagnostic.severity == super::event::DiagnosticSeverity::Error {
+                    self.first_error_line.get_or_insert(self.log.len());
+                }
                 self.log.push(ExecutionLogLine {
                     stream: EventStream::Stderr,
                     text: diagnostic.detail.as_ref().map_or_else(
@@ -54,15 +60,14 @@ impl ExecutionProgress {
                 stream: EventStream::Stdout,
                 text: message,
             }),
-            ExecutionEventKind::Summary(summary) => self.log.push(ExecutionLogLine {
-                stream: EventStream::Stdout,
-                text: format!(
-                    "Plan: {} to add, {} to change, {} to destroy.",
-                    summary.adds.unwrap_or(0),
-                    summary.changes.unwrap_or(0),
-                    summary.removes.unwrap_or(0)
-                ),
-            }),
+            ExecutionEventKind::Summary(summary) => {
+                if let Some(message) = summary.message {
+                    self.log.push(ExecutionLogLine {
+                        stream: EventStream::Stdout,
+                        text: message,
+                    });
+                }
+            }
             ExecutionEventKind::Phase(_)
             | ExecutionEventKind::Workspace(_)
             | ExecutionEventKind::Informational { message: None, .. } => {}
@@ -87,6 +92,11 @@ impl ExecutionProgress {
     #[must_use]
     pub(crate) fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
+    }
+
+    #[must_use]
+    pub(crate) const fn first_error_line(&self) -> Option<usize> {
+        self.first_error_line
     }
 
     #[cfg(test)]
@@ -135,22 +145,27 @@ mod tests {
         progress.record(event(ExecutionEventKind::Resource(ResourceEvent {
             address: "aws_vpc.main".to_owned(),
             kind: ResourceEventKind::RefreshStart,
+            message: None,
         })));
         progress.record(event(ExecutionEventKind::Resource(ResourceEvent {
             address: "aws_subnet.private[0]".to_owned(),
             kind: ResourceEventKind::RefreshStart,
+            message: None,
         })));
         progress.record(event(ExecutionEventKind::Resource(ResourceEvent {
             address: "aws_vpc.main".to_owned(),
             kind: ResourceEventKind::RefreshComplete,
+            message: None,
         })));
         progress.record(event(ExecutionEventKind::Resource(ResourceEvent {
             address: "aws_vpc.main".to_owned(),
             kind: ResourceEventKind::ApplyStart,
+            message: None,
         })));
         progress.record(event(ExecutionEventKind::Resource(ResourceEvent {
             address: "aws_vpc.main".to_owned(),
             kind: ResourceEventKind::ApplyComplete,
+            message: None,
         })));
 
         assert_eq!(
@@ -168,14 +183,17 @@ mod tests {
         progress.record(event(ExecutionEventKind::Resource(ResourceEvent {
             address: "aws_vpc.main".to_owned(),
             kind: ResourceEventKind::RefreshComplete,
+            message: None,
         })));
         progress.record(event(ExecutionEventKind::Resource(ResourceEvent {
             address: "aws_vpc.main".to_owned(),
             kind: ResourceEventKind::RefreshComplete,
+            message: None,
         })));
         progress.record(event(ExecutionEventKind::Resource(ResourceEvent {
             address: "aws_vpc.main".to_owned(),
             kind: ResourceEventKind::ApplyStart,
+            message: None,
         })));
 
         assert_eq!(
@@ -192,11 +210,13 @@ mod tests {
                 progress.record(event(ExecutionEventKind::Resource(ResourceEvent {
                     address: "aws_vpc.main".to_owned(),
                     kind: ResourceEventKind::RefreshStart,
+                    message: None,
                 })));
             }
             progress.record(event(ExecutionEventKind::Resource(ResourceEvent {
                 address: "aws_vpc.main".to_owned(),
                 kind: ResourceEventKind::RefreshComplete,
+                message: None,
             })));
             progress
         }
@@ -226,6 +246,7 @@ mod tests {
                 changes: Some(2),
                 removes: Some(3),
                 operation: Some("plan".to_owned()),
+                message: Some("Plan: 1 to add, 2 to change, 3 to destroy.".to_owned()),
             }),
         });
         assert_eq!(progress.last_event_at(), Some(summary_at));
@@ -256,6 +277,35 @@ mod tests {
             })
         );
         assert_eq!(progress.last_event_at(), Some(termination_at));
+    }
+
+    #[test]
+    fn appends_the_exact_terraform_messages_without_synthesizing_log_lines() {
+        let mut progress = ExecutionProgress::default();
+        progress.record(event(ExecutionEventKind::Resource(ResourceEvent {
+            address: "terraform_data.api".to_owned(),
+            kind: ResourceEventKind::PlannedChange,
+            message: Some("terraform_data.api will be updated in-place".to_owned()),
+        })));
+        progress.record(event(ExecutionEventKind::Summary(ExecutionSummary {
+            adds: Some(0),
+            changes: Some(1),
+            removes: None,
+            operation: Some("plan".to_owned()),
+            message: Some("Plan: 0 to add, 1 to change, 0 to destroy.".to_owned()),
+        })));
+
+        assert_eq!(
+            progress
+                .log()
+                .iter()
+                .map(|line| line.text.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "terraform_data.api will be updated in-place",
+                "Plan: 0 to add, 1 to change, 0 to destroy."
+            ]
+        );
     }
 
     #[test]

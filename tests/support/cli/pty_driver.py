@@ -299,7 +299,12 @@ try:
         exit_code = wait_exit()
     elif scenario == "diagnostic_success":
         wait_parts(
-            ["synthetic plan warning", "Terraform will perform", "terraform_data.api"],
+            [
+                "synthetic init warning",
+                "synthetic plan warning",
+                "Terraform will perform",
+                "terraform_data.api",
+            ],
             "diagnostic_and_plan",
         )
         send_key(b"q")

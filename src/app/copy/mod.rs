@@ -6,7 +6,6 @@ use super::{execution::Diagnostic, review::PlanReview};
 pub(crate) enum CopyTarget {
     Diagnostic,
     Plan,
-    Result,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

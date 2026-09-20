@@ -31,18 +31,44 @@ pub(crate) enum ResourceEventKind {
     PlannedChange,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct ResourceEvent {
     pub(crate) address: String,
     pub(crate) kind: ResourceEventKind,
+    pub(crate) message: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+impl Debug for ResourceEvent {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ResourceEvent")
+            .field("address", &self.address)
+            .field("kind", &self.kind)
+            .field("message", &self.message.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
+}
+
+#[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct ExecutionSummary {
     pub(crate) adds: Option<usize>,
     pub(crate) changes: Option<usize>,
     pub(crate) removes: Option<usize>,
     pub(crate) operation: Option<String>,
+    pub(crate) message: Option<String>,
+}
+
+impl Debug for ExecutionSummary {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ExecutionSummary")
+            .field("adds", &self.adds)
+            .field("changes", &self.changes)
+            .field("removes", &self.removes)
+            .field("operation", &self.operation)
+            .field("message", &self.message.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

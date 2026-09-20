@@ -86,30 +86,31 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
         Ok(Some(saved_plan)) => saved_plan.cleanup(),
         Ok(None) | Err(_) => Ok(()),
     };
-    if let Err(error) = &cleanup_result {
-        report_error(&format!(
-            "failed to remove the temporary Terraform plan: {error}"
-        ));
-    }
-
-    match (ui_result, cleanup_result) {
-        (Ok(SessionOutcome::Reviewed(metadata)), Ok(())) => {
+    let primary_exit = match ui_result {
+        Ok(SessionOutcome::Reviewed(metadata)) => {
             report_reviewed(&metadata);
             ExitCode::SUCCESS
         }
-        (Ok(SessionOutcome::Interrupted(phase)), Ok(())) => {
+        Ok(SessionOutcome::Interrupted(phase)) => {
             report_interrupted(phase);
             ExitCode::from(INTERRUPTED)
         }
-        (Ok(SessionOutcome::Failed(phase)), Ok(())) => {
+        Ok(SessionOutcome::Failed(phase)) => {
             report_error(&format!("{} failed.", phase.title()));
             ExitCode::from(EXECUTION_FAILURE)
         }
-        (Err(error), Ok(())) => {
+        Err(error) => {
             report_error(&format!("TUI failed: {error}"));
             ExitCode::from(EXECUTION_FAILURE)
         }
-        (_, Err(_)) => ExitCode::from(EXECUTION_FAILURE),
+    };
+    if let Err(error) = cleanup_result {
+        report_error(&format!(
+            "failed to remove the temporary Terraform plan: {error}"
+        ));
+        ExitCode::from(EXECUTION_FAILURE)
+    } else {
+        primary_exit
     }
 }
 

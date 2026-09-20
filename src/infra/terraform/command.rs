@@ -97,6 +97,16 @@ impl ProcessOutput {
         }
         self.ordered.push(chunk.clone());
     }
+
+    #[must_use]
+    pub(super) fn stdout(&self) -> &[u8] {
+        &self.stdout
+    }
+
+    #[must_use]
+    pub(super) fn stderr(&self) -> &[u8] {
+        &self.stderr
+    }
 }
 
 impl Debug for ProcessOutput {
@@ -817,14 +827,6 @@ mod tests {
                 stderr,
                 ordered: Vec::new(),
             }
-        }
-
-        pub(crate) fn stdout(&self) -> &[u8] {
-            &self.stdout
-        }
-
-        pub(crate) fn stderr(&self) -> &[u8] {
-            &self.stderr
         }
     }
 

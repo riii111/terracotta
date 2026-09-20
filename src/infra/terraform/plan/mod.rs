@@ -11,7 +11,8 @@ use std::{
 use std::os::unix::fs::OpenOptionsExt;
 
 use crate::app::execution::{
-    DiagnosticSeverity, ExecutionEvent, ExecutionEventKind, ExecutionPhase,
+    Diagnostic, DiagnosticSeverity, DiagnosticSource, ExecutionEvent, ExecutionEventKind,
+    ExecutionPhase,
 };
 #[cfg(test)]
 use crate::app::plan::Plan;
@@ -135,7 +136,7 @@ fn execute_review(
         };
 
         phase_sink(ExecutionPhase::Initializing);
-        run_required_command(
+        let init_output = run_required_command(
             root,
             TerraformCommand::Init,
             &["init", "-input=false", "-no-color"],
@@ -144,6 +145,12 @@ fn execute_review(
             &mut sink,
             true,
         )?;
+        for diagnostic in init_warning_diagnostics(&init_output.output) {
+            sink(ExecutionEvent {
+                received_at: std::time::Instant::now(),
+                kind: ExecutionEventKind::Diagnostic(diagnostic),
+            });
+        }
         let workspace = read_workspace_with_runner(root, cancellation, runner)?;
         sink(ExecutionEvent {
             received_at: std::time::Instant::now(),
@@ -194,7 +201,7 @@ fn run_required_command(
     runner: &dyn ProcessRunner,
     event_sink: &mut dyn FnMut(ExecutionEvent),
     human_output: bool,
-) -> Result<(), TerraformExecutionError> {
+) -> Result<super::command::ProcessResult, TerraformExecutionError> {
     let arguments = arguments.iter().map(OsString::from).collect::<Vec<_>>();
     let output = if human_output {
         run_command_with_text_events(
@@ -221,7 +228,61 @@ fn run_required_command(
     if !output.status.is_some_and(ProcessStatus::is_success) {
         return Err(non_zero_error(command, output));
     }
-    Ok(())
+    Ok(output)
+}
+
+fn init_warning_diagnostics(output: &super::command::ProcessOutput) -> Vec<Diagnostic> {
+    [output.stdout(), output.stderr()]
+        .into_iter()
+        .flat_map(warnings_from_human_output)
+        .collect()
+}
+
+fn warnings_from_human_output(output: &[u8]) -> Vec<Diagnostic> {
+    let text = String::from_utf8_lossy(output);
+    let lines = text.lines().collect::<Vec<_>>();
+    let mut diagnostics = Vec::new();
+    let mut index = 0;
+
+    while index < lines.len() {
+        let (line, boxed) = human_output_line(lines[index]);
+        let Some(summary) = line.strip_prefix("Warning:").map(str::trim) else {
+            index += 1;
+            continue;
+        };
+        let mut detail_lines = Vec::new();
+        index += 1;
+        if boxed {
+            while index < lines.len() && !lines[index].trim_start().starts_with('╵') {
+                let (line, _) = human_output_line(lines[index]);
+                detail_lines.push(line);
+                index += 1;
+            }
+        }
+        let detail_start = detail_lines
+            .iter()
+            .position(|line| !line.is_empty())
+            .unwrap_or(detail_lines.len());
+        let detail_end = detail_lines
+            .iter()
+            .rposition(|line| !line.is_empty())
+            .map_or(detail_start, |index| index + 1);
+        let detail = detail_lines[detail_start..detail_end].join("\n");
+        diagnostics.push(Diagnostic {
+            severity: DiagnosticSeverity::Warning,
+            summary: summary.to_owned(),
+            detail: (!detail.is_empty()).then_some(detail),
+            position: None,
+            source: DiagnosticSource::Terraform,
+        });
+    }
+    diagnostics
+}
+
+fn human_output_line(line: &str) -> (&str, bool) {
+    let line = line.trim_start();
+    line.strip_prefix('│')
+        .map_or_else(|| (line.trim(), false), |line| (line.trim(), true))
 }
 
 fn review_plan_arguments(plan_path: &Path) -> Vec<OsString> {
@@ -402,7 +463,7 @@ mod tests {
 
     use serde_json::json;
 
-    use crate::app::execution::{Diagnostic, DiagnosticSource, ResourceEvent, ResourceEventKind};
+    use crate::app::execution::{ResourceEvent, ResourceEventKind};
 
     use super::super::command::{ProcessOutput, ProcessOutputChunk, RunningProcess};
     use super::*;
@@ -668,6 +729,20 @@ mod tests {
             .collect()
     }
 
+    fn assert_init_warning(review: &PlanReview) {
+        assert_eq!(review.diagnostics().len(), 1);
+        assert_eq!(
+            (
+                review.diagnostics()[0].summary.as_str(),
+                review.diagnostics()[0].detail.as_deref()
+            ),
+            (
+                "Provider development overrides are in effect",
+                Some("Local providers are active.")
+            )
+        );
+    }
+
     #[test]
     fn review_workflow_runs_init_plan_and_text_then_json_show_in_the_same_root() {
         let plan_json = json!({
@@ -680,7 +755,11 @@ mod tests {
         })
         .to_string();
         let runner = FakeRunner::new([
-            output_process(ProcessStatus::Exited(0), b"init out\n", b"init err\n"),
+            output_process(
+                ProcessStatus::Exited(0),
+                b"init out\n",
+                "╷\n│ Warning: Provider development overrides are in effect\n│\n│ Local providers are active.\n╵\n".as_bytes(),
+            ),
             output_process(ProcessStatus::Exited(0), b"default\n", b""),
             output_process(ProcessStatus::Exited(2), b"", b""),
             output_process(ProcessStatus::Exited(0), b"standard plan\n", b""),
@@ -703,6 +782,7 @@ mod tests {
 
         assert_eq!(review.document().text(), "standard plan\n");
         assert_eq!(review.metadata().changes(), 1);
+        assert_init_warning(&review);
         assert!(
             saved_path.exists(),
             "saved plan should outlive plan parsing"
@@ -726,7 +806,8 @@ mod tests {
             matches!(
                 &event.kind,
                 ExecutionEventKind::Log(line)
-                    if line.stream == EventStream::Stderr && line.text == "init err"
+                    if line.stream == EventStream::Stderr
+                        && line.text == "│ Warning: Provider development overrides are in effect"
             )
         }));
 
@@ -909,6 +990,7 @@ mod tests {
             Some(ExecutionEventKind::Resource(ResourceEvent {
                 address,
                 kind: ResourceEventKind::RefreshStart,
+                ..
             })) if address == "aws_vpc.main"
         ));
         assert!(matches!(

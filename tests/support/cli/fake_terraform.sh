@@ -11,6 +11,9 @@ case "$1" in
       printf 'synthetic init failure\n' >&2
       exit 1
     fi
+    if [ "${TERRACOTTA_FAKE_MODE:-success}" = diagnostic_success ]; then
+      printf '╷\n│ Warning: synthetic init warning\n│\n│ fake Terraform initialized with a warning\n╵\n' >&2
+    fi
     ;;
   workspace)
     printf 'default\n'

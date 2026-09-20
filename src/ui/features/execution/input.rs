@@ -32,12 +32,11 @@ pub(crate) fn execution_key_to_input(
     if stage == ExecutionStage::Failed && key.code == KeyCode::Char('q') {
         return Some(ExecutionInput::Quit);
     }
-    if stage == ExecutionStage::Failed && key.modifiers == KeyModifiers::NONE {
-        match key.code {
-            KeyCode::Char('y') => return Some(ExecutionInput::Copy(CopyTarget::Diagnostic)),
-            KeyCode::Char('Y') => return Some(ExecutionInput::Copy(CopyTarget::Result)),
-            _ => {}
-        }
+    if stage == ExecutionStage::Failed
+        && key.modifiers == KeyModifiers::NONE
+        && key.code == KeyCode::Char('y')
+    {
+        return Some(ExecutionInput::Copy(CopyTarget::Diagnostic));
     }
 
     match key.code {
@@ -117,21 +116,13 @@ mod tests {
     }
 
     #[rstest]
-    #[case::uppercase_without_shift(KeyModifiers::NONE)]
-    #[case::uppercase_with_redundant_shift(KeyModifiers::SHIFT)]
-    fn uppercase_y_copies_result_after_failure(#[case] modifiers: KeyModifiers) {
-        assert_eq!(
-            execution_key_to_input(key(KeyCode::Char('Y'), modifiers), ExecutionStage::Failed),
-            Some(ExecutionInput::Copy(CopyTarget::Result))
-        );
-    }
-
-    #[rstest]
+    #[case::plain(KeyModifiers::NONE)]
+    #[case::shift(KeyModifiers::SHIFT)]
     #[case::control(KeyModifiers::CONTROL)]
     #[case::control_with_redundant_shift(KeyModifiers::CONTROL | KeyModifiers::SHIFT)]
     #[case::alt(KeyModifiers::ALT)]
     #[case::alt_with_redundant_shift(KeyModifiers::ALT | KeyModifiers::SHIFT)]
-    fn uppercase_y_with_control_or_alt_does_not_copy(#[case] modifiers: KeyModifiers) {
+    fn uppercase_y_does_not_copy_after_failure(#[case] modifiers: KeyModifiers) {
         assert_eq!(
             execution_key_to_input(key(KeyCode::Char('Y'), modifiers), ExecutionStage::Failed),
             None

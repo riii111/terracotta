@@ -116,7 +116,7 @@ fn parse_json_event(stream: EventStream, value: &Value) -> ExecutionEventKind {
             },
             ExecutionEventKind::Diagnostic,
         ),
-        Some("change_summary" | "summary") => parse_summary(object).map_or_else(
+        Some("change_summary" | "summary") => parse_summary(object, message.clone()).map_or_else(
             || {
                 ExecutionEventKind::Diagnostic(unknown_event_diagnostic(
                     stream, event_type, message,
@@ -149,10 +149,16 @@ fn parse_json_event(stream: EventStream, value: &Value) -> ExecutionEventKind {
                     ExecutionEventKind::Diagnostic(unknown_event_diagnostic(
                         stream,
                         Some(event_type.to_owned()),
-                        message,
+                        message.clone(),
                     ))
                 },
-                |(kind, address)| ExecutionEventKind::Resource(ResourceEvent { address, kind }),
+                |(kind, address)| {
+                    ExecutionEventKind::Resource(ResourceEvent {
+                        address,
+                        kind,
+                        message: message.clone(),
+                    })
+                },
             ),
         None => ExecutionEventKind::Diagnostic(unknown_event_diagnostic(stream, None, message)),
     }
@@ -203,7 +209,7 @@ fn resource_address_from_value(value: &Value, depth: usize) -> Option<String> {
         .and_then(|nested| resource_address_from_value(nested, depth + 1))
 }
 
-fn parse_summary(object: &Map<String, Value>) -> Option<ExecutionSummary> {
+fn parse_summary(object: &Map<String, Value>, message: Option<String>) -> Option<ExecutionSummary> {
     let changes = object
         .get("changes")
         .or_else(|| object.get("summary"))?
@@ -216,6 +222,7 @@ fn parse_summary(object: &Map<String, Value>) -> Option<ExecutionSummary> {
             .get("operation")
             .and_then(Value::as_str)
             .map(str::to_owned),
+        message,
     })
 }
 
@@ -316,7 +323,7 @@ mod tests {
     #[test]
     fn parses_split_refresh_events_by_resource_address() {
         let mut parser = TerraformEventParser::new();
-        let first = br#"{"type":"refresh_start","hook":{"resource":{"addr":"aws_vpc.main"}}}
+        let first = br#"{"@message":"aws_vpc.main: Refreshing state...","type":"refresh_start","hook":{"resource":{"addr":"aws_vpc.main"}}}
 "#;
         let second = br#"{"type":"refresh_complete","hook":{"resource":{"addr":"aws_vpc.main"}}}
 "#;
@@ -334,6 +341,7 @@ mod tests {
             ExecutionEventKind::Resource(ResourceEvent {
                 address: "aws_vpc.main".to_owned(),
                 kind: ResourceEventKind::RefreshStart,
+                message: Some("aws_vpc.main: Refreshing state...".to_owned()),
             })
         );
         let events = parser.push(EventStream::Stdout, second, Instant::now());
@@ -343,6 +351,7 @@ mod tests {
             ExecutionEventKind::Resource(ResourceEvent {
                 address: "aws_vpc.main".to_owned(),
                 kind: ResourceEventKind::RefreshComplete,
+                message: None,
             })
         );
     }
@@ -391,6 +400,7 @@ mod tests {
         let mut parser = TerraformEventParser::new();
         let summary = json!({
             "type": "change_summary",
+            "@message": "Plan: 2 to add, 2 to change, 2 to destroy.",
             "changes": {"add": 2, "change": 2, "remove": 2, "operation": "plan"}
         })
         .to_string();
@@ -427,6 +437,7 @@ mod tests {
                 changes: Some(2),
                 removes: Some(2),
                 operation: Some("plan".to_owned()),
+                message: Some("Plan: 2 to add, 2 to change, 2 to destroy.".to_owned()),
             })
         );
         let ExecutionEventKind::Diagnostic(diagnostic) = &diagnostic_event[0].kind else {
