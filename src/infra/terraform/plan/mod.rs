@@ -328,6 +328,8 @@ fn create_plan_path() -> io::Result<PathBuf> {
 
 #[cfg(test)]
 pub(crate) mod test_support {
+    use std::fmt::{Display, Formatter};
+
     use crate::app::plan::Plan;
 
     use super::{
@@ -340,13 +342,55 @@ pub(crate) mod test_support {
     #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt;
 
+    #[derive(Debug)]
+    pub(crate) enum PlanTestError {
+        Terraform(TerraformExecutionError),
+        Cleanup { message: String },
+    }
+
+    impl From<TerraformExecutionError> for PlanTestError {
+        fn from(error: TerraformExecutionError) -> Self {
+            Self::Terraform(error)
+        }
+    }
+
+    impl Display for PlanTestError {
+        fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Self::Terraform(error) => Display::fmt(error, formatter),
+                Self::Cleanup { message } => write!(
+                    formatter,
+                    "failed to remove the temporary Terraform plan: {message}"
+                ),
+            }
+        }
+    }
+
+    impl std::error::Error for PlanTestError {}
+
+    impl PlanTestError {
+        pub(crate) const fn kind(&self) -> &TerraformExecutionErrorKind {
+            match self {
+                Self::Terraform(error) => error.kind(),
+                Self::Cleanup { .. } => panic!("cleanup errors have no Terraform error kind"),
+            }
+        }
+
+        pub(crate) fn cleanup_error(&self) -> Option<&str> {
+            match self {
+                Self::Terraform(error) => error.cleanup_error(),
+                Self::Cleanup { .. } => None,
+            }
+        }
+    }
+
     pub(crate) fn run_plan(
         root: &Path,
         cancellation: &CancellationToken,
         runner: &dyn ProcessRunner,
         event_sink: &mut dyn FnMut(ExecutionEvent),
         phase_sink: &mut dyn FnMut(ExecutionPhase),
-    ) -> Result<Plan, TerraformExecutionError> {
+    ) -> Result<Plan, PlanTestError> {
         let temporary_plan = TemporaryPlan::create().map_err(|error| {
             TerraformExecutionError::new(TerraformExecutionErrorKind::TemporaryPlan {
                 message: error.to_string(),
@@ -395,16 +439,16 @@ pub(crate) mod test_support {
     pub(crate) fn finish_plan(
         temporary_plan: TemporaryPlan,
         result: Result<Plan, TerraformExecutionError>,
-    ) -> Result<Plan, TerraformExecutionError> {
+    ) -> Result<Plan, PlanTestError> {
         match temporary_plan.cleanup() {
-            Ok(()) => result,
+            Ok(()) => result.map_err(PlanTestError::from),
             Err(error) => match result {
-                Ok(_) => Err(TerraformExecutionError::new(
-                    TerraformExecutionErrorKind::TemporaryPlan {
-                        message: format!("failed to remove temporary plan: {error}"),
-                    },
+                Ok(_) => Err(PlanTestError::Cleanup {
+                    message: error.to_string(),
+                }),
+                Err(execution_error) => Err(PlanTestError::Terraform(
+                    execution_error.with_cleanup_error(&error),
                 )),
-                Err(execution_error) => Err(execution_error.with_cleanup_error(&error)),
             },
         }
     }
@@ -725,7 +769,7 @@ mod tests {
         runner: &FakeRunner,
         temporary_plan: TemporaryPlan,
         cancellation: &CancellationToken,
-    ) -> Result<Plan, TerraformExecutionError> {
+    ) -> Result<Plan, test_support::PlanTestError> {
         let result = execute_plan_without_events(
             Path::new("/root with spaces"),
             &temporary_plan.path,
@@ -1210,10 +1254,12 @@ mod tests {
         let error = run_fake(&runner, temporary_plan, &cancellation)
             .expect_err("cleanup of a directory should fail");
 
-        assert!(matches!(
-            error.kind(),
-            TerraformExecutionErrorKind::TemporaryPlan { .. }
-        ));
+        assert!(matches!(error, test_support::PlanTestError::Cleanup { .. }));
+        assert!(
+            error
+                .to_string()
+                .starts_with("failed to remove the temporary Terraform plan: ")
+        );
         assert!(plan_path.is_dir());
         fs::remove_dir(plan_path).expect("test plan directory should be removed");
         fs::remove_dir(directory).expect("test directory should be empty");

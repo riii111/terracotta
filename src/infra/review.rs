@@ -19,7 +19,7 @@ use super::{
 #[derive(Debug)]
 pub(crate) enum ReviewError {
     Interrupted,
-    Terraform(terraform::test_support::TerraformExecutionError),
+    Terraform(terraform::test_support::PlanTestError),
 }
 
 impl Display for ReviewError {
@@ -33,9 +33,15 @@ impl Display for ReviewError {
 
 impl std::error::Error for ReviewError {}
 
-impl From<terraform::test_support::TerraformExecutionError> for ReviewError {
-    fn from(error: terraform::test_support::TerraformExecutionError) -> Self {
+impl From<terraform::test_support::PlanTestError> for ReviewError {
+    fn from(error: terraform::test_support::PlanTestError) -> Self {
         Self::Terraform(error)
+    }
+}
+
+impl From<terraform::test_support::CommandTerraformExecutionError> for ReviewError {
+    fn from(error: terraform::test_support::CommandTerraformExecutionError) -> Self {
+        Self::Terraform(terraform::test_support::PlanTestError::Terraform(error))
     }
 }
 

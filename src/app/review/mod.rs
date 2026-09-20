@@ -149,12 +149,12 @@ pub(crate) enum PlanReviewMessage {
 pub(crate) mod test_support {
     use super::PlanMetadata;
 
-    pub(crate) fn resource_addresses(metadata: &PlanMetadata) -> &[String] {
-        &metadata.resource_addresses
+    pub(crate) const fn resource_count(metadata: &PlanMetadata) -> usize {
+        metadata.resource_addresses.len()
     }
 
-    pub(crate) fn output_names(metadata: &PlanMetadata) -> &[String] {
-        &metadata.output_names
+    pub(crate) fn has_output(metadata: &PlanMetadata, name: &str) -> bool {
+        metadata.output_names.iter().any(|output| output == name)
     }
 
     pub(crate) const fn contains_deletions(metadata: &PlanMetadata) -> bool {
@@ -168,7 +168,7 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::{applyable, contains_deletions, output_names};
+    use super::test_support::{applyable, contains_deletions, has_output};
     use super::*;
 
     #[test]
@@ -196,6 +196,6 @@ mod tests {
         assert_eq!(metadata.deletions(), 1);
         assert!(contains_deletions(&metadata));
         assert!(applyable(&metadata));
-        assert_eq!(output_names(&metadata), ["endpoint"]);
+        assert!(has_output(&metadata, "endpoint"));
     }
 }

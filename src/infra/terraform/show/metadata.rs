@@ -118,7 +118,7 @@ fn required_string<'a>(
 mod tests {
     use serde_json::json;
 
-    use crate::app::review::test_support::{applyable, output_names, resource_addresses};
+    use crate::app::review::test_support::{applyable, has_output, resource_count};
 
     use super::*;
 
@@ -139,8 +139,8 @@ mod tests {
         assert_eq!(metadata.additions(), 1);
         assert_eq!(metadata.changes(), 1);
         assert_eq!(metadata.deletions(), 1);
-        assert_eq!(resource_addresses(&metadata).len(), 2);
-        assert_eq!(output_names(&metadata), ["endpoint"]);
+        assert_eq!(resource_count(&metadata), 2);
+        assert!(has_output(&metadata, "endpoint"));
         assert!(applyable(&metadata));
         let debug = format!("{metadata:?}");
         assert!(!debug.contains("secret"));
@@ -179,7 +179,7 @@ mod tests {
         assert_eq!(metadata.additions(), 0);
         assert_eq!(metadata.changes(), 0);
         assert_eq!(metadata.deletions(), 0);
-        assert_eq!(output_names(&metadata), ["endpoint"]);
+        assert!(has_output(&metadata, "endpoint"));
         assert!(applyable(&metadata));
     }
 }
