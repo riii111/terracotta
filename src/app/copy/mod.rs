@@ -103,15 +103,15 @@ pub(crate) fn execution_effect(state: &ExecutionState) -> CopyEffect {
         _ => sections.push("Terraform failed.".to_owned()),
     }
     if let Some(result) = state.result() {
+        let log = state.progress().log();
         if let Some(summary) = result.summary_line()
-            && !result
-                .log()
+            && !log
                 .iter()
                 .any(|line| line.text.lines().any(|text| text == summary))
         {
             sections.push(summary.to_owned());
         }
-        sections.extend(result.log().iter().map(|line| line.text.clone()));
+        sections.extend(log.iter().map(|line| line.text.clone()));
     }
     CopyEffect::new(CopyTarget::Execution, sections.join("\n"))
 }

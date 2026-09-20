@@ -73,7 +73,6 @@ pub(crate) struct ExecutionState {
 pub(crate) struct ExecutionResult {
     phase: ExecutionStage,
     termination: ProcessTermination,
-    log: Vec<ExecutionLogLine>,
     summary_line: Option<String>,
     first_error_line: Option<usize>,
 }
@@ -87,11 +86,6 @@ impl ExecutionResult {
     #[must_use]
     pub(crate) const fn termination(&self) -> ProcessTermination {
         self.termination
-    }
-
-    #[must_use]
-    pub(crate) fn log(&self) -> &[ExecutionLogLine] {
-        &self.log
     }
 
     #[must_use]
@@ -147,6 +141,9 @@ impl ExecutionState {
     }
 
     pub(crate) fn record(&mut self, event: ExecutionEvent) {
+        if self.result.is_some() {
+            return;
+        }
         match &event.kind {
             ExecutionEventKind::Phase(ExecutionPhase::Initializing) => {
                 self.stage = ExecutionStage::Initializing;
@@ -198,7 +195,6 @@ impl ExecutionState {
         self.result = Some(ExecutionResult {
             phase,
             termination,
-            log: self.progress.log().to_vec(),
             summary_line: None,
             first_error_line,
         });
@@ -243,7 +239,6 @@ impl ExecutionState {
         self.result = Some(ExecutionResult {
             phase: ExecutionStage::Applying,
             termination,
-            log: self.progress.log().to_vec(),
             summary_line,
             first_error_line: self.progress.first_error_line(),
         });
@@ -551,9 +546,65 @@ mod tests {
         let result = state.result().expect("failure result should exist");
         assert_eq!(result.phase(), ExecutionStage::Planning);
         assert_eq!(result.first_error_line(), Some(2));
-        assert_eq!(result.log()[0].text, "Provider warning\nWarning detail");
-        assert_eq!(result.log()[1].text, "Invalid configuration");
-        assert_eq!(result.log()[2].text, "Terraform plan failed");
+        assert_eq!(
+            state.progress().log(),
+            [
+                ExecutionLogLine {
+                    stream: EventStream::Stderr,
+                    text: "Provider warning\nWarning detail".to_owned(),
+                },
+                ExecutionLogLine {
+                    stream: EventStream::Stderr,
+                    text: "Invalid configuration".to_owned(),
+                },
+                ExecutionLogLine {
+                    stream: EventStream::Stderr,
+                    text: "Terraform plan failed".to_owned(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn late_event_after_result_does_not_change_log_error_position_or_last_event() {
+        let started_at = Instant::now();
+        let finished_at = started_at + Duration::from_secs(1);
+        let mut state = ExecutionState::new(started_at);
+        state.record(event(
+            started_at,
+            ExecutionEventKind::Log(ExecutionLogLine {
+                stream: EventStream::Stdout,
+                text: "before failure".to_owned(),
+            }),
+        ));
+        state.fail("Terraform failed".to_owned(), finished_at);
+
+        let log = state.progress().log().to_owned();
+        let first_error_line = state
+            .result()
+            .expect("failure result should exist")
+            .first_error_line();
+
+        state.record(event(
+            finished_at + Duration::from_secs(1),
+            ExecutionEventKind::Diagnostic(Diagnostic {
+                severity: DiagnosticSeverity::Error,
+                summary: "Late error".to_owned(),
+                detail: None,
+                position: None,
+                source: DiagnosticSource::Terraform,
+            }),
+        ));
+
+        assert_eq!(state.progress().log(), log.as_slice());
+        assert_eq!(
+            state
+                .result()
+                .expect("failure result should still exist")
+                .first_error_line(),
+            first_error_line
+        );
+        assert_eq!(state.progress().last_event_at(), Some(finished_at));
     }
 
     #[test]

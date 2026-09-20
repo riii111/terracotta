@@ -200,9 +200,7 @@ pub(crate) fn execution_horizontal_scroll_position_with_view(
 }
 
 fn execution_lines(state: &ExecutionState) -> Vec<Line<'static>> {
-    let log = state
-        .result()
-        .map_or_else(|| state.progress().log(), |result| result.log());
+    let log = state.progress().log();
     let mut lines = log
         .iter()
         .flat_map(|line| {
@@ -219,14 +217,13 @@ fn execution_lines(state: &ExecutionState) -> Vec<Line<'static>> {
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
-    let summary_is_in_log = state.result().is_some_and(|result| {
-        result.summary_line().is_some_and(|summary| {
-            result
-                .log()
-                .iter()
+    let summary_is_in_log = state
+        .result()
+        .and_then(|result| result.summary_line())
+        .is_some_and(|summary| {
+            log.iter()
                 .any(|line| line.text.lines().any(|text| text == summary))
-        })
-    });
+        });
     if let Some(summary) = state.result().and_then(|result| result.summary_line())
         && !summary_is_in_log
     {
@@ -380,8 +377,9 @@ fn format_elapsed(elapsed: Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::copy::CopyTarget;
     use crate::app::execution::{
-        ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionLogLine,
+        ApplyStatus, ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionLogLine,
     };
 
     #[test]
@@ -409,5 +407,68 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["first", "second", "third"]
         );
+    }
+
+    #[test]
+    fn completed_apply_statuses_keep_full_log_order_for_render_and_copy() {
+        struct ApplyCase {
+            name: &'static str,
+            status: ApplyStatus,
+            expected_copy: &'static str,
+        }
+
+        for case in [
+            ApplyCase {
+                name: "succeeded",
+                status: ApplyStatus::Succeeded,
+                expected_copy: "Apply complete.\nfirst\nsecond\nthird",
+            },
+            ApplyCase {
+                name: "failed",
+                status: ApplyStatus::Failed,
+                expected_copy: "Apply failed.\nChanges may already be applied.\nfirst\nsecond\nthird",
+            },
+            ApplyCase {
+                name: "interrupted",
+                status: ApplyStatus::Interrupted,
+                expected_copy: "Apply interrupted.\nChanges may already be applied.\nfirst\nsecond\nthird",
+            },
+        ] {
+            let now = Instant::now();
+            let mut state = ExecutionState::applying(now, ExecutionContext::loading("/project"));
+            for (stream, text) in [
+                (EventStream::Stdout, "first"),
+                (EventStream::Stderr, "second"),
+                (EventStream::Stdout, "third"),
+            ] {
+                state.record(ExecutionEvent {
+                    received_at: now,
+                    kind: ExecutionEventKind::Log(ExecutionLogLine {
+                        stream,
+                        text: text.to_owned(),
+                    }),
+                });
+            }
+            state.finish_apply(case.status, None, None, now + Duration::from_secs(1));
+
+            assert_eq!(
+                execution_lines(&state)
+                    .iter()
+                    .map(Line::to_string)
+                    .collect::<Vec<_>>(),
+                ["first", "second", "third"],
+                "case: {}",
+                case.name
+            );
+            assert_eq!(
+                state
+                    .copy_effect(CopyTarget::Execution)
+                    .expect("completed apply should be copyable")
+                    .text(),
+                case.expected_copy,
+                "case: {}",
+                case.name
+            );
+        }
     }
 }
