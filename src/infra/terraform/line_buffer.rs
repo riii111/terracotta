@@ -24,12 +24,10 @@ impl LineBuffer {
             scan_start = line_start;
         }
 
-        if line_start == 0 {
-            self.scanned = self.pending.len();
-        } else {
+        if line_start != 0 {
             self.pending.drain(..line_start);
-            self.scanned = 0;
         }
+        self.scanned = self.pending.len();
     }
 
     pub(super) fn finish(&mut self) -> Vec<u8> {
