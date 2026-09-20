@@ -1,10 +1,10 @@
 # Terracotta
 
-Terraformのplanを楽に読んで判断しやすくする、一時的なTUI付きCLI。
+Terraformのplanを読み、判断しやすくする、確認したplanをapplyできる一時的なTUI付きCLI。
 
 Gitの変更と突き合わせて、**「自分のコード変更だけでは説明しづらい差分」**を見つけやすくする。
 
-MVPは`terracotta plan`によるplan実行、変更一覧、resource詳細、Gitのdirect照合、機微値の一時表示、マスク済みコピーを提供する。確認を終えるとシェルへ戻る。
+MVPは`terracotta plan`によるplan実行、変更一覧、resource詳細、Gitのdirect照合、機微値の一時表示、マスク済みコピー、確認したplanのapplyを提供する。確認を終えるとシェルへ戻る。
 
 ## 使い方
 
@@ -22,13 +22,18 @@ terracotta plan --compare-ref main
 
 Terraformのplan失敗時はdiagnosticを表示して終了を待つ。Gitの取得・解析だけが失敗した場合は、planを閲覧できる状態を保ったまま「解析不完全」と表示する。
 
-`plan`はクラウド接続を隠す機能ではない。対象rootのTerraform設定、state、認証情報など、通常の`terraform plan`に必要な環境を用意する。
+planに変更がある場合、確認画面で`a`を押すとapply確認へ進む。`yes`とEnterで、確認した一時planを1回だけapplyする。`no`とEnter、またはEscでplan確認へ戻る。apply中はTerraformの標準出力と標準エラーを表示し、完了後は成功・失敗・中断の結果を確認できる。
+
+applyを実行せずに`q`で終了した場合の終了コードは0。applyが失敗した場合は1、Ctrl-Cで中断した場合は130。失敗または中断では、変更の一部が適用済みの可能性がある。
+
+`plan`はクラウド接続を隠す機能ではない。対象rootのTerraform設定、state、認証情報など、通常の`terraform plan`と`terraform apply`に必要な環境を用意する。
 
 ## イメージ
 
 - **一時CLI**：使うときだけ開き、終わったらシェルに戻る
 - **Git変更との照合**：各リソースが今のコード変更とつながるかを見る
 - **確認したplanを持ち出す**：機微値をマスクしたplanやresourceをclipboardへコピーする
+- **確認したplanをapplyする**：保存済みplanを1回だけTerraformへ渡す
 
 ### 一時CLI
 
@@ -44,7 +49,9 @@ $ terracotta plan
       ↓
   plan review
       ↓
-  quit
+  apply (optional)
+      ↓
+  result
 
       ↓
 
@@ -97,6 +104,4 @@ MVPではroot直下のmanaged resourceとネイティブHCLのGit変更をdirect
 
 ### 確認したplanを持ち出す
 
-plan全体やresource単位の情報を、機微値をマスクしたテキストとしてclipboardへコピーできる。
-
-普通の`terraform plan`に戻りたくなくなるかどうか。
+plan全体やresource単位の情報を、機微値をマスクしたテキストとしてclipboardへコピーできる。apply結果もTerraformの出力を保ったままclipboardへコピーできる。

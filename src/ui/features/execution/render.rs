@@ -2,6 +2,7 @@ use std::time::{Duration, Instant};
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -16,6 +17,8 @@ use super::ExecutionViewState;
 const MIN_HEIGHT: u16 = 9;
 const MIN_WIDTH: u16 = 32;
 const STATUS_HEIGHT: u16 = 3;
+const FLASH_BACKGROUND: Color = Color::Rgb(0xf4, 0x9e, 0x4c);
+const FLASH_FOREGROUND: Color = Color::Rgb(0x11, 0x14, 0x19);
 
 pub(crate) fn render_execution_with_view(
     frame: &mut Frame<'_>,
@@ -30,7 +33,7 @@ pub(crate) fn render_execution_with_view(
         || layout.body().width == 0
         || layout.body().height == 0
     {
-        let message = if state.stage() == ExecutionStage::Failed {
+        let message = if state.stage() == ExecutionStage::Failed || state.is_apply() {
             "Terminal too small. Resize or press q to quit."
         } else {
             "Terminal too small. Resize or press Ctrl-C to cancel."
@@ -56,6 +59,11 @@ pub(crate) fn render_execution_with_view(
         view.scroll().min(max_vertical)
     };
     let horizontal = view.horizontal().min(max_horizontal);
+    let lines = if state.copy_flash_active(now) {
+        flash_lines(lines)
+    } else {
+        lines
+    };
     frame.render_widget(
         Paragraph::new(lines.clone())
             .style(theme::body_style())
@@ -205,7 +213,17 @@ fn execution_lines(state: &ExecutionState) -> Vec<Line<'static>> {
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
-    if let Some(summary) = state.result().and_then(|result| result.summary_line()) {
+    let summary_is_in_log = state.result().is_some_and(|result| {
+        result.summary_line().is_some_and(|summary| {
+            result
+                .log()
+                .iter()
+                .any(|line| line.text.lines().any(|text| text == summary))
+        })
+    });
+    if let Some(summary) = state.result().and_then(|result| result.summary_line())
+        && !summary_is_in_log
+    {
         lines.push(Line::default());
         lines.push(Line::from(summary.to_owned()));
     }
@@ -222,38 +240,71 @@ fn status_lines(
     now: Instant,
 ) -> Vec<Line<'static>> {
     let status = if state.is_cancelling() {
-        "Stopping...".to_owned()
+        if state.is_apply() {
+            "Stopping... Changes may already be applied.".to_owned()
+        } else {
+            "Stopping...".to_owned()
+        }
     } else {
         match state.stage() {
             ExecutionStage::Initializing => "Initializing...".to_owned(),
             ExecutionStage::Planning => "Planning...".to_owned(),
             ExecutionStage::Reading => "Reading plan...".to_owned(),
+            ExecutionStage::Applying => "Applying...".to_owned(),
+            ExecutionStage::ApplySucceeded => "Apply complete".to_owned(),
+            ExecutionStage::ApplyFailed => "Apply failed".to_owned(),
+            ExecutionStage::ApplyInterrupted => "Apply interrupted".to_owned(),
             ExecutionStage::Failed => state.result().map_or_else(
                 || "Terraform failed.".to_owned(),
                 |result| format!("Terraform failed: {:?}", result.termination().status),
             ),
         }
     };
+    let detail = if state.is_apply() {
+        match state.stage() {
+            ExecutionStage::ApplySucceeded => state
+                .result()
+                .and_then(|result| result.summary_line())
+                .unwrap_or("Apply complete."),
+            ExecutionStage::ApplyFailed | ExecutionStage::ApplyInterrupted => {
+                "Changes may already be applied."
+            }
+            _ => "Applying...",
+        }
+        .to_owned()
+    } else {
+        format!(
+            "Waiting {}s    Follow: {}",
+            state.waiting_at(now).as_secs(),
+            if view.follows_latest() { "On" } else { "Off" }
+        )
+    };
     vec![
         Line::from(status),
-        Line::from(vec![
-            Span::raw(format!("Waiting {}s", state.waiting_at(now).as_secs())),
-            Span::raw("    Follow: "),
-            Span::styled(
-                if view.follows_latest() { "On" } else { "Off" },
-                theme::secondary_style(),
-            ),
-        ]),
+        Line::from(detail),
         Line::from(format!("Elapsed {}", format_elapsed(state.elapsed_at(now)))),
     ]
 }
 
 fn footer_lines(state: &ExecutionState, width: u16) -> Vec<Line<'static>> {
-    let items = if state.stage() == ExecutionStage::Failed {
+    let finished_apply = matches!(
+        state.stage(),
+        ExecutionStage::ApplySucceeded
+            | ExecutionStage::ApplyFailed
+            | ExecutionStage::ApplyInterrupted
+    );
+    let items = if state.stage() == ExecutionStage::Failed || finished_apply {
         vec![
-            footer::hint(&["q"], "quit"),
+            footer::hint(&["q", "Ctrl-C"], "quit"),
             footer::hint(&["↑", "↓", "PgUp", "PgDn"], "scroll"),
-            footer::hint(&["y"], "copy diagnostic"),
+            footer::hint(
+                &["y"],
+                if finished_apply {
+                    "yank result"
+                } else {
+                    "copy diagnostic"
+                },
+            ),
         ]
     } else {
         vec![
@@ -293,6 +344,14 @@ fn scrollbar_reservations(lines: &[Line<'static>], area: Rect) -> (bool, bool) {
 
 fn max_line_width(lines: &[Line<'static>]) -> usize {
     lines.iter().map(Line::width).max().unwrap_or(0)
+}
+
+fn flash_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
+    let style = Style::default().fg(FLASH_FOREGROUND).bg(FLASH_BACKGROUND);
+    lines
+        .into_iter()
+        .map(|line| Line::from(Span::styled(line.to_string(), style)))
+        .collect()
 }
 
 fn preferred_scroll(state: &ExecutionState, max: u16) -> u16 {

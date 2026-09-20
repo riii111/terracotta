@@ -22,7 +22,17 @@ impl ExecutionProgress {
         let ExecutionEvent { received_at, kind } = event;
         self.last_event_at = Some(received_at);
         match kind {
-            ExecutionEventKind::Log(line) => self.log.push(line),
+            ExecutionEventKind::Log(line) => {
+                if self.first_error_line.is_none()
+                    && line
+                        .text
+                        .lines()
+                        .any(|text| text.trim_start().starts_with("Error:"))
+                {
+                    self.first_error_line = Some(rendered_line_count(&self.log));
+                }
+                self.log.push(line);
+            }
             ExecutionEventKind::Resource(resource) => {
                 if let Some(message) = resource.message.clone() {
                     self.log.push(ExecutionLogLine {

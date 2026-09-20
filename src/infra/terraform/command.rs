@@ -24,6 +24,7 @@ pub(crate) enum TerraformCommand {
     Init,
     Plan,
     Show,
+    Apply,
     WorkspaceShow,
 }
 
@@ -33,6 +34,7 @@ impl Display for TerraformCommand {
             Self::Init => "init",
             Self::Plan => "plan",
             Self::Show => "show",
+            Self::Apply => "apply",
             Self::WorkspaceShow => "workspace show",
         })
     }

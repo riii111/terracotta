@@ -253,6 +253,11 @@ def send_key(key):
     time.sleep(0.1)
 
 
+def send_text(text):
+    for character in text:
+        send_key(character.encode())
+
+
 def drain_after_exit(status):
     while True:
         ready, _, _ = select.select([fd], [], [], 0.2)
@@ -292,9 +297,49 @@ def kill_child():
 
 
 try:
-    if scenario in ("full_text", "no_changes", "basic_workflow"):
+    if scenario in ("full_text", "no_changes"):
         marker = "No changes." if scenario == "no_changes" else "Terraform will perform"
         wait_parts([marker, "terraform_data.api"], "plan_text", timeout=30)
+        send_key(b"q")
+        exit_code = wait_exit()
+    elif scenario == "basic_workflow":
+        wait_parts(["Terraform will perform", "terraform_data.api"], "plan_text", timeout=30)
+        send_key(b"a")
+        wait_new("Apply this reviewed plan?", "apply_confirmation")
+        send_text("yes")
+        send_key(b"\r")
+        wait_parts(["Apply complete", "Apply complete! Resources:"], "apply_result", timeout=60)
+        send_key(b"y")
+        send_key(b"q")
+        exit_code = wait_exit()
+    elif scenario in ("apply_success", "apply_failure", "apply_interrupt"):
+        wait_parts(["Terraform will perform", "terraform_data.api"], "plan_text", timeout=30)
+        send_key(b"a")
+        wait_new("Apply this reviewed plan?", "apply_confirmation")
+        send_text("yes")
+        send_key(b"\r")
+        wait_new("Applying...", "apply_started")
+        if scenario == "apply_success":
+            wait_parts(["Apply complete", "endpoint ="], "apply_success")
+            send_key(b"q")
+            exit_code = wait_exit()
+        elif scenario == "apply_failure":
+            wait_parts(["Apply failed", "synthetic apply failure"], "apply_failure")
+            send_key(b"q")
+            exit_code = wait_exit()
+        else:
+            send_key(b"\x03")
+            wait_parts(["Stopping apply", "Apply interrupted"], "apply_interrupted")
+            send_key(b"q")
+            exit_code = wait_exit()
+    elif scenario in ("apply_no", "apply_escape"):
+        wait_parts(["Terraform will perform", "terraform_data.api"], "plan_text", timeout=30)
+        send_key(b"a")
+        wait_new("Apply this reviewed plan?", "apply_confirmation")
+        send_text("no") if scenario == "apply_no" else send_key(b"\x1b")
+        if scenario == "apply_no":
+            send_key(b"\r")
+        wait_new("Terraform will perform", "plan_restored")
         send_key(b"q")
         exit_code = wait_exit()
     elif scenario == "diagnostic_success":

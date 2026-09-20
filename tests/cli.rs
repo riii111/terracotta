@@ -66,6 +66,7 @@ fn plan_argument_errors_follow_clap_without_initializing_a_tui() {
 
 #[cfg(all(unix, feature = "test-support"))]
 mod pty_tests {
+    use rstest::rstest;
     use std::{
         env, fs,
         os::unix::fs::PermissionsExt,
@@ -285,6 +286,91 @@ Plan: 0 to add, 1 to change, 0 to destroy.
     }
 
     #[test]
+    fn pty_apply_success_uses_the_saved_plan_once_and_cleans_it_after_quit() {
+        let fixture = Fixture::new();
+        let result = fixture.run("apply_success", 100, 24);
+
+        assert_eq!(result.exit_code, 0);
+        result.assert_restored();
+        result.observed("apply_confirmation");
+        result.observed("apply_started");
+        result.observed("apply_success");
+        let arguments = fixture.invocation_arguments();
+        assert_eq!(arguments.len(), 6);
+        assert!(arguments[5].starts_with("apply -input=false -no-color "));
+        assert_eq!(
+            arguments[2].split("-out=").nth(1),
+            arguments[5].split("-input=false -no-color ").nth(1)
+        );
+        fixture.assert_saved_plan_removed();
+    }
+
+    #[test]
+    fn pty_apply_failure_keeps_the_result_and_returns_failure() {
+        let fixture = Fixture::new();
+        let result = fixture.run("apply_failure", 100, 24);
+
+        assert_eq!(result.exit_code, 1);
+        result.assert_restored();
+        result.observed("apply_confirmation");
+        result.observed("apply_started");
+        result.observed("apply_failure");
+        assert_eq!(
+            fixture
+                .invocation_arguments()
+                .iter()
+                .filter(|arguments| arguments.starts_with("apply "))
+                .count(),
+            1
+        );
+        fixture.assert_saved_plan_removed();
+    }
+
+    #[test]
+    fn pty_apply_interrupt_waits_for_terraform_and_returns_130() {
+        let fixture = Fixture::new();
+        let result = fixture.run("apply_interrupt", 100, 24);
+
+        assert_eq!(result.exit_code, 130);
+        result.assert_restored();
+        result.observed("apply_confirmation");
+        result.observed("apply_started");
+        result.observed("apply_interrupted");
+        assert_eq!(
+            fixture
+                .invocation_arguments()
+                .iter()
+                .filter(|arguments| arguments.starts_with("apply "))
+                .count(),
+            1
+        );
+        fixture.assert_saved_plan_removed();
+        assert_child_reaped(&fixture.pid_record);
+    }
+
+    #[rstest]
+    #[case::no("apply_no")]
+    #[case::escape("apply_escape")]
+    fn pty_declining_apply_returns_to_the_same_review_without_running_apply(
+        #[case] scenario: &str,
+    ) {
+        let fixture = Fixture::new();
+        let result = fixture.run(scenario, 100, 24);
+
+        assert_eq!(result.exit_code, 0);
+        result.assert_restored();
+        result.observed("apply_confirmation");
+        result.observed("plan_restored");
+        assert!(
+            fixture
+                .invocation_arguments()
+                .iter()
+                .all(|arguments| !arguments.starts_with("apply "))
+        );
+        fixture.assert_saved_plan_removed();
+    }
+
+    #[test]
     fn pty_init_failure_skips_workspace_plan_and_show() {
         let fixture = Fixture::new();
         let result = fixture.run("init_failure", 100, 24);
@@ -353,6 +439,8 @@ Plan: 0 to add, 1 to change, 0 to destroy.
         assert_eq!(result.exit_code, 0);
         result.assert_restored();
         result.observed("plan_text");
+        result.observed("apply_confirmation");
+        result.observed("apply_result");
         scenario.clean();
     }
 

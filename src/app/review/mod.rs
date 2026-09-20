@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::execution::{Diagnostic, ExecutionEvent};
+use super::execution::{ApplyStatus, Diagnostic, ExecutionEvent};
 
 #[cfg(test)]
 pub(crate) mod git;
@@ -187,6 +187,14 @@ impl PlanMetadata {
 
     #[must_use]
     pub(crate) const fn has_changes(&self) -> bool {
+        self.additions > 0
+            || self.changes > 0
+            || self.deletions > 0
+            || !self.output_names.is_empty()
+    }
+
+    #[must_use]
+    pub(crate) const fn applyable(&self) -> bool {
         self.applyable
     }
 }
@@ -269,7 +277,18 @@ impl PlanReview {
 pub(crate) enum PlanReviewMessage {
     Event(ExecutionEvent),
     Completed(PlanReview),
-    Failed { message: String, interrupted: bool },
+    Failed {
+        message: String,
+        interrupted: bool,
+    },
+    ApplyEvent(ExecutionEvent),
+    ApplyCompleted {
+        status: ApplyStatus,
+        summary_line: Option<String>,
+    },
+    ApplyFailed {
+        message: String,
+    },
 }
 
 #[cfg(test)]
