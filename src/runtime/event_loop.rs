@@ -8,7 +8,7 @@ use std::{
 };
 
 use crossterm::event::{self, Event, KeyEvent};
-use ratatui::{DefaultTerminal, layout::Rect};
+use ratatui::{DefaultTerminal, Terminal, backend::Backend, layout::Rect};
 
 use crate::{
     app::{
@@ -60,40 +60,15 @@ pub(crate) fn run_connected(
         }
 
         let now = Instant::now();
-        let clear_copy_flash = state
-            .review()
-            .is_some_and(|review| review.copy_flash_pending() && !review.copy_flash_active(now));
-        let clear_apply_copy_flash = state
-            .apply()
-            .is_some_and(|apply| apply.copy_flash_pending() && !apply.copy_flash_active(now));
-        if dirty
-            || state.execution().is_some()
-            || state.apply_confirmation().is_some()
-            || state.apply().is_some()
-            || state
-                .review()
-                .is_some_and(|review| review.copy_flash_active(now))
-            || state
-                .apply()
-                .is_some_and(|apply| apply.copy_flash_active(now))
-            || clear_copy_flash
-            || clear_apply_copy_flash
-        {
-            draw(
-                &state,
-                terminal,
-                execution_view,
-                &review_view,
-                &confirmation_view,
-            )?;
-            if clear_copy_flash && let SessionState::Review(review) = &mut state {
-                review.clear_copy_flash();
-            }
-            if clear_apply_copy_flash && let SessionState::Apply(apply) = &mut state {
-                apply.clear_copy_flash();
-            }
-            dirty = false;
-        }
+        draw_if_needed(
+            &mut state,
+            terminal,
+            execution_view,
+            &review_view,
+            &confirmation_view,
+            &mut dirty,
+            now,
+        )?;
 
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {
@@ -115,14 +90,15 @@ pub(crate) fn run_connected(
                             .apply()
                             .is_some_and(|apply| apply.stage() == ExecutionStage::Applying)
                         {
-                            draw(
-                                &state,
+                            draw_if_needed(
+                                &mut state,
                                 terminal,
                                 execution_view,
                                 &review_view,
                                 &confirmation_view,
+                                &mut dirty,
+                                Instant::now(),
                             )?;
-                            dirty = false;
                         }
                     }
                 }
@@ -132,14 +108,71 @@ pub(crate) fn run_connected(
     }
 }
 
-fn handle_key_event(
-    terminal: &DefaultTerminal,
+fn should_draw(state: &SessionState, dirty: bool, now: Instant) -> bool {
+    dirty
+        || state.execution().is_some()
+        || state.apply().is_some_and(|apply| apply.result().is_none())
+        || state
+            .review()
+            .is_some_and(|review| review.copy_flash_active(now) || review.copy_flash_pending())
+        || state
+            .apply()
+            .is_some_and(|apply| apply.copy_flash_active(now) || apply.copy_flash_pending())
+}
+
+fn draw_if_needed<B: Backend>(
+    state: &mut SessionState,
+    terminal: &mut Terminal<B>,
+    execution_view: execution::ExecutionViewState,
+    review_view: &plan_review::PlanReviewViewState,
+    confirmation_view: &plan_review::ApplyConfirmationViewState,
+    dirty: &mut bool,
+    now: Instant,
+) -> Result<bool, B::Error> {
+    if !should_draw(state, *dirty, now) {
+        return Ok(false);
+    }
+
+    draw(
+        state,
+        terminal,
+        execution_view,
+        review_view,
+        confirmation_view,
+        now,
+    )?;
+    clear_expired_copy_flash(state, now);
+    *dirty = false;
+    Ok(true)
+}
+
+fn clear_expired_copy_flash(state: &mut SessionState, now: Instant) {
+    match state {
+        SessionState::Review(review)
+            if review.copy_flash_pending() && !review.copy_flash_active(now) =>
+        {
+            review.clear_copy_flash();
+        }
+        SessionState::Apply(apply)
+            if apply.copy_flash_pending() && !apply.copy_flash_active(now) =>
+        {
+            apply.clear_copy_flash();
+        }
+        SessionState::Execution(_)
+        | SessionState::ApplyConfirmation(_)
+        | SessionState::Review(_)
+        | SessionState::Apply(_) => {}
+    }
+}
+
+fn handle_key_event<B: Backend>(
+    terminal: &Terminal<B>,
     state: &SessionState,
     execution_view: &mut execution::ExecutionViewState,
     review_view: &mut plan_review::PlanReviewViewState,
     confirmation_view: &mut plan_review::ApplyConfirmationViewState,
     key: KeyEvent,
-) -> io::Result<Option<Action>> {
+) -> Result<Option<Action>, B::Error> {
     if let Some(execution) = state.execution() {
         return handle_execution_key_event(terminal, execution, execution_view, key);
     }
@@ -183,12 +216,12 @@ fn handle_key_event(
     )
 }
 
-fn handle_execution_key_event(
-    terminal: &DefaultTerminal,
+fn handle_execution_key_event<B: Backend>(
+    terminal: &Terminal<B>,
     state: &ExecutionState,
     execution_view: &mut execution::ExecutionViewState,
     key: KeyEvent,
-) -> io::Result<Option<Action>> {
+) -> Result<Option<Action>, B::Error> {
     Ok(
         match execution::execution_key_to_input(key, state.stage()) {
             Some(execution::ExecutionInput::Quit) => Some(Action::Quit),
@@ -239,28 +272,22 @@ fn handle_execution_key_event(
     )
 }
 
-fn draw(
+fn draw<B: Backend>(
     state: &SessionState,
-    terminal: &mut DefaultTerminal,
+    terminal: &mut Terminal<B>,
     execution_view: execution::ExecutionViewState,
     review_view: &plan_review::PlanReviewViewState,
     confirmation_view: &plan_review::ApplyConfirmationViewState,
-) -> io::Result<()> {
+    now: Instant,
+) -> Result<(), B::Error> {
     match state {
         SessionState::Execution(execution) => {
             terminal.draw(|frame| {
-                execution::render_execution_with_view(
-                    frame,
-                    execution,
-                    execution_view,
-                    Instant::now(),
-                );
+                execution::render_execution_with_view(frame, execution, execution_view, now);
             })?;
         }
         SessionState::Review(review) => {
-            terminal.draw(|frame| {
-                plan_review::render(frame, review, review_view, Instant::now());
-            })?;
+            terminal.draw(|frame| plan_review::render(frame, review, review_view, now))?;
         }
         SessionState::ApplyConfirmation(confirmation) => {
             terminal.draw(|frame| {
@@ -269,12 +296,7 @@ fn draw(
         }
         SessionState::Apply(execution) => {
             terminal.draw(|frame| {
-                execution::render_execution_with_view(
-                    frame,
-                    execution,
-                    execution_view,
-                    Instant::now(),
-                );
+                execution::render_execution_with_view(frame, execution, execution_view, now);
             })?;
         }
     }
@@ -381,4 +403,323 @@ struct RuntimeEffects<'a> {
     cancellation: &'a CancellationToken,
     clipboard: &'a mut ClipboardExecutor,
     apply_worker: &'a mut Option<JoinHandle<()>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use ratatui::{backend::TestBackend, style::Color};
+
+    use super::*;
+    use crate::app::{
+        copy::CopyResult,
+        execution::{ApplyStatus, ExecutionContext, ExecutionEvent, ExecutionEventKind},
+        review::{PlanDocument, PlanMetadata, PlanReview},
+        session::{ApplyConfirmationState, ReviewSessionState},
+    };
+
+    struct DrawCase {
+        name: &'static str,
+        state: SessionState,
+        dirty: bool,
+        now: Instant,
+        expected: bool,
+    }
+
+    #[test]
+    fn draw_decision_covers_dirty_and_runtime_states() {
+        let started_at = Instant::now();
+
+        assert_draw_cases([
+            DrawCase {
+                name: "dirty_confirmation",
+                state: confirmation_state(),
+                dirty: true,
+                now: started_at,
+                expected: true,
+            },
+            DrawCase {
+                name: "clean_confirmation",
+                state: confirmation_state(),
+                dirty: false,
+                now: started_at,
+                expected: false,
+            },
+            DrawCase {
+                name: "running_execution",
+                state: SessionState::new(ExecutionState::with_context(
+                    started_at,
+                    ExecutionContext::loading("loading..."),
+                )),
+                dirty: false,
+                now: started_at,
+                expected: true,
+            },
+            DrawCase {
+                name: "apply_in_progress",
+                state: apply_state(started_at, None),
+                dirty: false,
+                now: started_at,
+                expected: true,
+            },
+            DrawCase {
+                name: "apply_succeeded",
+                state: apply_state(started_at, Some(ApplyStatus::Succeeded)),
+                dirty: false,
+                now: started_at,
+                expected: false,
+            },
+            DrawCase {
+                name: "apply_failed",
+                state: apply_state(started_at, Some(ApplyStatus::Failed)),
+                dirty: false,
+                now: started_at,
+                expected: false,
+            },
+            DrawCase {
+                name: "apply_interrupted",
+                state: apply_state(started_at, Some(ApplyStatus::Interrupted)),
+                dirty: false,
+                now: started_at,
+                expected: false,
+            },
+        ]);
+    }
+
+    #[test]
+    fn draw_decision_covers_copy_flash_lifecycle() {
+        let started_at = Instant::now();
+        let flash_started_at = started_at + Duration::from_secs(1);
+        let flash_active_at = flash_started_at + Duration::from_millis(100);
+        let flash_expired_at = flash_started_at + Duration::from_millis(200);
+
+        let mut review_flash = review_state();
+        record_copy(&mut review_flash, CopyTarget::Plan, flash_started_at);
+
+        let mut apply_flash = apply_state(started_at, Some(ApplyStatus::Succeeded));
+        record_copy(&mut apply_flash, CopyTarget::Execution, flash_started_at);
+
+        assert_draw_cases([
+            DrawCase {
+                name: "flash_before_start",
+                state: review_state(),
+                dirty: false,
+                now: flash_started_at,
+                expected: false,
+            },
+            DrawCase {
+                name: "review_flash_active",
+                state: review_flash.clone(),
+                dirty: false,
+                now: flash_active_at,
+                expected: true,
+            },
+            DrawCase {
+                name: "review_flash_expired",
+                state: review_flash,
+                dirty: false,
+                now: flash_expired_at,
+                expected: true,
+            },
+            DrawCase {
+                name: "finished_apply_flash_active",
+                state: apply_flash.clone(),
+                dirty: false,
+                now: flash_active_at,
+                expected: true,
+            },
+            DrawCase {
+                name: "finished_apply_flash_expired",
+                state: apply_flash,
+                dirty: false,
+                now: flash_expired_at,
+                expected: true,
+            },
+        ]);
+    }
+
+    fn assert_draw_cases(cases: impl IntoIterator<Item = DrawCase>) {
+        for case in cases {
+            assert_eq!(
+                should_draw(&case.state, case.dirty, case.now),
+                case.expected,
+                "case: {}",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn confirmation_input_is_drawn_through_the_runtime_step() {
+        let now = Instant::now();
+        let mut state = confirmation_state();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+        let mut execution_view = execution::ExecutionViewState::default();
+        let mut review_view = plan_review::PlanReviewViewState::default();
+        let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
+        let mut dirty = true;
+
+        let action = handle_key_event(
+            &terminal,
+            &state,
+            &mut execution_view,
+            &mut review_view,
+            &mut confirmation_view,
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+        )
+        .expect("confirmation input should be handled");
+
+        assert_eq!(action, None);
+        assert_eq!(confirmation_view.input(), "y");
+
+        assert!(
+            draw_if_needed(
+                &mut state,
+                &mut terminal,
+                execution_view,
+                &review_view,
+                &confirmation_view,
+                &mut dirty,
+                now,
+            )
+            .expect("confirmation should render")
+        );
+
+        assert!(!dirty);
+        assert!(terminal_text(&terminal).contains("Apply this plan? (yes/no): y|"));
+    }
+
+    #[test]
+    fn expired_copy_flash_draws_once_through_the_runtime_step() {
+        let started_at = Instant::now();
+        let flash_active_at = started_at + Duration::from_millis(100);
+        let expired_at = started_at + Duration::from_millis(200);
+        let mut state = apply_state(started_at, None);
+        if let SessionState::Apply(execution) = &mut state {
+            execution.record(ExecutionEvent {
+                received_at: started_at,
+                kind: ExecutionEventKind::Informational {
+                    event_type: "log".to_owned(),
+                    message: Some("flash".to_owned()),
+                },
+            });
+            execution.finish_apply(ApplyStatus::Succeeded, None, None, started_at);
+        }
+        record_copy(&mut state, CopyTarget::Execution, started_at);
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+        let mut dirty = false;
+        let execution_view = execution::ExecutionViewState::default();
+        let review_view = plan_review::PlanReviewViewState::default();
+        let confirmation_view = plan_review::ApplyConfirmationViewState::default();
+
+        assert!(
+            draw_if_needed(
+                &mut state,
+                &mut terminal,
+                execution_view,
+                &review_view,
+                &confirmation_view,
+                &mut dirty,
+                flash_active_at,
+            )
+            .expect("active flash should render")
+        );
+
+        assert!(buffer_has_flash_style(&terminal));
+        assert!(state.apply().expect("apply state").copy_flash_pending());
+
+        assert!(
+            draw_if_needed(
+                &mut state,
+                &mut terminal,
+                execution_view,
+                &review_view,
+                &confirmation_view,
+                &mut dirty,
+                expired_at,
+            )
+            .expect("expired flash should render")
+        );
+
+        assert!(!state.apply().expect("apply state").copy_flash_pending());
+        assert!(!should_draw(&state, false, expired_at));
+        assert!(!buffer_has_flash_style(&terminal));
+        assert!(terminal_text(&terminal).contains("Apply complete"));
+
+        assert!(
+            !draw_if_needed(
+                &mut state,
+                &mut terminal,
+                execution_view,
+                &review_view,
+                &confirmation_view,
+                &mut dirty,
+                expired_at,
+            )
+            .expect("static result should remain rendered")
+        );
+    }
+
+    fn terminal_text(terminal: &Terminal<TestBackend>) -> String {
+        let buffer = terminal.backend().buffer();
+        let area = buffer.area();
+        let mut text = String::new();
+        for y in area.y..area.bottom() {
+            for x in area.x..area.right() {
+                text.push_str(buffer.cell((x, y)).expect("test cell").symbol());
+            }
+            text.push('\n');
+        }
+        text
+    }
+
+    fn buffer_has_flash_style(terminal: &Terminal<TestBackend>) -> bool {
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .any(|cell| cell.bg == Color::Rgb(0xf4, 0x9e, 0x4c))
+    }
+
+    fn review_state() -> SessionState {
+        SessionState::Review(Box::new(ReviewSessionState::new(PlanReview::new(
+            PathBuf::from("/project"),
+            "default".to_owned(),
+            PlanDocument::new("No changes.\n".to_owned()),
+            PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
+            Vec::new(),
+        ))))
+    }
+
+    fn confirmation_state() -> SessionState {
+        let SessionState::Review(review) = review_state() else {
+            unreachable!();
+        };
+        SessionState::ApplyConfirmation(Box::new(ApplyConfirmationState::new(
+            review.review().clone(),
+        )))
+    }
+
+    fn apply_state(started_at: Instant, status: Option<ApplyStatus>) -> SessionState {
+        let mut execution =
+            ExecutionState::applying(started_at, ExecutionContext::loading("loading..."));
+        if let Some(status) = status {
+            execution.finish_apply(status, None, None, started_at);
+        }
+        SessionState::Apply(Box::new(execution))
+    }
+
+    fn record_copy(state: &mut SessionState, target: CopyTarget, now: Instant) {
+        session::update(
+            state,
+            Action::CopyCompleted {
+                target,
+                result: CopyResult::Written,
+            },
+            now,
+        );
+    }
 }
