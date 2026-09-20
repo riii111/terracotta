@@ -12,7 +12,7 @@ use ratatui::{DefaultTerminal, Terminal, backend::Backend, layout::Rect};
 
 use crate::{
     app::{
-        copy::CopyTarget,
+        copy::{CopyEffect, CopyResult, CopyTarget},
         execution::{ExecutionStage, ExecutionState},
         review::PlanReviewMessage,
         session::{self, Action, Effect, SessionOutcome, SessionState},
@@ -308,12 +308,12 @@ fn draw<B: Backend>(
     Ok(())
 }
 
-fn receive_messages(
+fn receive_messages<C: ClipboardWriter>(
     messages: &Receiver<PlanReviewMessage>,
     state: &mut SessionState,
     execution_view: &mut execution::ExecutionViewState,
     worker_disconnected: &mut bool,
-    effects: &mut RuntimeEffects<'_>,
+    effects: &mut RuntimeEffects<'_, C>,
 ) -> (Option<SessionOutcome>, bool) {
     let mut received = false;
     loop {
@@ -361,21 +361,21 @@ pub(super) fn update_session(
     effect
 }
 
-fn dispatch(
+fn dispatch<C: ClipboardWriter>(
     state: &mut SessionState,
     action: Action,
     execution_view: &mut execution::ExecutionViewState,
-    effects: &mut RuntimeEffects<'_>,
+    effects: &mut RuntimeEffects<'_, C>,
 ) -> Option<SessionOutcome> {
     let effect = update_session(state, action, execution_view, Instant::now());
     apply_effect(state, effect, execution_view, effects)
 }
 
-fn apply_effect(
+fn apply_effect<C: ClipboardWriter>(
     state: &mut SessionState,
     effect: Option<Effect>,
     execution_view: &mut execution::ExecutionViewState,
-    effects: &mut RuntimeEffects<'_>,
+    effects: &mut RuntimeEffects<'_, C>,
 ) -> Option<SessionOutcome> {
     match effect {
         None => None,
@@ -433,12 +433,22 @@ fn apply_effect(
     }
 }
 
-struct RuntimeEffects<'a> {
+trait ClipboardWriter {
+    fn execute(&mut self, effect: &CopyEffect) -> CopyResult;
+}
+
+impl ClipboardWriter for ClipboardExecutor {
+    fn execute(&mut self, effect: &CopyEffect) -> CopyResult {
+        Self::execute(self, effect)
+    }
+}
+
+struct RuntimeEffects<'a, C: ClipboardWriter = ClipboardExecutor> {
     root: &'a Path,
     sender: &'a std::sync::mpsc::Sender<PlanReviewMessage>,
     saved_plan_slot: &'a Arc<Mutex<Option<SavedPlan>>>,
     cancellation: &'a CancellationToken,
-    clipboard: &'a mut ClipboardExecutor,
+    clipboard: &'a mut C,
     apply_worker: &'a mut Option<JoinHandle<()>>,
 }
 
@@ -452,7 +462,6 @@ mod tests {
 
     use super::*;
     use crate::app::{
-        copy::CopyResult,
         execution::{
             ApplyStatus, EventStream, ExecutionContext, ExecutionEvent, ExecutionEventKind,
             ExecutionLogLine,
@@ -467,6 +476,14 @@ mod tests {
         dirty: bool,
         now: Instant,
         expected: bool,
+    }
+
+    struct TestClipboard;
+
+    impl ClipboardWriter for TestClipboard {
+        fn execute(&mut self, _effect: &CopyEffect) -> CopyResult {
+            CopyResult::Written
+        }
     }
 
     #[test]
@@ -989,7 +1006,7 @@ mod tests {
         let (sender, _messages) = std::sync::mpsc::channel();
         let saved_plan_slot = Arc::new(Mutex::new(None));
         let cancellation = CancellationToken::new();
-        let mut clipboard = ClipboardExecutor::new();
+        let mut clipboard = TestClipboard;
         let mut apply_worker = None;
         let mut effects = RuntimeEffects {
             root: Path::new("/project"),
