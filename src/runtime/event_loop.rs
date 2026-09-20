@@ -666,7 +666,7 @@ mod tests {
         assert!(!dirty);
         let text = terminal_text(&terminal);
         assert!(text.contains("Apply this plan? (yes/no):"));
-        assert!(text.contains("│y|"), "{text}");
+        assert!(text.contains("│ y|"), "{text}");
     }
 
     #[test]

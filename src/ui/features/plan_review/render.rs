@@ -30,6 +30,7 @@ struct PreparedContent<'a> {
 
 pub(crate) struct ApplyConfirmationLayout {
     header: Rect,
+    notice: Rect,
     frame: Rect,
     footer: Rect,
     inner: Rect,
@@ -42,6 +43,10 @@ pub(crate) struct ApplyConfirmationLayout {
 impl ApplyConfirmationLayout {
     pub(crate) const fn header(&self) -> Rect {
         self.header
+    }
+
+    pub(crate) const fn notice(&self) -> Rect {
+        self.notice
     }
 
     pub(crate) const fn frame(&self) -> Rect {
@@ -197,11 +202,13 @@ pub(crate) fn render_apply_confirmation(
         header::render_review(frame, layout.header(), state.review());
     }
     if !layout.renderable() {
-        terminal_notice::render_wrapped(frame, area, CONFIRMATION_NOTICE);
+        terminal_notice::render_wrapped(frame, layout.notice(), CONFIRMATION_NOTICE);
         return;
     }
 
-    let inner = shell_layout::render_content_block_line(frame, layout.frame(), Line::default());
+    let block_inner =
+        shell_layout::render_content_block_line(frame, layout.frame(), Line::default());
+    let inner = padded_confirmation_inner(block_inner);
     debug_assert_eq!(inner, layout.inner());
     let info_area = Rect::new(
         inner.x,
@@ -238,30 +245,31 @@ pub(crate) fn apply_confirmation_layout(
         panel.height.saturating_sub(header_height),
     );
     let frame_width = panel.width.min(CONFIRMATION_MAX_WIDTH);
-    let inner_width = frame_width.saturating_sub(2);
-    let footer_lines = footer::layout(
-        vec![
-            footer::hint(&["Enter"], "confirm"),
-            footer::hint(&["Esc"], "back"),
-        ],
-        frame_width,
-    );
+    let footer_items = vec![
+        footer::hint(&["Enter"], "confirm"),
+        footer::hint(&["Esc"], "back"),
+    ];
+    let footer_lines = footer::layout(footer_items.clone(), frame_width);
+    let footer_required_width = footer_items.iter().map(Line::width).sum::<usize>() + 3;
+    let footer_fits = footer_lines.len() == 1
+        && footer_lines
+            .first()
+            .is_some_and(|line| line.width() == footer_required_width);
+    let inner_width = frame_width.saturating_sub(4);
     let lines = confirmation_lines(state);
     let body = Paragraph::new(lines.clone()).wrap(Wrap { trim: false });
     let body_height = body.line_count(inner_width).saturating_add(1);
     let frame_height = u16::try_from(body_height)
         .unwrap_or(u16::MAX)
-        .saturating_add(2);
+        .saturating_add(4);
     let group_height = frame_height.saturating_add(1);
-    let renderable = inner_width > 0
-        && !footer_lines.is_empty()
-        && group_height <= available.height
-        && frame_width >= 3;
+    let renderable =
+        inner_width > 0 && footer_fits && group_height <= available.height && frame_width >= 5;
     let frame_x = panel.x + panel.width.saturating_sub(frame_width) / 2;
     let group_y = available.y + available.height.saturating_sub(group_height) / 2;
     let frame = Rect::new(frame_x, group_y, frame_width, frame_height);
     let footer = Rect::new(frame.x, frame.bottom(), frame.width, 1);
-    let inner = Block::new().borders(Borders::ALL).inner(frame);
+    let inner = padded_confirmation_inner(Block::new().borders(Borders::ALL).inner(frame));
     let input = Rect::new(
         inner.x,
         inner.y.saturating_add(inner.height.saturating_sub(1)),
@@ -270,6 +278,7 @@ pub(crate) fn apply_confirmation_layout(
     );
     ApplyConfirmationLayout {
         header,
+        notice: available,
         frame,
         footer,
         inner,
@@ -278,6 +287,15 @@ pub(crate) fn apply_confirmation_layout(
         footer_lines,
         renderable,
     }
+}
+
+const fn padded_confirmation_inner(inner: Rect) -> Rect {
+    Rect::new(
+        inner.x.saturating_add(1),
+        inner.y.saturating_add(1),
+        inner.width.saturating_sub(2),
+        inner.height.saturating_sub(2),
+    )
 }
 
 fn confirmation_lines(state: &ApplyConfirmationState) -> Vec<Line<'static>> {
@@ -1489,7 +1507,8 @@ End of synthetic plan body."#;
             );
             assert_eq!(layout.footer().y, layout.frame().bottom());
             assert_eq!(layout.footer().x, layout.frame().x);
-            assert_eq!(layout.inner().height, layout.frame().height - 2);
+            assert_eq!(layout.inner().width, layout.frame().width - 4);
+            assert_eq!(layout.inner().height, layout.frame().height - 4);
             assert_eq!(layout.input().height, 1);
             assert!(layout.frame().height < height);
         }
@@ -1537,6 +1556,25 @@ End of synthetic plan body."#;
         assert!(text.contains("apply)."));
         assert!(!text.contains("This plan includes resource deletion."));
         assert_eq!(layout.footer().y, layout.frame().bottom());
+    }
+
+    #[test]
+    fn production_confirmation_requires_a_complete_footer_and_keeps_notice_below_header() {
+        let state = confirmation_state(review());
+        let narrow = Rect::new(0, 0, 24, 30);
+        assert!(!apply_confirmation_layout(narrow, &state).renderable());
+
+        let area = Rect::new(0, 0, 48, 12);
+        let layout = apply_confirmation_layout(area, &state);
+        assert!(!layout.renderable());
+        let buffer = render_to_buffer((area.width, area.height), |frame| {
+            render_apply_confirmation(frame, &state, &ApplyConfirmationViewState::default());
+        });
+        let text = buffer_text(&buffer);
+        let lines = text.lines().collect::<Vec<_>>();
+        assert!(lines[usize::from(layout.header().y)].contains("Terracotta |"));
+        assert!(!lines[usize::from(layout.header().y)].contains("Terminal too small"));
+        assert!(lines[usize::from(layout.notice().y)].contains("Terminal too small"));
     }
 
     #[test]

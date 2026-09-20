@@ -7,17 +7,18 @@ expression: buffer_text(buffer)
 
 
 
-
  ┌────────────────────────────────────────────────────────────────────────────┐
- │Apply this reviewed plan?                                                   │
  │                                                                            │
- │Target: /repo/environments/production/main                                  │
- │Workspace: default                                                          │
- │Plan: 2 to add, 2 to change, 1 to destroy.                                  │
+ │ Apply this reviewed plan?                                                  │
  │                                                                            │
- │This plan includes resource deletion.                                       │
+ │ Target: /repo/environments/production/main                                 │
+ │ Workspace: default                                                         │
+ │ Plan: 2 to add, 2 to change, 1 to destroy.                                 │
  │                                                                            │
- │Apply this plan? (yes/no):                                                  │
- │|                                                                           │
+ │ This plan includes resource deletion.                                      │
+ │                                                                            │
+ │ Apply this plan? (yes/no):                                                 │
+ │ |                                                                          │
+ │                                                                            │
  └────────────────────────────────────────────────────────────────────────────┘
  Enter confirm | Esc back
