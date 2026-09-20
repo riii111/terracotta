@@ -17,210 +17,12 @@ use crate::ui::primitives::{atoms::scrollbar, molecules::terminal_notice};
 use crate::ui::shell::{footer, header, layout as shell_layout};
 use crate::ui::theme;
 
-use super::PlanReviewInput;
+use super::{ApplyConfirmationViewState, PlanReviewViewState};
 
 const MIN_WIDTH: u16 = 24;
 const MIN_HEIGHT: u16 = 6;
 const FLASH_BACKGROUND: Color = Color::Rgb(0xf4, 0x9e, 0x4c);
 const FLASH_FOREGROUND: Color = Color::Rgb(0x11, 0x14, 0x19);
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SearchInputState {
-    query: String,
-    cursor: usize,
-    previous_query: String,
-    previous_vertical: u16,
-    previous_horizontal: u16,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct PlanReviewViewState {
-    vertical: u16,
-    horizontal: u16,
-    search: Option<SearchInputState>,
-}
-
-impl PlanReviewViewState {
-    pub(crate) fn apply(
-        &mut self,
-        input: PlanReviewInput,
-        body: Rect,
-        state: &ReviewSessionState,
-    ) -> Option<String> {
-        let (max_vertical, max_horizontal) = limits(body, state);
-        self.vertical = self.vertical.min(max_vertical);
-        self.horizontal = self.horizontal.min(max_horizontal);
-        if self.search.is_some() {
-            return self.apply_search_input(input);
-        }
-
-        match input {
-            PlanReviewInput::SearchStart => {
-                let query = state.review().search_query().to_owned();
-                self.search = Some(SearchInputState {
-                    cursor: query.len(),
-                    previous_query: query.clone(),
-                    query,
-                    previous_vertical: self.vertical,
-                    previous_horizontal: self.horizontal,
-                });
-                None
-            }
-            PlanReviewInput::Up => self.scroll_vertical(-1, body, state),
-            PlanReviewInput::Down => self.scroll_vertical(1, body, state),
-            PlanReviewInput::Left => self.scroll_horizontal(-1, body, state),
-            PlanReviewInput::Right => self.scroll_horizontal(1, body, state),
-            PlanReviewInput::PageUp => {
-                self.vertical = self.vertical.saturating_sub(body.height.max(1));
-                None
-            }
-            PlanReviewInput::PageDown => {
-                let (max_vertical, _) = limits(body, state);
-                self.vertical = self
-                    .vertical
-                    .saturating_add(body.height.max(1))
-                    .min(max_vertical);
-                None
-            }
-            PlanReviewInput::Top => {
-                self.vertical = 0;
-                None
-            }
-            PlanReviewInput::Bottom => {
-                self.vertical = limits(body, state).0;
-                None
-            }
-            PlanReviewInput::LeftEdge => {
-                self.horizontal = 0;
-                None
-            }
-            PlanReviewInput::RightEdge => {
-                self.horizontal = limits(body, state).1;
-                None
-            }
-            PlanReviewInput::SearchChar(_)
-            | PlanReviewInput::SearchBackspace
-            | PlanReviewInput::SearchLeft
-            | PlanReviewInput::SearchRight
-            | PlanReviewInput::SearchHome
-            | PlanReviewInput::SearchEnd
-            | PlanReviewInput::SearchConfirm
-            | PlanReviewInput::SearchCancel
-            | PlanReviewInput::Apply
-            | PlanReviewInput::Copy
-            | PlanReviewInput::Quit => None,
-        }
-    }
-
-    pub(crate) const fn searching(&self) -> bool {
-        self.search.is_some()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn search_input(&self) -> Option<&str> {
-        self.search.as_ref().map(|search| search.query.as_str())
-    }
-
-    pub(crate) const fn scroll(&self) -> (u16, u16) {
-        (self.vertical, self.horizontal)
-    }
-
-    fn apply_search_input(&mut self, input: PlanReviewInput) -> Option<String> {
-        let search = self.search.as_mut()?;
-        match input {
-            PlanReviewInput::SearchChar(character) => {
-                search.query.insert(search.cursor, character);
-                search.cursor += character.len_utf8();
-                self.vertical = 0;
-                self.horizontal = 0;
-                Some(search.query.clone())
-            }
-            PlanReviewInput::SearchBackspace => {
-                if search.cursor > 0 {
-                    let previous = search.query[..search.cursor]
-                        .char_indices()
-                        .next_back()
-                        .map_or(0, |(index, _)| index);
-                    search.query.drain(previous..search.cursor);
-                    search.cursor = previous;
-                    self.vertical = 0;
-                    self.horizontal = 0;
-                }
-                Some(search.query.clone())
-            }
-            PlanReviewInput::SearchLeft => {
-                search.cursor = search.query[..search.cursor]
-                    .char_indices()
-                    .next_back()
-                    .map_or(0, |(index, _)| index);
-                None
-            }
-            PlanReviewInput::SearchRight => {
-                search.cursor = search.query[search.cursor..]
-                    .char_indices()
-                    .nth(1)
-                    .map_or(search.query.len(), |(index, _)| search.cursor + index);
-                None
-            }
-            PlanReviewInput::SearchHome => {
-                search.cursor = 0;
-                None
-            }
-            PlanReviewInput::SearchEnd => {
-                search.cursor = search.query.len();
-                None
-            }
-            PlanReviewInput::SearchConfirm => {
-                self.search = None;
-                None
-            }
-            PlanReviewInput::SearchCancel => {
-                let (previous_query, previous_vertical, previous_horizontal) = (
-                    search.previous_query.clone(),
-                    search.previous_vertical,
-                    search.previous_horizontal,
-                );
-                self.vertical = previous_vertical;
-                self.horizontal = previous_horizontal;
-                self.search = None;
-                Some(previous_query)
-            }
-            _ => None,
-        }
-    }
-
-    fn scroll_vertical(
-        &mut self,
-        delta: i16,
-        body: Rect,
-        state: &ReviewSessionState,
-    ) -> Option<String> {
-        let max = limits(body, state).0;
-        self.vertical = if delta.is_negative() {
-            self.vertical.saturating_sub(delta.unsigned_abs())
-        } else {
-            self.vertical.saturating_add(delta.unsigned_abs()).min(max)
-        };
-        None
-    }
-
-    fn scroll_horizontal(
-        &mut self,
-        delta: i16,
-        body: Rect,
-        state: &ReviewSessionState,
-    ) -> Option<String> {
-        let max = limits(body, state).1;
-        self.horizontal = if delta.is_negative() {
-            self.horizontal.saturating_sub(delta.unsigned_abs())
-        } else {
-            self.horizontal
-                .saturating_add(delta.unsigned_abs())
-                .min(max)
-        };
-        None
-    }
-}
 
 pub(crate) struct PlanReviewLayout {
     shell: shell_layout::ShellLayout,
@@ -228,6 +30,8 @@ pub(crate) struct PlanReviewLayout {
     search: Option<Rect>,
     vertical_scrollbar: bool,
     horizontal_scrollbar: bool,
+    max_vertical: u16,
+    max_horizontal: u16,
 }
 
 impl PlanReviewLayout {
@@ -245,6 +49,14 @@ impl PlanReviewLayout {
 
     pub(crate) const fn horizontal_scrollbar(&self) -> bool {
         self.horizontal_scrollbar
+    }
+
+    pub(crate) const fn max_vertical(&self) -> u16 {
+        self.max_vertical
+    }
+
+    pub(crate) const fn max_horizontal(&self) -> u16 {
+        self.max_horizontal
     }
 }
 
@@ -271,8 +83,8 @@ pub(crate) fn layout(area: Rect, searching: bool, state: &ReviewSessionState) ->
         inner.width,
         inner.height.saturating_sub(search_height),
     );
-    let (vertical_scrollbar, horizontal_scrollbar) =
-        scrollbar_reservations(&review_lines_for_limits(state), available);
+    let lines = review_lines_for_limits(state);
+    let (vertical_scrollbar, horizontal_scrollbar) = scrollbar_reservations(&lines, available);
     let body = Rect::new(
         available.x,
         available.y,
@@ -283,20 +95,22 @@ pub(crate) fn layout(area: Rect, searching: bool, state: &ReviewSessionState) ->
             .height
             .saturating_sub(u16::from(horizontal_scrollbar)),
     );
+    let (max_vertical, max_horizontal) = limits(&lines, body);
     PlanReviewLayout {
         shell,
         body,
         search,
         vertical_scrollbar,
         horizontal_scrollbar,
+        max_vertical,
+        max_horizontal,
     }
 }
 
 pub(crate) fn render_apply_confirmation(
     frame: &mut Frame<'_>,
     state: &ApplyConfirmationState,
-    input: &str,
-    cursor: usize,
+    view: &ApplyConfirmationViewState,
 ) {
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
@@ -335,9 +149,9 @@ pub(crate) fn render_apply_confirmation(
         lines.push(Line::from("This plan includes resource deletion."));
         lines.push(Line::default());
     }
-    let cursor = cursor.min(input.len());
-    let before = input[..cursor].to_owned();
-    let after = input[cursor..].to_owned();
+    let cursor = view.cursor().min(view.input().len());
+    let before = view.input()[..cursor].to_owned();
+    let after = view.input()[cursor..].to_owned();
     lines.push(Line::from(vec![
         Span::raw("Apply this plan? (yes/no): "),
         Span::styled(before, search_input_style()),
@@ -404,7 +218,8 @@ pub(crate) fn render(
     }
 
     let lines = review_lines(state);
-    let (max_vertical, max_horizontal) = limits(layout.body(), state);
+    let max_vertical = layout.max_vertical();
+    let max_horizontal = layout.max_horizontal();
     let (vertical, horizontal) = view.scroll();
     let vertical = vertical.min(max_vertical);
     let horizontal = horizontal.min(max_horizontal);
@@ -530,12 +345,11 @@ fn flash_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
         .collect()
 }
 
-fn limits(body: Rect, state: &ReviewSessionState) -> (u16, u16) {
-    let lines = review_lines_for_limits(state);
+fn limits(lines: &[Line<'static>], body: Rect) -> (u16, u16) {
     let max_vertical =
         u16::try_from(lines.len().saturating_sub(usize::from(body.height))).unwrap_or(u16::MAX);
     let max_horizontal =
-        u16::try_from(max_line_width(&lines).saturating_sub(usize::from(body.width)))
+        u16::try_from(max_line_width(lines).saturating_sub(usize::from(body.width)))
             .unwrap_or(u16::MAX);
     (max_vertical, max_horizontal)
 }
@@ -588,9 +402,10 @@ fn max_line_width(lines: &[Line<'static>]) -> usize {
 }
 
 fn search_prompt(view: &PlanReviewViewState, width: u16) -> Option<(Line<'static>, u16)> {
-    let search = view.search.as_ref()?;
-    let before = search.query[..search.cursor].to_owned();
-    let after = search.query[search.cursor..].to_owned();
+    let query = view.search_query()?;
+    let cursor = view.search_cursor()?;
+    let before = query[..cursor].to_owned();
+    let after = query[cursor..].to_owned();
     let line = Line::from(vec![
         Span::styled("/", theme::footer_key_style()),
         Span::styled(before.clone(), search_input_style()),
@@ -654,107 +469,18 @@ const fn severity_label(severity: DiagnosticSeverity) -> &'static str {
 mod tests {
     use std::path::PathBuf;
 
-    use crate::app::{
-        execution::{ExecutionContext, ExecutionState},
-        review::{PlanDocument, PlanMetadata},
-        session::{Action, SessionState, update},
-    };
+    use crate::app::review::{PlanDocument, PlanMetadata};
+    use crate::ui::features::plan_review::PlanReviewInput;
 
     use super::*;
 
-    fn review() -> ReviewSessionState {
-        let now = Instant::now();
-        let mut session = SessionState::new(ExecutionState::with_context(
-            now,
-            ExecutionContext::loading("/project"),
-        ));
-        update(
-            &mut session,
-            Action::ReviewCompleted(PlanReview::new(
-                PathBuf::from("/project"),
-                "default".to_owned(),
-                PlanDocument::new("first\nterraform_data.api = secret\nlast\n".to_owned()),
-                PlanMetadata::new(Vec::new(), Vec::new(), 0, 1, 0, true),
-                Vec::new(),
-            )),
-            now,
-        );
-        let SessionState::Review(review) = session else {
-            panic!("review should be visible");
-        };
-        *review
-    }
-
-    #[test]
-    fn search_input_changes_query_and_resets_scroll() {
-        let state = review();
-        let mut view = PlanReviewViewState::default();
-        let body = Rect::new(0, 0, 40, 10);
-        view.apply(PlanReviewInput::SearchStart, body, &state);
-        assert_eq!(
-            view.apply(PlanReviewInput::SearchChar('a'), body, &state),
-            Some("a".to_owned())
-        );
-        assert_eq!(view.search_input(), Some("a"));
-        assert_eq!(view.scroll(), (0, 0));
-    }
-
-    #[test]
-    fn escape_restores_query_and_position() {
-        let state = review();
-        let mut view = PlanReviewViewState::default();
-        let body = Rect::new(0, 0, 40, 10);
-        view.apply(PlanReviewInput::SearchStart, body, &state);
-        view.apply(PlanReviewInput::SearchChar('a'), body, &state);
-        assert_eq!(
-            view.apply(PlanReviewInput::SearchCancel, body, &state),
-            Some(String::new())
-        );
-        assert!(!view.searching());
-    }
-
-    #[test]
-    fn search_key_input_stays_in_the_editor() {
-        assert_eq!(
-            super::super::input::key_to_input(
-                crossterm::event::KeyEvent::new(
-                    crossterm::event::KeyCode::Char('j'),
-                    crossterm::event::KeyModifiers::NONE,
-                ),
-                true,
-            ),
-            Some(PlanReviewInput::SearchChar('j'))
-        );
-    }
-
-    #[test]
-    fn search_right_moves_to_the_next_character_boundary() {
-        let state = review();
-        let mut view = PlanReviewViewState::default();
-        let body = Rect::new(0, 0, 40, 10);
-        view.apply(PlanReviewInput::SearchStart, body, &state);
-        view.apply(PlanReviewInput::SearchChar('a'), body, &state);
-        view.apply(PlanReviewInput::SearchChar('b'), body, &state);
-        view.apply(PlanReviewInput::SearchChar('c'), body, &state);
-        view.apply(PlanReviewInput::SearchHome, body, &state);
-        view.apply(PlanReviewInput::SearchRight, body, &state);
-        view.apply(PlanReviewInput::SearchChar('X'), body, &state);
-        assert_eq!(view.search_input(), Some("aXbc"));
-
-        view.apply(PlanReviewInput::SearchHome, body, &state);
-        view.apply(PlanReviewInput::SearchRight, body, &state);
-        view.apply(PlanReviewInput::SearchChar('あ'), body, &state);
-        assert_eq!(view.search_input(), Some("aあXbc"));
-    }
-
     #[test]
     fn search_prompt_keeps_the_cursor_visible() {
-        let state = review();
         let mut view = PlanReviewViewState::default();
         let body = Rect::new(0, 0, 10, 10);
-        view.apply(PlanReviewInput::SearchStart, body, &state);
+        view.apply(PlanReviewInput::SearchStart, body, 0, 0, "");
         for character in "abcdefgh".chars() {
-            view.apply(PlanReviewInput::SearchChar(character), body, &state);
+            view.apply(PlanReviewInput::SearchChar(character), body, 0, 0, "");
         }
         let Some((line, horizontal)) = search_prompt(&view, 6) else {
             panic!("search prompt should be visible");

@@ -38,8 +38,7 @@ pub(crate) fn run_connected(
 ) -> io::Result<SessionOutcome> {
     let mut execution_view = execution::ExecutionViewState::default();
     let mut review_view = plan_review::PlanReviewViewState::default();
-    let mut confirmation_input = String::new();
-    let mut confirmation_cursor = 0;
+    let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
     let mut effects = RuntimeEffects {
         root,
         sender,
@@ -85,8 +84,7 @@ pub(crate) fn run_connected(
                 terminal,
                 execution_view,
                 &review_view,
-                &confirmation_input,
-                confirmation_cursor,
+                &confirmation_view,
             )?;
             if clear_copy_flash && let SessionState::Review(review) = &mut state {
                 review.clear_copy_flash();
@@ -107,8 +105,7 @@ pub(crate) fn run_connected(
                         &state,
                         &mut execution_view,
                         &mut review_view,
-                        &mut confirmation_input,
-                        &mut confirmation_cursor,
+                        &mut confirmation_view,
                         key,
                     )? {
                         if let Some(outcome) = dispatch(&mut state, action, &mut effects) {
@@ -123,8 +120,7 @@ pub(crate) fn run_connected(
                                 terminal,
                                 execution_view,
                                 &review_view,
-                                &confirmation_input,
-                                confirmation_cursor,
+                                &confirmation_view,
                             )?;
                             dirty = false;
                         }
@@ -141,8 +137,7 @@ fn handle_key_event(
     state: &SessionState,
     execution_view: &mut execution::ExecutionViewState,
     review_view: &mut plan_review::PlanReviewViewState,
-    confirmation_input: &mut String,
-    confirmation_cursor: &mut usize,
+    confirmation_view: &mut plan_review::ApplyConfirmationViewState,
     key: KeyEvent,
 ) -> io::Result<Option<Action>> {
     if let Some(execution) = state.execution() {
@@ -150,64 +145,8 @@ fn handle_key_event(
     }
 
     if state.apply_confirmation().is_some() {
-        return Ok(match plan_review::apply_confirmation_key_to_input(key) {
-            Some(plan_review::ApplyConfirmationInput::Character(character)) => {
-                confirmation_input.insert(*confirmation_cursor, character);
-                *confirmation_cursor += character.len_utf8();
-                None
-            }
-            Some(plan_review::ApplyConfirmationInput::Backspace) => {
-                if *confirmation_cursor > 0 {
-                    let previous = confirmation_input[..*confirmation_cursor]
-                        .char_indices()
-                        .next_back()
-                        .map_or(0, |(index, _)| index);
-                    confirmation_input.drain(previous..*confirmation_cursor);
-                    *confirmation_cursor = previous;
-                }
-                None
-            }
-            Some(plan_review::ApplyConfirmationInput::Left) => {
-                *confirmation_cursor = confirmation_input[..*confirmation_cursor]
-                    .char_indices()
-                    .next_back()
-                    .map_or(0, |(index, _)| index);
-                None
-            }
-            Some(plan_review::ApplyConfirmationInput::Right) => {
-                *confirmation_cursor = confirmation_input[*confirmation_cursor..]
-                    .char_indices()
-                    .nth(1)
-                    .map_or(confirmation_input.len(), |(index, _)| {
-                        *confirmation_cursor + index
-                    });
-                None
-            }
-            Some(plan_review::ApplyConfirmationInput::Home) => {
-                *confirmation_cursor = 0;
-                None
-            }
-            Some(plan_review::ApplyConfirmationInput::End) => {
-                *confirmation_cursor = confirmation_input.len();
-                None
-            }
-            Some(plan_review::ApplyConfirmationInput::Confirm) if confirmation_input == "yes" => {
-                confirmation_input.clear();
-                *confirmation_cursor = 0;
-                Some(Action::ConfirmApply)
-            }
-            Some(plan_review::ApplyConfirmationInput::Confirm) if confirmation_input == "no" => {
-                confirmation_input.clear();
-                *confirmation_cursor = 0;
-                Some(Action::CancelApply)
-            }
-            Some(plan_review::ApplyConfirmationInput::Cancel) => {
-                confirmation_input.clear();
-                *confirmation_cursor = 0;
-                Some(Action::CancelApply)
-            }
-            _ => None,
-        });
+        return Ok(plan_review::apply_confirmation_key_to_input(key)
+            .and_then(|input| confirmation_view.apply(input)));
     }
 
     if let Some(apply) = state.apply() {
@@ -228,10 +167,15 @@ fn handle_key_event(
                     Rect::new(0, 0, size.width, size.height),
                     review_view.searching(),
                     review,
-                )
-                .body();
+                );
                 review_view
-                    .apply(input, body, review)
+                    .apply(
+                        input,
+                        body.body(),
+                        body.max_vertical(),
+                        body.max_horizontal(),
+                        review.review().search_query(),
+                    )
                     .map(Action::ReviewSearchChanged)
             }
             None => None,
@@ -300,8 +244,7 @@ fn draw(
     terminal: &mut DefaultTerminal,
     execution_view: execution::ExecutionViewState,
     review_view: &plan_review::PlanReviewViewState,
-    confirmation_input: &str,
-    confirmation_cursor: usize,
+    confirmation_view: &plan_review::ApplyConfirmationViewState,
 ) -> io::Result<()> {
     match state {
         SessionState::Execution(execution) => {
@@ -321,12 +264,7 @@ fn draw(
         }
         SessionState::ApplyConfirmation(confirmation) => {
             terminal.draw(|frame| {
-                plan_review::render_apply_confirmation(
-                    frame,
-                    confirmation,
-                    confirmation_input,
-                    confirmation_cursor,
-                );
+                plan_review::render_apply_confirmation(frame, confirmation, confirmation_view);
             })?;
         }
         SessionState::Apply(execution) => {
