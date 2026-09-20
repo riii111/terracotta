@@ -5,7 +5,7 @@ expression: buffer_text(buffer)
 
  Terracotta | main
 
- ┌Apply failed────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+ ┌Apply result────────────────────────────────────────────────────────────────────────────────────────────────────────┐
  │Apply failed                                                                                                        │
  │Changes may already be applied.                                                                                     │
  │Elapsed 4.0s                                                                                                        │
