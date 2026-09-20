@@ -73,7 +73,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, area: Rect, lines: Vec<Line<'static>
 #[cfg(test)]
 mod tests {
     use ratatui::buffer::Buffer;
-    use ratatui::style::{Color, Style};
+    use ratatui::style::{Color, Modifier};
     use rstest::rstest;
 
     use super::*;
@@ -99,18 +99,74 @@ mod tests {
             })
             .unwrap();
         let buffer = terminal.backend().buffer();
-        assert_buffer_text_style(buffer, "[", 0, theme::footer_key_style());
-        assert_buffer_text_style(buffer, "]", 0, theme::footer_key_style());
-        assert_buffer_text_style(buffer, "/", 0, theme::footer_key_separator_style());
-        assert_buffer_text_style(buffer, "/", 2, theme::footer_key_style());
-        assert_buffer_text_style(buffer, " prev/next", 0, theme::footer_text_style());
-        assert_buffer_text_style(buffer, " search", 0, theme::footer_text_style());
+        assert_buffer_text_style(
+            buffer,
+            "[",
+            0,
+            Color::Rgb(0xd4, 0xa4, 0x85),
+            Color::Reset,
+            Modifier::empty(),
+        );
+        assert_buffer_text_style(
+            buffer,
+            "]",
+            0,
+            Color::Rgb(0xd4, 0xa4, 0x85),
+            Color::Reset,
+            Modifier::empty(),
+        );
+        assert_buffer_text_style(
+            buffer,
+            "/",
+            0,
+            Color::Rgb(0x90, 0x90, 0x90),
+            Color::Reset,
+            Modifier::empty(),
+        );
+        assert_buffer_text_style(
+            buffer,
+            "/",
+            2,
+            Color::Rgb(0xd4, 0xa4, 0x85),
+            Color::Reset,
+            Modifier::empty(),
+        );
+        assert_buffer_text_style(
+            buffer,
+            " prev/next",
+            0,
+            Color::Rgb(0xc0, 0xb8, 0xb8),
+            Color::Reset,
+            Modifier::empty(),
+        );
+        assert_buffer_text_style(
+            buffer,
+            " search",
+            0,
+            Color::Rgb(0xc0, 0xb8, 0xb8),
+            Color::Reset,
+            Modifier::empty(),
+        );
         if width == 80 {
-            assert_buffer_text_style(buffer, " | ", 0, theme::footer_text_style());
+            assert_buffer_text_style(
+                buffer,
+                " | ",
+                0,
+                Color::Rgb(0xc0, 0xb8, 0xb8),
+                Color::Reset,
+                Modifier::empty(),
+            );
         }
     }
 
-    fn assert_buffer_text_style(buffer: &Buffer, text: &str, occurrence: usize, style: Style) {
+    fn assert_buffer_text_style(
+        buffer: &Buffer,
+        text: &str,
+        occurrence: usize,
+        foreground: Color,
+        background: Color,
+        modifier: Modifier,
+    ) {
         let mut matches = 0;
         let area = buffer.area();
         for y in area.y..area.bottom() {
@@ -131,9 +187,9 @@ mod tests {
                         let cell = buffer
                             .cell((area.x + u16::try_from(start + offset).unwrap(), y))
                             .expect("footer cell");
-                        assert_eq!(cell.fg, style.fg.unwrap_or(Color::Reset));
-                        assert_eq!(cell.bg, style.bg.unwrap_or(Color::Reset));
-                        assert_eq!(cell.modifier, style.add_modifier);
+                        assert_eq!(cell.fg, foreground);
+                        assert_eq!(cell.bg, background);
+                        assert_eq!(cell.modifier, modifier);
                     }
                     return;
                 }
