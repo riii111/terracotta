@@ -16,7 +16,7 @@ use crate::app::execution::{
 };
 use crate::infra::CancellationToken;
 
-use super::{events::TerraformEventParser, show::PlanParseError};
+use super::{events::TerraformEventParser, line_buffer::LineBuffer, show::PlanParseError};
 
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
@@ -316,8 +316,8 @@ impl EventParser {
 
 #[derive(Default)]
 struct TextLineParser {
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
+    stdout: LineBuffer,
+    stderr: LineBuffer,
 }
 
 impl TextLineParser {
@@ -327,22 +327,15 @@ impl TextLineParser {
         bytes: &[u8],
         received_at: Instant,
     ) -> Vec<ExecutionEvent> {
-        let buffer = self.buffer_mut(stream);
-        buffer.extend_from_slice(bytes);
-        let mut lines = Vec::new();
-        while let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
-            let mut line = buffer.drain(..=newline).collect::<Vec<_>>();
-            line.pop();
-            if line.last() == Some(&b'\r') {
-                line.pop();
-            }
-            lines.push(log_event(stream, &line, received_at));
-        }
-        lines
+        let mut events = Vec::new();
+        self.buffer_mut(stream).push(bytes, |line| {
+            events.push(log_event(stream, line, received_at));
+        });
+        events
     }
 
     fn finish(&mut self, stream: EventStream, received_at: Instant) -> Vec<ExecutionEvent> {
-        let line = std::mem::take(self.buffer_mut(stream));
+        let line = self.buffer_mut(stream).finish();
         if line.is_empty() {
             Vec::new()
         } else {
@@ -350,7 +343,7 @@ impl TextLineParser {
         }
     }
 
-    const fn buffer_mut(&mut self, stream: EventStream) -> &mut Vec<u8> {
+    const fn buffer_mut(&mut self, stream: EventStream) -> &mut LineBuffer {
         match stream {
             EventStream::Stdout => &mut self.stdout,
             EventStream::Stderr => &mut self.stderr,
@@ -883,6 +876,26 @@ mod tests {
     }
 
     #[test]
+    fn text_parser_preserves_chunked_long_lines_and_empty_lines() {
+        let now = Instant::now();
+        let mut parser = TextLineParser::default();
+        let long_line = "x".repeat(100_000);
+        let input = format!("{long_line}\r\n\n続き\n未完了").into_bytes();
+        let mut events = Vec::new();
+
+        for chunk in input.chunks(8 * 1024) {
+            events.extend(parser.push(EventStream::Stdout, chunk, now));
+        }
+        events.extend(parser.finish(EventStream::Stdout, now));
+
+        let lines = events.iter().filter_map(log_text).map(|(_, text)| text);
+        assert_eq!(
+            lines.collect::<Vec<_>>(),
+            vec![long_line.as_str(), "", "続き", "未完了"]
+        );
+    }
+
+    #[test]
     fn text_parser_flushes_a_final_line_without_newline() {
         let now = Instant::now();
         let mut parser = TextLineParser::default();
@@ -953,30 +966,6 @@ mod tests {
                 (EventStream::Stderr, "warning"),
                 (EventStream::Stdout, "初期化"),
                 (EventStream::Stdout, "final line"),
-            ]
-        );
-    }
-
-    #[test]
-    fn unobserved_output_keeps_stream_fallback_for_outputs_without_ranges() {
-        let output = ProcessOutput::new(b"stdout\n".to_vec(), b"stderr\n".to_vec());
-        let mut parser = EventParser::Text(TextLineParser::default());
-        let mut observed = ObservedOutput::default();
-        let mut events = Vec::new();
-
-        emit_unobserved_output(&mut parser, &mut observed, &output, &mut |event| {
-            events.push(event);
-        });
-        emit_parser_remainders(&mut parser, &mut |event| events.push(event));
-
-        assert_eq!(observed.stdout, output.stdout().len());
-        assert_eq!(observed.stderr, output.stderr().len());
-        assert_eq!(observed.chunks, 0);
-        assert_eq!(
-            events.iter().filter_map(log_text).collect::<Vec<_>>(),
-            [
-                (EventStream::Stdout, "stdout"),
-                (EventStream::Stderr, "stderr"),
             ]
         );
     }

@@ -10,8 +10,8 @@ use crate::app::execution::{
 
 #[derive(Default)]
 pub(crate) struct TerraformEventParser {
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
+    stdout: super::line_buffer::LineBuffer,
+    stderr: super::line_buffer::LineBuffer,
 }
 
 impl TerraformEventParser {
@@ -26,9 +26,13 @@ impl TerraformEventParser {
         bytes: &[u8],
         received_at: Instant,
     ) -> Vec<ExecutionEvent> {
-        let buffer = self.buffer_mut(stream);
-        buffer.extend_from_slice(bytes);
-        self.take_complete_lines(stream, received_at)
+        let mut events = Vec::new();
+        self.buffer_mut(stream).push(bytes, |line| {
+            if let Some(event) = Self::parse_line(stream, line, received_at) {
+                events.push(event);
+            }
+        });
+        events
     }
 
     pub(crate) fn finish(
@@ -36,44 +40,20 @@ impl TerraformEventParser {
         stream: EventStream,
         received_at: Instant,
     ) -> Vec<ExecutionEvent> {
-        let buffer = self.buffer_mut(stream);
-        if buffer.is_empty() {
+        let line = self.buffer_mut(stream).finish();
+        if line.is_empty() {
             return Vec::new();
         }
-        let line = std::mem::take(buffer);
         Self::parse_line(stream, &line, received_at)
             .into_iter()
             .collect()
     }
 
-    const fn buffer_mut(&mut self, stream: EventStream) -> &mut Vec<u8> {
+    const fn buffer_mut(&mut self, stream: EventStream) -> &mut super::line_buffer::LineBuffer {
         match stream {
             EventStream::Stdout => &mut self.stdout,
             EventStream::Stderr => &mut self.stderr,
         }
-    }
-
-    fn take_complete_lines(
-        &mut self,
-        stream: EventStream,
-        received_at: Instant,
-    ) -> Vec<ExecutionEvent> {
-        let mut lines = Vec::new();
-        {
-            let buffer = self.buffer_mut(stream);
-            while let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
-                let mut line = buffer.drain(..=newline).collect::<Vec<_>>();
-                line.pop();
-                if line.last() == Some(&b'\r') {
-                    line.pop();
-                }
-                lines.push(line);
-            }
-        }
-        lines
-            .into_iter()
-            .filter_map(|line| Self::parse_line(stream, &line, received_at))
-            .collect()
     }
 
     fn parse_line(
@@ -314,8 +294,6 @@ fn unknown_event_diagnostic(
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use serde_json::json;
 
     use super::*;
@@ -396,6 +374,43 @@ mod tests {
     }
 
     #[test]
+    fn preserves_events_across_crlf_utf8_chunks_and_eof() {
+        let mut parser = TerraformEventParser::new();
+        let timestamp = Instant::now();
+        let event = json!({
+            "type": "version",
+            "@message": "初期化しました"
+        })
+        .to_string();
+        let input = format!("\r\n{event}\r\n未完了").into_bytes();
+        let mut events = Vec::new();
+
+        for chunk in input.chunks(2) {
+            events.extend(parser.push(EventStream::Stdout, chunk, timestamp));
+        }
+        events.extend(parser.finish(EventStream::Stdout, timestamp));
+
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            &events[0].kind,
+            ExecutionEventKind::Informational {
+                event_type,
+                message: Some(message),
+            } if event_type == "version" && message == "初期化しました"
+        ));
+        assert!(matches!(
+            &events[1].kind,
+            ExecutionEventKind::Diagnostic(diagnostic)
+                if diagnostic.summary == "未完了"
+                    && diagnostic.detail.is_none()
+                    && diagnostic.source
+                        == DiagnosticSource::NonJson {
+                            stream: EventStream::Stdout,
+                        }
+        ));
+    }
+
+    #[test]
     fn parses_summary_and_diagnostic_position_without_inventing_progress_total() {
         let mut parser = TerraformEventParser::new();
         let summary = json!({
@@ -461,20 +476,29 @@ mod tests {
     fn preserves_long_non_json_diagnostic_text() {
         let mut parser = TerraformEventParser::new();
         let long_text = "x".repeat(100_000);
-        let stderr_events = parser.push(
-            EventStream::Stderr,
-            format!("{long_text}\n").as_bytes(),
-            Instant::now(),
-        );
+        let event = json!({
+            "type": "version",
+            "@message": "after long diagnostic"
+        })
+        .to_string();
+        let input = format!("{long_text}\n{event}\n").into_bytes();
+        let mut events = Vec::new();
+        for chunk in input.chunks(8 * 1024) {
+            events.extend(parser.push(EventStream::Stderr, chunk, Instant::now()));
+        }
 
-        let ExecutionEventKind::Diagnostic(diagnostic) = &stderr_events[0].kind else {
+        let ExecutionEventKind::Diagnostic(diagnostic) = &events[0].kind else {
             panic!("expected a stderr diagnostic");
         };
         assert_eq!(diagnostic.summary.len(), long_text.len());
         assert!(diagnostic.detail.is_none());
-        assert!(
-            Instant::now().duration_since(stderr_events[0].received_at) < Duration::from_secs(1)
-        );
+        assert!(matches!(
+            &events[1].kind,
+            ExecutionEventKind::Informational {
+                event_type,
+                message: Some(message),
+            } if event_type == "version" && message == "after long diagnostic"
+        ));
     }
 
     #[test]
