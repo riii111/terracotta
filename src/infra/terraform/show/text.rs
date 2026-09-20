@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{collections::HashMap, ops::Range};
 
 use crate::app::review::{PlanBlock, PlanBlockKind, PlanDocument};
 
@@ -23,6 +23,14 @@ fn split_blocks(
     output_names: &[String],
 ) -> Vec<PlanBlock> {
     let lines = text.split('\n').collect::<Vec<_>>();
+    let mut resource_indices = HashMap::with_capacity(resource_addresses.len());
+    for (index, address) in resource_addresses.iter().enumerate() {
+        resource_indices.entry(address.as_str()).or_insert(index);
+    }
+    let mut output_indices = HashMap::with_capacity(output_names.len());
+    for (index, name) in output_names.iter().enumerate() {
+        output_indices.entry(name.as_str()).or_insert(index);
+    }
     let mut candidates = Vec::new();
     let mut section_boundaries = Vec::new();
     let mut heredoc_terminator: Option<String> = None;
@@ -42,18 +50,18 @@ fn split_blocks(
             section_boundaries.push(line);
         }
         if in_output_section {
-            if let Some(name) = output_names.iter().find(|name| output_header(text, name)) {
+            if let Some(index) = output_header(text, &output_indices)
+                && let Some(name) = output_names.get(index)
+            {
                 candidates.push((line, PlanBlockKind::Output(name.clone())));
             }
-        } else if let Some(address) = resource_addresses
-            .iter()
-            .find(|address| resource_header(text, address))
+        } else if let Some(index) = resource_header(text, &resource_indices)
+            && let Some(address) = resource_addresses.get(index)
         {
             candidates.push((line, PlanBlockKind::Resource(address.clone())));
         }
         heredoc_terminator = heredoc_start(text);
     }
-    candidates.sort_by_key(|(line, _)| *line);
 
     let mut blocks = Vec::new();
     let mut cursor = 0;
@@ -114,9 +122,14 @@ fn block_end(
             )
         })
         .map(|(line, _)| *line);
-    let section_boundary = section_boundaries.iter().copied().find(|line| {
-        *line > start && matches!(kind, PlanBlockKind::Resource(_) | PlanBlockKind::Output(_))
-    });
+    let section_boundary = if matches!(kind, PlanBlockKind::Resource(_) | PlanBlockKind::Output(_))
+    {
+        section_boundaries
+            .get(section_boundaries.partition_point(|line| *line <= start))
+            .copied()
+    } else {
+        None
+    };
     next_same_kind
         .into_iter()
         .chain(section_boundary)
@@ -124,38 +137,34 @@ fn block_end(
         .unwrap_or(line_count)
 }
 
-fn resource_header(line: &str, address: &str) -> bool {
-    let Some(rest) = line.strip_prefix("  # ") else {
-        return false;
-    };
+fn resource_header(line: &str, indices: &HashMap<&str, usize>) -> Option<usize> {
+    let rest = line.strip_prefix("  # ")?;
     let is_action = rest.contains(" will be ")
         || rest.contains(" must be ")
         || rest.contains(" has moved to ")
         || rest.contains(" will no longer be managed ");
-    let mentions_address = rest
-        .strip_prefix(address)
-        .is_some_and(|suffix| suffix.starts_with(' ') || suffix.starts_with(','))
-        || rest
-            .split_whitespace()
-            .any(|word| word.trim_matches(',') == address);
-    is_action && mentions_address
+    if !is_action {
+        return None;
+    }
+    rest.char_indices()
+        .filter(|&(_, character)| matches!(character, ' ' | ','))
+        .map(|(index, _)| &rest[..index])
+        .filter_map(|prefix| indices.get(prefix).copied())
+        .chain(
+            rest.split_whitespace()
+                .filter_map(|word| indices.get(word.trim_matches(',')).copied()),
+        )
+        .min()
 }
 
-fn output_header(line: &str, name: &str) -> bool {
-    let Some(rest) = line.strip_prefix("  ") else {
-        return false;
-    };
-    let Some(rest) = rest
+fn output_header(line: &str, indices: &HashMap<&str, usize>) -> Option<usize> {
+    let rest = line.strip_prefix("  ")?;
+    let rest = rest
         .strip_prefix('+')
         .or_else(|| rest.strip_prefix('-'))
-        .or_else(|| rest.strip_prefix('~'))
-    else {
-        return false;
-    };
-    let Some((candidate, _)) = rest.trim_start().split_once('=') else {
-        return false;
-    };
-    candidate.trim() == name
+        .or_else(|| rest.strip_prefix('~'))?;
+    let (candidate, _) = rest.trim_start().split_once('=')?;
+    indices.get(candidate.trim()).copied()
 }
 
 fn heredoc_start(line: &str) -> Option<String> {
@@ -288,6 +297,112 @@ mod tests {
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0].lines(), &(0..5));
         assert_eq!(blocks[1].lines(), &(5..10));
+    }
+
+    #[test]
+    fn indexes_resource_headers_without_prefix_collisions_or_unknown_matches() {
+        let resource_addresses = [
+            "terraform_data.api".to_owned(),
+            "terraform_data.api_extra".to_owned(),
+            "module.service[\"a, b\"]".to_owned(),
+            "module.service[\"will be here\"]".to_owned(),
+            "terraform_data.moved_new".to_owned(),
+            "terraform_data.moved_old".to_owned(),
+        ];
+        let mut resource_indices = HashMap::new();
+        for (index, address) in resource_addresses.iter().enumerate() {
+            resource_indices.entry(address.as_str()).or_insert(index);
+        }
+
+        for (line, expected) in [
+            ("  # terraform_data.api_extra will be created", Some(1)),
+            ("  # module.service[\"a, b\"] will be created", Some(2)),
+            (
+                "  # module.service[\"will be here\"] will be created",
+                Some(3),
+            ),
+            (
+                "  # terraform_data.moved_old has moved to terraform_data.moved_new",
+                Some(4),
+            ),
+            ("  # terraform_data.unknown will be created", None),
+            ("  # terraform_data.api is unchanged", None),
+        ] {
+            assert_eq!(
+                resource_header(line, &resource_indices),
+                expected,
+                "line: {line}"
+            );
+        }
+
+        let duplicate_addresses = ["terraform_data.duplicate", "terraform_data.duplicate"];
+        let mut duplicate_indices = HashMap::new();
+        for (index, address) in duplicate_addresses.iter().enumerate() {
+            duplicate_indices.entry(*address).or_insert(index);
+        }
+        assert_eq!(
+            resource_header(
+                "  # terraform_data.duplicate will be created",
+                &duplicate_indices
+            ),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn indexes_output_headers_with_the_existing_action_and_assignment_rules() {
+        let output_names = ["endpoint".to_owned(), "endpoint_extra".to_owned()];
+        let mut output_indices = HashMap::new();
+        for (index, name) in output_names.iter().enumerate() {
+            output_indices.entry(name.as_str()).or_insert(index);
+        }
+
+        for (line, expected) in [
+            ("  + endpoint_extra = (known after apply)", Some(1)),
+            ("  ~ endpoint = \"new\"", Some(0)),
+            ("  + endpoint_extra", None),
+            ("  + endpoint_extra.value = \"new\"", None),
+            ("  endpoint = \"new\"", None),
+        ] {
+            assert_eq!(
+                output_header(line, &output_indices),
+                expected,
+                "line: {line}"
+            );
+        }
+
+        let duplicate_names = ["duplicate", "duplicate"];
+        let mut duplicate_indices = HashMap::new();
+        for (index, name) in duplicate_names.iter().enumerate() {
+            duplicate_indices.entry(*name).or_insert(index);
+        }
+        assert_eq!(
+            output_header("  + duplicate = (known after apply)", &duplicate_indices),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn preserves_indexed_resource_output_and_unknown_heading_block_ranges() {
+        let source = "preamble\n  # terraform_data.moved_old has moved to terraform_data.moved_new\n  ~ resource \"terraform_data\" \"new\" {\n      value = \"new\"\n    }\n  # terraform_data.api_extra will be created\n  + resource \"terraform_data\" \"api_extra\" {\n      value = \"extra\"\n    }\n  # terraform_data.unknown will be created\nChanges to Outputs:\n  + endpoint_extra = (known after apply)\n  ~ endpoint = \"new\"\nPlan: 0 to add, 2 to change, 0 to destroy.\n";
+        let blocks = split_blocks(
+            source,
+            &[
+                "terraform_data.moved_new".to_owned(),
+                "terraform_data.moved_old".to_owned(),
+                "terraform_data.api_extra".to_owned(),
+            ],
+            &["endpoint".to_owned(), "endpoint_extra".to_owned()],
+        );
+
+        assert_eq!(blocks.len(), 7);
+        assert_eq!(blocks[0].lines(), &(0..1));
+        assert_eq!(blocks[1].lines(), &(1..5));
+        assert_eq!(blocks[2].lines(), &(5..10));
+        assert_eq!(blocks[3].lines(), &(10..11));
+        assert_eq!(blocks[4].lines(), &(11..12));
+        assert_eq!(blocks[5].lines(), &(12..13));
+        assert_eq!(blocks[6].lines(), &(13..15));
     }
 
     #[test]
