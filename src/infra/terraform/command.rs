@@ -2,6 +2,7 @@ use std::{
     ffi::{OsStr, OsString},
     fmt::{Debug, Display, Formatter},
     io::{self, Read},
+    ops::Range,
     path::Path,
     process::{Child, Command, ExitStatus, Stdio},
     sync::mpsc::{self, Receiver, Sender, TryRecvError},
@@ -79,7 +80,13 @@ impl Display for ProcessStatus {
 pub(crate) struct ProcessOutput {
     pub(super) stdout: Vec<u8>,
     stderr: Vec<u8>,
-    ordered: Vec<ProcessOutputChunk>,
+    ordered: Vec<ProcessOutputRange>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct ProcessOutputRange {
+    stream: EventStream,
+    range: Range<usize>,
 }
 
 impl ProcessOutput {
@@ -93,11 +100,22 @@ impl ProcessOutput {
     }
 
     fn append(&mut self, chunk: &ProcessOutputChunk) {
-        match chunk.stream {
-            EventStream::Stdout => self.stdout.extend_from_slice(&chunk.bytes),
-            EventStream::Stderr => self.stderr.extend_from_slice(&chunk.bytes),
-        }
-        self.ordered.push(chunk.clone());
+        let range = match chunk.stream {
+            EventStream::Stdout => {
+                let start = self.stdout.len();
+                self.stdout.extend_from_slice(&chunk.bytes);
+                start..self.stdout.len()
+            }
+            EventStream::Stderr => {
+                let start = self.stderr.len();
+                self.stderr.extend_from_slice(&chunk.bytes);
+                start..self.stderr.len()
+            }
+        };
+        self.ordered.push(ProcessOutputRange {
+            stream: chunk.stream,
+            range,
+        });
     }
 
     #[must_use]
@@ -528,8 +546,12 @@ fn emit_unobserved_output(
     event_sink: &mut dyn FnMut(ExecutionEvent),
 ) {
     if !output.ordered.is_empty() {
-        for chunk in output.ordered.iter().skip(observed.chunks) {
-            for event in parser.push(chunk.stream, &chunk.bytes, Instant::now()) {
+        for record in output.ordered.iter().skip(observed.chunks) {
+            let bytes = match record.stream {
+                EventStream::Stdout => &output.stdout[record.range.clone()],
+                EventStream::Stderr => &output.stderr[record.range.clone()],
+            };
+            for event in parser.push(record.stream, bytes, Instant::now()) {
                 event_sink(event);
             }
         }
@@ -875,6 +897,87 @@ mod tests {
         assert_eq!(
             log_text(&remainder[0]),
             Some((EventStream::Stdout, "final line"))
+        );
+    }
+
+    #[test]
+    fn unobserved_output_replays_remaining_ranges_in_receive_order() {
+        let message = "初期化\n".as_bytes();
+        let split = "初".len() - 1;
+        let mut chunks = vec![
+            ProcessOutputChunk {
+                stream: EventStream::Stdout,
+                bytes: message[..split].to_vec(),
+            },
+            ProcessOutputChunk {
+                stream: EventStream::Stderr,
+                bytes: b"warning\n".to_vec(),
+            },
+            ProcessOutputChunk {
+                stream: EventStream::Stdout,
+                bytes: message[split..].to_vec(),
+            },
+            ProcessOutputChunk {
+                stream: EventStream::Stdout,
+                bytes: b"final line".to_vec(),
+            },
+        ];
+        let mut output = ProcessOutput::empty();
+        for chunk in &chunks {
+            output.append(chunk);
+        }
+
+        let mut parser = EventParser::Text(TextLineParser::default());
+        let mut observed = ObservedOutput::default();
+        let mut events = Vec::new();
+        emit_chunks(
+            &mut parser,
+            &mut observed,
+            vec![chunks.remove(0)],
+            &mut |event| events.push(event),
+        );
+
+        emit_unobserved_output(&mut parser, &mut observed, &output, &mut |event| {
+            events.push(event);
+        });
+        emit_parser_remainders(&mut parser, &mut |event| events.push(event));
+
+        assert_eq!(output.stdout(), [message, b"final line"].concat());
+        assert_eq!(output.stderr(), b"warning\n");
+        assert_eq!(observed.stdout, output.stdout().len());
+        assert_eq!(observed.stderr, output.stderr().len());
+        assert_eq!(observed.chunks, 4);
+        assert_eq!(
+            events.iter().filter_map(log_text).collect::<Vec<_>>(),
+            [
+                (EventStream::Stderr, "warning"),
+                (EventStream::Stdout, "初期化"),
+                (EventStream::Stdout, "final line"),
+            ]
+        );
+    }
+
+    #[test]
+    fn unobserved_output_keeps_stream_fallback_for_outputs_without_ranges() {
+        let output = ProcessOutput::new(b"stdout\n".to_vec(), b"stderr\n".to_vec());
+        let mut parser = EventParser::Text(TextLineParser::default());
+        let mut observed = ObservedOutput::default();
+        let mut events = Vec::new();
+
+        emit_unobserved_output(&mut parser, &mut observed, &output, &mut |event| {
+            events.push(event);
+        });
+        emit_parser_remainders(&mut parser, &mut |event| events.push(event));
+
+        assert_eq!(observed.stdout, output.stdout().len());
+        assert_eq!(observed.stderr, output.stderr().len());
+        assert_eq!(observed.chunks, 0);
+        assert_eq!(
+            events.iter().filter_map(log_text).collect::<Vec<_>>(),
+            [
+                (EventStream::Stdout, "stdout"),
+                (EventStream::Stderr, "stderr"),
+            ]
         );
     }
 }
