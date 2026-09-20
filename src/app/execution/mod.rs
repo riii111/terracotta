@@ -19,6 +19,10 @@ pub(crate) enum ExecutionStage {
     Initializing,
     Planning,
     Reading,
+    Applying,
+    ApplySucceeded,
+    ApplyFailed,
+    ApplyInterrupted,
     Failed,
 }
 
@@ -29,9 +33,20 @@ impl ExecutionStage {
             Self::Initializing => "Initializing",
             Self::Planning => "Planning",
             Self::Reading => "Reading",
+            Self::Applying => "Applying",
+            Self::ApplySucceeded => "Apply complete",
+            Self::ApplyFailed => "Apply failed",
+            Self::ApplyInterrupted => "Apply interrupted",
             Self::Failed => "Failed",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ApplyStatus {
+    Succeeded,
+    Failed,
+    Interrupted,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +65,7 @@ pub(crate) struct ExecutionState {
     cancellation_requested: bool,
     failure_message: Option<String>,
     copy_notice: Option<copy::CopyNotice>,
+    copy_flash_until: Option<Instant>,
     result: Option<ExecutionResult>,
 }
 
@@ -102,6 +118,24 @@ impl ExecutionState {
             cancellation_requested: false,
             failure_message: None,
             copy_notice: None,
+            copy_flash_until: None,
+            result: None,
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn applying(started_at: Instant, context: ExecutionContext) -> Self {
+        Self {
+            stage: ExecutionStage::Applying,
+            active_phase: ExecutionStage::Applying,
+            context,
+            started_at,
+            finished_at: None,
+            progress: ExecutionProgress::default(),
+            cancellation_requested: false,
+            failure_message: None,
+            copy_notice: None,
+            copy_flash_until: None,
             result: None,
         }
     }
@@ -170,6 +204,51 @@ impl ExecutionState {
         });
     }
 
+    pub(crate) fn finish_apply(
+        &mut self,
+        status: ApplyStatus,
+        summary_line: Option<String>,
+        message: Option<String>,
+        received_at: Instant,
+    ) {
+        if let Some(message) = message {
+            self.record(ExecutionEvent {
+                received_at,
+                kind: ExecutionEventKind::Diagnostic(Diagnostic {
+                    severity: DiagnosticSeverity::Error,
+                    summary: message,
+                    detail: None,
+                    position: None,
+                    source: DiagnosticSource::Terraform,
+                }),
+            });
+        }
+        self.finished_at.get_or_insert(received_at);
+        self.stage = match status {
+            ApplyStatus::Succeeded => ExecutionStage::ApplySucceeded,
+            ApplyStatus::Failed => ExecutionStage::ApplyFailed,
+            ApplyStatus::Interrupted => ExecutionStage::ApplyInterrupted,
+        };
+        let termination = self
+            .progress
+            .termination()
+            .unwrap_or_else(|| ProcessTermination {
+                status: match status {
+                    ApplyStatus::Succeeded => ProcessExitStatus::Exited(0),
+                    ApplyStatus::Failed => ProcessExitStatus::Exited(1),
+                    ApplyStatus::Interrupted => ProcessExitStatus::Signaled,
+                },
+                interrupted: status == ApplyStatus::Interrupted,
+            });
+        self.result = Some(ExecutionResult {
+            phase: ExecutionStage::Applying,
+            termination,
+            log: self.progress.log().to_vec(),
+            summary_line,
+            first_error_line: self.progress.first_error_line(),
+        });
+    }
+
     #[must_use]
     pub(crate) fn copy_effect(&self, target: copy::CopyTarget) -> Option<copy::CopyEffect> {
         match target {
@@ -177,7 +256,10 @@ impl ExecutionState {
                 self.progress.diagnostics(),
                 self.failure_message.as_deref(),
             )),
-            copy::CopyTarget::Plan => None,
+            copy::CopyTarget::Execution if self.result().is_some() => {
+                Some(copy::execution_effect(self))
+            }
+            copy::CopyTarget::Plan | copy::CopyTarget::Execution => None,
         }
     }
 
@@ -186,8 +268,28 @@ impl ExecutionState {
         self.copy_notice
     }
 
-    pub(crate) const fn set_copy_notice(&mut self, notice: copy::CopyNotice) {
+    pub(crate) fn set_copy_notice(&mut self, notice: copy::CopyNotice, now: Instant) {
         self.copy_notice = Some(notice);
+        self.copy_flash_until = match notice {
+            copy::CopyNotice::Copied {
+                target: copy::CopyTarget::Execution,
+            } => Some(now + Duration::from_millis(200)),
+            _ => None,
+        };
+    }
+
+    #[must_use]
+    pub(crate) fn copy_flash_active(&self, now: Instant) -> bool {
+        self.copy_flash_until.is_some_and(|until| now < until)
+    }
+
+    #[must_use]
+    pub(crate) const fn copy_flash_pending(&self) -> bool {
+        self.copy_flash_until.is_some()
+    }
+
+    pub(crate) const fn clear_copy_flash(&mut self) {
+        self.copy_flash_until = None;
     }
 
     #[must_use]
@@ -226,6 +328,20 @@ impl ExecutionState {
     #[must_use]
     pub(crate) const fn cancellation_requested(&self) -> bool {
         self.cancellation_requested
+    }
+
+    #[must_use]
+    pub(crate) fn is_apply(&self) -> bool {
+        matches!(
+            self.stage,
+            ExecutionStage::Applying
+                | ExecutionStage::ApplySucceeded
+                | ExecutionStage::ApplyFailed
+                | ExecutionStage::ApplyInterrupted
+        ) || self
+            .result
+            .as_ref()
+            .is_some_and(|result| result.phase() == ExecutionStage::Applying)
     }
 
     #[must_use]

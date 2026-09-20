@@ -44,6 +44,32 @@ case "$1" in
     fi
     exit 2
     ;;
+  apply)
+    plan_path=''
+    for argument in "$@"; do
+      case "$argument" in
+        *.tfplan) plan_path=$argument ;;
+      esac
+    done
+    test -n "$plan_path"
+    test -f "$plan_path"
+    printf '%s\n' "$$" > "$TERRACOTTA_FAKE_PID_PATH"
+    if [ "${TERRACOTTA_FAKE_MODE:-success}" = apply_interrupt ]; then
+      printf 'Applying saved plan...\n'
+      exec python3 -c 'import signal,sys,time; signal.signal(signal.SIGINT, lambda *_: (print("Stopping apply", flush=True), time.sleep(1), sys.exit(130))); time.sleep(30)'
+    fi
+    if [ "${TERRACOTTA_FAKE_MODE:-success}" = apply_failure ]; then
+      sleep 1
+      printf 'Error: synthetic apply failure\n' >&2
+      printf 'Changes may already be applied.\n' >&2
+      exit 1
+    fi
+    printf 'Applying saved plan...\n'
+    sleep 1
+    printf 'Apply complete! Resources: 1 added, 1 changed, 0 destroyed.\n'
+    printf 'Outputs:\nendpoint = "https://example.test"\n'
+    exit 0
+    ;;
   show)
     if [ "$2" = -json ]; then
       cat "$TERRACOTTA_FAKE_SHOW_JSON"

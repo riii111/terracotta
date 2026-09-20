@@ -23,6 +23,7 @@ pub(crate) enum PlanReviewInput {
     SearchEnd,
     SearchConfirm,
     SearchCancel,
+    Apply,
     Copy,
     Quit,
 }
@@ -76,7 +77,46 @@ pub(crate) fn key_to_input(key: KeyEvent, searching: bool) -> Option<PlanReviewI
         (KeyCode::End, _) => Some(PlanReviewInput::Bottom),
         (KeyCode::Char('/'), KeyModifiers::NONE) => Some(PlanReviewInput::SearchStart),
         (KeyCode::Char('y'), KeyModifiers::NONE) => Some(PlanReviewInput::Copy),
+        (KeyCode::Char('a'), KeyModifiers::NONE) => Some(PlanReviewInput::Apply),
+        (KeyCode::Char('c'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
+            Some(PlanReviewInput::Quit)
+        }
         (KeyCode::Char('q'), KeyModifiers::NONE) => Some(PlanReviewInput::Quit),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ApplyConfirmationInput {
+    Character(char),
+    Backspace,
+    Left,
+    Right,
+    Home,
+    End,
+    Confirm,
+    Cancel,
+}
+
+pub(crate) fn apply_confirmation_key_to_input(key: KeyEvent) -> Option<ApplyConfirmationInput> {
+    let key = normalize_key(key);
+    match (key.code, key.modifiers) {
+        (KeyCode::Enter, _) => Some(ApplyConfirmationInput::Confirm),
+        (KeyCode::Esc, _) => Some(ApplyConfirmationInput::Cancel),
+        (KeyCode::Backspace, _) => Some(ApplyConfirmationInput::Backspace),
+        (KeyCode::Left, _) => Some(ApplyConfirmationInput::Left),
+        (KeyCode::Right, _) => Some(ApplyConfirmationInput::Right),
+        (KeyCode::Home, _) => Some(ApplyConfirmationInput::Home),
+        (KeyCode::End, _) => Some(ApplyConfirmationInput::End),
+        (KeyCode::Char('a'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
+            Some(ApplyConfirmationInput::Home)
+        }
+        (KeyCode::Char('e'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
+            Some(ApplyConfirmationInput::End)
+        }
+        (KeyCode::Char(character), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+            Some(ApplyConfirmationInput::Character(character))
+        }
         _ => None,
     }
 }
@@ -147,6 +187,57 @@ mod tests {
         assert_eq!(
             key_to_input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), true),
             Some(PlanReviewInput::SearchCancel)
+        );
+    }
+
+    #[test]
+    fn apply_confirmation_accepts_only_explicit_confirmation_keys() {
+        assert_eq!(
+            apply_confirmation_key_to_input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE,)),
+            Some(ApplyConfirmationInput::Confirm)
+        );
+        assert_eq!(
+            apply_confirmation_key_to_input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            Some(ApplyConfirmationInput::Cancel)
+        );
+        assert_eq!(
+            key_to_input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), false),
+            None
+        );
+        assert_eq!(
+            apply_confirmation_key_to_input(KeyEvent::new(
+                KeyCode::Char('c'),
+                KeyModifiers::CONTROL,
+            )),
+            None
+        );
+        assert_eq!(
+            apply_confirmation_key_to_input(KeyEvent::new(
+                KeyCode::Char('a'),
+                KeyModifiers::CONTROL,
+            )),
+            Some(ApplyConfirmationInput::Home)
+        );
+        assert_eq!(
+            apply_confirmation_key_to_input(KeyEvent::new(
+                KeyCode::Char('e'),
+                KeyModifiers::CONTROL,
+            )),
+            Some(ApplyConfirmationInput::End)
+        );
+        assert_eq!(
+            apply_confirmation_key_to_input(KeyEvent::new(
+                KeyCode::Char('b'),
+                KeyModifiers::CONTROL,
+            )),
+            Some(ApplyConfirmationInput::Left)
+        );
+        assert_eq!(
+            apply_confirmation_key_to_input(KeyEvent::new(
+                KeyCode::Char('f'),
+                KeyModifiers::CONTROL,
+            )),
+            Some(ApplyConfirmationInput::Right)
         );
     }
 }

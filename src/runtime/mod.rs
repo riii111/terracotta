@@ -8,7 +8,7 @@ use std::{
     panic::{self, AssertUnwindSafe},
     path::Path,
     process::ExitCode,
-    sync::mpsc,
+    sync::{Arc, Mutex, mpsc},
     thread::{self, JoinHandle},
     time::Instant,
 };
@@ -19,8 +19,8 @@ mod synthetic;
 use crate::{
     app::{
         execution::{
-            ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionPhase, ExecutionStage,
-            ExecutionState,
+            ApplyStatus, ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionPhase,
+            ExecutionStage, ExecutionState,
         },
         review::{PlanMetadata, PlanReviewMessage},
         session::SessionOutcome,
@@ -50,7 +50,8 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
 
     let cancellation = CancellationToken::new();
     let (sender, receiver) = mpsc::channel();
-    let worker = match spawn_plan_worker(root, &cancellation, sender) {
+    let saved_plan_slot = Arc::new(Mutex::new(None));
+    let worker = match spawn_plan_worker(root, &cancellation, sender.clone(), &saved_plan_slot) {
         Ok(worker) => worker,
         Err(error) => {
             report_error(&format!("failed to start the plan worker: {error}"));
@@ -60,6 +61,10 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
     let mut worker = WorkerGuard {
         cancellation: cancellation.clone(),
         handle: Some(worker),
+    };
+    let mut apply_worker = WorkerGuard {
+        cancellation: cancellation.clone(),
+        handle: None,
     };
     let mut clipboard = ClipboardExecutor::new();
     let context = ExecutionContext::loading(root.display().to_string());
@@ -72,24 +77,48 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
 
         event_loop::run_connected(
             terminal,
+            root,
             ExecutionState::with_context(Instant::now(), context),
             &receiver,
+            &sender,
+            &saved_plan_slot,
             &cancellation,
             &mut clipboard,
+            &mut apply_worker.handle,
         )
     });
     if ui_result.is_err() {
         cancellation.cancel();
     }
-    let worker_result = worker.join();
-    let cleanup_result = match worker_result {
-        Ok(Some(saved_plan)) => saved_plan.cleanup(),
-        Ok(None) | Err(_) => Ok(()),
-    };
+    let _ = apply_worker.join_if_started();
+    let _ = worker.join();
+    let cleanup_result =
+        take_saved_plan(&saved_plan_slot).map_or(Ok(()), terraform::SavedPlan::cleanup);
     let primary_exit = match ui_result {
         Ok(SessionOutcome::Reviewed(metadata)) => {
             report_reviewed(&metadata);
             ExitCode::SUCCESS
+        }
+        Ok(SessionOutcome::Applied {
+            status: ApplyStatus::Succeeded,
+            summary_line,
+        }) => {
+            report_apply_success(summary_line.as_deref());
+            ExitCode::SUCCESS
+        }
+        Ok(SessionOutcome::Applied {
+            status: ApplyStatus::Failed,
+            ..
+        }) => {
+            report_apply_failure(false);
+            ExitCode::from(EXECUTION_FAILURE)
+        }
+        Ok(SessionOutcome::Applied {
+            status: ApplyStatus::Interrupted,
+            ..
+        }) => {
+            report_apply_failure(true);
+            ExitCode::from(INTERRUPTED)
         }
         Ok(SessionOutcome::Interrupted(phase)) => {
             report_interrupted(phase);
@@ -149,6 +178,23 @@ fn report_reviewed(metadata: &PlanMetadata) {
     }
 }
 
+fn report_apply_success(summary_line: Option<&str>) {
+    let _ = writeln!(
+        io::stdout(),
+        "{}",
+        summary_line.unwrap_or("Apply complete.")
+    );
+}
+
+fn report_apply_failure(interrupted: bool) {
+    let result = if interrupted {
+        "Apply interrupted. Changes may already be applied."
+    } else {
+        "Apply failed. Changes may already be applied."
+    };
+    let _ = writeln!(io::stdout(), "{result}");
+}
+
 fn report_interrupted(phase: ExecutionStage) {
     let message = match phase {
         ExecutionStage::Initializing => "Initialization cancelled.",
@@ -161,9 +207,11 @@ fn spawn_plan_worker(
     root: &Path,
     cancellation: &CancellationToken,
     sender: mpsc::Sender<PlanReviewMessage>,
-) -> io::Result<JoinHandle<Option<terraform::SavedPlan>>> {
+    saved_plan_slot: &Arc<Mutex<Option<terraform::SavedPlan>>>,
+) -> io::Result<JoinHandle<()>> {
     let worker_cancellation = cancellation.clone();
     let worker_root = root.to_owned();
+    let worker_saved_plan_slot = Arc::clone(saved_plan_slot);
     thread::Builder::new()
         .name("terracotta-plan".to_owned())
         .spawn(move || {
@@ -185,17 +233,62 @@ fn spawn_plan_worker(
             ) {
                 Ok(planned) => {
                     let (review, saved_plan) = planned.into_parts();
+                    if let Ok(mut slot) = worker_saved_plan_slot.lock() {
+                        *slot = Some(saved_plan);
+                    }
                     if !worker_cancellation.is_cancelled() {
                         let _ = sender.send(PlanReviewMessage::Completed(review));
                     }
-                    Some(saved_plan)
                 }
                 Err(error) => {
                     let _ = sender.send(PlanReviewMessage::Failed {
                         message: error.to_string(),
                         interrupted: worker_cancellation.is_cancelled(),
                     });
-                    None
+                }
+            }
+        })
+}
+
+fn take_saved_plan(
+    slot: &Arc<Mutex<Option<terraform::SavedPlan>>>,
+) -> Option<terraform::SavedPlan> {
+    slot.lock().ok().and_then(|mut slot| slot.take())
+}
+
+pub(super) fn spawn_apply_worker(
+    root: &Path,
+    plan_path: &Path,
+    cancellation: &CancellationToken,
+    sender: &mpsc::Sender<PlanReviewMessage>,
+) -> io::Result<JoinHandle<()>> {
+    let worker_root = root.to_owned();
+    let worker_plan_path = plan_path.to_owned();
+    let worker_cancellation = cancellation.clone();
+    let worker_sender = sender.clone();
+    thread::Builder::new()
+        .name("terracotta-apply".to_owned())
+        .spawn(move || {
+            let mut event_sink = |event| {
+                let _ = worker_sender.send(PlanReviewMessage::ApplyEvent(event));
+            };
+            match terraform::run_apply(
+                &worker_root,
+                &worker_plan_path,
+                &worker_cancellation,
+                &terraform::SystemProcessRunner,
+                &mut event_sink,
+            ) {
+                Ok(result) => {
+                    let _ = worker_sender.send(PlanReviewMessage::ApplyCompleted {
+                        status: result.status(),
+                        summary_line: result.summary_line().map(str::to_owned),
+                    });
+                }
+                Err(error) => {
+                    let _ = worker_sender.send(PlanReviewMessage::ApplyFailed {
+                        message: error.to_string(),
+                    });
                 }
             }
         })
@@ -207,15 +300,19 @@ fn report_error(message: &str) {
 
 struct WorkerGuard {
     cancellation: CancellationToken,
-    handle: Option<JoinHandle<Option<terraform::SavedPlan>>>,
+    handle: Option<JoinHandle<()>>,
 }
 
 impl WorkerGuard {
-    fn join(&mut self) -> thread::Result<Option<terraform::SavedPlan>> {
+    fn join(&mut self) -> thread::Result<()> {
         self.handle
             .take()
             .expect("plan worker should be present")
             .join()
+    }
+
+    fn join_if_started(&mut self) -> thread::Result<()> {
+        self.handle.take().map_or(Ok(()), JoinHandle::join)
     }
 }
 

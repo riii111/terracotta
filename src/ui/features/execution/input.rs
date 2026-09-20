@@ -21,22 +21,37 @@ pub(crate) fn execution_key_to_input(
 ) -> Option<ExecutionInput> {
     let key = normalize_key(key);
 
+    let finished = matches!(
+        stage,
+        ExecutionStage::Failed
+            | ExecutionStage::ApplySucceeded
+            | ExecutionStage::ApplyFailed
+            | ExecutionStage::ApplyInterrupted
+    );
+    let apply_result = matches!(
+        stage,
+        ExecutionStage::ApplySucceeded
+            | ExecutionStage::ApplyFailed
+            | ExecutionStage::ApplyInterrupted
+    );
+
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-        return Some(if stage == ExecutionStage::Failed {
+        return Some(if finished {
             ExecutionInput::Quit
         } else {
             ExecutionInput::Action(ExecutionAction::RequestCancellation)
         });
     }
 
-    if stage == ExecutionStage::Failed && key.code == KeyCode::Char('q') {
+    if finished && key.code == KeyCode::Char('q') {
         return Some(ExecutionInput::Quit);
     }
-    if stage == ExecutionStage::Failed
-        && key.modifiers == KeyModifiers::NONE
-        && key.code == KeyCode::Char('y')
-    {
-        return Some(ExecutionInput::Copy(CopyTarget::Diagnostic));
+    if finished && key.modifiers == KeyModifiers::NONE && key.code == KeyCode::Char('y') {
+        return Some(ExecutionInput::Copy(if apply_result {
+            CopyTarget::Execution
+        } else {
+            CopyTarget::Diagnostic
+        }));
     }
 
     if key.code == KeyCode::Char('a') && key.modifiers.contains(KeyModifiers::CONTROL) {

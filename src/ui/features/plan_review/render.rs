@@ -5,10 +5,14 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{Paragraph, Wrap},
 };
 
-use crate::app::{execution::DiagnosticSeverity, review::PlanReview, session::ReviewSessionState};
+use crate::app::{
+    execution::DiagnosticSeverity,
+    review::PlanReview,
+    session::{ApplyConfirmationState, ReviewSessionState},
+};
 use crate::ui::primitives::{atoms::scrollbar, molecules::terminal_notice};
 use crate::ui::shell::{footer, header, layout as shell_layout};
 use crate::ui::theme;
@@ -102,6 +106,7 @@ impl PlanReviewViewState {
             | PlanReviewInput::SearchEnd
             | PlanReviewInput::SearchConfirm
             | PlanReviewInput::SearchCancel
+            | PlanReviewInput::Apply
             | PlanReviewInput::Copy
             | PlanReviewInput::Quit => None,
         }
@@ -245,7 +250,10 @@ impl PlanReviewLayout {
 
 pub(crate) fn layout(area: Rect, searching: bool, state: &ReviewSessionState) -> PlanReviewLayout {
     let panel = shell_layout::centered_area(area);
-    let footer_lines = footer::layout(footer_items(searching), panel.width);
+    let footer_lines = footer::layout(
+        footer_items(searching, state.review().metadata().applyable()),
+        panel.width,
+    );
     let required = footer::layout(
         vec![
             footer::hint(&["↑", "↓"], "scroll"),
@@ -282,6 +290,67 @@ pub(crate) fn layout(area: Rect, searching: bool, state: &ReviewSessionState) ->
         vertical_scrollbar,
         horizontal_scrollbar,
     }
+}
+
+pub(crate) fn render_apply_confirmation(
+    frame: &mut Frame<'_>,
+    state: &ApplyConfirmationState,
+    input: &str,
+    cursor: usize,
+) {
+    let area = frame.area();
+    if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
+        terminal_notice::render_wrapped(
+            frame,
+            area,
+            "Terminal too small. Resize or press Esc to go back.",
+        );
+        return;
+    }
+    let panel = shell_layout::centered_area(area);
+    let footer_lines = footer::layout(
+        vec![
+            footer::hint(&["Enter"], "confirm"),
+            footer::hint(&["Esc"], "back"),
+        ],
+        panel.width,
+    );
+    let shell = shell_layout::layout(panel, footer_lines.clone(), footer_lines, 1);
+    header::render_review(frame, shell.header(), state.review());
+    let inner = shell_layout::render_content_block(frame, shell.content(), "Apply");
+    let metadata = state.review().metadata();
+    let mut lines = vec![
+        Line::from("Apply this reviewed plan?"),
+        Line::from(format!("Target: {}", state.review().root().display())),
+        Line::from(format!("Workspace: {}", state.review().workspace())),
+        Line::from(format!(
+            "Plan: {} to add, {} to change, {} to destroy.",
+            metadata.additions(),
+            metadata.changes(),
+            metadata.deletions()
+        )),
+        Line::default(),
+    ];
+    if metadata.deletions() > 0 {
+        lines.push(Line::from("This plan includes resource deletion."));
+        lines.push(Line::default());
+    }
+    let cursor = cursor.min(input.len());
+    let before = input[..cursor].to_owned();
+    let after = input[cursor..].to_owned();
+    lines.push(Line::from(vec![
+        Span::raw("Apply this plan? (yes/no): "),
+        Span::styled(before, search_input_style()),
+        Span::styled("|", search_input_style()),
+        Span::styled(after, search_input_style()),
+    ]));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .style(theme::body_style())
+            .wrap(Wrap { trim: false }),
+        inner,
+    );
+    footer::render(frame, shell.footer(), shell.footer_lines().to_owned());
 }
 
 pub(crate) fn render(
@@ -538,7 +607,7 @@ fn search_prompt(view: &PlanReviewViewState, width: u16) -> Option<(Line<'static
     Some((line, horizontal))
 }
 
-fn footer_items(searching: bool) -> Vec<Line<'static>> {
+fn footer_items(searching: bool, applyable: bool) -> Vec<Line<'static>> {
     if searching {
         vec![
             footer::hint(&["Enter"], "confirm"),
@@ -546,12 +615,16 @@ fn footer_items(searching: bool) -> Vec<Line<'static>> {
             footer::hint(&["Ctrl-A", "Ctrl-E"], "move"),
         ]
     } else {
-        vec![
+        let mut items = vec![
             footer::hint(&["↑", "↓", "←", "→"], "scroll"),
             footer::hint(&["/"], "search"),
             footer::hint(&["y"], "yank"),
-            footer::hint(&["q"], "quit"),
-        ]
+        ];
+        if applyable {
+            items.push(footer::hint(&["a"], "apply"));
+        }
+        items.push(footer::hint(&["q"], "quit"));
+        items
     }
 }
 

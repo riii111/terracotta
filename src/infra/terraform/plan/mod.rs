@@ -48,7 +48,7 @@ impl SavedPlan {
     }
 
     #[must_use]
-    fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         self.path
             .as_deref()
             .expect("saved plan path should exist until cleanup")

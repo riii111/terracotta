@@ -1,11 +1,15 @@
 use std::fmt::{Debug, Formatter};
 
-use super::{execution::Diagnostic, review::PlanReview};
+use super::{
+    execution::{Diagnostic, ExecutionStage, ExecutionState},
+    review::PlanReview,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CopyTarget {
     Diagnostic,
     Plan,
+    Execution,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +87,35 @@ pub(crate) fn diagnostic_effect(diagnostics: &[Diagnostic], fallback: Option<&st
     CopyEffect::new(CopyTarget::Diagnostic, text)
 }
 
+#[must_use]
+pub(crate) fn execution_effect(state: &ExecutionState) -> CopyEffect {
+    let mut sections = Vec::new();
+    match state.stage() {
+        ExecutionStage::ApplySucceeded => sections.push("Apply complete.".to_owned()),
+        ExecutionStage::ApplyInterrupted => {
+            sections.push("Apply interrupted.".to_owned());
+            sections.push("Changes may already be applied.".to_owned());
+        }
+        ExecutionStage::ApplyFailed => {
+            sections.push("Apply failed.".to_owned());
+            sections.push("Changes may already be applied.".to_owned());
+        }
+        _ => sections.push("Terraform failed.".to_owned()),
+    }
+    if let Some(result) = state.result() {
+        if let Some(summary) = result.summary_line()
+            && !result
+                .log()
+                .iter()
+                .any(|line| line.text.lines().any(|text| text == summary))
+        {
+            sections.push(summary.to_owned());
+        }
+        sections.extend(result.log().iter().map(|line| line.text.clone()));
+    }
+    CopyEffect::new(CopyTarget::Execution, sections.join("\n"))
+}
+
 fn diagnostic_text(diagnostics: &[Diagnostic]) -> String {
     diagnostics
         .iter()
@@ -101,7 +134,10 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::app::{
-        execution::{DiagnosticSeverity, DiagnosticSource},
+        execution::{
+            ApplyStatus, DiagnosticSeverity, DiagnosticSource, EventStream, ExecutionContext,
+            ExecutionEvent, ExecutionEventKind, ExecutionLogLine,
+        },
         review::{PlanDocument, PlanMetadata},
     };
 
@@ -127,5 +163,26 @@ mod tests {
 
         assert_eq!(effect.text(), "Provider warning\nTerraform plan body\n");
         assert!(!format!("{effect:?}").contains("Terraform plan body"));
+    }
+
+    #[test]
+    fn apply_copy_keeps_human_output_without_repeating_the_summary() {
+        let now = std::time::Instant::now();
+        let mut state = ExecutionState::applying(now, ExecutionContext::loading("/project"));
+        let summary = "Apply complete! Resources: 1 added, 0 changed, 0 destroyed.";
+        state.record(ExecutionEvent {
+            received_at: now,
+            kind: ExecutionEventKind::Log(ExecutionLogLine {
+                stream: EventStream::Stdout,
+                text: format!("Applying saved plan...\n{summary}"),
+            }),
+        });
+        state.finish_apply(ApplyStatus::Succeeded, Some(summary.to_owned()), None, now);
+
+        let effect = state
+            .copy_effect(CopyTarget::Execution)
+            .expect("apply result copy should be available");
+        assert!(effect.text().contains("Applying saved plan..."));
+        assert_eq!(effect.text().matches(summary).count(), 1);
     }
 }
