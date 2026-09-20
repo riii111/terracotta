@@ -1,15 +1,12 @@
-use std::collections::BTreeMap;
 use std::time::Instant;
 
 use super::event::{
     Diagnostic, EventStream, ExecutionEvent, ExecutionEventKind, ExecutionLogLine,
-    ProcessTermination, ResourceEventKind,
+    ProcessTermination,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ExecutionProgress {
-    resources: Vec<(String, ResourceEventKind)>,
-    resource_indices: BTreeMap<String, usize>,
     diagnostics: Vec<Diagnostic>,
     log: Vec<ExecutionLogLine>,
     first_error_line: Option<usize>,
@@ -34,18 +31,11 @@ impl ExecutionProgress {
                 self.log.push(line);
             }
             ExecutionEventKind::Resource(resource) => {
-                if let Some(message) = resource.message.clone() {
+                if let Some(message) = resource.message {
                     self.log.push(ExecutionLogLine {
                         stream: EventStream::Stdout,
                         text: message,
                     });
-                }
-                if let Some(&index) = self.resource_indices.get(&resource.address) {
-                    self.resources[index].1 = resource.kind;
-                } else {
-                    self.resource_indices
-                        .insert(resource.address.clone(), self.resources.len());
-                    self.resources.push((resource.address, resource.kind));
                 }
             }
             ExecutionEventKind::Diagnostic(diagnostic) => {
@@ -119,112 +109,15 @@ fn rendered_line_count(log: &[ExecutionLogLine]) -> usize {
 mod tests {
     use super::super::event::{
         DiagnosticSeverity, DiagnosticSource, ExecutionSummary, ProcessExitStatus, ResourceEvent,
+        ResourceEventKind,
     };
     use super::*;
-
-    fn resources(progress: &ExecutionProgress) -> Vec<(&str, ResourceEventKind)> {
-        progress
-            .resources
-            .iter()
-            .map(|(address, kind)| (address.as_str(), *kind))
-            .collect()
-    }
 
     fn event(kind: ExecutionEventKind) -> ExecutionEvent {
         ExecutionEvent {
             received_at: Instant::now(),
             kind,
         }
-    }
-
-    #[test]
-    fn preserves_first_seen_order_and_latest_state_for_interleaved_resources() {
-        let mut progress = ExecutionProgress::default();
-        progress.record(event(ExecutionEventKind::Resource(ResourceEvent {
-            address: "aws_vpc.main".to_owned(),
-            kind: ResourceEventKind::RefreshStart,
-            message: None,
-        })));
-        progress.record(event(ExecutionEventKind::Resource(ResourceEvent {
-            address: "aws_subnet.private[0]".to_owned(),
-            kind: ResourceEventKind::RefreshStart,
-            message: None,
-        })));
-        progress.record(event(ExecutionEventKind::Resource(ResourceEvent {
-            address: "aws_vpc.main".to_owned(),
-            kind: ResourceEventKind::RefreshComplete,
-            message: None,
-        })));
-        progress.record(event(ExecutionEventKind::Resource(ResourceEvent {
-            address: "aws_vpc.main".to_owned(),
-            kind: ResourceEventKind::ApplyStart,
-            message: None,
-        })));
-        progress.record(event(ExecutionEventKind::Resource(ResourceEvent {
-            address: "aws_vpc.main".to_owned(),
-            kind: ResourceEventKind::ApplyComplete,
-            message: None,
-        })));
-
-        assert_eq!(
-            resources(&progress),
-            vec![
-                ("aws_vpc.main", ResourceEventKind::ApplyComplete,),
-                ("aws_subnet.private[0]", ResourceEventKind::RefreshStart,),
-            ]
-        );
-    }
-
-    #[test]
-    fn post_completion_event_updates_latest_state_without_new_resource() {
-        let mut progress = ExecutionProgress::default();
-        progress.record(event(ExecutionEventKind::Resource(ResourceEvent {
-            address: "aws_vpc.main".to_owned(),
-            kind: ResourceEventKind::RefreshComplete,
-            message: None,
-        })));
-        progress.record(event(ExecutionEventKind::Resource(ResourceEvent {
-            address: "aws_vpc.main".to_owned(),
-            kind: ResourceEventKind::RefreshComplete,
-            message: None,
-        })));
-        progress.record(event(ExecutionEventKind::Resource(ResourceEvent {
-            address: "aws_vpc.main".to_owned(),
-            kind: ResourceEventKind::ApplyStart,
-            message: None,
-        })));
-
-        assert_eq!(
-            resources(&progress),
-            vec![("aws_vpc.main", ResourceEventKind::ApplyStart)]
-        );
-    }
-
-    #[test]
-    fn repeated_events_have_the_same_final_state_without_retaining_history() {
-        fn progress_after_repeated_events(event_count: usize) -> ExecutionProgress {
-            let mut progress = ExecutionProgress::default();
-            for _ in 0..event_count {
-                progress.record(event(ExecutionEventKind::Resource(ResourceEvent {
-                    address: "aws_vpc.main".to_owned(),
-                    kind: ResourceEventKind::RefreshStart,
-                    message: None,
-                })));
-            }
-            progress.record(event(ExecutionEventKind::Resource(ResourceEvent {
-                address: "aws_vpc.main".to_owned(),
-                kind: ResourceEventKind::RefreshComplete,
-                message: None,
-            })));
-            progress
-        }
-
-        let hundred = progress_after_repeated_events(100);
-        let ten_thousand = progress_after_repeated_events(10_000);
-
-        assert_eq!(resources(&hundred), resources(&ten_thousand));
-        assert_eq!(hundred.diagnostics(), ten_thousand.diagnostics());
-        assert_eq!(hundred.termination(), ten_thousand.termination());
     }
 
     #[test]

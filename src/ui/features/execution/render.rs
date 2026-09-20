@@ -200,9 +200,7 @@ pub(crate) fn execution_horizontal_scroll_position_with_view(
 }
 
 fn execution_lines(state: &ExecutionState) -> Vec<Line<'static>> {
-    let log = state
-        .result()
-        .map_or_else(|| state.progress().log(), |result| result.log());
+    let log = state.progress().log();
     let mut lines = log
         .iter()
         .flat_map(|line| {
@@ -219,14 +217,13 @@ fn execution_lines(state: &ExecutionState) -> Vec<Line<'static>> {
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
-    let summary_is_in_log = state.result().is_some_and(|result| {
-        result.summary_line().is_some_and(|summary| {
-            result
-                .log()
-                .iter()
+    let summary_is_in_log = state
+        .result()
+        .and_then(|result| result.summary_line())
+        .is_some_and(|summary| {
+            log.iter()
                 .any(|line| line.text.lines().any(|text| text == summary))
-        })
-    });
+        });
     if let Some(summary) = state.result().and_then(|result| result.summary_line())
         && !summary_is_in_log
     {
