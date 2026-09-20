@@ -17,13 +17,14 @@ pub(crate) enum SessionOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SessionState {
     Execution(Box<ExecutionState>),
-    Review(ReviewSessionState),
+    Review(Box<ReviewSessionState>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ReviewSessionState {
     review: PlanReview,
     copy_notice: Option<CopyNotice>,
+    copy_flash_until: Option<Instant>,
 }
 
 impl ReviewSessionState {
@@ -32,6 +33,7 @@ impl ReviewSessionState {
         Self {
             review,
             copy_notice: None,
+            copy_flash_until: None,
         }
     }
 
@@ -40,9 +42,27 @@ impl ReviewSessionState {
         &self.review
     }
 
+    pub(crate) fn set_search_query(&mut self, query: String) {
+        self.review.set_search_query(query);
+    }
+
     #[must_use]
     pub(crate) const fn copy_notice(&self) -> Option<CopyNotice> {
         self.copy_notice
+    }
+
+    #[must_use]
+    pub(crate) fn copy_flash_active(&self, now: Instant) -> bool {
+        self.copy_flash_until.is_some_and(|until| now < until)
+    }
+
+    #[must_use]
+    pub(crate) const fn copy_flash_pending(&self) -> bool {
+        self.copy_flash_until.is_some()
+    }
+
+    pub(crate) const fn clear_copy_flash(&mut self) {
+        self.copy_flash_until = None;
     }
 }
 
@@ -55,6 +75,7 @@ pub(crate) enum Action {
         message: String,
         interrupted: bool,
     },
+    ReviewSearchChanged(String),
     WorkerDisconnected,
     Copy(CopyTarget),
     CopyCompleted {
@@ -149,7 +170,7 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
                     execution.stage(),
                 )));
             }
-            *state = SessionState::Review(ReviewSessionState::new(review));
+            *state = SessionState::Review(Box::new(ReviewSessionState::new(review)));
             None
         }
         Action::ReviewFailed {
@@ -165,6 +186,12 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
                 )));
             }
             execution.fail(message, now);
+            None
+        }
+        Action::ReviewSearchChanged(query) => {
+            if let SessionState::Review(review) = state {
+                review.review.set_search_query(query);
+            }
             None
         }
         Action::WorkerDisconnected => match state {
@@ -194,7 +221,11 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
             };
             match state {
                 SessionState::Execution(execution) => execution.set_copy_notice(notice),
-                SessionState::Review(review) => review.copy_notice = Some(notice),
+                SessionState::Review(review) => {
+                    review.copy_notice = Some(notice);
+                    review.copy_flash_until = (result == CopyResult::Written)
+                        .then(|| now + std::time::Duration::from_millis(200));
+                }
             }
             None
         }
@@ -281,5 +312,37 @@ mod tests {
             update(&mut state, Action::Quit, now),
             Some(Effect::Finish(SessionOutcome::Reviewed(_)))
         ));
+    }
+
+    #[test]
+    fn review_copy_flash_expires_without_clearing_the_notice() {
+        let now = Instant::now();
+        let mut state = SessionState::new(ExecutionState::with_context(
+            now,
+            ExecutionContext::loading("/project"),
+        ));
+        update(&mut state, Action::ReviewCompleted(review()), now);
+        update(
+            &mut state,
+            Action::CopyCompleted {
+                target: CopyTarget::Plan,
+                result: CopyResult::Written,
+            },
+            now,
+        );
+
+        let SessionState::Review(review) = &state else {
+            panic!("review should be visible");
+        };
+        assert!(review.copy_flash_active(now + std::time::Duration::from_millis(100)));
+        assert!(review.copy_flash_pending());
+        assert!(review.copy_notice().is_some());
+
+        let SessionState::Review(review) = &mut state else {
+            panic!("review should be visible");
+        };
+        review.clear_copy_flash();
+        assert!(!review.copy_flash_pending());
+        assert!(review.copy_notice().is_some());
     }
 }

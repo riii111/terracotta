@@ -1,0 +1,27 @@
+---
+source: src/ui/preview.rs
+expression: buffer_text(&buffer)
+---
+
+ Terracotta | infra/prod    workspace: default
+
+ ┌Apply this reviewed plan?───────────────────────────────────────────────────┐
+ │Target: infra/prod                                                         ↑│
+ │Workspace: default                                                         █│
+ │Plan: 2 to add, 2 to change, 1 to destroy.                                 █│
+ │                                                                           █│
+ │This plan includes resource deletion and replacement. Review the production█│
+ │impact before applying this saved plan.                                    ││
+ │                                                                           ││
+ │Apply this plan? (yes/no): _                                               ││
+ │                                                                           ││
+ │Terraform will perform the following actions:                              ││
+ │                                                                           ││
+ │  # terraform_data.api will be updated in-place                            ││
+ │  ~ resource "terraform_data" "api" {                                      ││
+ │      id       = "api-20260920"                                            ││
+ │      ~ input  = "before" -> "after"                                       ││
+ │      # (4 unchanged attributes hidden)                                    ││
+ │←████████████████████████████████──────────────────────────────────────────→│
+ └────────────────────────────────────────────────────────────────────────────┘
+ Enter yes | n no | Esc back | q quit

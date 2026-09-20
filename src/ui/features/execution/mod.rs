@@ -5,13 +5,19 @@ mod render;
 pub(crate) enum ExecutionScroll {
     Up,
     Down,
+    Left,
+    Right,
     PageUp,
     PageDown,
+    Top,
+    LeftEdge,
+    RightEdge,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ExecutionViewState {
     scroll: u16,
+    horizontal: u16,
     follow: bool,
 }
 
@@ -19,6 +25,7 @@ impl Default for ExecutionViewState {
     fn default() -> Self {
         Self {
             scroll: 0,
+            horizontal: 0,
             follow: true,
         }
     }
@@ -38,9 +45,34 @@ impl ExecutionViewState {
             ExecutionScroll::Down => current_offset.saturating_add(1).min(max_offset),
             ExecutionScroll::PageUp => current_offset.saturating_sub(page_height),
             ExecutionScroll::PageDown => current_offset.saturating_add(page_height).min(max_offset),
+            ExecutionScroll::Top => 0,
+            ExecutionScroll::Left
+            | ExecutionScroll::Right
+            | ExecutionScroll::LeftEdge
+            | ExecutionScroll::RightEdge => current_offset,
         };
         self.follow = false;
         self.scroll = offset;
+    }
+
+    pub(crate) fn apply_horizontal_scroll(
+        &mut self,
+        action: ExecutionScroll,
+        current_offset: u16,
+        max_offset: u16,
+        current_vertical: u16,
+    ) {
+        if self.follow {
+            self.scroll = current_vertical;
+        }
+        self.horizontal = match action {
+            ExecutionScroll::Left => current_offset.saturating_sub(1),
+            ExecutionScroll::Right => current_offset.saturating_add(1).min(max_offset),
+            ExecutionScroll::LeftEdge => 0,
+            ExecutionScroll::RightEdge => max_offset,
+            _ => current_offset,
+        };
+        self.follow = false;
     }
 
     pub(crate) const fn end(&mut self) {
@@ -57,9 +89,31 @@ impl ExecutionViewState {
     pub(crate) const fn scroll(self) -> u16 {
         self.scroll
     }
+
+    #[must_use]
+    pub(crate) const fn horizontal(self) -> u16 {
+        self.horizontal
+    }
 }
 
 pub(crate) use input::{ExecutionInput, execution_key_to_input};
 pub(crate) use render::{
-    execution_layout, execution_scroll_position_with_view, render_execution_with_view,
+    execution_horizontal_scroll_position_with_view, execution_layout,
+    execution_scroll_position_with_view, render_execution_with_view,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn horizontal_scroll_keeps_the_effective_follow_position() {
+        let mut view = ExecutionViewState::default();
+
+        view.apply_horizontal_scroll(ExecutionScroll::Right, 0, 5, 42);
+
+        assert_eq!(view.scroll(), 42);
+        assert_eq!(view.horizontal(), 1);
+        assert!(!view.follows_latest());
+    }
+}

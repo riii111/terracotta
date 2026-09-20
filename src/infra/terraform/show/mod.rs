@@ -62,9 +62,14 @@ pub(super) fn read_review(
     runner: &dyn ProcessRunner,
 ) -> Result<(PlanDocument, PlanMetadata), TerraformExecutionError> {
     let text = run_show(root, plan_path, false, cancellation, runner)?;
-    let document = parse_document(text.output.stdout).map_err(invalid_plan)?;
     let json = run_show(root, plan_path, true, cancellation, runner)?;
     let metadata = parse_metadata(&json.output.stdout, plan_changed).map_err(invalid_plan)?;
+    let document = parse_document(
+        text.output.stdout,
+        metadata.resource_addresses(),
+        metadata.output_names(),
+    )
+    .map_err(invalid_plan)?;
     Ok((document, metadata))
 }
 

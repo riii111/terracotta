@@ -24,6 +24,14 @@ pub(crate) fn frame_style() -> Style {
     Style::default().fg(Color::Rgb(0x76, 0x7a, 0x84))
 }
 
+pub(crate) fn scrollbar_thumb_style() -> Style {
+    Style::default().fg(Color::Rgb(0xc0, 0xb8, 0xb0))
+}
+
+pub(crate) fn scrollbar_track_style() -> Style {
+    Style::default().fg(Color::Rgb(0x50, 0x52, 0x5e))
+}
+
 pub(crate) fn warning_style() -> Style {
     Style::default()
         .fg(Color::Rgb(0xeb, 0xcb, 0x8b))

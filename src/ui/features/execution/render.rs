@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::execution::{EventStream, ExecutionResult, ExecutionStage, ExecutionState};
-use crate::ui::primitives::atoms::separator;
+use crate::ui::primitives::atoms::{scrollbar, separator};
 use crate::ui::primitives::molecules::terminal_notice;
 use crate::ui::shell::{footer, header, layout as shell_layout};
 use crate::ui::theme;
@@ -25,7 +25,11 @@ pub(crate) fn render_execution_with_view(
 ) {
     let area = frame.area();
     let layout = execution_layout(area, state);
-    if area.width < MIN_WIDTH || area.height < MIN_HEIGHT || layout.body().height == 0 {
+    if area.width < MIN_WIDTH
+        || area.height < MIN_HEIGHT
+        || layout.body().width == 0
+        || layout.body().height == 0
+    {
         let message = if state.stage() == ExecutionStage::Failed {
             "Terminal too small. Resize or press q to quit."
         } else {
@@ -45,18 +49,46 @@ pub(crate) fn render_execution_with_view(
     );
 
     let lines = execution_lines(state);
-    let max = max_scroll(lines.len(), layout.body().height);
+    let (max_vertical, max_horizontal) = scroll_limits(&lines, layout.body());
     let scroll = if view.follows_latest() {
-        preferred_scroll(state, max)
+        preferred_scroll(state, max_vertical)
     } else {
-        view.scroll().min(max)
+        view.scroll().min(max_vertical)
     };
+    let horizontal = view.horizontal().min(max_horizontal);
     frame.render_widget(
-        Paragraph::new(lines)
+        Paragraph::new(lines.clone())
             .style(theme::body_style())
-            .scroll((scroll, 0)),
+            .scroll((scroll, horizontal)),
         layout.chunks[1],
     );
+    let body = layout.body();
+    let scrollbar_area = Rect::new(
+        body.x,
+        body.y,
+        body.width
+            .saturating_add(u16::from(layout.vertical_scrollbar())),
+        body.height
+            .saturating_add(u16::from(layout.horizontal_scrollbar())),
+    );
+    if layout.vertical_scrollbar() {
+        scrollbar::render_vertical(
+            frame,
+            scrollbar_area,
+            lines.len(),
+            usize::from(body.height),
+            usize::from(scroll),
+        );
+    }
+    if layout.horizontal_scrollbar() {
+        scrollbar::render_horizontal(
+            frame,
+            scrollbar_area,
+            max_line_width(&lines),
+            usize::from(body.width),
+            usize::from(horizontal),
+        );
+    }
     frame.render_widget(separator::render(layout.chunks[2].width), layout.chunks[2]);
     if let Some(notice) = state.copy_notice() {
         frame.render_widget(
@@ -74,17 +106,29 @@ pub(crate) fn render_execution_with_view(
 pub(crate) struct ExecutionLayout {
     shell: shell_layout::ShellLayout,
     chunks: Vec<Rect>,
+    body: Rect,
+    vertical_scrollbar: bool,
+    horizontal_scrollbar: bool,
 }
 
 impl ExecutionLayout {
-    pub(crate) fn body(&self) -> Rect {
-        self.chunks[1]
+    pub(crate) const fn body(&self) -> Rect {
+        self.body
+    }
+
+    pub(crate) const fn vertical_scrollbar(&self) -> bool {
+        self.vertical_scrollbar
+    }
+
+    pub(crate) const fn horizontal_scrollbar(&self) -> bool {
+        self.horizontal_scrollbar
     }
 }
 
 pub(crate) fn execution_layout(area: Rect, state: &ExecutionState) -> ExecutionLayout {
-    let footer_lines = footer_lines(state, area.width);
-    let shell = shell_layout::layout(area, footer_lines.clone(), footer_lines, 1);
+    let shell_area = shell_layout::centered_area(area);
+    let footer_lines = footer_lines(state, shell_area.width);
+    let shell = shell_layout::layout(shell_area, footer_lines.clone(), footer_lines, 1);
     let notice_height = u16::from(state.copy_notice().is_some());
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -96,7 +140,26 @@ pub(crate) fn execution_layout(area: Rect, state: &ExecutionState) -> ExecutionL
         ])
         .split(shell.content_inner())
         .to_vec();
-    ExecutionLayout { shell, chunks }
+    let available = chunks[1];
+    let lines = execution_lines(state);
+    let (vertical_scrollbar, horizontal_scrollbar) = scrollbar_reservations(&lines, available);
+    let body = Rect::new(
+        available.x,
+        available.y,
+        available
+            .width
+            .saturating_sub(u16::from(vertical_scrollbar)),
+        available
+            .height
+            .saturating_sub(u16::from(horizontal_scrollbar)),
+    );
+    ExecutionLayout {
+        shell,
+        chunks,
+        body,
+        vertical_scrollbar,
+        horizontal_scrollbar,
+    }
 }
 
 pub(crate) fn execution_scroll_position_with_view(
@@ -104,13 +167,22 @@ pub(crate) fn execution_scroll_position_with_view(
     view: ExecutionViewState,
     body: Rect,
 ) -> (u16, u16) {
-    let max = max_scroll(execution_lines(state).len(), body.height);
+    let (max, _) = scroll_limits(&execution_lines(state), body);
     let current = if view.follows_latest() {
         preferred_scroll(state, max)
     } else {
         view.scroll().min(max)
     };
     (current, max)
+}
+
+pub(crate) fn execution_horizontal_scroll_position_with_view(
+    state: &ExecutionState,
+    view: ExecutionViewState,
+    body: Rect,
+) -> (u16, u16) {
+    let (_, max) = scroll_limits(&execution_lines(state), body);
+    (view.horizontal().min(max), max)
 }
 
 fn execution_lines(state: &ExecutionState) -> Vec<Line<'static>> {
@@ -193,8 +265,34 @@ fn footer_lines(state: &ExecutionState, width: u16) -> Vec<Line<'static>> {
     footer::layout(items, width)
 }
 
-fn max_scroll(line_count: usize, height: u16) -> u16 {
-    u16::try_from(line_count.saturating_sub(usize::from(height))).unwrap_or(u16::MAX)
+fn scroll_limits(lines: &[Line<'static>], body: Rect) -> (u16, u16) {
+    let vertical =
+        u16::try_from(lines.len().saturating_sub(usize::from(body.height))).unwrap_or(u16::MAX);
+    let horizontal = u16::try_from(max_line_width(lines).saturating_sub(usize::from(body.width)))
+        .unwrap_or(u16::MAX);
+    (vertical, horizontal)
+}
+
+fn scrollbar_reservations(lines: &[Line<'static>], area: Rect) -> (bool, bool) {
+    let mut vertical = false;
+    let mut horizontal = false;
+    let line_count = lines.len();
+    let line_width = max_line_width(lines);
+    loop {
+        let next_vertical =
+            line_count > usize::from(area.height.saturating_sub(u16::from(horizontal)));
+        let next_horizontal =
+            line_width > usize::from(area.width.saturating_sub(u16::from(vertical)));
+        if next_vertical == vertical && next_horizontal == horizontal {
+            return (vertical, horizontal);
+        }
+        vertical = next_vertical;
+        horizontal = next_horizontal;
+    }
+}
+
+fn max_line_width(lines: &[Line<'static>]) -> usize {
+    lines.iter().map(Line::width).max().unwrap_or(0)
 }
 
 fn preferred_scroll(state: &ExecutionState, max: u16) -> u16 {

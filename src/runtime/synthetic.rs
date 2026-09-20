@@ -8,19 +8,27 @@ use crate::{
             EventStream, ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionLogLine,
             ExecutionPhase, ExecutionState,
         },
-        review::{PlanDocument, PlanMetadata, PlanReview},
+        review::{PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata, PlanReview},
         session::ReviewSessionState,
     },
     ui::features::{execution, plan_review},
 };
 
 pub(super) fn run_synthetic() -> io::Result<()> {
-    let review = ReviewSessionState::new(PlanReview::new(
+    let mut review = ReviewSessionState::new(PlanReview::new(
         PathBuf::from("infra/prod"),
         "default".to_owned(),
-        PlanDocument::new(
-            "Terraform will perform the following actions:\n\n  # terraform_data.example will be updated in-place\n  ~ resource \"terraform_data\" \"example\" {\n      ~ input = \"before\" -> \"after\"\n    }\n\nPlan: 0 to add, 1 to change, 0 to destroy.\n"
+        PlanDocument::with_blocks(
+            "Terraform will perform the following actions:\n\n  # terraform_data.example will be updated in-place\n  ~ resource \"terraform_data\" \"example\" {\n      ~ input = \"before\" -> \"after\"\n      note = \"searchable synthetic value\"\n    }\n\nPlan: 0 to add, 1 to change, 0 to destroy.\n"
                 .to_owned(),
+            vec![
+                PlanBlock::new(0..2, PlanBlockKind::Common),
+                PlanBlock::new(
+                    2..7,
+                    PlanBlockKind::Resource("terraform_data.example".to_owned()),
+                ),
+                PlanBlock::new(7..10, PlanBlockKind::Common),
+            ],
         ),
         PlanMetadata::new(
             vec!["terraform_data.example".to_owned()],
@@ -35,16 +43,18 @@ pub(super) fn run_synthetic() -> io::Result<()> {
     let mut view = plan_review::PlanReviewViewState::default();
     ratatui::run(|terminal| {
         loop {
-            terminal.draw(|frame| plan_review::render(frame, &review, view))?;
+            terminal.draw(|frame| {
+                plan_review::render(frame, &review, &view, Instant::now());
+            })?;
             if let Event::Key(key) = event::read()?
                 && key.is_press()
             {
-                if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) {
+                if !view.searching() && matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) {
                     return Ok(());
                 }
-                if let Some(input) = plan_review::key_to_input(key) {
+                if let Some(input) = plan_review::key_to_input(key, view.searching()) {
                     let size = terminal.size()?;
-                    view.apply(
+                    if let Some(query) = view.apply(
                         input,
                         ratatui::layout::Rect::new(
                             1,
@@ -53,7 +63,9 @@ pub(super) fn run_synthetic() -> io::Result<()> {
                             size.height.saturating_sub(5),
                         ),
                         &review,
-                    );
+                    ) {
+                        review.set_search_query(query);
+                    }
                 }
             }
         }
