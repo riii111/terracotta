@@ -1,146 +1,165 @@
 use std::{
-    fmt::{self, Display, Formatter},
+    fmt::{Debug, Formatter},
     path::{Path, PathBuf},
 };
 
-use super::{
-    attribution::{AnalysisIssue, ResourceAttribution, SourceFileAnalysis, SourceSide},
-    execution::ExecutionEvent,
-    plan::Plan,
-};
+use super::execution::{Diagnostic, ExecutionEvent};
 
-mod detail;
-mod diagnostics;
-mod item;
-mod list;
+#[cfg(test)]
+pub(crate) mod git;
 
-pub(crate) use detail::{
-    AttributeGroup, DetailAction, DetailRow, ResourceNavigation, ReviewDetailState,
-};
-pub(crate) use diagnostics::ReviewDiagnosticsState;
-pub(crate) use item::PlanListItem;
-pub(crate) use list::{PlanListAction, PlanListContext, PlanListFilter, PlanListState};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ReviewComparisonBasis {
-    WorkingTreeVsHead,
-    HeadVsMergeBase,
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct PlanDocument {
+    text: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ReviewComparisonSource {
-    Head,
-    WorkingTree,
-    MergeBase,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ReviewComparisonStatus {
-    Complete,
-    Incomplete(String),
-}
-
-impl ReviewComparisonStatus {
+impl PlanDocument {
     #[must_use]
-    pub(crate) fn message(&self) -> Option<&str> {
-        match self {
-            Self::Complete => None,
-            Self::Incomplete(message) => Some(message),
-        }
+    pub(crate) const fn new(text: String) -> Self {
+        Self { text }
+    }
+
+    #[must_use]
+    pub(crate) fn text(&self) -> &str {
+        &self.text
+    }
+}
+
+impl Debug for PlanDocument {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PlanDocument")
+            .field("text", &"<redacted>")
+            .finish()
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ReviewComparison {
-    basis: ReviewComparisonBasis,
-    compare_ref: Option<String>,
-    status: ReviewComparisonStatus,
+pub(crate) struct PlanMetadata {
+    resource_addresses: Vec<String>,
+    output_names: Vec<String>,
+    additions: usize,
+    changes: usize,
+    deletions: usize,
+    applyable: bool,
 }
 
-impl ReviewComparison {
+impl PlanMetadata {
     #[must_use]
     pub(crate) const fn new(
-        basis: ReviewComparisonBasis,
-        compare_ref: Option<String>,
-        status: ReviewComparisonStatus,
+        resource_addresses: Vec<String>,
+        output_names: Vec<String>,
+        additions: usize,
+        changes: usize,
+        deletions: usize,
+        applyable: bool,
     ) -> Self {
         Self {
-            basis,
-            compare_ref,
-            status,
+            resource_addresses,
+            output_names,
+            additions,
+            changes,
+            deletions,
+            applyable,
         }
     }
 
     #[must_use]
-    pub(crate) const fn status(&self) -> &ReviewComparisonStatus {
-        &self.status
-    }
-
-    #[must_use]
-    pub(crate) const fn basis(&self) -> ReviewComparisonBasis {
-        self.basis
-    }
-
-    #[must_use]
-    pub(crate) fn compare_ref(&self) -> Option<&str> {
-        self.compare_ref.as_deref()
-    }
-
-    #[must_use]
-    pub(crate) const fn source_for(&self, side: SourceSide) -> ReviewComparisonSource {
-        match (self.basis, side) {
-            (ReviewComparisonBasis::WorkingTreeVsHead, SourceSide::Before)
-            | (ReviewComparisonBasis::HeadVsMergeBase, SourceSide::After) => {
-                ReviewComparisonSource::Head
-            }
-            (ReviewComparisonBasis::WorkingTreeVsHead, SourceSide::After) => {
-                ReviewComparisonSource::WorkingTree
-            }
-            (ReviewComparisonBasis::HeadVsMergeBase, SourceSide::Before) => {
-                ReviewComparisonSource::MergeBase
-            }
-        }
-    }
-
     #[cfg(test)]
-    #[must_use]
-    pub(crate) const fn working_tree() -> Self {
-        Self::new(
-            ReviewComparisonBasis::WorkingTreeVsHead,
-            None,
-            ReviewComparisonStatus::Complete,
-        )
+    pub(crate) fn resource_addresses(&self) -> &[String] {
+        &self.resource_addresses
     }
 
     #[must_use]
-    pub(crate) fn label(&self) -> String {
-        match self.basis() {
-            ReviewComparisonBasis::WorkingTreeVsHead => "working tree vs HEAD".to_owned(),
-            ReviewComparisonBasis::HeadVsMergeBase => self.compare_ref().map_or_else(
-                || "HEAD vs merge-base".to_owned(),
-                |compare_ref| format!("HEAD vs merge-base({compare_ref})"),
-            ),
-        }
+    #[cfg(test)]
+    pub(crate) fn output_names(&self) -> &[String] {
+        &self.output_names
     }
-}
 
-impl Display for ReviewComparison {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.label())
+    #[must_use]
+    pub(crate) const fn additions(&self) -> usize {
+        self.additions
+    }
+
+    #[must_use]
+    pub(crate) const fn changes(&self) -> usize {
+        self.changes
+    }
+
+    #[must_use]
+    pub(crate) const fn deletions(&self) -> usize {
+        self.deletions
+    }
+
+    #[must_use]
+    #[cfg(test)]
+    pub(crate) const fn contains_deletions(&self) -> bool {
+        self.deletions > 0
+    }
+
+    #[must_use]
+    #[cfg(test)]
+    pub(crate) const fn applyable(&self) -> bool {
+        self.applyable
+    }
+
+    #[must_use]
+    pub(crate) const fn has_changes(&self) -> bool {
+        self.applyable
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PlanReview {
     root: PathBuf,
-    repository_root: Option<PathBuf>,
     workspace: String,
-    git: String,
-    plan: Plan,
-    source_files: Vec<SourceFileAnalysis>,
-    attributions: Vec<ResourceAttribution>,
-    comparison: ReviewComparison,
-    analysis_issues: Vec<AnalysisIssue>,
+    document: PlanDocument,
+    metadata: PlanMetadata,
+    diagnostics: Vec<Diagnostic>,
+}
+
+impl PlanReview {
+    #[must_use]
+    pub(crate) const fn new(
+        root: PathBuf,
+        workspace: String,
+        document: PlanDocument,
+        metadata: PlanMetadata,
+        diagnostics: Vec<Diagnostic>,
+    ) -> Self {
+        Self {
+            root,
+            workspace,
+            document,
+            metadata,
+            diagnostics,
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn root(&self) -> &Path {
+        &self.root
+    }
+
+    #[must_use]
+    pub(crate) fn workspace(&self) -> &str {
+        &self.workspace
+    }
+
+    #[must_use]
+    pub(crate) const fn document(&self) -> &PlanDocument {
+        &self.document
+    }
+
+    #[must_use]
+    pub(crate) const fn metadata(&self) -> &PlanMetadata {
+        &self.metadata
+    }
+
+    #[must_use]
+    pub(crate) fn diagnostics(&self) -> &[Diagnostic] {
+        &self.diagnostics
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -150,134 +169,35 @@ pub(crate) enum PlanReviewMessage {
     Failed { message: String, interrupted: bool },
 }
 
-impl PlanReview {
-    #[must_use]
-    pub(crate) fn new(
-        root: PathBuf,
-        workspace: String,
-        plan: Plan,
-        source_files: Vec<SourceFileAnalysis>,
-        attributions: Vec<ResourceAttribution>,
-        comparison: ReviewComparison,
-        analysis_issues: Vec<AnalysisIssue>,
-    ) -> Self {
-        Self {
-            root,
-            repository_root: None,
-            workspace,
-            git: "unavailable".to_owned(),
-            plan,
-            source_files,
-            attributions,
-            comparison,
-            analysis_issues,
-        }
-    }
-
-    pub(crate) fn with_git(mut self, git: String) -> Self {
-        self.git = git;
-        self
-    }
-
-    pub(crate) fn with_repository_root(mut self, repository_root: Option<PathBuf>) -> Self {
-        self.repository_root = repository_root;
-        self
-    }
-
-    #[must_use]
-    pub(crate) fn root(&self) -> &Path {
-        &self.root
-    }
-
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn repository_root(&self) -> Option<&Path> {
-        self.repository_root.as_deref()
-    }
-
-    #[must_use]
-    pub(crate) fn workspace(&self) -> &str {
-        &self.workspace
-    }
-
-    #[must_use]
-    pub(crate) fn git(&self) -> &str {
-        &self.git
-    }
-
-    #[must_use]
-    pub(crate) const fn plan(&self) -> &Plan {
-        &self.plan
-    }
-
-    #[must_use]
-    pub(crate) fn source_files(&self) -> &[SourceFileAnalysis] {
-        &self.source_files
-    }
-
-    #[must_use]
-    pub(crate) fn attributions(&self) -> &[ResourceAttribution] {
-        &self.attributions
-    }
-
-    #[must_use]
-    pub(crate) const fn comparison(&self) -> &ReviewComparison {
-        &self.comparison
-    }
-
-    #[must_use]
-    pub(crate) fn analysis_issues(&self) -> &[AnalysisIssue] {
-        &self.analysis_issues
-    }
-
-    #[must_use]
-    pub(crate) fn needs_review_count(&self) -> usize {
-        self.attributions
-            .iter()
-            .filter(|attribution| attribution.needs_review())
-            .count()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn maps_working_tree_source_sides() {
-        let comparison = ReviewComparison::working_tree();
+    fn debug_output_never_contains_plan_text() {
+        let document = PlanDocument::new("password = secret".to_owned());
 
-        assert_eq!(
-            comparison.source_for(SourceSide::Before),
-            ReviewComparisonSource::Head
-        );
-        assert_eq!(
-            comparison.source_for(SourceSide::After),
-            ReviewComparisonSource::WorkingTree
-        );
+        let debug = format!("{document:?}");
+
+        assert!(!debug.contains("secret"));
+        assert!(debug.contains("<redacted>"));
     }
 
     #[test]
-    fn maps_compare_ref_source_sides() {
-        let comparison = ReviewComparison::new(
-            ReviewComparisonBasis::HeadVsMergeBase,
-            Some("main".to_owned()),
-            ReviewComparisonStatus::Complete,
+    fn metadata_exposes_summary_and_applyability_without_values() {
+        let metadata = PlanMetadata::new(
+            vec!["terraform_data.example".to_owned()],
+            vec!["endpoint".to_owned()],
+            1,
+            0,
+            1,
+            true,
         );
 
-        assert_eq!(
-            comparison.source_for(SourceSide::Before),
-            ReviewComparisonSource::MergeBase
-        );
-        assert_eq!(
-            comparison.source_for(SourceSide::After),
-            ReviewComparisonSource::Head
-        );
-    }
-
-    impl ReviewComparisonStatus {
-        pub(crate) const fn is_complete(&self) -> bool {
-            matches!(self, Self::Complete)
-        }
+        assert_eq!(metadata.additions(), 1);
+        assert_eq!(metadata.deletions(), 1);
+        assert!(metadata.contains_deletions());
+        assert!(metadata.applyable());
+        assert_eq!(metadata.output_names(), ["endpoint"]);
     }
 }

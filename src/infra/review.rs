@@ -7,7 +7,7 @@ use std::{
 use crate::app::{
     attribution::{AnalysisIssue, SourceFileAnalysis, attribute_changes, mark_analysis_incomplete},
     execution::{ExecutionEvent, ExecutionEventKind, ExecutionPhase},
-    review::{PlanReview, ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus},
+    review::git::{PlanReview, ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus},
 };
 use crate::infra::CancellationToken;
 
@@ -411,7 +411,7 @@ mod tests {
             Ok(Some(ProcessStatus::Exited(0)))
         }
 
-        fn kill(&mut self) -> io::Result<()> {
+        fn request_interrupt(&mut self) -> io::Result<()> {
             Ok(())
         }
 

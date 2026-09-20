@@ -19,12 +19,13 @@ mod synthetic;
 use crate::{
     app::{
         execution::{
-            ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionPhase, ExecutionState,
+            ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionPhase, ExecutionStage,
+            ExecutionState,
         },
-        review::PlanReviewMessage,
+        review::{PlanMetadata, PlanReviewMessage},
         session::SessionOutcome,
     },
-    infra::{CancellationToken, ClipboardExecutor, review},
+    infra::{CancellationToken, ClipboardExecutor, terraform},
 };
 
 #[cfg(feature = "test-support")]
@@ -38,6 +39,10 @@ const INTERRUPTED: u8 = 130;
     reason = "the library facade is the only public runtime entry point"
 )]
 pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
+    if compare_ref.is_some() {
+        report_error("--compare-ref is unavailable while Git comparison is paused");
+        return ExitCode::from(EXECUTION_FAILURE);
+    }
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         report_error("terracotta plan requires an interactive terminal");
         return ExitCode::from(EXECUTION_FAILURE);
@@ -45,48 +50,7 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
 
     let cancellation = CancellationToken::new();
     let (sender, receiver) = mpsc::channel();
-    let worker_cancellation = cancellation.clone();
-    let worker_root = root.to_owned();
-    let worker_compare_ref = compare_ref.map(str::to_owned);
-    let worker = match thread::Builder::new()
-        .name("terracotta-plan".to_owned())
-        .spawn(move || {
-            let mut event_sink = |event| {
-                let _ = sender.send(PlanReviewMessage::Event(event));
-            };
-            let mut phase_sink = |phase: ExecutionPhase| {
-                let _ = sender.send(PlanReviewMessage::Event(ExecutionEvent {
-                    received_at: Instant::now(),
-                    kind: ExecutionEventKind::Phase(phase),
-                }));
-            };
-            let result = review::run_review(
-                &worker_root,
-                worker_compare_ref.as_deref(),
-                &worker_cancellation,
-                &mut event_sink,
-                &mut phase_sink,
-            );
-            let message = match result {
-                Ok(review) => PlanReviewMessage::Completed(review),
-                Err(error) => match error {
-                    review::ReviewError::Interrupted => PlanReviewMessage::Failed {
-                        message: "review was interrupted".to_owned(),
-                        interrupted: true,
-                    },
-                    review::ReviewError::Terraform(error) => PlanReviewMessage::Failed {
-                        message: error.to_string(),
-                        interrupted: false,
-                    },
-                },
-            };
-            if worker_cancellation.is_cancelled()
-                && matches!(&message, PlanReviewMessage::Completed(_))
-            {
-                return;
-            }
-            let _ = sender.send(message);
-        }) {
+    let worker = match spawn_plan_worker(root, &cancellation, sender) {
         Ok(worker) => worker,
         Err(error) => {
             report_error(&format!("failed to start the plan worker: {error}"));
@@ -98,7 +62,7 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
         handle: Some(worker),
     };
     let mut clipboard = ClipboardExecutor::new();
-    let context = initial_execution_context(root, compare_ref);
+    let context = ExecutionContext::loading(root.display().to_string(), "Git comparison paused");
     let ui_result = run_terminal(|terminal| {
         #[cfg(feature = "test-support")]
         if test_support::panic_after_draw_requested() {
@@ -117,20 +81,35 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
     if ui_result.is_err() {
         cancellation.cancel();
     }
-    let worker_panicked = worker.join();
+    let worker_result = worker.join();
+    let cleanup_result = match worker_result {
+        Ok(Some(saved_plan)) => saved_plan.cleanup(),
+        Ok(None) | Err(_) => Ok(()),
+    };
+    if let Err(error) = &cleanup_result {
+        report_error(&format!(
+            "failed to remove the temporary Terraform plan: {error}"
+        ));
+    }
 
-    match (ui_result, worker_panicked) {
-        (Ok(SessionOutcome::Reviewed), Ok(())) => ExitCode::SUCCESS,
-        (Ok(SessionOutcome::Interrupted), Ok(())) => ExitCode::from(INTERRUPTED),
-        (Ok(SessionOutcome::Failed), Ok(())) => ExitCode::from(EXECUTION_FAILURE),
+    match (ui_result, cleanup_result) {
+        (Ok(SessionOutcome::Reviewed(metadata)), Ok(())) => {
+            report_reviewed(&metadata);
+            ExitCode::SUCCESS
+        }
+        (Ok(SessionOutcome::Interrupted(phase)), Ok(())) => {
+            report_interrupted(phase);
+            ExitCode::from(INTERRUPTED)
+        }
+        (Ok(SessionOutcome::Failed(phase)), Ok(())) => {
+            report_error(&format!("{} failed.", phase.title()));
+            ExitCode::from(EXECUTION_FAILURE)
+        }
         (Err(error), Ok(())) => {
             report_error(&format!("TUI failed: {error}"));
             ExitCode::from(EXECUTION_FAILURE)
         }
-        (_, Err(_)) => {
-            report_error("the plan worker terminated unexpectedly");
-            ExitCode::from(EXECUTION_FAILURE)
-        }
+        (_, Err(_)) => ExitCode::from(EXECUTION_FAILURE),
     }
 }
 
@@ -155,15 +134,70 @@ where
     }
 }
 
-fn initial_execution_context(root: &Path, compare_ref: Option<&str>) -> ExecutionContext {
-    ExecutionContext::loading(root.display().to_string(), comparison_label(compare_ref))
+fn report_reviewed(metadata: &PlanMetadata) {
+    if metadata.has_changes() {
+        let _ = writeln!(
+            io::stdout(),
+            "Plan: {} to add, {} to change, {} to destroy.\nApply was not run.",
+            metadata.additions(),
+            metadata.changes(),
+            metadata.deletions()
+        );
+    } else {
+        let _ = writeln!(io::stdout(), "No changes.");
+    }
 }
 
-fn comparison_label(compare_ref: Option<&str>) -> String {
-    compare_ref.map_or_else(
-        || "working tree vs HEAD".to_owned(),
-        |compare_ref| format!("HEAD vs merge-base({compare_ref})"),
-    )
+fn report_interrupted(phase: ExecutionStage) {
+    let message = match phase {
+        ExecutionStage::Initializing => "Initialization cancelled.",
+        _ => "Plan cancelled.",
+    };
+    let _ = writeln!(io::stdout(), "{message}");
+}
+
+fn spawn_plan_worker(
+    root: &Path,
+    cancellation: &CancellationToken,
+    sender: mpsc::Sender<PlanReviewMessage>,
+) -> io::Result<JoinHandle<Option<terraform::SavedPlan>>> {
+    let worker_cancellation = cancellation.clone();
+    let worker_root = root.to_owned();
+    thread::Builder::new()
+        .name("terracotta-plan".to_owned())
+        .spawn(move || {
+            let mut event_sink = |event| {
+                let _ = sender.send(PlanReviewMessage::Event(event));
+            };
+            let mut phase_sink = |phase: ExecutionPhase| {
+                let _ = sender.send(PlanReviewMessage::Event(ExecutionEvent {
+                    received_at: Instant::now(),
+                    kind: ExecutionEventKind::Phase(phase),
+                }));
+            };
+            match terraform::run_review(
+                &worker_root,
+                &worker_cancellation,
+                &terraform::SystemProcessRunner,
+                &mut event_sink,
+                &mut phase_sink,
+            ) {
+                Ok(planned) => {
+                    let (review, saved_plan) = planned.into_parts();
+                    if !worker_cancellation.is_cancelled() {
+                        let _ = sender.send(PlanReviewMessage::Completed(review));
+                    }
+                    Some(saved_plan)
+                }
+                Err(error) => {
+                    let _ = sender.send(PlanReviewMessage::Failed {
+                        message: error.to_string(),
+                        interrupted: worker_cancellation.is_cancelled(),
+                    });
+                    None
+                }
+            }
+        })
 }
 
 fn report_error(message: &str) {
@@ -172,11 +206,11 @@ fn report_error(message: &str) {
 
 struct WorkerGuard {
     cancellation: CancellationToken,
-    handle: Option<JoinHandle<()>>,
+    handle: Option<JoinHandle<Option<terraform::SavedPlan>>>,
 }
 
 impl WorkerGuard {
-    fn join(&mut self) -> thread::Result<()> {
+    fn join(&mut self) -> thread::Result<Option<terraform::SavedPlan>> {
         self.handle
             .take()
             .expect("plan worker should be present")

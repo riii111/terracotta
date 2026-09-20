@@ -292,136 +292,32 @@ def kill_child():
 
 
 try:
-    if scenario == "workflow":
-        wait_new("Needs review: 0/1", "list")
-        send_key(b"f")
-        wait_parts(["Showing", "0/1"], "filter_empty")
-        send_key(b"f")
-        wait_new("Filter: All", "filter_all")
-        send_key(b"/")
-        send_key(b"/")
-        wait_new("Type to search", "search_input")
-        send_key(b"z")
-        wait_new("No resources match the current filter/search.", "search_empty")
-        send_key(b"\x7f")
-        send_key(b"\x7f")
-        send_key(b"\r")
-        wait_new("terraform_data.api", "search_cleared")
-        send_key(b"\r")
-        wait_new("Resource 1/1", "detail")
-        send_key(b"s")
-        send_key(b"\x1b[6~")
-        wait_new("Analysis info", "analysis_info")
-        send_key(b"j")
-        send_key(b"\r")
-        wait_new("collaps", "expanded")
-        send_key(b"y")
-        wait_any(["Copied", "Copy failed"], "copy")
-        send_key(b"\x1b")
-        wait_new("Filter:", "back")
-        send_key(b"q")
-        exit_code = wait_exit()
-    elif scenario == "ui11":
-        wait_parts(
-            ["terraform_data.api", "terraform_data.new", "terraform_data.old"],
-            "ui11_list",
-        )
-        send_key(b"f")
-        wait_parts(["Filter: Needs review", "Showing: 2/3"], "ui11_filter")
-        send_key(b"\r")
-        wait_parts_without(
-            ["Resource 1/2", "terraform_data.new", '+ "created"'],
-            ["- <absent>"],
-            "ui11_create_detail",
-        )
-        send_key(b"]")
-        wait_parts_without(
-            ["Resource 2/2", "terraform_data.old", '- "old"'],
-            ['+ <absent>'],
-            "ui11_delete_detail",
-        )
-        send_key(b"[")
-        wait_new("terraform_data.new", "ui11_previous")
-        send_key(b"\x1b")
-        wait_new("Filter: Needs review", "ui11_filtered_back")
-        send_key(b"f")
-        wait_new("Filter: All", "ui11_all")
-        send_key(b"k")
-        send_key(b"\r")
-        wait_parts(
-            ["Resource 1/3", "terraform_data.api", '- "old"', '+ "new"'],
-            "ui11_update_detail",
-        )
-        send_key(b"s")
-        wait_new("Analysis info", "ui11_analysis_open")
-        send_key(b"s")
-        wait_parts_without(
-            ["Resource 1/3", "terraform_data.api"],
-            ["Analysis info"],
-            "ui11_analysis_closed",
-        )
-        send_key(b"\x1b")
-        wait_new("Filter: All", "ui11_detail_back")
-        send_key(b"q")
-        exit_code = wait_exit()
-    elif scenario == "basic_workflow":
-        wait_new("Needs review: 1/5", "list")
-        send_key(b"f")
-        wait_new("Filter: Needs review", "filter")
-        send_key(b"\r")
-        wait_new("Resource 1/1", "detail")
-        send_key(b"s")
-        wait_new("Analysis info", "analysis_info")
-        send_key(b"\x1b")
-        wait_new("Filter:", "back")
+    if scenario in ("full_text", "no_changes", "basic_workflow"):
+        marker = "No changes." if scenario == "no_changes" else "Terraform will perform"
+        wait_parts([marker, "terraform_data.api"], "plan_text", timeout=30)
         send_key(b"q")
         exit_code = wait_exit()
     elif scenario == "diagnostic_success":
-        wait_new("Diagnostics: 1 (w)", "diagnostic_notice")
-        send_key(b"w")
-        wait_parts(["Diagnostics", "Warning 1/1", "synthetic plan warning"], "diagnostics")
-        send_key(b"\x1b")
-        wait_new("Diagnostics: 1 (w)", "diagnostics_back")
+        wait_parts(
+            ["synthetic plan warning", "Terraform will perform", "terraform_data.api"],
+            "diagnostic_and_plan",
+        )
         send_key(b"q")
         exit_code = wait_exit()
-    elif scenario == "failure":
-        wait_new("Failed", "failed")
-        send_key(b"y")
-        wait_any(["Copied diagnostic", "Copy failed: clipboard unavailable."], "failure_copy")
-        send_key(b"q")
-        exit_code = wait_exit()
-    elif scenario == "git_failure":
-        wait_parts(["?", "analysis incomplete"], "git_failure")
+    elif scenario in ("failure", "init_failure"):
+        marker = "synthetic init failure" if scenario == "init_failure" else "synthetic plan failure"
+        wait_parts(["Terraform failed", marker], "failed")
         send_key(b"q")
         exit_code = wait_exit()
     elif scenario == "interrupt":
         wait_file(os.environ["TERRACOTTA_FAKE_PID_PATH"], "terraform_started")
         send_key(b"\x03")
-        wait_new("Cancelling...", "cancelling")
-        exit_code = wait_exit()
-    elif scenario == "git_interrupt":
-        wait_file(os.environ["TERRACOTTA_FAKE_GIT_PID_PATH"], "git_started")
-        send_key(b"\x03")
-        wait_new("Cancelling...", "cancelling")
-        exit_code = wait_exit()
-    elif scenario == "config_interrupt":
-        wait_file(os.environ["TERRACOTTA_FAKE_GIT_PID_PATH"], "git_started")
-        send_key(b"\x03")
+        observed.append("interrupt_requested")
         exit_code = wait_exit()
     elif scenario == "narrow":
         wait_new("Terminal too small", "narrow")
         resize(100, 24)
-        wait_new("Needs review: 0/1", "resized")
-        send_key(b"q")
-        exit_code = wait_exit()
-    elif scenario == "empty":
-        wait_parts(["Needs review: 0/0", "No res"], "empty")
-        send_key(b"y")
-        send_key(b"\r")
-        send_key(b"q")
-        exit_code = wait_exit()
-    elif scenario == "compare_ref":
-        wait_parts(["merge-base(main)", "Needs review: 1/1"], "compare_ref")
+        wait_new("Terraform will perform", "resized")
         send_key(b"q")
         exit_code = wait_exit()
     elif scenario == "panic":

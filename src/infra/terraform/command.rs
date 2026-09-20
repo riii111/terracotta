@@ -10,7 +10,8 @@ use std::{
 };
 
 use crate::app::execution::{
-    EventStream, ExecutionEvent, ExecutionEventKind, ProcessExitStatus, ProcessTermination,
+    EventStream, ExecutionEvent, ExecutionEventKind, ExecutionLogLine, ProcessExitStatus,
+    ProcessTermination,
 };
 use crate::infra::CancellationToken;
 
@@ -20,6 +21,7 @@ const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TerraformCommand {
+    Init,
     Plan,
     Show,
     WorkspaceShow,
@@ -28,6 +30,7 @@ pub(crate) enum TerraformCommand {
 impl Display for TerraformCommand {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
+            Self::Init => "init",
             Self::Plan => "plan",
             Self::Show => "show",
             Self::WorkspaceShow => "workspace show",
@@ -46,6 +49,19 @@ impl ProcessStatus {
     pub(super) const fn is_success(self) -> bool {
         matches!(self, Self::Exited(0))
     }
+
+    #[must_use]
+    pub(super) const fn is_plan_success(self) -> bool {
+        matches!(self, Self::Exited(0 | 2))
+    }
+
+    #[must_use]
+    pub(super) const fn code(self) -> Option<i32> {
+        match self {
+            Self::Exited(code) => Some(code),
+            Self::Signaled => None,
+        }
+    }
 }
 
 impl Display for ProcessStatus {
@@ -61,6 +77,7 @@ impl Display for ProcessStatus {
 pub(crate) struct ProcessOutput {
     pub(super) stdout: Vec<u8>,
     stderr: Vec<u8>,
+    ordered: Vec<ProcessOutputChunk>,
 }
 
 impl ProcessOutput {
@@ -69,6 +86,7 @@ impl ProcessOutput {
         Self {
             stdout: Vec::new(),
             stderr: Vec::new(),
+            ordered: Vec::new(),
         }
     }
 
@@ -77,6 +95,7 @@ impl ProcessOutput {
             EventStream::Stdout => self.stdout.extend_from_slice(&chunk.bytes),
             EventStream::Stderr => self.stderr.extend_from_slice(&chunk.bytes),
         }
+        self.ordered.push(chunk.clone());
     }
 }
 
@@ -106,12 +125,12 @@ pub(crate) enum TerraformExecutionErrorKind {
     NonZero {
         command: TerraformCommand,
         status: ProcessStatus,
-        output: ProcessOutput,
+        output: Box<ProcessOutput>,
     },
     Interrupted {
         command: TerraformCommand,
-        output: ProcessOutput,
-        kill_error: Option<String>,
+        output: Box<ProcessOutput>,
+        interrupt_error: Option<String>,
     },
     InvalidPlan {
         source: PlanParseError,
@@ -119,6 +138,7 @@ pub(crate) enum TerraformExecutionErrorKind {
     InvalidWorkspace {
         message: String,
     },
+    #[cfg(test)]
     Cleanup {
         message: String,
     },
@@ -182,6 +202,7 @@ impl Display for TerraformExecutionError {
                     "terraform workspace output could not be parsed: {message}"
                 )
             }
+            #[cfg(test)]
             TerraformExecutionErrorKind::Cleanup { message } => {
                 write!(
                     formatter,
@@ -204,20 +225,21 @@ pub(super) struct ProcessResult {
     pub(super) status: Option<ProcessStatus>,
     pub(super) output: ProcessOutput,
     pub(super) interrupted: bool,
-    kill_error: Option<String>,
+    interrupt_error: Option<String>,
 }
 
 impl ProcessResult {
-    const fn interrupted(output: ProcessOutput, kill_error: Option<String>) -> Self {
+    const fn interrupted(output: ProcessOutput, interrupt_error: Option<String>) -> Self {
         Self {
             status: None,
             output,
             interrupted: true,
-            kill_error,
+            interrupt_error,
         }
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct ProcessOutputChunk {
     pub(super) stream: EventStream,
     pub(super) bytes: Vec<u8>,
@@ -233,7 +255,7 @@ pub(crate) trait RunningProcess {
     }
 
     fn try_wait(&mut self) -> io::Result<Option<ProcessStatus>>;
-    fn kill(&mut self) -> io::Result<()>;
+    fn request_interrupt(&mut self) -> io::Result<()>;
     fn wait(&mut self) -> io::Result<ProcessStatus>;
     fn collect_output(self: Box<Self>) -> io::Result<ProcessOutput>;
 }
@@ -244,6 +266,87 @@ pub(crate) struct SystemProcessRunner;
 struct ObservedOutput {
     stdout: usize,
     stderr: usize,
+    chunks: usize,
+}
+
+enum EventParser {
+    Json(TerraformEventParser),
+    Text(TextLineParser),
+}
+
+impl EventParser {
+    fn push(
+        &mut self,
+        stream: EventStream,
+        bytes: &[u8],
+        received_at: Instant,
+    ) -> Vec<ExecutionEvent> {
+        match self {
+            Self::Json(parser) => parser.push(stream, bytes, received_at),
+            Self::Text(parser) => parser.push(stream, bytes, received_at),
+        }
+    }
+
+    fn finish(&mut self, stream: EventStream, received_at: Instant) -> Vec<ExecutionEvent> {
+        match self {
+            Self::Json(parser) => parser.finish(stream, received_at),
+            Self::Text(parser) => parser.finish(stream, received_at),
+        }
+    }
+}
+
+#[derive(Default)]
+struct TextLineParser {
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+impl TextLineParser {
+    fn push(
+        &mut self,
+        stream: EventStream,
+        bytes: &[u8],
+        received_at: Instant,
+    ) -> Vec<ExecutionEvent> {
+        let buffer = self.buffer_mut(stream);
+        buffer.extend_from_slice(bytes);
+        let mut lines = Vec::new();
+        while let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
+            let mut line = buffer.drain(..=newline).collect::<Vec<_>>();
+            line.pop();
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            lines.push(log_event(stream, &line, received_at));
+        }
+        lines
+    }
+
+    fn finish(&mut self, stream: EventStream, received_at: Instant) -> Vec<ExecutionEvent> {
+        let line = std::mem::take(self.buffer_mut(stream));
+        if line.is_empty() {
+            Vec::new()
+        } else {
+            vec![log_event(stream, &line, received_at)]
+        }
+    }
+
+    const fn buffer_mut(&mut self, stream: EventStream) -> &mut Vec<u8> {
+        match stream {
+            EventStream::Stdout => &mut self.stdout,
+            EventStream::Stderr => &mut self.stderr,
+        }
+    }
+}
+
+fn log_event(stream: EventStream, line: &[u8], received_at: Instant) -> ExecutionEvent {
+    ExecutionEvent {
+        received_at,
+        kind: ExecutionEventKind::Log(ExecutionLogLine {
+            stream,
+            text: String::from_utf8_lossy(line).into_owned(),
+        }),
+    }
 }
 
 pub(super) fn run_command(
@@ -253,7 +356,7 @@ pub(super) fn run_command(
     cancellation: &CancellationToken,
     runner: &dyn ProcessRunner,
 ) -> Result<ProcessResult, TerraformExecutionError> {
-    run_command_with_events(root, command, arguments, cancellation, runner, None)
+    run_command_with_parser(root, command, arguments, cancellation, runner, None, false)
 }
 
 pub(super) fn run_command_with_events(
@@ -262,9 +365,54 @@ pub(super) fn run_command_with_events(
     arguments: &[OsString],
     cancellation: &CancellationToken,
     runner: &dyn ProcessRunner,
-    mut event_sink: Option<&mut dyn FnMut(ExecutionEvent)>,
+    event_sink: Option<&mut dyn FnMut(ExecutionEvent)>,
 ) -> Result<ProcessResult, TerraformExecutionError> {
-    let mut parser = event_sink.is_some().then(TerraformEventParser::new);
+    run_command_with_parser(
+        root,
+        command,
+        arguments,
+        cancellation,
+        runner,
+        event_sink,
+        false,
+    )
+}
+
+pub(super) fn run_command_with_text_events(
+    root: &Path,
+    command: TerraformCommand,
+    arguments: &[OsString],
+    cancellation: &CancellationToken,
+    runner: &dyn ProcessRunner,
+    event_sink: Option<&mut dyn FnMut(ExecutionEvent)>,
+) -> Result<ProcessResult, TerraformExecutionError> {
+    run_command_with_parser(
+        root,
+        command,
+        arguments,
+        cancellation,
+        runner,
+        event_sink,
+        true,
+    )
+}
+
+fn run_command_with_parser(
+    root: &Path,
+    command: TerraformCommand,
+    arguments: &[OsString],
+    cancellation: &CancellationToken,
+    runner: &dyn ProcessRunner,
+    mut event_sink: Option<&mut dyn FnMut(ExecutionEvent)>,
+    text: bool,
+) -> Result<ProcessResult, TerraformExecutionError> {
+    let mut parser = event_sink.is_some().then(|| {
+        if text {
+            EventParser::Text(TextLineParser::default())
+        } else {
+            EventParser::Json(TerraformEventParser::new())
+        }
+    });
     let mut observed = ObservedOutput::default();
     if cancellation.is_cancelled() {
         if let Some(event_sink) = event_sink {
@@ -313,12 +461,15 @@ pub(super) fn run_command_with_events(
                 status: Some(status),
                 output,
                 interrupted: false,
-                kill_error: None,
+                interrupt_error: None,
             });
         }
 
         if cancellation.is_cancelled() {
-            let kill_error = process.kill().err().map(|error| error.to_string());
+            let interrupt_error = process
+                .request_interrupt()
+                .err()
+                .map(|error| error.to_string());
             let status = process.wait().map_err(|error| {
                 TerraformExecutionError::new(TerraformExecutionErrorKind::Process {
                     command,
@@ -340,7 +491,7 @@ pub(super) fn run_command_with_events(
                 status: Some(status),
                 output,
                 interrupted: true,
-                kill_error,
+                interrupt_error,
             });
         }
 
@@ -349,7 +500,7 @@ pub(super) fn run_command_with_events(
 }
 
 fn emit_chunks(
-    parser: &mut TerraformEventParser,
+    parser: &mut EventParser,
     observed: &mut ObservedOutput,
     chunks: Vec<ProcessOutputChunk>,
     event_sink: &mut dyn FnMut(ExecutionEvent),
@@ -362,6 +513,7 @@ fn emit_chunks(
             EventStream::Stdout => observed.stdout += length,
             EventStream::Stderr => observed.stderr += length,
         }
+        observed.chunks += 1;
         for event in events {
             event_sink(event);
         }
@@ -369,11 +521,22 @@ fn emit_chunks(
 }
 
 fn emit_unobserved_output(
-    parser: &mut TerraformEventParser,
+    parser: &mut EventParser,
     observed: &mut ObservedOutput,
     output: &ProcessOutput,
     event_sink: &mut dyn FnMut(ExecutionEvent),
 ) {
+    if !output.ordered.is_empty() {
+        for chunk in output.ordered.iter().skip(observed.chunks) {
+            for event in parser.push(chunk.stream, &chunk.bytes, Instant::now()) {
+                event_sink(event);
+            }
+        }
+        observed.chunks = output.ordered.len();
+        observed.stdout = output.stdout.len();
+        observed.stderr = output.stderr.len();
+        return;
+    }
     emit_remaining_stream(
         parser,
         observed.stdout,
@@ -393,7 +556,7 @@ fn emit_unobserved_output(
 }
 
 fn emit_remaining_stream(
-    parser: &mut TerraformEventParser,
+    parser: &mut EventParser,
     observed: usize,
     stream: EventStream,
     output: &[u8],
@@ -407,10 +570,7 @@ fn emit_remaining_stream(
     }
 }
 
-fn emit_parser_remainders(
-    parser: &mut TerraformEventParser,
-    event_sink: &mut dyn FnMut(ExecutionEvent),
-) {
+fn emit_parser_remainders(parser: &mut EventParser, event_sink: &mut dyn FnMut(ExecutionEvent)) {
     for stream in [EventStream::Stdout, EventStream::Stderr] {
         for event in parser.finish(stream, Instant::now()) {
             event_sink(event);
@@ -442,8 +602,8 @@ pub(super) fn interrupted_error(
 ) -> TerraformExecutionError {
     TerraformExecutionError::new(TerraformExecutionErrorKind::Interrupted {
         command,
-        output: process.output,
-        kill_error: process.kill_error,
+        output: Box::new(process.output),
+        interrupt_error: process.interrupt_error,
     })
 }
 
@@ -454,7 +614,7 @@ pub(super) fn non_zero_error(
     TerraformExecutionError::new(TerraformExecutionErrorKind::NonZero {
         command,
         status: process.status.unwrap_or(ProcessStatus::Signaled),
-        output: process.output,
+        output: Box::new(process.output),
     })
 }
 
@@ -467,6 +627,7 @@ impl ProcessRunner for SystemProcessRunner {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        configure_process_group(&mut command);
         let child = command.spawn()?;
         Ok(Box::new(SystemRunningProcess::new(child)))
     }
@@ -509,8 +670,8 @@ impl RunningProcess for SystemRunningProcess {
             .map(|status| status.map(process_status))
     }
 
-    fn kill(&mut self) -> io::Result<()> {
-        self.child.kill()
+    fn request_interrupt(&mut self) -> io::Result<()> {
+        request_interrupt(&self.child)
     }
 
     fn wait(&mut self) -> io::Result<ProcessStatus> {
@@ -529,10 +690,45 @@ impl Drop for SystemRunningProcess {
     fn drop(&mut self) {
         let running = self.child.try_wait().ok().flatten().is_none();
         if running {
-            let _ = self.child.kill();
+            let _ = request_interrupt(&self.child);
             let _ = self.child.wait();
         }
         let _ = join_readers(&mut self.readers);
+    }
+}
+
+#[cfg(unix)]
+const fn configure_process_group(_command: &mut Command) {}
+
+#[cfg(windows)]
+fn configure_process_group(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+
+    command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP);
+}
+
+#[cfg(unix)]
+fn request_interrupt(child: &Child) -> io::Result<()> {
+    let pid = i32::try_from(child.id()).map_err(|_| io::Error::other("child PID is too large"))?;
+    // SAFETY: kill is called with the live child PID and a valid signal constant.
+    let result = unsafe { libc::kill(pid, libc::SIGINT) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(windows)]
+fn request_interrupt(child: &Child) -> io::Result<()> {
+    use windows_sys::Win32::System::Console::{CTRL_BREAK_EVENT, GenerateConsoleCtrlEvent};
+
+    // SAFETY: the child was created as its own process group and its PID is that group ID.
+    let result = unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, child.id()) };
+    if result != 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
     }
 }
 
@@ -616,7 +812,11 @@ mod tests {
 
     impl ProcessOutput {
         pub(crate) const fn new(stdout: Vec<u8>, stderr: Vec<u8>) -> Self {
-            Self { stdout, stderr }
+            Self {
+                stdout,
+                stderr,
+                ordered: Vec::new(),
+            }
         }
 
         pub(crate) fn stdout(&self) -> &[u8] {
@@ -636,5 +836,52 @@ mod tests {
         pub(crate) fn cleanup_error(&self) -> Option<&str> {
             self.cleanup_error.as_deref()
         }
+    }
+
+    fn log_text(event: &ExecutionEvent) -> Option<(EventStream, &str)> {
+        let ExecutionEventKind::Log(line) = &event.kind else {
+            return None;
+        };
+        Some((line.stream, line.text.as_str()))
+    }
+
+    #[test]
+    fn text_parser_preserves_interleaved_stream_order_and_split_utf8() {
+        let now = Instant::now();
+        let mut parser = TextLineParser::default();
+        let message = "初期化しました\n".as_bytes();
+        let split = "初".len() - 1;
+
+        assert!(
+            parser
+                .push(EventStream::Stdout, &message[..split], now)
+                .is_empty()
+        );
+        let stderr = parser.push(EventStream::Stderr, b"warning\n", now);
+        let stdout = parser.push(EventStream::Stdout, &message[split..], now);
+
+        assert_eq!(log_text(&stderr[0]), Some((EventStream::Stderr, "warning")));
+        assert_eq!(
+            log_text(&stdout[0]),
+            Some((EventStream::Stdout, "初期化しました"))
+        );
+    }
+
+    #[test]
+    fn text_parser_flushes_a_final_line_without_newline() {
+        let now = Instant::now();
+        let mut parser = TextLineParser::default();
+
+        assert!(
+            parser
+                .push(EventStream::Stdout, b"final line", now)
+                .is_empty()
+        );
+        let remainder = parser.finish(EventStream::Stdout, now);
+
+        assert_eq!(
+            log_text(&remainder[0]),
+            Some((EventStream::Stdout, "final line"))
+        );
     }
 }

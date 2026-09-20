@@ -10,18 +10,260 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 
-use crate::app::execution::{ExecutionEvent, ExecutionPhase};
+use crate::app::execution::{
+    DiagnosticSeverity, ExecutionEvent, ExecutionEventKind, ExecutionPhase,
+};
+#[cfg(test)]
 use crate::app::plan::Plan;
+use crate::app::review::PlanReview;
 use crate::infra::CancellationToken;
 
 use super::{
     command::{
         ProcessRunner, ProcessStatus, TerraformCommand, TerraformExecutionError,
         TerraformExecutionErrorKind, interrupted_error, non_zero_error, run_command_with_events,
+        run_command_with_text_events,
     },
-    show::read_plan,
+    show::read_review,
+    workspace::read_workspace_with_runner,
 };
 
+#[cfg(test)]
+use super::show::read_plan;
+
+pub(crate) struct PlannedReview {
+    review: PlanReview,
+    saved_plan: SavedPlan,
+}
+
+impl PlannedReview {
+    pub(crate) fn into_parts(self) -> (PlanReview, SavedPlan) {
+        (self.review, self.saved_plan)
+    }
+}
+
+pub(crate) struct SavedPlan {
+    path: Option<PathBuf>,
+}
+
+impl SavedPlan {
+    fn create() -> io::Result<Self> {
+        create_plan_path().map(|path| Self { path: Some(path) })
+    }
+
+    #[must_use]
+    fn path(&self) -> &Path {
+        self.path
+            .as_deref()
+            .expect("saved plan path should exist until cleanup")
+    }
+
+    pub(crate) fn cleanup(mut self) -> io::Result<()> {
+        self.remove()
+    }
+
+    fn remove(&mut self) -> io::Result<()> {
+        let Some(path) = self.path.take() else {
+            return Ok(());
+        };
+        match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+impl Drop for SavedPlan {
+    fn drop(&mut self) {
+        let _ = self.remove();
+    }
+}
+
+pub(crate) fn run_review(
+    root: &Path,
+    cancellation: &CancellationToken,
+    runner: &dyn ProcessRunner,
+    event_sink: &mut dyn FnMut(ExecutionEvent),
+    phase_sink: &mut dyn FnMut(ExecutionPhase),
+) -> Result<PlannedReview, TerraformExecutionError> {
+    let saved_plan = SavedPlan::create().map_err(|error| {
+        TerraformExecutionError::new(TerraformExecutionErrorKind::TemporaryPlan {
+            message: error.to_string(),
+        })
+    })?;
+    let result = execute_review(
+        root,
+        saved_plan.path(),
+        cancellation,
+        runner,
+        event_sink,
+        phase_sink,
+    );
+
+    match result {
+        Ok(review) => Ok(PlannedReview { review, saved_plan }),
+        Err(error) => match saved_plan.cleanup() {
+            Ok(()) => Err(error),
+            Err(cleanup) => Err(error.with_cleanup_error(&cleanup)),
+        },
+    }
+}
+
+fn execute_review(
+    root: &Path,
+    plan_path: &Path,
+    cancellation: &CancellationToken,
+    runner: &dyn ProcessRunner,
+    event_sink: &mut dyn FnMut(ExecutionEvent),
+    phase_sink: &mut dyn FnMut(ExecutionPhase),
+) -> Result<PlanReview, TerraformExecutionError> {
+    let mut diagnostics = Vec::new();
+    let (workspace, document, metadata) = {
+        let mut sink = |event: ExecutionEvent| {
+            if let ExecutionEventKind::Diagnostic(diagnostic) = &event.kind
+                && matches!(
+                    diagnostic.severity,
+                    DiagnosticSeverity::Warning
+                        | DiagnosticSeverity::Error
+                        | DiagnosticSeverity::Unknown
+                )
+            {
+                diagnostics.push(diagnostic.clone());
+            }
+            event_sink(event);
+        };
+
+        phase_sink(ExecutionPhase::Initializing);
+        run_required_command(
+            root,
+            TerraformCommand::Init,
+            &["init", "-input=false", "-no-color"],
+            cancellation,
+            runner,
+            &mut sink,
+            true,
+        )?;
+        let workspace = read_workspace_with_runner(root, cancellation, runner)?;
+        sink(ExecutionEvent {
+            received_at: std::time::Instant::now(),
+            kind: ExecutionEventKind::Workspace(workspace.clone()),
+        });
+
+        phase_sink(ExecutionPhase::Planning);
+        let plan_arguments = review_plan_arguments(plan_path);
+        let output = run_command_with_events(
+            root,
+            TerraformCommand::Plan,
+            &plan_arguments,
+            cancellation,
+            runner,
+            Some(&mut sink),
+        )?;
+        if output.interrupted {
+            return Err(interrupted_error(TerraformCommand::Plan, output));
+        }
+        if !output.status.is_some_and(ProcessStatus::is_plan_success) {
+            return Err(non_zero_error(TerraformCommand::Plan, output));
+        }
+        let plan_changed = output.status.and_then(ProcessStatus::code) == Some(2);
+
+        phase_sink(ExecutionPhase::Reading);
+        let (document, metadata) =
+            read_review(root, plan_path, plan_changed, cancellation, runner)?;
+        (workspace, document, metadata)
+    };
+    Ok(PlanReview::new(
+        root.to_owned(),
+        workspace,
+        document,
+        metadata,
+        diagnostics,
+    ))
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "command execution keeps root, cancellation, runner, and event ownership explicit"
+)]
+fn run_required_command(
+    root: &Path,
+    command: TerraformCommand,
+    arguments: &[&str],
+    cancellation: &CancellationToken,
+    runner: &dyn ProcessRunner,
+    event_sink: &mut dyn FnMut(ExecutionEvent),
+    human_output: bool,
+) -> Result<(), TerraformExecutionError> {
+    let arguments = arguments.iter().map(OsString::from).collect::<Vec<_>>();
+    let output = if human_output {
+        run_command_with_text_events(
+            root,
+            command,
+            &arguments,
+            cancellation,
+            runner,
+            Some(event_sink),
+        )?
+    } else {
+        run_command_with_events(
+            root,
+            command,
+            &arguments,
+            cancellation,
+            runner,
+            Some(event_sink),
+        )?
+    };
+    if output.interrupted {
+        return Err(interrupted_error(command, output));
+    }
+    if !output.status.is_some_and(ProcessStatus::is_success) {
+        return Err(non_zero_error(command, output));
+    }
+    Ok(())
+}
+
+fn review_plan_arguments(plan_path: &Path) -> Vec<OsString> {
+    let mut output = OsString::from("-out=");
+    output.push(plan_path.as_os_str());
+    vec![
+        OsString::from("plan"),
+        OsString::from("-input=false"),
+        OsString::from("-json"),
+        OsString::from("-detailed-exitcode"),
+        output,
+    ]
+}
+
+fn create_plan_path() -> io::Result<PathBuf> {
+    let directory = env::temp_dir();
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let process_id = std::process::id();
+    for attempt in 0..100 {
+        let path = directory.join(format!(
+            "terracotta-{process_id}-{timestamp}-{attempt}.tfplan"
+        ));
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        match options.open(&path) {
+            Ok(_) => return Ok(path),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not allocate a unique Terraform plan path",
+    ))
+}
+
+#[cfg(test)]
 pub(crate) fn run_plan(
     root: &Path,
     cancellation: &CancellationToken,
@@ -46,6 +288,7 @@ pub(crate) fn run_plan(
     finish_plan(temporary_plan, result)
 }
 
+#[cfg(test)]
 fn execute_plan(
     root: &Path,
     plan_path: &Path,
@@ -74,6 +317,7 @@ fn execute_plan(
     read_plan(root, plan_path, cancellation, runner)
 }
 
+#[cfg(test)]
 fn finish_plan(
     temporary_plan: TemporaryPlan,
     result: Result<Plan, TerraformExecutionError>,
@@ -91,6 +335,7 @@ fn finish_plan(
     }
 }
 
+#[cfg(test)]
 fn plan_arguments(plan_path: &Path) -> Vec<OsString> {
     let mut output = OsString::from("-out=");
     output.push(plan_path.as_os_str());
@@ -102,10 +347,12 @@ fn plan_arguments(plan_path: &Path) -> Vec<OsString> {
     ]
 }
 
+#[cfg(test)]
 struct TemporaryPlan {
     path: PathBuf,
 }
 
+#[cfg(test)]
 impl TemporaryPlan {
     fn create() -> io::Result<Self> {
         let directory = env::temp_dir();
@@ -159,9 +406,7 @@ mod tests {
 
     use super::super::command::{ProcessOutput, ProcessOutputChunk, RunningProcess};
     use super::*;
-    use crate::app::execution::{
-        EventStream, ExecutionEventKind, ProcessExitStatus, ProcessTermination,
-    };
+    use crate::app::execution::{EventStream, ProcessExitStatus, ProcessTermination};
     use std::process::Command;
 
     fn execute_plan_without_events(
@@ -207,7 +452,7 @@ mod tests {
         Pending {
             cancellation: CancellationToken,
             output: ProcessOutput,
-            killed: Rc<Cell<bool>>,
+            interrupt_count: Rc<Cell<usize>>,
         },
         MakePlanPathDirectory,
     }
@@ -296,9 +541,12 @@ mod tests {
             }
         }
 
-        fn kill(&mut self) -> io::Result<()> {
-            if let Some(FakeResponse::Pending { killed, .. }) = self.response.as_ref() {
-                killed.set(true);
+        fn request_interrupt(&mut self) -> io::Result<()> {
+            if let Some(FakeResponse::Pending {
+                interrupt_count, ..
+            }) = self.response.as_ref()
+            {
+                interrupt_count.set(interrupt_count.get() + 1);
             }
             Ok(())
         }
@@ -333,6 +581,13 @@ mod tests {
         FakeResponse::Exit {
             status: ProcessStatus::Exited(0),
             output: ProcessOutput::new(PLAN_JSON.to_vec(), Vec::new()),
+        }
+    }
+
+    fn output_process(status: ProcessStatus, stdout: &[u8], stderr: &[u8]) -> FakeResponse {
+        FakeResponse::Exit {
+            status,
+            output: ProcessOutput::new(stdout.to_vec(), stderr.to_vec()),
         }
     }
 
@@ -411,6 +666,174 @@ mod tests {
             .iter()
             .map(|argument| argument.to_string_lossy().into_owned())
             .collect()
+    }
+
+    #[test]
+    fn review_workflow_runs_init_plan_and_text_then_json_show_in_the_same_root() {
+        let plan_json = json!({
+            "format_version": "1.0",
+            "applyable": true,
+            "resource_changes": [{
+                "address": "terraform_data.api",
+                "change": {"actions": ["update"]}
+            }]
+        })
+        .to_string();
+        let runner = FakeRunner::new([
+            output_process(ProcessStatus::Exited(0), b"init out\n", b"init err\n"),
+            output_process(ProcessStatus::Exited(0), b"default\n", b""),
+            output_process(ProcessStatus::Exited(2), b"", b""),
+            output_process(ProcessStatus::Exited(0), b"standard plan\n", b""),
+            output_process(ProcessStatus::Exited(0), plan_json.as_bytes(), b""),
+        ]);
+        let cancellation = CancellationToken::new();
+        let mut events = Vec::new();
+        let mut phases = Vec::new();
+
+        let planned = run_review(
+            Path::new("/root with spaces"),
+            &cancellation,
+            &runner,
+            &mut |event| events.push(event),
+            &mut |phase| phases.push(phase),
+        )
+        .expect("review should complete");
+        let (review, saved_plan) = planned.into_parts();
+        let saved_path = saved_plan.path().to_owned();
+
+        assert_eq!(review.document().text(), "standard plan\n");
+        assert_eq!(review.metadata().changes(), 1);
+        assert!(
+            saved_path.exists(),
+            "saved plan should outlive plan parsing"
+        );
+        assert_eq!(
+            phases,
+            [
+                ExecutionPhase::Initializing,
+                ExecutionPhase::Planning,
+                ExecutionPhase::Reading
+            ]
+        );
+        assert!(events.iter().any(|event| {
+            matches!(
+                &event.kind,
+                ExecutionEventKind::Log(line)
+                    if line.stream == EventStream::Stdout && line.text == "init out"
+            )
+        }));
+        assert!(events.iter().any(|event| {
+            matches!(
+                &event.kind,
+                ExecutionEventKind::Log(line)
+                    if line.stream == EventStream::Stderr && line.text == "init err"
+            )
+        }));
+
+        let invocations = runner.invocations.borrow();
+        assert_eq!(invocations.len(), 5);
+        assert!(
+            invocations
+                .iter()
+                .all(|invocation| invocation.root == Path::new("/root with spaces"))
+        );
+        assert_eq!(
+            argument_strings(&invocations[0].arguments),
+            ["init", "-input=false", "-no-color"]
+        );
+        assert_eq!(
+            argument_strings(&invocations[1].arguments),
+            ["workspace", "show"]
+        );
+        assert_eq!(
+            &argument_strings(&invocations[2].arguments)[..4],
+            ["plan", "-input=false", "-json", "-detailed-exitcode"]
+        );
+        assert_eq!(
+            argument_strings(&invocations[3].arguments)[..2],
+            ["show", "-no-color"]
+        );
+        assert_eq!(
+            argument_strings(&invocations[4].arguments)[..2],
+            ["show", "-json"]
+        );
+        drop(invocations);
+
+        saved_plan.cleanup().expect("saved plan should be removed");
+        assert!(!saved_path.exists());
+    }
+
+    #[test]
+    fn review_workflow_stops_after_init_failure() {
+        let runner = FakeRunner::new([output_process(
+            ProcessStatus::Exited(1),
+            b"",
+            b"invalid configuration\n",
+        )]);
+        let cancellation = CancellationToken::new();
+
+        let result = run_review(
+            Path::new("/root"),
+            &cancellation,
+            &runner,
+            &mut |_| {},
+            &mut |_| {},
+        );
+        let Err(error) = result else {
+            panic!("init failure should stop the workflow");
+        };
+
+        assert!(matches!(
+            error.kind(),
+            TerraformExecutionErrorKind::NonZero {
+                command: TerraformCommand::Init,
+                ..
+            }
+        ));
+        assert_eq!(runner.invocations.borrow().len(), 1);
+    }
+
+    #[test]
+    fn review_workflow_keeps_primary_and_cleanup_failures() {
+        let runner = FakeRunner::new([
+            successful_process(),
+            output_process(ProcessStatus::Exited(0), b"default\n", b""),
+            FakeResponse::MakePlanPathDirectory,
+            FakeResponse::LaunchError("show unavailable"),
+        ]);
+        let cancellation = CancellationToken::new();
+
+        let result = run_review(
+            Path::new("/root"),
+            &cancellation,
+            &runner,
+            &mut |_| {},
+            &mut |_| {},
+        );
+        let Err(error) = result else {
+            panic!("show and cleanup failures should be reported");
+        };
+
+        assert!(matches!(
+            error.kind(),
+            TerraformExecutionErrorKind::Launch {
+                command: TerraformCommand::Show,
+                ..
+            }
+        ));
+        assert!(error.cleanup_error().is_some());
+        let plan_path = runner.invocations.borrow()[2]
+            .arguments
+            .iter()
+            .find_map(|argument| {
+                argument
+                    .to_str()
+                    .and_then(|argument| argument.strip_prefix("-out="))
+                    .map(PathBuf::from)
+            })
+            .expect("plan invocation should contain the saved path");
+        assert!(plan_path.is_dir());
+        fs::remove_dir(plan_path).expect("synthetic plan directory should be removed");
     }
 
     #[test]
@@ -614,11 +1037,11 @@ mod tests {
     #[test]
     fn interrupts_and_reaps_plan_before_cleanup_without_starting_show() {
         let cancellation = CancellationToken::new();
-        let killed = Rc::new(Cell::new(false));
+        let interrupt_count = Rc::new(Cell::new(0));
         let runner = FakeRunner::new([FakeResponse::Pending {
             cancellation: cancellation.clone(),
             output: ProcessOutput::empty(),
-            killed: killed.clone(),
+            interrupt_count: interrupt_count.clone(),
         }]);
         let (temporary_plan, directory) = temporary_plan_with_space();
 
@@ -632,7 +1055,11 @@ mod tests {
                 ..
             }
         ));
-        assert!(killed.get(), "interrupted process should be killed");
+        assert_eq!(
+            interrupt_count.get(),
+            1,
+            "interrupt should be requested once"
+        );
         assert_eq!(runner.invocations.borrow().len(), 1);
         assert!(error.cleanup_error().is_none());
         fs::remove_dir(directory).expect("test directory should be empty");
@@ -641,13 +1068,13 @@ mod tests {
     #[test]
     fn interrupts_and_reaps_show_before_cleanup() {
         let cancellation = CancellationToken::new();
-        let killed = Rc::new(Cell::new(false));
+        let interrupt_count = Rc::new(Cell::new(0));
         let runner = FakeRunner::new([
             successful_process(),
             FakeResponse::Pending {
                 cancellation: cancellation.clone(),
                 output: ProcessOutput::empty(),
-                killed: killed.clone(),
+                interrupt_count: interrupt_count.clone(),
             },
         ]);
         let (temporary_plan, directory) = temporary_plan_with_space();
@@ -662,7 +1089,11 @@ mod tests {
                 ..
             }
         ));
-        assert!(killed.get(), "interrupted process should be killed");
+        assert_eq!(
+            interrupt_count.get(),
+            1,
+            "interrupt should be requested once"
+        );
         assert_eq!(runner.invocations.borrow().len(), 2);
         fs::remove_dir(directory).expect("test directory should be empty");
     }

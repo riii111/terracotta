@@ -16,7 +16,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     Plan {
-        #[arg(long, value_name = "REF")]
+        #[arg(long, value_name = "REF", hide = true)]
         compare_ref: Option<String>,
     },
 }

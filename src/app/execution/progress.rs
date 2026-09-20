@@ -1,9 +1,11 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
+#[cfg(test)]
+use super::event::DiagnosticSeverity;
 use super::event::{
-    Diagnostic, DiagnosticSeverity, ExecutionEvent, ExecutionEventKind, ProcessTermination,
-    ResourceEventKind,
+    Diagnostic, EventStream, ExecutionEvent, ExecutionEventKind, ExecutionLogLine,
+    ProcessTermination, ResourceEventKind,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -11,6 +13,7 @@ pub(crate) struct ExecutionProgress {
     resources: Vec<(String, ResourceEventKind)>,
     resource_indices: BTreeMap<String, usize>,
     diagnostics: Vec<Diagnostic>,
+    log: Vec<ExecutionLogLine>,
     termination: Option<ProcessTermination>,
     last_event_at: Option<Instant>,
 }
@@ -20,7 +23,12 @@ impl ExecutionProgress {
         let ExecutionEvent { received_at, kind } = event;
         self.last_event_at = Some(received_at);
         match kind {
+            ExecutionEventKind::Log(line) => self.log.push(line),
             ExecutionEventKind::Resource(resource) => {
+                self.log.push(ExecutionLogLine {
+                    stream: EventStream::Stdout,
+                    text: format!("{}: {:?}", resource.address, resource.kind),
+                });
                 if let Some(&index) = self.resource_indices.get(&resource.address) {
                     self.resources[index].1 = resource.kind;
                 } else {
@@ -29,17 +37,42 @@ impl ExecutionProgress {
                     self.resources.push((resource.address, resource.kind));
                 }
             }
-            ExecutionEventKind::Diagnostic(diagnostic) => self.diagnostics.push(diagnostic),
-            ExecutionEventKind::Summary(_)
-            | ExecutionEventKind::Phase(_)
-            | ExecutionEventKind::RepositoryRoot(_)
+            ExecutionEventKind::Diagnostic(diagnostic) => {
+                self.log.push(ExecutionLogLine {
+                    stream: EventStream::Stderr,
+                    text: diagnostic.detail.as_ref().map_or_else(
+                        || diagnostic.summary.clone(),
+                        |detail| format!("{}\n{detail}", diagnostic.summary),
+                    ),
+                });
+                self.diagnostics.push(diagnostic);
+            }
+            ExecutionEventKind::Informational {
+                message: Some(message),
+                ..
+            } => self.log.push(ExecutionLogLine {
+                stream: EventStream::Stdout,
+                text: message,
+            }),
+            ExecutionEventKind::Summary(summary) => self.log.push(ExecutionLogLine {
+                stream: EventStream::Stdout,
+                text: format!(
+                    "Plan: {} to add, {} to change, {} to destroy.",
+                    summary.adds.unwrap_or(0),
+                    summary.changes.unwrap_or(0),
+                    summary.removes.unwrap_or(0)
+                ),
+            }),
+            ExecutionEventKind::Phase(_)
             | ExecutionEventKind::Workspace(_)
-            | ExecutionEventKind::Git(_)
-            | ExecutionEventKind::Informational { .. } => {}
+            | ExecutionEventKind::Informational { message: None, .. } => {}
+            #[cfg(test)]
+            ExecutionEventKind::RepositoryRoot(_) | ExecutionEventKind::Git(_) => {}
             ExecutionEventKind::Terminated(termination) => self.termination = Some(termination),
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn resources(&self) -> impl Iterator<Item = (&str, ResourceEventKind)> {
         self.resources
             .iter()
@@ -47,10 +80,16 @@ impl ExecutionProgress {
     }
 
     #[must_use]
+    pub(crate) fn log(&self) -> &[ExecutionLogLine] {
+        &self.log
+    }
+
+    #[must_use]
     pub(crate) fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
     }
 
+    #[cfg(test)]
     pub(crate) fn take_review_diagnostics(&mut self) -> Vec<Diagnostic> {
         std::mem::take(&mut self.diagnostics)
             .into_iter()

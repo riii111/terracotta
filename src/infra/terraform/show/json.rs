@@ -1,7 +1,5 @@
-use std::collections::BTreeMap;
-use std::fmt::{Display, Formatter};
-
 use serde_json::{Map, Value};
+use std::collections::BTreeMap;
 
 use crate::app::plan::{
     Plan, PlanAction, PlanSummary, PlanValue, ReplacePathSegment, ResourceChange,
@@ -11,39 +9,7 @@ use crate::app::plan::{
 
 const SUPPORTED_FORMAT_MAJOR: u64 = 1;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum PlanParseError {
-    InvalidJson,
-    RootMustBeObject,
-    MissingField(&'static str),
-    InvalidField(&'static str),
-    UnsupportedFormatMajor(u64),
-}
-
-impl Display for PlanParseError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::InvalidJson => formatter.write_str("Terraform plan JSON is invalid"),
-            Self::RootMustBeObject => {
-                formatter.write_str("Terraform plan JSON root must be an object")
-            }
-            Self::MissingField(field) => {
-                write!(formatter, "Terraform plan JSON is missing {field}")
-            }
-            Self::InvalidField(field) => {
-                write!(formatter, "Terraform plan JSON has an invalid {field}")
-            }
-            Self::UnsupportedFormatMajor(major) => {
-                write!(
-                    formatter,
-                    "Terraform plan JSON format major version {major} is unsupported"
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for PlanParseError {}
+use super::PlanParseError;
 
 /// Parses bytes containing the JSON document emitted by `terraform show -json`.
 ///
