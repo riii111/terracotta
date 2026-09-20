@@ -478,6 +478,12 @@ mod tests {
         expected: bool,
     }
 
+    #[derive(Debug, Clone, Copy)]
+    enum CopyFlashTarget {
+        Review,
+        Apply,
+    }
+
     struct TestClipboard;
 
     impl ClipboardWriter for TestClipboard {
@@ -554,10 +560,20 @@ mod tests {
         let flash_expired_at = flash_started_at + Duration::from_millis(200);
 
         let mut review_flash = review_state();
-        record_copy(&mut review_flash, CopyTarget::Plan, flash_started_at);
+        record_copy(
+            &mut review_flash,
+            CopyTarget::Plan,
+            CopyResult::Written,
+            flash_started_at,
+        );
 
         let mut apply_flash = apply_state(started_at, Some(ApplyStatus::Succeeded));
-        record_copy(&mut apply_flash, CopyTarget::Execution, flash_started_at);
+        record_copy(
+            &mut apply_flash,
+            CopyTarget::Execution,
+            CopyResult::Written,
+            flash_started_at,
+        );
 
         assert_draw_cases([
             DrawCase {
@@ -649,29 +665,54 @@ mod tests {
         assert!(terminal_text(&terminal).contains("Apply this plan? (yes/no): y|"));
     }
 
-    #[test]
-    fn expired_copy_flash_draws_once_through_the_runtime_step() {
+    #[rstest]
+    #[case::review_written(CopyFlashTarget::Review, CopyResult::Written)]
+    #[case::apply_written(CopyFlashTarget::Apply, CopyResult::Written)]
+    #[case::review_failed(CopyFlashTarget::Review, CopyResult::Failed)]
+    #[case::apply_failed(CopyFlashTarget::Apply, CopyResult::Failed)]
+    fn copy_flash_lifecycle_draws_through_the_runtime_step(
+        #[case] target: CopyFlashTarget,
+        #[case] result: CopyResult,
+    ) {
         let started_at = Instant::now();
         let flash_active_at = started_at + Duration::from_millis(100);
         let expired_at = started_at + Duration::from_millis(200);
-        let mut state = apply_state(started_at, None);
-        if let SessionState::Apply(execution) = &mut state {
-            execution.record(ExecutionEvent {
-                received_at: started_at,
-                kind: ExecutionEventKind::Informational {
-                    event_type: "log".to_owned(),
-                    message: Some("flash".to_owned()),
-                },
-            });
-            execution.finish_apply(ApplyStatus::Succeeded, None, None, started_at);
-        }
-        record_copy(&mut state, CopyTarget::Execution, started_at);
+        let mut state = copy_flash_state(target, started_at);
+        record_copy(&mut state, target.copy_target(), result, started_at);
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
-        let mut dirty = false;
         let execution_view = execution::ExecutionViewState::default();
-        let review_view = plan_review::PlanReviewViewState::default();
+        let review_view = match target {
+            CopyFlashTarget::Review => copy_review_view(&state),
+            CopyFlashTarget::Apply => plan_review::PlanReviewViewState::default(),
+        };
         let confirmation_view = plan_review::ApplyConfirmationViewState::default();
 
+        let mut dirty = result == CopyResult::Failed;
+        assert!(
+            draw_if_needed(
+                &mut state,
+                &mut terminal,
+                execution_view,
+                &review_view,
+                &confirmation_view,
+                &mut dirty,
+                started_at,
+            )
+            .expect("copy result should render")
+        );
+
+        if result == CopyResult::Failed {
+            assert!(!copy_target_has_flash_style(target, &terminal));
+            assert!(terminal_text(&terminal).contains("Copy failed: clipboard unavailable."));
+            assert!(!should_draw(&state, false, started_at));
+            return;
+        }
+
+        assert!(
+            copy_target_has_flash_style(target, &terminal),
+            "{}",
+            terminal_text(&terminal)
+        );
         assert!(
             draw_if_needed(
                 &mut state,
@@ -685,8 +726,8 @@ mod tests {
             .expect("active flash should render")
         );
 
-        assert!(buffer_has_flash_style(&terminal));
-        assert!(state.apply().expect("apply state").copy_flash_pending());
+        assert!(copy_target_has_flash_style(target, &terminal));
+        assert!(copy_flash_pending(&state, target));
 
         assert!(
             draw_if_needed(
@@ -701,10 +742,24 @@ mod tests {
             .expect("expired flash should render")
         );
 
-        assert!(!state.apply().expect("apply state").copy_flash_pending());
+        assert!(!copy_flash_pending(&state, target));
         assert!(!should_draw(&state, false, expired_at));
-        assert!(!buffer_has_flash_style(&terminal));
-        assert!(terminal_text(&terminal).contains("Apply complete"));
+        assert!(!copy_target_has_flash_style(target, &terminal));
+        match target {
+            CopyFlashTarget::Review => {
+                assert!(terminal_text(&terminal).contains("Copied."));
+                assert!(buffer_text_prefix_has_style(
+                    &terminal,
+                    "terraform_data.api",
+                    "terraform_data",
+                    Color::Rgb(0x11, 0x14, 0x19),
+                    Color::Rgb(0xf4, 0x9e, 0x4c),
+                ));
+            }
+            CopyFlashTarget::Apply => {
+                assert!(terminal_text(&terminal).contains("Apply complete"));
+            }
+        }
 
         assert!(
             !draw_if_needed(
@@ -1087,6 +1142,70 @@ mod tests {
             .any(|cell| cell.bg == Color::Rgb(0xf4, 0x9e, 0x4c))
     }
 
+    fn buffer_text_prefix_has_style(
+        terminal: &Terminal<TestBackend>,
+        text: &str,
+        prefix: &str,
+        foreground: Color,
+        background: Color,
+    ) -> bool {
+        let buffer = terminal.backend().buffer();
+        let area = buffer.area();
+        let symbols_per_row = |y| {
+            (area.x..area.right())
+                .map(|x| buffer.cell((x, y)).expect("text cell").symbol())
+                .collect::<Vec<_>>()
+        };
+        for y in area.y..area.bottom() {
+            let symbols = symbols_per_row(y);
+            for start in 0..symbols.len() {
+                if !symbols[start..]
+                    .iter()
+                    .copied()
+                    .collect::<String>()
+                    .starts_with(text)
+                {
+                    continue;
+                }
+                if (0..prefix.chars().count()).all(|offset| {
+                    let cell = buffer
+                        .cell((
+                            area.x + u16::try_from(start + offset).expect("text offset"),
+                            y,
+                        ))
+                        .expect("text cell");
+                    cell.fg == foreground && cell.bg == background
+                }) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn copy_target_has_flash_style(
+        target: CopyFlashTarget,
+        terminal: &Terminal<TestBackend>,
+    ) -> bool {
+        match target {
+            CopyFlashTarget::Review => buffer_text_prefix_has_style(
+                terminal,
+                "copy body marker",
+                "copy body marker",
+                Color::Rgb(0x11, 0x14, 0x19),
+                Color::Rgb(0xf4, 0x9e, 0x4c),
+            ),
+            CopyFlashTarget::Apply => buffer_has_flash_style(terminal),
+        }
+    }
+
+    fn copy_flash_pending(state: &SessionState, target: CopyFlashTarget) -> bool {
+        match target {
+            CopyFlashTarget::Review => state.review().expect("review state").copy_flash_pending(),
+            CopyFlashTarget::Apply => state.apply().expect("apply state").copy_flash_pending(),
+        }
+    }
+
     fn review_state() -> SessionState {
         SessionState::Review(Box::new(ReviewSessionState::new(PlanReview::new(
             PathBuf::from("/project"),
@@ -1149,14 +1268,87 @@ mod tests {
         ))))
     }
 
-    fn record_copy(state: &mut SessionState, target: CopyTarget, now: Instant) {
-        session::update(
-            state,
-            Action::CopyCompleted {
-                target,
-                result: CopyResult::Written,
-            },
-            now,
+    fn copy_flash_state(target: CopyFlashTarget, started_at: Instant) -> SessionState {
+        match target {
+            CopyFlashTarget::Review => {
+                let mut review = PlanReview::new(
+                    PathBuf::from("/project"),
+                    "default".to_owned(),
+                    plan_document(copy_plan_text()),
+                    PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
+                    Vec::new(),
+                );
+                review.set_search_query("terraform_data".to_owned());
+                SessionState::Review(Box::new(ReviewSessionState::new(review)))
+            }
+            CopyFlashTarget::Apply => {
+                let mut state = apply_state(started_at, None);
+                if let SessionState::Apply(execution) = &mut state {
+                    execution.record(ExecutionEvent {
+                        received_at: started_at,
+                        kind: ExecutionEventKind::Informational {
+                            event_type: "log".to_owned(),
+                            message: Some("flash".to_owned()),
+                        },
+                    });
+                    execution.finish_apply(ApplyStatus::Succeeded, None, None, started_at);
+                }
+                state
+            }
+        }
+    }
+
+    fn copy_review_view(state: &SessionState) -> plan_review::PlanReviewViewState {
+        let area = Rect::new(0, 0, 80, 24);
+        let review = state.review().expect("review state");
+        let query = review.review().search_query();
+        let layout = plan_review::layout(area, false, review);
+        let mut view = plan_review::PlanReviewViewState::default();
+        view.apply(
+            plan_review::PlanReviewInput::Down,
+            area,
+            layout.max_vertical(),
+            layout.max_horizontal(),
+            query,
         );
+        view.apply(
+            plan_review::PlanReviewInput::Right,
+            area,
+            layout.max_vertical(),
+            layout.max_horizontal(),
+            query,
+        );
+        view.apply(
+            plan_review::PlanReviewInput::SearchStart,
+            area,
+            layout.max_vertical(),
+            layout.max_horizontal(),
+            query,
+        );
+        view
+    }
+
+    fn copy_plan_text() -> String {
+        let mut lines = vec![
+            "Terraform will perform the following actions:".to_owned(),
+            String::new(),
+            "xcopy body marker remains visible after the notification and has a long suffix for horizontal scrolling".to_owned(),
+            "xterraform_data.api contains the search highlight that must return after the copy flash".to_owned(),
+        ];
+        lines.extend((0..40).map(|index| format!("synthetic plan page line {index}")));
+        format!("{}\n", lines.join("\n"))
+    }
+
+    fn record_copy(state: &mut SessionState, target: CopyTarget, result: CopyResult, now: Instant) {
+        session::update(state, Action::CopyCompleted { target, result }, now);
+    }
+
+    impl CopyFlashTarget {
+        fn copy_target(self) -> CopyTarget {
+            match self {
+                Self::Review => CopyTarget::Plan,
+                Self::Apply => CopyTarget::Execution,
+            }
+        }
     }
 }
