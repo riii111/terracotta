@@ -457,7 +457,10 @@ mod tests {
     use std::path::PathBuf;
 
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::{backend::TestBackend, style::Color};
+    use ratatui::{
+        backend::TestBackend,
+        style::{Color, Modifier},
+    };
     use rstest::rstest;
 
     use super::*;
@@ -666,28 +669,17 @@ mod tests {
     }
 
     #[rstest]
-    #[case::review_written(CopyFlashTarget::Review, CopyResult::Written)]
-    #[case::apply_written(CopyFlashTarget::Apply, CopyResult::Written)]
-    #[case::review_failed(CopyFlashTarget::Review, CopyResult::Failed)]
-    #[case::apply_failed(CopyFlashTarget::Apply, CopyResult::Failed)]
-    fn copy_flash_lifecycle_draws_through_the_runtime_step(
+    #[case::review(CopyFlashTarget::Review)]
+    #[case::apply(CopyFlashTarget::Apply)]
+    fn successful_copy_flash_lifecycle_draws_through_the_runtime_step(
         #[case] target: CopyFlashTarget,
-        #[case] result: CopyResult,
     ) {
         let started_at = Instant::now();
         let flash_active_at = started_at + Duration::from_millis(100);
         let expired_at = started_at + Duration::from_millis(200);
-        let mut state = copy_flash_state(target, started_at);
-        record_copy(&mut state, target.copy_target(), result, started_at);
-        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
-        let execution_view = execution::ExecutionViewState::default();
-        let review_view = match target {
-            CopyFlashTarget::Review => copy_review_view(&state),
-            CopyFlashTarget::Apply => plan_review::PlanReviewViewState::default(),
-        };
-        let confirmation_view = plan_review::ApplyConfirmationViewState::default();
-
-        let mut dirty = result == CopyResult::Failed;
+        let (mut state, mut terminal, execution_view, review_view, confirmation_view) =
+            copy_runtime_fixture(target, CopyResult::Written, started_at);
+        let mut dirty = false;
         assert!(
             draw_if_needed(
                 &mut state,
@@ -700,13 +692,6 @@ mod tests {
             )
             .expect("copy result should render")
         );
-
-        if result == CopyResult::Failed {
-            assert!(!copy_target_has_flash_style(target, &terminal));
-            assert!(terminal_text(&terminal).contains("Copy failed: clipboard unavailable."));
-            assert!(!should_draw(&state, false, started_at));
-            return;
-        }
 
         assert!(
             copy_target_has_flash_style(target, &terminal),
@@ -754,6 +739,7 @@ mod tests {
                     "terraform_data",
                     Color::Rgb(0x11, 0x14, 0x19),
                     Color::Rgb(0xf4, 0x9e, 0x4c),
+                    Modifier::BOLD,
                 ));
             }
             CopyFlashTarget::Apply => {
@@ -773,6 +759,34 @@ mod tests {
             )
             .expect("static result should remain rendered")
         );
+    }
+
+    #[rstest]
+    #[case::review(CopyFlashTarget::Review)]
+    #[case::apply(CopyFlashTarget::Apply)]
+    fn failed_copy_shows_only_the_notification_through_the_runtime_step(
+        #[case] target: CopyFlashTarget,
+    ) {
+        let started_at = Instant::now();
+        let (mut state, mut terminal, execution_view, review_view, confirmation_view) =
+            copy_runtime_fixture(target, CopyResult::Failed, started_at);
+        let mut dirty = true;
+
+        assert!(
+            draw_if_needed(
+                &mut state,
+                &mut terminal,
+                execution_view,
+                &review_view,
+                &confirmation_view,
+                &mut dirty,
+                started_at,
+            )
+            .expect("failed copy result should render")
+        );
+        assert!(!copy_target_has_flash_style(target, &terminal));
+        assert!(terminal_text(&terminal).contains("Copy failed: clipboard unavailable."));
+        assert!(!should_draw(&state, false, started_at));
     }
 
     #[rstest]
@@ -1148,6 +1162,7 @@ mod tests {
         prefix: &str,
         foreground: Color,
         background: Color,
+        modifier: Modifier,
     ) -> bool {
         let buffer = terminal.backend().buffer();
         let area = buffer.area();
@@ -1174,7 +1189,7 @@ mod tests {
                             y,
                         ))
                         .expect("text cell");
-                    cell.fg == foreground && cell.bg == background
+                    cell.fg == foreground && cell.bg == background && cell.modifier == modifier
                 }) {
                     return true;
                 }
@@ -1194,6 +1209,7 @@ mod tests {
                 "copy body marker",
                 Color::Rgb(0x11, 0x14, 0x19),
                 Color::Rgb(0xf4, 0x9e, 0x4c),
+                Modifier::empty(),
             ),
             CopyFlashTarget::Apply => buffer_has_flash_style(terminal),
         }
@@ -1296,6 +1312,35 @@ mod tests {
                 state
             }
         }
+    }
+
+    fn copy_runtime_fixture(
+        target: CopyFlashTarget,
+        result: CopyResult,
+        started_at: Instant,
+    ) -> (
+        SessionState,
+        Terminal<TestBackend>,
+        execution::ExecutionViewState,
+        plan_review::PlanReviewViewState,
+        plan_review::ApplyConfirmationViewState,
+    ) {
+        let mut state = copy_flash_state(target, started_at);
+        record_copy(&mut state, target.copy_target(), result, started_at);
+        let terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+        let execution_view = execution::ExecutionViewState::default();
+        let review_view = match target {
+            CopyFlashTarget::Review => copy_review_view(&state),
+            CopyFlashTarget::Apply => plan_review::PlanReviewViewState::default(),
+        };
+        let confirmation_view = plan_review::ApplyConfirmationViewState::default();
+        (
+            state,
+            terminal,
+            execution_view,
+            review_view,
+            confirmation_view,
+        )
     }
 
     fn copy_review_view(state: &SessionState) -> plan_review::PlanReviewViewState {
