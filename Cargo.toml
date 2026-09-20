@@ -14,7 +14,7 @@ test-support = []
 arboard = { version = "3.6.1", default-features = false }
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
-ratatui = "0.30"
+ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 
 [target.'cfg(unix)'.dependencies]
