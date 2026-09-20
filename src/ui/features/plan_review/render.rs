@@ -610,6 +610,35 @@ End of synthetic plan body."#;
         write_buffer_captures(name, buffer);
     }
 
+    fn assert_text_color(buffer: &Buffer, text: &str, color: Color) {
+        let area = buffer.area();
+        for y in area.y..area.bottom() {
+            let symbols = (area.x..area.right())
+                .map(|x| buffer.cell((x, y)).expect("plan cell").symbol())
+                .collect::<Vec<_>>();
+            let Some(start) = (0..symbols.len()).find(|&start| {
+                symbols[start..]
+                    .iter()
+                    .copied()
+                    .collect::<String>()
+                    .starts_with(text)
+            }) else {
+                continue;
+            };
+            for offset in 0..text.chars().count() {
+                let cell = buffer
+                    .cell((
+                        area.x + u16::try_from(start + offset).expect("plan offset"),
+                        y,
+                    ))
+                    .expect("plan cell");
+                assert_eq!(cell.fg, color, "{text}");
+            }
+            return;
+        }
+        panic!("text should be visible: {text}");
+    }
+
     #[test]
     fn renders_plan_review_normal_at_all_supported_sizes() {
         for &(width, height) in &SIZES {
@@ -679,13 +708,34 @@ End of synthetic plan body."#;
         );
         let text = buffer_text(&buffer);
         assert!(text.contains("Terraform will perform the following actions:"));
-        assert!(buffer.content().iter().any(|cell| cell.symbol() == "↑"));
-        assert!(buffer.content().iter().any(|cell| cell.symbol() == "→"));
-        assert!(buffer.content().iter().any(|cell| {
-            cell.fg == Color::Rgb(0xa3, 0xbe, 0x8c)
-                || cell.fg == Color::Rgb(0xbf, 0x61, 0x6a)
-                || cell.fg == Color::Rgb(0xeb, 0xcb, 0x8b)
-        }));
+        assert!(layout.vertical_scrollbar());
+        assert!(layout.horizontal_scrollbar());
+        let body = layout.body();
+        let vertical_x = body.x.saturating_add(body.width);
+        let horizontal_y = body.y.saturating_add(body.height);
+        let horizontal_end_x = vertical_x;
+        assert_eq!(buffer[(vertical_x, body.y)].symbol(), "↑");
+        assert_eq!(
+            buffer[(vertical_x, body.y)].fg,
+            Color::Rgb(0x50, 0x52, 0x5e)
+        );
+        assert_eq!(buffer[(body.x, horizontal_y)].symbol(), "←");
+        assert_eq!(
+            buffer[(body.x, horizontal_y)].fg,
+            Color::Rgb(0x50, 0x52, 0x5e)
+        );
+        assert_eq!(buffer[(horizontal_end_x, horizontal_y)].symbol(), "→");
+        assert_eq!(
+            buffer[(horizontal_end_x, horizontal_y)].fg,
+            Color::Rgb(0xc0, 0xb8, 0xb0)
+        );
+        assert_text_color(
+            &buffer,
+            "~ resource \"terraform_data\" \"api\"",
+            Color::Rgb(0xeb, 0xcb, 0x8b),
+        );
+        assert_text_color(&buffer, "- old_checksum", Color::Rgb(0xbf, 0x61, 0x6a));
+        assert_text_color(&buffer, "+ new_checksum", Color::Rgb(0xa3, 0xbe, 0x8c));
     }
 
     #[test]

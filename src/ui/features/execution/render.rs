@@ -399,10 +399,6 @@ mod tests {
             EventStream::Stdout,
         ),
         (
-            "Warning: synthetic provider emitted a non-blocking diagnostic",
-            EventStream::Stderr,
-        ),
-        (
             "terraform_data.worker: Replacing... [id=worker-20260920]",
             EventStream::Stdout,
         ),
@@ -426,6 +422,12 @@ mod tests {
             "A deliberately long synthetic apply line keeps horizontal scrolling visible in the production renderer",
             EventStream::Stdout,
         ),
+    ];
+    const SUCCESS_LOG: &[(&str, EventStream)] = &[
+        (
+            "Warning: synthetic provider emitted a non-blocking diagnostic",
+            EventStream::Stderr,
+        ),
         ("Apply finished successfully.", EventStream::Stdout),
         ("Outputs: endpoint = synthetic", EventStream::Stdout),
         ("Apply log remains in receive order.", EventStream::Stdout),
@@ -448,6 +450,17 @@ mod tests {
                 }),
             });
         }
+        if status == ApplyStatus::Succeeded {
+            for (text, stream) in SUCCESS_LOG {
+                state.record(ExecutionEvent {
+                    received_at: started_at,
+                    kind: ExecutionEventKind::Log(ExecutionLogLine {
+                        stream: *stream,
+                        text: (*text).to_owned(),
+                    }),
+                });
+            }
+        }
         state.finish_apply(
             status,
             (status == ApplyStatus::Succeeded)
@@ -462,6 +475,36 @@ mod tests {
     fn snapshot(name: &str, buffer: &Buffer) {
         insta::assert_snapshot!(name.to_string(), buffer_text(buffer));
         write_buffer_captures(name, buffer);
+    }
+
+    fn assert_text_uses_style(buffer: &Buffer, text: &str, color: Color, modifier: Modifier) {
+        let area = buffer.area();
+        for y in area.y..area.bottom() {
+            let symbols = (area.x..area.right())
+                .map(|x| buffer.cell((x, y)).expect("execution cell").symbol())
+                .collect::<Vec<_>>();
+            let Some(start) = (0..symbols.len()).find(|&start| {
+                symbols[start..]
+                    .iter()
+                    .copied()
+                    .collect::<String>()
+                    .starts_with(text)
+            }) else {
+                continue;
+            };
+            for offset in 0..text.chars().count() {
+                let cell = buffer
+                    .cell((
+                        area.x + u16::try_from(start + offset).expect("execution offset"),
+                        y,
+                    ))
+                    .expect("execution cell");
+                assert_eq!(cell.fg, color, "{text}");
+                assert!(cell.modifier.contains(modifier), "{text}");
+            }
+            return;
+        }
+        panic!("text should be visible: {text}");
     }
 
     #[test]
@@ -506,11 +549,33 @@ mod tests {
         let text = buffer_text(&buffer);
         assert!(text.contains("Apply complete"));
         assert!(text.contains("Apply finished successfully."));
-        assert!(buffer.content().iter().any(|cell| cell.symbol() == "↑"));
-        assert!(buffer.content().iter().any(|cell| cell.symbol() == "→"));
-        assert!(buffer.content().iter().any(|cell| {
-            cell.fg == Color::Rgb(0xeb, 0xcb, 0x8b) && cell.modifier.contains(Modifier::BOLD)
-        }));
+        assert!(layout.vertical_scrollbar());
+        assert!(layout.horizontal_scrollbar());
+        let body = layout.body();
+        let vertical_x = body.x.saturating_add(body.width);
+        let horizontal_y = body.y.saturating_add(body.height);
+        let horizontal_end_x = vertical_x;
+        assert_eq!(buffer[(vertical_x, body.y)].symbol(), "↑");
+        assert_eq!(
+            buffer[(vertical_x, body.y)].fg,
+            Color::Rgb(0xc0, 0xb8, 0xb0)
+        );
+        assert_eq!(buffer[(body.x, horizontal_y)].symbol(), "←");
+        assert_eq!(
+            buffer[(body.x, horizontal_y)].fg,
+            Color::Rgb(0x50, 0x52, 0x5e)
+        );
+        assert_eq!(buffer[(horizontal_end_x, horizontal_y)].symbol(), "→");
+        assert_eq!(
+            buffer[(horizontal_end_x, horizontal_y)].fg,
+            Color::Rgb(0xc0, 0xb8, 0xb0)
+        );
+        assert_text_uses_style(
+            &buffer,
+            "Warning: synthetic provider emitted a non-blocking diagnostic",
+            Color::Rgb(0xeb, 0xcb, 0x8b),
+            Modifier::BOLD,
+        );
     }
 
     #[test]
@@ -523,9 +588,34 @@ mod tests {
         assert!(
             buffer_text(&buffer).contains("AccessDenied: synthetic provider rejected the request")
         );
-        assert!(buffer.content().iter().any(|cell| {
-            cell.fg == Color::Rgb(0xeb, 0xcb, 0x8b) && cell.modifier.contains(Modifier::BOLD)
-        }));
+        let diagnostic = "AccessDenied: synthetic provider rejected the request";
+        let area = buffer.area();
+        for y in area.y..area.bottom() {
+            let symbols = (area.x..area.right())
+                .map(|x| buffer.cell((x, y)).expect("diagnostic cell").symbol())
+                .collect::<Vec<_>>();
+            let Some(start) = (0..symbols.len()).find(|&start| {
+                symbols[start..]
+                    .iter()
+                    .copied()
+                    .collect::<String>()
+                    .starts_with(diagnostic)
+            }) else {
+                continue;
+            };
+            for offset in 0..diagnostic.chars().count() {
+                let cell = buffer
+                    .cell((
+                        area.x + u16::try_from(start + offset).expect("diagnostic offset"),
+                        y,
+                    ))
+                    .expect("diagnostic cell");
+                assert_eq!(cell.fg, Color::Rgb(0xeb, 0xcb, 0x8b));
+                assert!(cell.modifier.contains(Modifier::BOLD));
+            }
+            return;
+        }
+        panic!("diagnostic row should be visible");
     }
 
     #[test]

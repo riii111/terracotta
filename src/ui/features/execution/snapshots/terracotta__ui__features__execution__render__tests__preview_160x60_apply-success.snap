@@ -21,13 +21,13 @@ expression: buffer_text(buffer)
                     │terraform apply review.tfplan                                                                                         │
                     │terraform_data.api: Modifying... [id=api-20260920]                                                                    │
                     │terraform_data.api: Modifications complete after 1s [id=api-20260920]                                                 │
-                    │Warning: synthetic provider emitted a non-blocking diagnostic                                                         │
                     │terraform_data.worker: Replacing... [id=worker-20260920]                                                              │
                     │terraform_data.worker: Destruction complete after 1s                                                                  │
                     │terraform_data.worker: Creation complete after 1s [id=worker-20260920]                                                │
                     │terraform_data.old: Destruction complete after 1s                                                                     │
                     │terraform_data.new: Creation complete after 1s [id=new-20260920]                                                      │
                     │A deliberately long synthetic apply line keeps horizontal scrolling visible in the production renderer                │
+                    │Warning: synthetic provider emitted a non-blocking diagnostic                                                         │
                     │Apply finished successfully.                                                                                          │
                     │Outputs: endpoint = synthetic                                                                                         │
                     │Apply log remains in receive order.                                                                                   │
