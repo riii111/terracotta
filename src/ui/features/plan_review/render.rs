@@ -639,6 +639,44 @@ End of synthetic plan body."#;
         panic!("text should be visible: {text}");
     }
 
+    fn assert_text_prefix_uses_style(
+        buffer: &Buffer,
+        text: &str,
+        styled_prefix: &str,
+        foreground: Color,
+        background: Color,
+        modifier: Modifier,
+    ) {
+        let area = buffer.area();
+        for y in area.y..area.bottom() {
+            let symbols = (area.x..area.right())
+                .map(|x| buffer.cell((x, y)).expect("search cell").symbol())
+                .collect::<Vec<_>>();
+            let Some(start) = (0..symbols.len()).find(|&start| {
+                symbols[start..]
+                    .iter()
+                    .copied()
+                    .collect::<String>()
+                    .starts_with(text)
+            }) else {
+                continue;
+            };
+            for offset in 0..styled_prefix.chars().count() {
+                let cell = buffer
+                    .cell((
+                        area.x + u16::try_from(start + offset).expect("search offset"),
+                        y,
+                    ))
+                    .expect("search cell");
+                assert_eq!(cell.fg, foreground, "{styled_prefix}");
+                assert_eq!(cell.bg, background, "{styled_prefix}");
+                assert!(cell.modifier.contains(modifier), "{styled_prefix}");
+            }
+            return;
+        }
+        panic!("text should be visible: {text}");
+    }
+
     #[test]
     fn renders_plan_review_normal_at_all_supported_sizes() {
         for &(width, height) in &SIZES {
@@ -756,11 +794,14 @@ End of synthetic plan body."#;
         });
 
         assert!(buffer_text(&buffer).contains("/terraform_data|"));
-        assert!(buffer.content().iter().any(|cell| {
-            cell.bg == Color::Rgb(0xf4, 0x9e, 0x4c)
-                && cell.fg == Color::Rgb(0x11, 0x14, 0x19)
-                && cell.modifier.contains(Modifier::BOLD)
-        }));
+        assert_text_prefix_uses_style(
+            &buffer,
+            "terraform_data.api",
+            SEARCH_TERM,
+            Color::Rgb(0x11, 0x14, 0x19),
+            Color::Rgb(0xf4, 0x9e, 0x4c),
+            Modifier::BOLD,
+        );
     }
 
     #[test]
