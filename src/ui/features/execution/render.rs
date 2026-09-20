@@ -1,28 +1,21 @@
-use std::{
-    path::Path,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::app::execution::{Diagnostic, DiagnosticSeverity, ResourceEventKind};
-use crate::app::execution::{ExecutionStage, ExecutionState};
+use crate::app::execution::{EventStream, ExecutionResult, ExecutionStage, ExecutionState};
 use crate::ui::primitives::atoms::separator;
 use crate::ui::primitives::molecules::terminal_notice;
-use crate::ui::shell::context::display_path;
 use crate::ui::shell::{footer, header, layout as shell_layout};
 use crate::ui::theme;
 
 use super::ExecutionViewState;
 
-const MIN_HEIGHT: u16 = 11;
-const MIN_WIDTH: u16 = 48;
+const MIN_HEIGHT: u16 = 9;
+const MIN_WIDTH: u16 = 32;
 const STATUS_HEIGHT: u16 = 3;
-const SEPARATOR_HEIGHT: u16 = 1;
 
 pub(crate) fn render_execution_with_view(
     frame: &mut Frame<'_>,
@@ -43,32 +36,32 @@ pub(crate) fn render_execution_with_view(
     }
 
     header::render_execution(frame, layout.shell.header(), state.context());
-    let content_area =
+    let content =
         shell_layout::render_content_block(frame, layout.shell.content(), state.stage().title());
-    debug_assert_eq!(content_area, layout.shell.content_inner());
-    let chunks = &layout.chunks;
-
+    debug_assert_eq!(content, layout.shell.content_inner());
     frame.render_widget(
-        Paragraph::new(status_lines_with_view(state, view, now)).style(theme::body_style()),
-        chunks[0],
+        Paragraph::new(status_lines(state, view, now)).style(theme::body_style()),
+        layout.chunks[0],
     );
 
-    let lines = wrapped_lines(&execution_lines(state), chunks[1].width);
-    let visible_height = usize::from(chunks[1].height);
-    let max_scroll = lines.len().saturating_sub(visible_height);
-    let max_scroll = u16::try_from(max_scroll).unwrap_or(u16::MAX);
+    let lines = execution_lines(state);
+    let max = max_scroll(lines.len(), layout.body().height);
     let scroll = if view.follows_latest() {
-        max_scroll
+        preferred_scroll(state, max)
     } else {
-        view.scroll().min(max_scroll)
+        view.scroll().min(max)
     };
-    let paragraph = Paragraph::new(lines).style(theme::body_style());
-    frame.render_widget(paragraph.scroll((scroll, 0)), chunks[1]);
-    frame.render_widget(separator::render(chunks[2].width), chunks[2]);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .style(theme::body_style())
+            .scroll((scroll, 0)),
+        layout.chunks[1],
+    );
+    frame.render_widget(separator::render(layout.chunks[2].width), layout.chunks[2]);
     if let Some(notice) = state.copy_notice() {
         frame.render_widget(
-            Paragraph::new(notice.message()).style(theme::body_style()),
-            chunks[3],
+            Paragraph::new(notice.message()).style(theme::secondary_style()),
+            layout.chunks[3],
         );
     }
     footer::render(
@@ -84,36 +77,24 @@ pub(crate) struct ExecutionLayout {
 }
 
 impl ExecutionLayout {
-    #[cfg(test)]
-    pub(crate) const fn content(&self) -> Rect {
-        self.shell.content()
-    }
-
     pub(crate) fn body(&self) -> Rect {
         self.chunks[1]
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn footer(&self) -> Rect {
-        self.shell.footer()
     }
 }
 
 pub(crate) fn execution_layout(area: Rect, state: &ExecutionState) -> ExecutionLayout {
     let footer_lines = footer_lines(state, area.width);
-    let required_footer_lines = required_footer_lines(state, area.width);
-    let shell = shell_layout::layout(area, footer_lines, required_footer_lines, 1);
-    let content_area = shell.content_inner();
-    let copy_notice_height = u16::from(state.copy_notice().is_some());
+    let shell = shell_layout::layout(area, footer_lines.clone(), footer_lines, 1);
+    let notice_height = u16::from(state.copy_notice().is_some());
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(status_height(state)),
+            Constraint::Length(STATUS_HEIGHT),
             Constraint::Min(1),
-            Constraint::Length(SEPARATOR_HEIGHT),
-            Constraint::Length(copy_notice_height),
+            Constraint::Length(1),
+            Constraint::Length(notice_height),
         ])
-        .split(content_area)
+        .split(shell.content_inner())
         .to_vec();
     ExecutionLayout { shell, chunks }
 }
@@ -123,260 +104,78 @@ pub(crate) fn execution_scroll_position_with_view(
     view: ExecutionViewState,
     body: Rect,
 ) -> (u16, u16) {
-    let lines = wrapped_lines(&execution_lines(state), body.width);
-    let visible_height = usize::from(body.height);
-    let max_scroll = u16::try_from(lines.len().saturating_sub(visible_height)).unwrap_or(u16::MAX);
-    let current_scroll = if view.follows_latest() {
-        max_scroll
+    let max = max_scroll(execution_lines(state).len(), body.height);
+    let current = if view.follows_latest() {
+        preferred_scroll(state, max)
     } else {
-        view.scroll().min(max_scroll)
+        view.scroll().min(max)
     };
-    (current_scroll, max_scroll)
+    (current, max)
 }
 
-fn status_lines_with_view(
+fn execution_lines(state: &ExecutionState) -> Vec<Line<'static>> {
+    let log = state
+        .result()
+        .map_or_else(|| state.progress().log(), |result| result.log());
+    let mut lines = log
+        .iter()
+        .flat_map(|line| {
+            line.text
+                .lines()
+                .map(|text| {
+                    let style = if line.stream == EventStream::Stderr {
+                        theme::warning_style()
+                    } else {
+                        theme::body_style()
+                    };
+                    Line::from(Span::styled(text.to_owned(), style))
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    if let Some(summary) = state.result().and_then(|result| result.summary_line()) {
+        lines.push(Line::default());
+        lines.push(Line::from(summary.to_owned()));
+    }
+    if lines.is_empty() {
+        vec![Line::from("Waiting for Terraform output...")]
+    } else {
+        lines
+    }
+}
+
+fn status_lines(
     state: &ExecutionState,
     view: ExecutionViewState,
     now: Instant,
 ) -> Vec<Line<'static>> {
     let status = if state.is_cancelling() {
-        "Cancelling...".to_owned()
+        "Stopping...".to_owned()
     } else {
         match state.stage() {
+            ExecutionStage::Initializing => "Initializing...".to_owned(),
             ExecutionStage::Planning => "Planning...".to_owned(),
             ExecutionStage::Reading => "Reading plan...".to_owned(),
+            #[cfg(test)]
             ExecutionStage::Matching => "Matching Git...".to_owned(),
-            ExecutionStage::Failed => format_elapsed_line(state.elapsed_at(now)),
+            ExecutionStage::Failed => state.result().map_or_else(
+                || "Terraform failed.".to_owned(),
+                |result| format!("Terraform failed: {:?}", result.termination().status),
+            ),
         }
     };
-
-    if state.stage() == ExecutionStage::Failed {
-        return vec![Line::from(status)];
-    }
-
     vec![
         Line::from(status),
         Line::from(vec![
-            Span::raw(format!(
-                "Waiting for Terraform output... {}s",
-                state.waiting_at(now).as_secs()
-            )),
+            Span::raw(format!("Waiting {}s", state.waiting_at(now).as_secs())),
             Span::raw("    Follow: "),
             Span::styled(
                 if view.follows_latest() { "On" } else { "Off" },
                 theme::secondary_style(),
             ),
         ]),
-        Line::from(format_elapsed_line(state.elapsed_at(now))),
+        Line::from(format!("Elapsed {}", format_elapsed(state.elapsed_at(now)))),
     ]
-}
-
-fn execution_lines(state: &ExecutionState) -> Vec<String> {
-    if state.stage() == ExecutionStage::Failed {
-        return failed_lines(state);
-    }
-
-    let mut lines = resource_lines(state.progress().resources());
-    if lines.is_empty() {
-        lines.push("  No Terraform events yet.".to_owned());
-    }
-
-    let diagnostics = state.progress().diagnostics();
-    if !diagnostics.is_empty() {
-        lines.push(String::new());
-        lines.push(format!("  Diagnostics ({})", diagnostics.len()));
-        for diagnostic in diagnostics {
-            append_diagnostic(&mut lines, diagnostic, state);
-        }
-    }
-
-    lines
-}
-
-fn failed_lines(state: &ExecutionState) -> Vec<String> {
-    let diagnostics = state.progress().diagnostics();
-    let mut lines = if diagnostics.is_empty() {
-        vec!["  Diagnostic unavailable.".to_owned()]
-    } else {
-        let mut lines = Vec::new();
-        for (index, diagnostic) in diagnostics.iter().enumerate() {
-            if index > 0 {
-                lines.push(String::new());
-            }
-            lines.push(format!(
-                "  {} {}/{}",
-                diagnostic_severity_label(diagnostic.severity),
-                index + 1,
-                diagnostics.len()
-            ));
-            lines.push(format!("  Summary: {}", diagnostic.summary));
-            if let Some(detail) = &diagnostic.detail {
-                for line in detail.lines() {
-                    lines.push(format!("  Detail: {line}"));
-                }
-            }
-            if let Some(position) = &diagnostic.position {
-                let filename = display_path(
-                    Path::new(&position.filename),
-                    state.context().repository_root_path(),
-                    Some(state.context().cwd_path()),
-                );
-                lines.push(format!(
-                    "  Location: {filename}:{}:{}-{}:{}",
-                    position.start.line,
-                    position.start.column,
-                    position.end.line,
-                    position.end.column
-                ));
-            }
-        }
-        lines
-    };
-    lines.push(String::new());
-    lines.push("  Review result is unavailable.".to_owned());
-    lines
-}
-
-fn resource_lines<'a>(
-    resources: impl Iterator<Item = (&'a str, ResourceEventKind)>,
-) -> Vec<String> {
-    resources
-        .map(|(address, kind)| {
-            format!(
-                "  [{}] {:<36} {}",
-                resource_status(kind),
-                address,
-                resource_label(kind)
-            )
-        })
-        .collect()
-}
-
-fn append_diagnostic(lines: &mut Vec<String>, diagnostic: &Diagnostic, state: &ExecutionState) {
-    lines.push(format!(
-        "    {}: {}",
-        diagnostic_severity(diagnostic.severity),
-        diagnostic.summary
-    ));
-    if let Some(detail) = &diagnostic.detail {
-        for line in detail.lines() {
-            lines.push(format!("      {line}"));
-        }
-    }
-    if let Some(position) = &diagnostic.position {
-        let filename = display_path(
-            Path::new(&position.filename),
-            state.context().repository_root_path(),
-            Some(state.context().cwd_path()),
-        );
-        lines.push(format!(
-            "      at {filename}:{}:{}",
-            position.start.line, position.start.column
-        ));
-    }
-}
-
-fn wrapped_lines(lines: &[String], width: u16) -> Vec<Line<'static>> {
-    let width = usize::from(width.max(1));
-    lines
-        .iter()
-        .flat_map(|line| {
-            if line.is_empty() {
-                return vec![Line::from("")];
-            }
-            let source = Line::from(line.as_str());
-            let mut wrapped = Vec::new();
-            let mut current = String::new();
-            let mut current_width = 0;
-            for grapheme in source.styled_graphemes(Style::default()) {
-                let grapheme_width = Line::from(grapheme.symbol).width();
-                if grapheme_width > 0 && current_width > 0 && current_width + grapheme_width > width
-                {
-                    wrapped.push(Line::from(std::mem::take(&mut current)));
-                    current_width = 0;
-                }
-                current.push_str(grapheme.symbol);
-                current_width += grapheme_width;
-            }
-            if current.is_empty() {
-                wrapped.push(Line::from(""));
-            } else {
-                wrapped.push(Line::from(current));
-            }
-            wrapped
-        })
-        .collect()
-}
-
-const fn resource_status(kind: ResourceEventKind) -> &'static str {
-    match kind {
-        ResourceEventKind::ApplyErrored
-        | ResourceEventKind::ProvisionErrored
-        | ResourceEventKind::EphemeralErrored => "failed",
-        kind if kind.is_complete() => "done",
-        ResourceEventKind::ResourceDrift | ResourceEventKind::PlannedChange => "info",
-        _ => "run",
-    }
-}
-
-const fn resource_label(kind: ResourceEventKind) -> &'static str {
-    match kind {
-        ResourceEventKind::RefreshStart => "Refreshing",
-        ResourceEventKind::RefreshComplete => "Refresh complete",
-        ResourceEventKind::ApplyStart | ResourceEventKind::ApplyProgress => "Applying",
-        ResourceEventKind::ApplyComplete => "Apply complete",
-        ResourceEventKind::ApplyErrored => "Apply failed",
-        ResourceEventKind::ProvisionStart | ResourceEventKind::ProvisionProgress => "Provisioning",
-        ResourceEventKind::ProvisionComplete => "Provision complete",
-        ResourceEventKind::ProvisionErrored => "Provision failed",
-        ResourceEventKind::ImportStart => "Importing",
-        ResourceEventKind::ImportComplete => "Import complete",
-        ResourceEventKind::EphemeralStart | ResourceEventKind::EphemeralProgress => {
-            "Running ephemeral operation"
-        }
-        ResourceEventKind::EphemeralComplete => "Ephemeral operation complete",
-        ResourceEventKind::EphemeralErrored => "Ephemeral operation failed",
-        ResourceEventKind::ResourceDrift => "Drift detected",
-        ResourceEventKind::PlannedChange => "Planned change",
-    }
-}
-
-const fn diagnostic_severity(severity: DiagnosticSeverity) -> &'static str {
-    match severity {
-        DiagnosticSeverity::Error => "error",
-        DiagnosticSeverity::Warning => "warning",
-        DiagnosticSeverity::Info => "info",
-        DiagnosticSeverity::Unknown => "diagnostic",
-    }
-}
-
-const fn diagnostic_severity_label(severity: DiagnosticSeverity) -> &'static str {
-    match severity {
-        DiagnosticSeverity::Error => "Error",
-        DiagnosticSeverity::Warning => "Warning",
-        DiagnosticSeverity::Info => "Info",
-        DiagnosticSeverity::Unknown => "Unknown",
-    }
-}
-
-fn format_elapsed(elapsed: Duration) -> String {
-    format!(
-        "{}.{:01}s",
-        elapsed.as_secs(),
-        elapsed.subsec_millis() / 100
-    )
-}
-
-fn format_elapsed_line(elapsed: Duration) -> String {
-    format!("Elapsed {}", format_elapsed(elapsed))
-}
-
-fn status_height(state: &ExecutionState) -> u16 {
-    if state.stage() == ExecutionStage::Failed {
-        1
-    } else {
-        STATUS_HEIGHT
-    }
 }
 
 fn footer_lines(state: &ExecutionState, width: u16) -> Vec<Line<'static>> {
@@ -385,7 +184,6 @@ fn footer_lines(state: &ExecutionState, width: u16) -> Vec<Line<'static>> {
             footer::hint(&["q"], "quit"),
             footer::hint(&["↑", "↓", "PgUp", "PgDn"], "scroll"),
             footer::hint(&["y"], "copy diagnostic"),
-            footer::hint(&["Y"], "copy result"),
         ]
     } else {
         vec![
@@ -397,523 +195,61 @@ fn footer_lines(state: &ExecutionState, width: u16) -> Vec<Line<'static>> {
     footer::layout(items, width)
 }
 
-fn required_footer_lines(state: &ExecutionState, width: u16) -> Vec<Line<'static>> {
-    let items = if state.stage() == ExecutionStage::Failed {
-        vec![
-            footer::hint(&["q"], "quit"),
-            footer::hint(&["↑", "↓", "PgUp", "PgDn"], "scroll"),
-        ]
-    } else {
-        vec![
-            footer::hint(&["Ctrl-C"], "cancel"),
-            footer::hint(&["↑", "↓", "PgUp", "PgDn"], "scroll"),
-        ]
-    };
-    footer::layout(items, width)
+fn max_scroll(line_count: usize, height: u16) -> u16 {
+    u16::try_from(line_count.saturating_sub(usize::from(height))).unwrap_or(u16::MAX)
+}
+
+fn preferred_scroll(state: &ExecutionState, max: u16) -> u16 {
+    state
+        .result()
+        .and_then(ExecutionResult::first_error_line)
+        .and_then(|line| u16::try_from(line).ok())
+        .unwrap_or(max)
+        .min(max)
+}
+
+fn format_elapsed(elapsed: Duration) -> String {
+    format!(
+        "{}.{:01}s",
+        elapsed.as_secs(),
+        elapsed.subsec_millis() / 100
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::ui::test_support::render_to_buffer as render_test_buffer;
-    use crate::ui::test_support::{assert_shell_frame_and_footer, buffer_text};
-    use ratatui::buffer::Buffer;
-
-    use crate::app::copy::{CopyNotice, CopyTarget};
-    use crate::app::execution::{
-        ExecutionAction, ExecutionContext, ExecutionEvent, ExecutionEventKind, ResourceEvent,
-    };
-    use crate::ui::features::execution::ExecutionScroll;
-
     use super::*;
     use crate::app::execution::{
-        DiagnosticPoint, DiagnosticPosition, DiagnosticSource, ExecutionPhase, ProcessExitStatus,
-        ProcessTermination,
+        ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionLogLine,
     };
 
-    include!("tests/render_snapshots.rs");
-
-    fn render_execution(frame: &mut Frame<'_>, state: &ExecutionState, now: Instant) {
-        let view = ExecutionViewState::default();
-        render_execution_with_view(frame, state, view, now);
-    }
-
-    fn event(received_at: Instant, kind: ExecutionEventKind) -> ExecutionEvent {
-        ExecutionEvent { received_at, kind }
-    }
-
-    fn render_to_buffer(state: &ExecutionState, now: Instant, width: u16, height: u16) -> Buffer {
-        render_test_buffer((width, height), |frame| render_execution(frame, state, now))
-    }
-
-    fn render_to_buffer_with_view(
-        state: &ExecutionState,
-        view: ExecutionViewState,
-        now: Instant,
-        width: u16,
-        height: u16,
-    ) -> Buffer {
-        render_test_buffer((width, height), |frame| {
-            render_execution_with_view(frame, state, view, now);
-        })
-    }
-
-    fn resource_event(at: Instant, address: &str, kind: ResourceEventKind) -> ExecutionEvent {
-        event(
-            at,
-            ExecutionEventKind::Resource(ResourceEvent {
-                address: address.to_owned(),
-                kind,
-            }),
-        )
-    }
-
     #[test]
-    fn renders_elapsed_waiting_and_interleaved_resource_progress() {
-        let started_at = Instant::now();
-        let mut state = ExecutionState::new(started_at);
-        state.record(resource_event(
-            started_at + Duration::from_secs(1),
-            "aws_vpc.main",
-            ResourceEventKind::RefreshStart,
-        ));
-        state.record(resource_event(
-            started_at + Duration::from_secs(2),
-            "aws_instance.api",
-            ResourceEventKind::RefreshStart,
-        ));
-        state.record(resource_event(
-            started_at + Duration::from_secs(3),
-            "aws_vpc.main",
-            ResourceEventKind::RefreshComplete,
-        ));
-
-        let text = buffer_text(&render_to_buffer(
-            &state,
-            started_at + Duration::from_secs(5),
-            100,
-            20,
-        ));
-
-        assert!(
-            text.contains("Terracotta | loading... (Git loading)"),
-            "{text}"
+    fn append_only_log_is_rendered_in_receive_order() {
+        let now = Instant::now();
+        let mut state = ExecutionState::with_context(
+            now,
+            ExecutionContext::loading("/project", "Git comparison paused"),
         );
-        assert!(text.contains("Planning..."), "{text}");
-        assert!(
-            text.contains("Waiting for Terraform output... 2s"),
-            "{text}"
-        );
-        assert!(text.contains("Elapsed 5.0s"), "{text}");
-        assert!(text.contains("[done] aws_vpc.main"), "{text}");
-        assert!(text.contains("[run] aws_instance.api"), "{text}");
-        assert!(text.contains("Follow: On"), "{text}");
-    }
-
-    #[test]
-    fn renders_execution_context_for_known_and_unavailable_values() {
-        let started_at = Instant::now();
-        let state = ExecutionState::with_context(
-            started_at,
-            ExecutionContext::known(
-                "infra/prod",
-                "default",
-                "feature/plan-ui",
-                "working tree vs HEAD",
-            ),
-        );
-        let text = buffer_text(&render_to_buffer(&state, started_at, 80, 16));
-
-        assert!(
-            text.contains("Terracotta | prod (Git unavailable)"),
-            "{text}"
-        );
-        assert!(text.contains("Git: working tree vs HEAD"), "{text}");
-
-        let long_context = ExecutionState::with_context(
-            started_at,
-            ExecutionContext::known(
-                "/Users/example/terraform/infrastructure/production/networking",
-                "workspace-with-a-long-name",
-                "feature/long-running-execution-screen",
-                "release/2026-09-17 vs working tree",
-            ),
-        );
-        let long_context_text = buffer_text(&render_to_buffer(&long_context, started_at, 80, 30));
-        assert!(
-            long_context_text.contains("networking (Git unavailable)"),
-            "{long_context_text}"
-        );
-        assert!(
-            long_context_text.contains("Git: release/2026-09-17 vs working tree"),
-            "{long_context_text}"
-        );
-        assert!(
-            long_context_text.contains("workspace: workspace-with-a-long-name"),
-            "{long_context_text}"
-        );
-        assert!(
-            long_context_text.contains("Elapsed 0.0s"),
-            "{long_context_text}"
-        );
-        assert!(
-            long_context_text.contains("Ctrl-C cancel"),
-            "{long_context_text}"
-        );
-
-        let unavailable = ExecutionState::with_context(
-            started_at,
-            ExecutionContext::known(
-                "infra/prod",
-                "default",
-                "feature/plan-ui",
-                "working tree vs HEAD",
-            )
-            .with_git(None),
-        );
-        let unavailable_text = buffer_text(&render_to_buffer(&unavailable, started_at, 80, 16));
-        assert!(
-            unavailable_text.contains("Terracotta | prod (Git unavailable)"),
-            "{unavailable_text}"
-        );
-        assert!(
-            unavailable_text.contains("Git: working tree vs HEAD"),
-            "{unavailable_text}"
-        );
-    }
-
-    #[test]
-    fn renders_no_event_state_and_keeps_copy_out_of_running_footer() {
-        let started_at = Instant::now();
-        let state = ExecutionState::new(started_at);
-        let text = buffer_text(&render_to_buffer(
-            &state,
-            started_at + Duration::from_secs(2),
-            80,
-            16,
-        ));
-
-        assert!(text.contains("No Terraform events yet."), "{text}");
-        assert!(
-            text.contains("Waiting for Terraform output... 2s"),
-            "{text}"
-        );
-        assert!(!text.to_ascii_lowercase().contains("copy"), "{text}");
-    }
-
-    #[test]
-    fn renders_copy_notices_on_their_own_row_before_running_footer() {
-        let cases = [
-            (
-                "success",
-                CopyNotice::Copied {
-                    target: CopyTarget::Result,
-                    resource_count: 1,
-                },
-                "Copied result (redacted).",
-            ),
-            (
-                "failure",
-                CopyNotice::Failed,
-                "Copy failed: clipboard unavailable.",
-            ),
-        ];
-
-        for (name, notice, expected) in cases {
-            let started_at = Instant::now();
-            let mut state = ExecutionState::new(started_at);
-            state.set_copy_notice(notice);
-            let text = buffer_text(&render_to_buffer(&state, started_at, 48, 12));
-
-            assert!(text.contains(expected), "case: {name}\n{text}");
-            assert!(text.contains("Ctrl-C cancel"), "case: {name}\n{text}");
-            assert!(
-                text.contains("↑/↓/PgUp/PgDn scroll"),
-                "case: {name}\n{text}"
-            );
-        }
-    }
-
-    #[test]
-    fn execution_widths_keep_active_exit_and_page_scroll_hints() {
-        for width in [48, 60, 80, 120] {
-            let started_at = Instant::now();
-            let state = ExecutionState::new(started_at);
-            let text = buffer_text(&render_to_buffer(&state, started_at, width, 20));
-
-            assert!(text.contains("Ctrl-C cancel"), "width: {width}\n{text}");
-            assert!(
-                text.contains("↑/↓/PgUp/PgDn scroll"),
-                "width: {width}\n{text}"
-            );
-        }
-    }
-
-    #[test]
-    fn execution_layout_reserves_copy_notice_row_for_scroll_body() {
-        let started_at = Instant::now();
-        let area = Rect::new(0, 0, 48, 12);
-        let mut state = ExecutionState::new(started_at);
-        for index in 0..40 {
-            state.record(resource_event(
-                started_at,
-                &format!("aws_instance.item[{index}]"),
-                ResourceEventKind::RefreshStart,
-            ));
-        }
-
-        let without_notice = execution_layout(area, &state).body();
-        state.set_copy_notice(CopyNotice::Failed);
-        let with_notice = execution_layout(area, &state).body();
-        assert_eq!(without_notice.height, with_notice.height + 1);
-
-        let mut view = ExecutionViewState::default();
-        let (current, max) = execution_scroll_position_with_view(&state, view, with_notice);
-        assert_eq!(current, max);
-        view.apply_scroll(ExecutionScroll::PageUp, current, max, with_notice.height);
-        assert_eq!(view.scroll(), current.saturating_sub(with_notice.height));
-        view.apply_scroll(
-            ExecutionScroll::PageDown,
-            view.scroll(),
-            max,
-            with_notice.height,
-        );
-        assert_eq!(
-            view.scroll(),
-            (current.saturating_sub(with_notice.height))
-                .saturating_add(with_notice.height)
-                .min(max)
-        );
-    }
-
-    #[test]
-    fn renders_failed_stage_with_long_diagnostic_and_quit_footer() {
-        let started_at = Instant::now();
-        let mut state = ExecutionState::new(started_at);
-        let diagnostic_detail = "日本語の診断文と絵文字🙂を含む長い内容。".repeat(8);
-        state.record(event(
-            started_at + Duration::from_secs(1),
-            ExecutionEventKind::Diagnostic(Diagnostic {
-                severity: DiagnosticSeverity::Error,
-                summary: "Terraform initialization required".to_owned(),
-                detail: Some(diagnostic_detail.clone()),
-                position: Some(DiagnosticPosition {
-                    filename: "infra/prod/main.tf".to_owned(),
-                    start: DiagnosticPoint {
-                        line: 12,
-                        column: 3,
-                        byte: Some(100),
-                    },
-                    end: DiagnosticPoint {
-                        line: 12,
-                        column: 9,
-                        byte: Some(106),
-                    },
+        for (stream, text) in [
+            (EventStream::Stdout, "first"),
+            (EventStream::Stderr, "second"),
+            (EventStream::Stdout, "third"),
+        ] {
+            state.record(ExecutionEvent {
+                received_at: now,
+                kind: ExecutionEventKind::Log(ExecutionLogLine {
+                    stream,
+                    text: text.to_owned(),
                 }),
-                source: DiagnosticSource::Terraform,
-            }),
-        ));
-        state.record(event(
-            started_at + Duration::from_secs(2),
-            ExecutionEventKind::Terminated(ProcessTermination {
-                status: ProcessExitStatus::Exited(1),
-                interrupted: false,
-            }),
-        ));
-        assert_eq!(state.progress().diagnostics().len(), 1);
-        assert_eq!(
-            state.progress().diagnostics()[0].summary,
-            "Terraform initialization required"
-        );
-        assert_eq!(
-            state.progress().diagnostics()[0].detail.as_deref(),
-            Some(diagnostic_detail.as_str())
-        );
-        let text = buffer_text(&render_to_buffer(
-            &state,
-            started_at + Duration::from_secs(2),
-            60,
-            30,
-        ));
-
-        assert!(
-            text.contains("Terracotta | loading... (Git loading)"),
-            "{text}"
-        );
-        assert!(text.contains("Summary:"), "{text}");
-        assert!(!text.contains("No Terraform events yet."), "{text}");
-        assert!(text.contains("Terraform initialization required"), "{text}");
-        let compact = text.replace(' ', "");
-        assert!(compact.contains("日本語の診断文"), "{text}");
-        assert!(compact.contains("絵文字🙂"), "{text}");
-        assert!(
-            text.contains("Location: infra/prod/main.tf:12:3-12:9"),
-            "{text}"
-        );
-        assert!(text.contains("Error 1/1"), "{text}");
-        assert!(text.contains("q quit"), "{text}");
-    }
-
-    #[test]
-    fn failed_footer_names_copy_targets_after_scroll() {
-        let started_at = Instant::now();
-        let mut state = ExecutionState::new(started_at);
-        state.fail("Terraform failed".to_owned(), started_at);
-
-        let footer = footer_lines(&state, 80)
-            .into_iter()
-            .map(|line| line.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        assert_eq!(
-            footer,
-            "q quit | ↑/↓/PgUp/PgDn scroll | y copy diagnostic | Y copy result"
-        );
-    }
-
-    #[test]
-    fn renders_reading_matching_and_cancelling_statuses() {
-        let started_at = Instant::now();
-        let mut state = ExecutionState::new(started_at);
-
-        state.record(event(
-            started_at,
-            ExecutionEventKind::Phase(ExecutionPhase::Reading),
-        ));
-        let reading = buffer_text(&render_to_buffer(&state, started_at, 80, 16));
-        assert!(reading.contains("Reading plan..."), "{reading}");
-
-        state.record(event(
-            started_at,
-            ExecutionEventKind::Phase(ExecutionPhase::Matching),
-        ));
-        let matching = buffer_text(&render_to_buffer(&state, started_at, 80, 16));
-        assert!(matching.contains("Matching Git..."), "{matching}");
-
-        state.apply(ExecutionAction::RequestCancellation);
-        let cancelling = buffer_text(&render_to_buffer(&state, started_at, 80, 16));
-        assert!(cancelling.contains("Cancelling..."), "{cancelling}");
-    }
-
-    #[test]
-    fn end_restores_following_and_scrolling_turns_it_off() {
-        let started_at = Instant::now();
-        let mut state = ExecutionState::new(started_at);
-        state.record(resource_event(
-            started_at,
-            "aws_vpc.main",
-            ResourceEventKind::RefreshComplete,
-        ));
-
-        let mut view = ExecutionViewState::default();
-        view.apply_scroll(ExecutionScroll::Down, 0, 1, 1);
-        let stopped = buffer_text(&render_to_buffer_with_view(
-            &state, view, started_at, 80, 16,
-        ));
-        assert!(stopped.contains("Follow: Off"), "{stopped}");
-
-        view.end();
-        let resumed = buffer_text(&render_to_buffer_with_view(
-            &state, view, started_at, 80, 16,
-        ));
-        assert!(resumed.contains("Follow: On"), "{resumed}");
-    }
-
-    #[test]
-    fn scrolling_from_latest_uses_the_rendered_bottom_and_stays_put_on_new_events() {
-        let started_at = Instant::now();
-        let mut state = ExecutionState::new(started_at);
-        for index in 0..30 {
-            state.record(resource_event(
-                started_at,
-                &format!("aws_instance.item[{index}]"),
-                ResourceEventKind::RefreshStart,
-            ));
+            });
         }
 
-        let area = Rect::new(0, 0, 80, 16);
-        let body = execution_layout(area, &state).body();
-        let mut view = ExecutionViewState::default();
-        let (current_offset, max_offset) = execution_scroll_position_with_view(&state, view, body);
-        assert!(current_offset > 0);
-        assert_eq!(current_offset, max_offset);
-
-        view.apply_scroll(ExecutionScroll::Up, current_offset, max_offset, body.height);
-        assert!(!view.follows_latest());
-        let stopped_offset = view.scroll();
-        assert_eq!(stopped_offset, current_offset - 1);
-
-        state.record(resource_event(
-            started_at,
-            "aws_instance.new",
-            ResourceEventKind::RefreshStart,
-        ));
-        let body = execution_layout(area, &state).body();
-        let (new_offset, new_max_offset) = execution_scroll_position_with_view(&state, view, body);
-        assert_eq!(new_offset, stopped_offset);
-        assert!(new_max_offset > max_offset);
-
-        view.end();
-        let body = execution_layout(area, &state).body();
-        let (follow_offset, follow_max_offset) =
-            execution_scroll_position_with_view(&state, view, body);
-        assert!(view.follows_latest());
-        assert_eq!(follow_offset, follow_max_offset);
-    }
-
-    #[test]
-    fn narrow_running_and_failed_screens_show_their_allowed_exit_guidance() {
-        let started_at = Instant::now();
-        let state = ExecutionState::new(started_at);
-        let minimum = buffer_text(&render_to_buffer(&state, started_at, MIN_WIDTH, MIN_HEIGHT));
-        assert!(minimum.contains("Ctrl-C cancel"), "{minimum}");
-
-        let running = buffer_text(&render_to_buffer(
-            &state,
-            started_at,
-            MIN_WIDTH - 1,
-            MIN_HEIGHT,
-        ));
-        assert!(running.contains("Resize or press Ctrl-C to"), "{running}");
-        assert!(running.contains("cancel."), "{running}");
-        assert!(!running.contains("press q to quit"), "{running}");
-
-        let mut failed = ExecutionState::new(started_at);
-        failed.record(event(
-            started_at,
-            ExecutionEventKind::Terminated(ProcessTermination {
-                status: ProcessExitStatus::Exited(1),
-                interrupted: false,
-            }),
-        ));
-        let failed_text = buffer_text(&render_to_buffer(
-            &failed,
-            started_at,
-            MIN_WIDTH - 1,
-            MIN_HEIGHT,
-        ));
-        assert!(
-            failed_text.contains("Resize or press q to quit."),
-            "{failed_text}"
+        assert_eq!(
+            execution_lines(&state)
+                .iter()
+                .map(Line::to_string)
+                .collect::<Vec<_>>(),
+            vec!["first", "second", "third"]
         );
-    }
-
-    #[test]
-    fn common_shell_geometry_survives_supported_sizes() {
-        let started_at = Instant::now();
-        let state = ExecutionState::new(started_at);
-        for (width, height) in [(120, 40), (80, 24), (48, 12)] {
-            let layout = execution_layout(Rect::new(0, 0, width, height), &state);
-            let buffer = render_to_buffer(&state, started_at, width, height);
-            assert_shell_frame_and_footer(
-                &buffer,
-                layout.content(),
-                layout.footer(),
-                "Ctrl-C cancel",
-            );
-        }
-
-        let small = buffer_text(&render_to_buffer(&state, started_at, 47, 10));
-        assert!(small.contains("Terminal too small"), "{small}");
     }
 }

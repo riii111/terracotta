@@ -1804,9 +1804,11 @@ dependencies = [
  "crossterm",
  "hcl-rs",
  "insta",
+ "libc",
  "ratatui",
  "rstest",
  "serde_json",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

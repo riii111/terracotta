@@ -8,6 +8,3 @@ mod input;
 mod primitives;
 mod shell;
 mod theme;
-
-#[cfg(test)]
-mod test_support;

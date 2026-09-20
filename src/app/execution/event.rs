@@ -1,8 +1,7 @@
+use std::fmt::{Debug, Formatter};
+#[cfg(test)]
+use std::path::PathBuf;
 use std::time::Instant;
-use std::{
-    fmt::{Debug, Formatter},
-    path::PathBuf,
-};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EventStream {
@@ -32,35 +31,44 @@ pub(crate) enum ResourceEventKind {
     PlannedChange,
 }
 
-impl ResourceEventKind {
-    #[must_use]
-    pub(crate) const fn is_complete(self) -> bool {
-        matches!(
-            self,
-            Self::RefreshComplete
-                | Self::ApplyComplete
-                | Self::ApplyErrored
-                | Self::ProvisionComplete
-                | Self::ProvisionErrored
-                | Self::ImportComplete
-                | Self::EphemeralComplete
-                | Self::EphemeralErrored
-        )
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct ResourceEvent {
     pub(crate) address: String,
     pub(crate) kind: ResourceEventKind,
+    pub(crate) message: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+impl Debug for ResourceEvent {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ResourceEvent")
+            .field("address", &self.address)
+            .field("kind", &self.kind)
+            .field("message", &self.message.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
+}
+
+#[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct ExecutionSummary {
     pub(crate) adds: Option<usize>,
     pub(crate) changes: Option<usize>,
     pub(crate) removes: Option<usize>,
     pub(crate) operation: Option<String>,
+    pub(crate) message: Option<String>,
+}
+
+impl Debug for ExecutionSummary {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ExecutionSummary")
+            .field("adds", &self.adds)
+            .field("changes", &self.changes)
+            .field("removes", &self.removes)
+            .field("operation", &self.operation)
+            .field("message", &self.message.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,12 +141,15 @@ pub(crate) struct ProcessTermination {
 
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum ExecutionEventKind {
+    Log(ExecutionLogLine),
     Resource(ResourceEvent),
     Summary(ExecutionSummary),
     Diagnostic(Diagnostic),
     Phase(ExecutionPhase),
+    #[cfg(test)]
     RepositoryRoot(Option<PathBuf>),
     Workspace(String),
+    #[cfg(test)]
     Git(Option<String>),
     Informational {
         event_type: String,
@@ -149,13 +160,33 @@ pub(crate) enum ExecutionEventKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ExecutionPhase {
+    Initializing,
+    Planning,
     Reading,
+    #[cfg(test)]
     Matching,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct ExecutionLogLine {
+    pub(crate) stream: EventStream,
+    pub(crate) text: String,
+}
+
+impl Debug for ExecutionLogLine {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ExecutionLogLine")
+            .field("stream", &self.stream)
+            .field("text", &"<redacted>")
+            .finish()
+    }
 }
 
 impl Debug for ExecutionEventKind {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Log(line) => formatter.debug_tuple("Log").field(line).finish(),
             Self::Resource(event) => formatter.debug_tuple("Resource").field(event).finish(),
             Self::Summary(summary) => formatter.debug_tuple("Summary").field(summary).finish(),
             Self::Diagnostic(diagnostic) => formatter
@@ -163,8 +194,10 @@ impl Debug for ExecutionEventKind {
                 .field(diagnostic)
                 .finish(),
             Self::Phase(phase) => formatter.debug_tuple("Phase").field(phase).finish(),
+            #[cfg(test)]
             Self::RepositoryRoot(_) => formatter.write_str("RepositoryRoot(<redacted>)"),
             Self::Workspace(_) => formatter.write_str("Workspace(<redacted>)"),
+            #[cfg(test)]
             Self::Git(_) => formatter.write_str("Git(<redacted>)"),
             Self::Informational { event_type, .. } => formatter
                 .debug_struct("Informational")

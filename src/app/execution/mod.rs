@@ -9,15 +9,17 @@ mod progress;
 pub(crate) use context::{ExecutionContext, ExecutionContextValue};
 pub(crate) use event::{
     Diagnostic, DiagnosticPoint, DiagnosticPosition, DiagnosticSeverity, DiagnosticSource,
-    EventStream, ExecutionEvent, ExecutionEventKind, ExecutionPhase, ExecutionSummary,
-    ProcessExitStatus, ProcessTermination, ResourceEvent, ResourceEventKind,
+    EventStream, ExecutionEvent, ExecutionEventKind, ExecutionLogLine, ExecutionPhase,
+    ExecutionSummary, ProcessExitStatus, ProcessTermination, ResourceEvent, ResourceEventKind,
 };
 pub(crate) use progress::ExecutionProgress;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ExecutionStage {
+    Initializing,
     Planning,
     Reading,
+    #[cfg(test)]
     Matching,
     Failed,
 }
@@ -26,8 +28,10 @@ impl ExecutionStage {
     #[must_use]
     pub(crate) const fn title(self) -> &'static str {
         match self {
+            Self::Initializing => "Initializing",
             Self::Planning => "Planning",
             Self::Reading => "Reading",
+            #[cfg(test)]
             Self::Matching => "Matching",
             Self::Failed => "Failed",
         }
@@ -42,6 +46,7 @@ pub(crate) enum ExecutionAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ExecutionState {
     stage: ExecutionStage,
+    active_phase: ExecutionStage,
     context: ExecutionContext,
     started_at: Instant,
     finished_at: Option<Instant>,
@@ -49,13 +54,51 @@ pub(crate) struct ExecutionState {
     cancellation_requested: bool,
     failure_message: Option<String>,
     copy_notice: Option<copy::CopyNotice>,
+    result: Option<ExecutionResult>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExecutionResult {
+    phase: ExecutionStage,
+    termination: ProcessTermination,
+    log: Vec<ExecutionLogLine>,
+    summary_line: Option<String>,
+    first_error_line: Option<usize>,
+}
+
+impl ExecutionResult {
+    #[must_use]
+    pub(crate) const fn phase(&self) -> ExecutionStage {
+        self.phase
+    }
+
+    #[must_use]
+    pub(crate) const fn termination(&self) -> ProcessTermination {
+        self.termination
+    }
+
+    #[must_use]
+    pub(crate) fn log(&self) -> &[ExecutionLogLine] {
+        &self.log
+    }
+
+    #[must_use]
+    pub(crate) fn summary_line(&self) -> Option<&str> {
+        self.summary_line.as_deref()
+    }
+
+    #[must_use]
+    pub(crate) const fn first_error_line(&self) -> Option<usize> {
+        self.first_error_line
+    }
 }
 
 impl ExecutionState {
     #[must_use]
     pub(crate) fn with_context(started_at: Instant, context: ExecutionContext) -> Self {
         Self {
-            stage: ExecutionStage::Planning,
+            stage: ExecutionStage::Initializing,
+            active_phase: ExecutionStage::Initializing,
             context,
             started_at,
             finished_at: None,
@@ -63,6 +106,7 @@ impl ExecutionState {
             cancellation_requested: false,
             failure_message: None,
             copy_notice: None,
+            result: None,
         }
     }
 
@@ -74,12 +118,24 @@ impl ExecutionState {
 
     pub(crate) fn record(&mut self, event: ExecutionEvent) {
         match &event.kind {
+            ExecutionEventKind::Phase(ExecutionPhase::Initializing) => {
+                self.stage = ExecutionStage::Initializing;
+                self.active_phase = ExecutionStage::Initializing;
+            }
+            ExecutionEventKind::Phase(ExecutionPhase::Planning) => {
+                self.stage = ExecutionStage::Planning;
+                self.active_phase = ExecutionStage::Planning;
+            }
             ExecutionEventKind::Phase(ExecutionPhase::Reading) => {
                 self.stage = ExecutionStage::Reading;
+                self.active_phase = ExecutionStage::Reading;
             }
+            #[cfg(test)]
             ExecutionEventKind::Phase(ExecutionPhase::Matching) => {
                 self.stage = ExecutionStage::Matching;
+                self.active_phase = ExecutionStage::Matching;
             }
+            #[cfg(test)]
             ExecutionEventKind::RepositoryRoot(repository_root) => {
                 self.context = self
                     .context
@@ -89,6 +145,7 @@ impl ExecutionState {
             ExecutionEventKind::Workspace(workspace) => {
                 self.context = self.context.clone().with_workspace(workspace.clone());
             }
+            #[cfg(test)]
             ExecutionEventKind::Git(git) => {
                 self.context = self.context.clone().with_git(git.clone());
             }
@@ -105,6 +162,7 @@ impl ExecutionState {
     }
 
     pub(crate) fn fail(&mut self, message: String, received_at: Instant) {
+        let phase = self.active_phase;
         self.stage = ExecutionStage::Failed;
         self.finished_at.get_or_insert(received_at);
         self.failure_message = Some(message.clone());
@@ -118,23 +176,29 @@ impl ExecutionState {
                 source: DiagnosticSource::Terraform,
             }),
         });
+        let termination = self.progress.termination().unwrap_or(ProcessTermination {
+            status: ProcessExitStatus::Exited(1),
+            interrupted: false,
+        });
+        let first_error_line = self.progress.first_error_line();
+        self.result = Some(ExecutionResult {
+            phase,
+            termination,
+            log: self.progress.log().to_vec(),
+            summary_line: None,
+            first_error_line,
+        });
     }
 
     #[must_use]
     pub(crate) fn copy_effect(&self, target: copy::CopyTarget) -> Option<copy::CopyEffect> {
-        let text = match target {
-            copy::CopyTarget::Diagnostic => copy::failed_diagnostic_text(
-                self.failure_message.as_deref(),
+        match target {
+            copy::CopyTarget::Diagnostic => Some(copy::diagnostic_effect(
                 self.progress.diagnostics(),
-            ),
-            copy::CopyTarget::Result => copy::failed_text(
-                self.context(),
                 self.failure_message.as_deref(),
-                self.progress.diagnostics(),
-            ),
-            copy::CopyTarget::Resource | copy::CopyTarget::Plan => return None,
-        };
-        Some(copy::CopyEffect::new(target, 0, text))
+            )),
+            copy::CopyTarget::Plan => None,
+        }
     }
 
     #[must_use]
@@ -161,10 +225,6 @@ impl ExecutionState {
         &self.progress
     }
 
-    pub(crate) fn take_review_diagnostics(&mut self) -> Vec<Diagnostic> {
-        self.progress.take_review_diagnostics()
-    }
-
     #[must_use]
     pub(crate) fn elapsed_at(&self, now: Instant) -> Duration {
         self.finished_at
@@ -186,6 +246,11 @@ impl ExecutionState {
     #[must_use]
     pub(crate) const fn cancellation_requested(&self) -> bool {
         self.cancellation_requested
+    }
+
+    #[must_use]
+    pub(crate) const fn result(&self) -> Option<&ExecutionResult> {
+        self.result.as_ref()
     }
 }
 
@@ -319,11 +384,11 @@ mod tests {
             }),
         ));
         assert!(!state.is_cancelling());
-        assert_eq!(state.stage(), ExecutionStage::Planning);
+        assert_eq!(state.stage(), ExecutionStage::Initializing);
     }
 
     #[test]
-    fn failed_copy_effects_separate_diagnostic_from_full_result() {
+    fn failed_copy_effect_contains_the_diagnostic() {
         let started_at = Instant::now();
         let mut state = ExecutionState::new(started_at);
         state.fail("Terraform failed".to_owned(), started_at);
@@ -331,14 +396,8 @@ mod tests {
         let diagnostic = state
             .copy_effect(copy::CopyTarget::Diagnostic)
             .expect("diagnostic copy should be available");
-        let result = state
-            .copy_effect(copy::CopyTarget::Result)
-            .expect("result copy should be available");
-
         assert_eq!(diagnostic.target(), copy::CopyTarget::Diagnostic);
         assert!(diagnostic.text().contains("Terraform failed"));
-        assert_eq!(result.target(), copy::CopyTarget::Result);
-        assert!(result.text().contains("Review result is unavailable."));
     }
 
     #[test]
@@ -359,6 +418,51 @@ mod tests {
         assert_eq!(state.stage(), ExecutionStage::Failed);
         assert_eq!(state.progress().termination(), Some(termination));
         assert_eq!(state.progress().last_event_at(), Some(termination_at));
+    }
+
+    #[test]
+    fn failure_result_keeps_the_running_phase_and_first_terraform_error() {
+        let started_at = Instant::now();
+        let mut state = ExecutionState::new(started_at);
+        state.record(event(
+            started_at,
+            ExecutionEventKind::Phase(ExecutionPhase::Planning),
+        ));
+        state.record(event(
+            started_at,
+            ExecutionEventKind::Diagnostic(Diagnostic {
+                severity: DiagnosticSeverity::Warning,
+                summary: "Provider warning".to_owned(),
+                detail: Some("Warning detail".to_owned()),
+                position: None,
+                source: DiagnosticSource::Terraform,
+            }),
+        ));
+        state.record(event(
+            started_at,
+            ExecutionEventKind::Diagnostic(Diagnostic {
+                severity: DiagnosticSeverity::Error,
+                summary: "Invalid configuration".to_owned(),
+                detail: None,
+                position: None,
+                source: DiagnosticSource::Terraform,
+            }),
+        ));
+        state.record(event(
+            started_at,
+            ExecutionEventKind::Terminated(ProcessTermination {
+                status: ProcessExitStatus::Exited(1),
+                interrupted: false,
+            }),
+        ));
+        state.fail("Terraform plan failed".to_owned(), started_at);
+
+        let result = state.result().expect("failure result should exist");
+        assert_eq!(result.phase(), ExecutionStage::Planning);
+        assert_eq!(result.first_error_line(), Some(2));
+        assert_eq!(result.log()[0].text, "Provider warning\nWarning detail");
+        assert_eq!(result.log()[1].text, "Invalid configuration");
+        assert_eq!(result.log()[2].text, "Terraform plan failed");
     }
 
     #[test]

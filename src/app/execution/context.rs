@@ -1,34 +1,36 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
+
+#[cfg(test)]
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ExecutionContextValue {
     Loading,
+    #[cfg(test)]
     Unavailable,
     Known(String),
 }
 
-impl ExecutionContextValue {
-    #[must_use]
-    pub(crate) fn as_str(&self) -> &str {
-        match self {
-            Self::Loading => "loading...",
-            Self::Unavailable => "unavailable",
-            Self::Known(value) => value,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ExecutionContext {
-    cwd: ExecutionContextValue,
-    repository_root: ExecutionContextValue,
-    repository_root_path: Option<PathBuf>,
+    cwd: String,
     workspace: ExecutionContextValue,
+    #[cfg(test)]
+    repository_root: ExecutionContextValue,
+    #[cfg(test)]
+    repository_root_path: Option<PathBuf>,
+    #[cfg(test)]
     git: ExecutionContextValue,
+    #[cfg(test)]
     comparison: ExecutionContextValue,
 }
 
 impl ExecutionContext {
+    #[cfg(test)]
+    #[allow(
+        dead_code,
+        reason = "retained for dormant Git comparison regression fixtures"
+    )]
     #[must_use]
     pub(crate) fn known(
         cwd: impl Into<String>,
@@ -37,26 +39,33 @@ impl ExecutionContext {
         comparison: impl Into<String>,
     ) -> Self {
         Self {
-            cwd: ExecutionContextValue::Known(cwd.into()),
+            cwd: cwd.into(),
+            workspace: ExecutionContextValue::Known(workspace.into()),
             repository_root: ExecutionContextValue::Unavailable,
             repository_root_path: None,
-            workspace: ExecutionContextValue::Known(workspace.into()),
             git: ExecutionContextValue::Known(git.into()),
             comparison: ExecutionContextValue::Known(comparison.into()),
         }
     }
 
-    pub(crate) fn loading(cwd: impl Into<String>, comparison: impl Into<String>) -> Self {
+    pub(crate) fn loading(cwd: impl Into<String>, comparison: &str) -> Self {
+        #[cfg(not(test))]
+        let _ = comparison;
         Self {
-            cwd: ExecutionContextValue::Known(cwd.into()),
-            repository_root: ExecutionContextValue::Loading,
-            repository_root_path: None,
+            cwd: cwd.into(),
             workspace: ExecutionContextValue::Loading,
+            #[cfg(test)]
+            repository_root: ExecutionContextValue::Loading,
+            #[cfg(test)]
+            repository_root_path: None,
+            #[cfg(test)]
             git: ExecutionContextValue::Loading,
-            comparison: ExecutionContextValue::Known(comparison.into()),
+            #[cfg(test)]
+            comparison: ExecutionContextValue::Known(comparison.to_owned()),
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn with_repository_root(mut self, repository_root: Option<PathBuf>) -> Self {
         self.repository_root_path.clone_from(&repository_root);
         self.repository_root = repository_root.map_or(ExecutionContextValue::Unavailable, |path| {
@@ -70,6 +79,7 @@ impl ExecutionContext {
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn with_git(mut self, git: Option<String>) -> Self {
         self.git = git.map_or(
             ExecutionContextValue::Unavailable,
@@ -79,16 +89,8 @@ impl ExecutionContext {
     }
 
     #[must_use]
-    pub(crate) const fn cwd(&self) -> &ExecutionContextValue {
-        &self.cwd
-    }
-
-    #[must_use]
     pub(crate) fn cwd_path(&self) -> &Path {
-        match &self.cwd {
-            ExecutionContextValue::Known(value) => Path::new(value),
-            ExecutionContextValue::Loading | ExecutionContextValue::Unavailable => Path::new(""),
-        }
+        Path::new(&self.cwd)
     }
 
     #[must_use]
@@ -96,21 +98,33 @@ impl ExecutionContext {
         &self.workspace
     }
 
+    #[cfg(test)]
     #[must_use]
     pub(crate) const fn repository_root(&self) -> &ExecutionContextValue {
         &self.repository_root
     }
 
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn repository_root_path(&self) -> Option<&Path> {
         self.repository_root_path.as_deref()
     }
 
+    #[cfg(test)]
+    #[allow(
+        dead_code,
+        reason = "retained for dormant Git comparison regression fixtures"
+    )]
     #[must_use]
     pub(crate) const fn git(&self) -> &ExecutionContextValue {
         &self.git
     }
 
+    #[cfg(test)]
+    #[allow(
+        dead_code,
+        reason = "retained for dormant Git comparison regression fixtures"
+    )]
     #[must_use]
     pub(crate) const fn comparison(&self) -> &ExecutionContextValue {
         &self.comparison

@@ -3,7 +3,7 @@ name = "terracotta"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.98"
-description = "Review Terraform plan changes against Git evidence"
+description = "Review Terraform plans in an interactive terminal"
 repository = "https://github.com/riii111/terracotta"
 publish = false
 
@@ -17,6 +17,12 @@ crossterm = "0.29"
 ratatui = "0.30"
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 hcl = { package = "hcl-rs", version = "0.19.8" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Console", "Win32_System_Threading"] }
 
 [dev-dependencies]
 insta = "1"
