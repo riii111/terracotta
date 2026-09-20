@@ -12,7 +12,7 @@ use ratatui::{DefaultTerminal, Terminal, backend::Backend, layout::Rect};
 
 use crate::{
     app::{
-        copy::CopyTarget,
+        copy::{CopyEffect, CopyResult, CopyTarget},
         execution::{ExecutionStage, ExecutionState},
         review::PlanReviewMessage,
         session::{self, Action, Effect, SessionOutcome, SessionState},
@@ -52,8 +52,13 @@ pub(crate) fn run_connected(
     let mut dirty = true;
 
     loop {
-        let (outcome, received) =
-            receive_messages(messages, &mut state, &mut worker_disconnected, &mut effects);
+        let (outcome, received) = receive_messages(
+            messages,
+            &mut state,
+            &mut execution_view,
+            &mut worker_disconnected,
+            &mut effects,
+        );
         dirty |= received;
         if let Some(outcome) = outcome {
             return Ok(outcome);
@@ -83,7 +88,9 @@ pub(crate) fn run_connected(
                         &mut confirmation_view,
                         key,
                     )? {
-                        if let Some(outcome) = dispatch(&mut state, action, &mut effects) {
+                        if let Some(outcome) =
+                            dispatch(&mut state, action, &mut execution_view, &mut effects)
+                        {
                             return Ok(outcome);
                         }
                         if state
@@ -301,19 +308,24 @@ fn draw<B: Backend>(
     Ok(())
 }
 
-fn receive_messages(
+fn receive_messages<C: ClipboardWriter>(
     messages: &Receiver<PlanReviewMessage>,
     state: &mut SessionState,
+    execution_view: &mut execution::ExecutionViewState,
     worker_disconnected: &mut bool,
-    effects: &mut RuntimeEffects<'_>,
+    effects: &mut RuntimeEffects<'_, C>,
 ) -> (Option<SessionOutcome>, bool) {
     let mut received = false;
     loop {
         match messages.try_recv() {
             Ok(message) => {
                 received = true;
-                if let Some(outcome) = dispatch(state, SessionState::from_message(message), effects)
-                {
+                if let Some(outcome) = dispatch(
+                    state,
+                    SessionState::from_message(message),
+                    execution_view,
+                    effects,
+                ) {
                     return (Some(outcome), received);
                 }
             }
@@ -324,26 +336,46 @@ fn receive_messages(
             Err(TryRecvError::Disconnected) => {
                 *worker_disconnected = true;
                 received = true;
-                let outcome = dispatch(state, Action::WorkerDisconnected, effects);
+                let outcome = dispatch(state, Action::WorkerDisconnected, execution_view, effects);
                 return (outcome, received);
             }
         }
     }
 }
 
-fn dispatch(
+pub(super) fn update_session(
     state: &mut SessionState,
     action: Action,
-    effects: &mut RuntimeEffects<'_>,
-) -> Option<SessionOutcome> {
-    let effect = session::update(state, action, Instant::now());
-    apply_effect(state, effect, effects)
+    execution_view: &mut execution::ExecutionViewState,
+    now: Instant,
+) -> Option<Effect> {
+    let was_apply = state.apply().is_some();
+    let had_apply_result = state.apply().is_some_and(|apply| apply.result().is_some());
+    let effect = session::update(state, action, now);
+    let entered_apply = !was_apply && state.apply().is_some();
+    let apply_result_ready =
+        !had_apply_result && state.apply().is_some_and(|apply| apply.result().is_some());
+    if entered_apply || apply_result_ready {
+        *execution_view = execution::ExecutionViewState::default();
+    }
+    effect
 }
 
-fn apply_effect(
+fn dispatch<C: ClipboardWriter>(
+    state: &mut SessionState,
+    action: Action,
+    execution_view: &mut execution::ExecutionViewState,
+    effects: &mut RuntimeEffects<'_, C>,
+) -> Option<SessionOutcome> {
+    let effect = update_session(state, action, execution_view, Instant::now());
+    apply_effect(state, effect, execution_view, effects)
+}
+
+fn apply_effect<C: ClipboardWriter>(
     state: &mut SessionState,
     effect: Option<Effect>,
-    effects: &mut RuntimeEffects<'_>,
+    execution_view: &mut execution::ExecutionViewState,
+    effects: &mut RuntimeEffects<'_, C>,
 ) -> Option<SessionOutcome> {
     match effect {
         None => None,
@@ -363,6 +395,7 @@ fn apply_effect(
                     Action::ApplyFailed {
                         message: "The reviewed plan is no longer available.".to_owned(),
                     },
+                    execution_view,
                     effects,
                 );
             };
@@ -379,6 +412,7 @@ fn apply_effect(
                         Action::ApplyFailed {
                             message: format!("failed to start the apply worker: {error}"),
                         },
+                        execution_view,
                         effects,
                     );
                 }
@@ -388,18 +422,33 @@ fn apply_effect(
         Some(Effect::WriteClipboard(effect)) => {
             let target = effect.target();
             let result = effects.clipboard.execute(&effect);
-            dispatch(state, Action::CopyCompleted { target, result }, effects)
+            dispatch(
+                state,
+                Action::CopyCompleted { target, result },
+                execution_view,
+                effects,
+            )
         }
         Some(Effect::Finish(outcome)) => Some(outcome),
     }
 }
 
-struct RuntimeEffects<'a> {
+trait ClipboardWriter {
+    fn execute(&mut self, effect: &CopyEffect) -> CopyResult;
+}
+
+impl ClipboardWriter for ClipboardExecutor {
+    fn execute(&mut self, effect: &CopyEffect) -> CopyResult {
+        Self::execute(self, effect)
+    }
+}
+
+struct RuntimeEffects<'a, C: ClipboardWriter = ClipboardExecutor> {
     root: &'a Path,
     sender: &'a std::sync::mpsc::Sender<PlanReviewMessage>,
     saved_plan_slot: &'a Arc<Mutex<Option<SavedPlan>>>,
     cancellation: &'a CancellationToken,
-    clipboard: &'a mut ClipboardExecutor,
+    clipboard: &'a mut C,
     apply_worker: &'a mut Option<JoinHandle<()>>,
 }
 
@@ -409,11 +458,14 @@ mod tests {
 
     use crossterm::event::{KeyCode, KeyModifiers};
     use ratatui::{backend::TestBackend, style::Color};
+    use rstest::rstest;
 
     use super::*;
     use crate::app::{
-        copy::CopyResult,
-        execution::{ApplyStatus, ExecutionContext, ExecutionEvent, ExecutionEventKind},
+        execution::{
+            ApplyStatus, EventStream, ExecutionContext, ExecutionEvent, ExecutionEventKind,
+            ExecutionLogLine,
+        },
         review::{PlanMetadata, PlanReview, test_support::plan_document},
         session::{ApplyConfirmationState, ReviewSessionState},
     };
@@ -424,6 +476,14 @@ mod tests {
         dirty: bool,
         now: Instant,
         expected: bool,
+    }
+
+    struct TestClipboard;
+
+    impl ClipboardWriter for TestClipboard {
+        fn execute(&mut self, _effect: &CopyEffect) -> CopyResult {
+            CopyResult::Written
+        }
     }
 
     #[test]
@@ -660,6 +720,351 @@ mod tests {
         );
     }
 
+    #[rstest]
+    #[case::failed_end(ApplyStatus::Failed, KeyCode::End, KeyModifiers::NONE)]
+    #[case::failed_alt_right(ApplyStatus::Failed, KeyCode::Char('>'), KeyModifiers::ALT)]
+    #[case::interrupted_end(ApplyStatus::Interrupted, KeyCode::End, KeyModifiers::NONE)]
+    #[case::interrupted_alt_right(ApplyStatus::Interrupted, KeyCode::Char('>'), KeyModifiers::ALT)]
+    fn end_keys_reach_the_rendered_log_tail(
+        #[case] status: ApplyStatus,
+        #[case] code: KeyCode,
+        #[case] modifiers: KeyModifiers,
+    ) {
+        let started_at = Instant::now();
+        let mut state = long_apply_state(started_at, Some(status));
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+        let mut execution_view = execution::ExecutionViewState::default();
+        let review_view = plan_review::PlanReviewViewState::default();
+        let confirmation_view = plan_review::ApplyConfirmationViewState::default();
+        let key = KeyEvent::new(code, modifiers);
+        let action = handle_key_event(
+            &terminal,
+            &state,
+            &mut execution_view,
+            &mut plan_review::PlanReviewViewState::default(),
+            &mut plan_review::ApplyConfirmationViewState::default(),
+            key,
+        )
+        .expect("end key should be handled");
+
+        assert_eq!(action, None);
+        let mut dirty = true;
+        assert!(
+            draw_if_needed(
+                &mut state,
+                &mut terminal,
+                execution_view,
+                &review_view,
+                &confirmation_view,
+                &mut dirty,
+                started_at,
+            )
+            .expect("result should render")
+        );
+        assert!(terminal_text(&terminal).contains("tail marker"));
+    }
+
+    #[test]
+    fn manual_scroll_survives_new_log_until_end_restores_following() {
+        let started_at = Instant::now();
+        let mut state = long_apply_state(started_at, None);
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+        let mut execution_view = execution::ExecutionViewState::default();
+        let mut review_view = plan_review::PlanReviewViewState::default();
+        let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
+        let down = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
+
+        assert_eq!(
+            handle_key_event(
+                &terminal,
+                &state,
+                &mut execution_view,
+                &mut review_view,
+                &mut confirmation_view,
+                down,
+            )
+            .expect("scroll key should be handled"),
+            None
+        );
+        assert!(!execution_view.follows_latest());
+
+        let new_log = ExecutionEvent {
+            received_at: started_at + Duration::from_secs(1),
+            kind: ExecutionEventKind::Log(ExecutionLogLine {
+                stream: EventStream::Stdout,
+                text: "new tail marker".to_owned(),
+            }),
+        };
+        let _ = update_session(
+            &mut state,
+            Action::ApplyWorkerEvent(new_log),
+            &mut execution_view,
+            started_at + Duration::from_secs(1),
+        );
+        assert!(!execution_view.follows_latest());
+
+        let end = KeyEvent::new(KeyCode::End, KeyModifiers::NONE);
+        assert_eq!(
+            handle_key_event(
+                &terminal,
+                &state,
+                &mut execution_view,
+                &mut review_view,
+                &mut confirmation_view,
+                end,
+            )
+            .expect("end key should be handled"),
+            None
+        );
+        assert!(execution_view.follows_latest());
+
+        let mut dirty = true;
+        draw_if_needed(
+            &mut state,
+            &mut terminal,
+            execution_view,
+            &review_view,
+            &confirmation_view,
+            &mut dirty,
+            started_at + Duration::from_secs(1),
+        )
+        .expect("updated log should render");
+        assert!(terminal_text(&terminal).contains("new tail marker"));
+    }
+
+    #[test]
+    fn update_session_resets_only_when_apply_starts_or_finishes() {
+        let now = Instant::now();
+        let mut state = applyable_review_state();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+        let mut view = execution::ExecutionViewState::default();
+        let mut review_view = plan_review::PlanReviewViewState::default();
+        let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
+        view.apply_scroll(execution::ExecutionScroll::Down, 10, 20, 10);
+        view.apply_horizontal_scroll(execution::ExecutionScroll::Right, 2, 5, 10);
+
+        let apply_action = handle_key_event(
+            &terminal,
+            &state,
+            &mut view,
+            &mut review_view,
+            &mut confirmation_view,
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+        )
+        .expect("apply key should be handled");
+        assert!(
+            update_session(
+                &mut state,
+                apply_action.expect("apply key should produce an action"),
+                &mut view,
+                now,
+            )
+            .is_none()
+        );
+        assert_eq!(view.horizontal(), 3);
+        assert!(!view.follows_latest());
+
+        for character in "yes".chars() {
+            assert!(
+                handle_key_event(
+                    &terminal,
+                    &state,
+                    &mut view,
+                    &mut review_view,
+                    &mut confirmation_view,
+                    KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+                )
+                .expect("confirmation key should be handled")
+                .is_none()
+            );
+        }
+        let confirm_action = handle_key_event(
+            &terminal,
+            &state,
+            &mut view,
+            &mut review_view,
+            &mut confirmation_view,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        )
+        .expect("confirmation should be handled");
+        assert!(matches!(
+            update_session(
+                &mut state,
+                confirm_action.expect("yes should produce an action"),
+                &mut view,
+                now,
+            ),
+            Some(Effect::StartApply)
+        ));
+        assert_eq!(view.horizontal(), 0);
+        assert_eq!(view.vertical_offset(2, 90), 2);
+
+        assert_apply_start_path(
+            &mut state,
+            &mut terminal,
+            &mut view,
+            &mut review_view,
+            &mut confirmation_view,
+            now,
+        );
+        assert_apply_completion_and_copy_path(
+            &mut state,
+            &mut terminal,
+            &mut view,
+            &mut review_view,
+            &mut confirmation_view,
+            now,
+        );
+    }
+
+    fn assert_apply_start_path(
+        state: &mut SessionState,
+        terminal: &mut Terminal<TestBackend>,
+        view: &mut execution::ExecutionViewState,
+        review_view: &mut plan_review::PlanReviewViewState,
+        confirmation_view: &mut plan_review::ApplyConfirmationViewState,
+        now: Instant,
+    ) {
+        for index in 0..40 {
+            let text = if index == 0 {
+                "apply log line 0 with enough width to exercise the production horizontal scrollbar after the result is complete".to_owned()
+            } else if index == 39 {
+                "tail apply marker".to_owned()
+            } else {
+                format!("apply log line {index}")
+            };
+            let _ = update_session(
+                state,
+                Action::ApplyWorkerEvent(ExecutionEvent {
+                    received_at: now,
+                    kind: ExecutionEventKind::Log(ExecutionLogLine {
+                        stream: EventStream::Stdout,
+                        text,
+                    }),
+                }),
+                view,
+                now,
+            );
+        }
+        let text =
+            render_apply_to_text(state, terminal, *view, review_view, confirmation_view, now);
+        assert_eq!(view.horizontal(), 0);
+        assert!(text.contains("tail apply marker"));
+
+        for key in [
+            KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+        ] {
+            assert!(
+                handle_key_event(terminal, state, view, review_view, confirmation_view, key,)
+                    .expect("manual execution key should be handled")
+                    .is_none()
+            );
+        }
+        assert!(execution_scroll_position(state, *view) > 0);
+        assert!(view.horizontal() > 0);
+    }
+
+    fn assert_apply_completion_and_copy_path(
+        state: &mut SessionState,
+        terminal: &mut Terminal<TestBackend>,
+        view: &mut execution::ExecutionViewState,
+        review_view: &mut plan_review::PlanReviewViewState,
+        confirmation_view: &mut plan_review::ApplyConfirmationViewState,
+        now: Instant,
+    ) {
+        let _ = update_session(
+            state,
+            Action::ApplyCompleted {
+                status: ApplyStatus::Succeeded,
+                summary_line: None,
+            },
+            view,
+            now,
+        );
+        assert_eq!(view.horizontal(), 0);
+        assert_eq!(view.vertical_offset(2, 90), 2);
+        let text =
+            render_apply_to_text(state, terminal, *view, review_view, confirmation_view, now);
+        assert!(text.contains("tail apply marker"));
+
+        for key in [
+            KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+        ] {
+            assert!(
+                handle_key_event(terminal, state, view, review_view, confirmation_view, key,)
+                    .expect("post-result execution key should be handled")
+                    .is_none()
+            );
+        }
+        let copied_vertical = execution_scroll_position(state, *view);
+        let copied_horizontal = view.horizontal();
+        assert!(copied_vertical > 0);
+        assert!(copied_horizontal > 0);
+
+        let (sender, _messages) = std::sync::mpsc::channel();
+        let saved_plan_slot = Arc::new(Mutex::new(None));
+        let cancellation = CancellationToken::new();
+        let mut clipboard = TestClipboard;
+        let mut apply_worker = None;
+        let mut effects = RuntimeEffects {
+            root: Path::new("/project"),
+            sender: &sender,
+            saved_plan_slot: &saved_plan_slot,
+            cancellation: &cancellation,
+            clipboard: &mut clipboard,
+            apply_worker: &mut apply_worker,
+        };
+        assert!(
+            dispatch(
+                state,
+                Action::Copy(CopyTarget::Execution),
+                view,
+                &mut effects,
+            )
+            .is_none()
+        );
+        assert!(state.apply().expect("apply state").copy_notice().is_some());
+        let _ = render_apply_to_text(state, terminal, *view, review_view, confirmation_view, now);
+        assert_eq!(execution_scroll_position(state, *view), copied_vertical);
+        assert_eq!(view.horizontal(), copied_horizontal);
+    }
+
+    fn render_apply_to_text(
+        state: &mut SessionState,
+        terminal: &mut Terminal<TestBackend>,
+        view: execution::ExecutionViewState,
+        review_view: &plan_review::PlanReviewViewState,
+        confirmation_view: &plan_review::ApplyConfirmationViewState,
+        now: Instant,
+    ) -> String {
+        let mut dirty = true;
+        assert!(
+            draw_if_needed(
+                state,
+                terminal,
+                view,
+                review_view,
+                confirmation_view,
+                &mut dirty,
+                now,
+            )
+            .expect("apply should render")
+        );
+        terminal_text(terminal)
+    }
+
+    fn execution_scroll_position(state: &SessionState, view: execution::ExecutionViewState) -> u16 {
+        let apply = state.apply().expect("apply state");
+        execution::execution_scroll_position_with_view(
+            apply,
+            view,
+            &execution::execution_layout(ratatui::layout::Rect::new(0, 0, 80, 24), apply),
+        )
+        .0
+    }
+
     fn terminal_text(terminal: &Terminal<TestBackend>) -> String {
         let buffer = terminal.backend().buffer();
         let area = buffer.area();
@@ -708,6 +1113,40 @@ mod tests {
             execution.finish_apply(status, None, None, started_at);
         }
         SessionState::Apply(Box::new(execution))
+    }
+
+    fn long_apply_state(started_at: Instant, status: Option<ApplyStatus>) -> SessionState {
+        let mut execution = ExecutionState::applying(
+            started_at,
+            ExecutionContext::loading("/project").with_workspace("default"),
+        );
+        for index in 0..40 {
+            execution.record(ExecutionEvent {
+                received_at: started_at,
+                kind: ExecutionEventKind::Log(ExecutionLogLine {
+                    stream: EventStream::Stdout,
+                    text: if index == 39 {
+                        "tail marker".to_owned()
+                    } else {
+                        format!("log line {index}")
+                    },
+                }),
+            });
+        }
+        if let Some(status) = status {
+            execution.finish_apply(status, None, None, started_at);
+        }
+        SessionState::Apply(Box::new(execution))
+    }
+
+    fn applyable_review_state() -> SessionState {
+        SessionState::Review(Box::new(ReviewSessionState::new(PlanReview::new(
+            PathBuf::from("/project"),
+            "default".to_owned(),
+            plan_document("Plan: 1 to add.\n".to_owned()),
+            PlanMetadata::new(Vec::new(), Vec::new(), 1, 0, 0, true),
+            Vec::new(),
+        ))))
     }
 
     fn record_copy(state: &mut SessionState, target: CopyTarget, now: Instant) {
