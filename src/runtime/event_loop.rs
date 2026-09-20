@@ -128,12 +128,9 @@ fn draw_if_needed<B: Backend>(
     confirmation_view: &plan_review::ApplyConfirmationViewState,
     dirty: &mut bool,
     now: Instant,
-) -> io::Result<()>
-where
-    B::Error: std::fmt::Debug,
-{
+) -> Result<bool, B::Error> {
     if !should_draw(state, *dirty, now) {
-        return Ok(());
+        return Ok(false);
     }
 
     draw(
@@ -142,10 +139,11 @@ where
         execution_view,
         review_view,
         confirmation_view,
+        now,
     )?;
     clear_expired_copy_flash(state, now);
     *dirty = false;
-    Ok(())
+    Ok(true)
 }
 
 fn clear_expired_copy_flash(state: &mut SessionState, now: Instant) {
@@ -174,10 +172,7 @@ fn handle_key_event<B: Backend>(
     review_view: &mut plan_review::PlanReviewViewState,
     confirmation_view: &mut plan_review::ApplyConfirmationViewState,
     key: KeyEvent,
-) -> io::Result<Option<Action>>
-where
-    B::Error: std::fmt::Debug,
-{
+) -> Result<Option<Action>, B::Error> {
     if let Some(execution) = state.execution() {
         return handle_execution_key_event(terminal, execution, execution_view, key);
     }
@@ -200,9 +195,7 @@ where
             Some(plan_review::PlanReviewInput::Apply) => Some(Action::OpenApplyConfirmation),
             Some(plan_review::PlanReviewInput::Copy) => Some(Action::Copy(CopyTarget::Plan)),
             Some(input) => {
-                let size = terminal
-                    .size()
-                    .map_err(|error| io::Error::other(format!("{error:?}")))?;
+                let size = terminal.size()?;
                 let body = plan_review::layout(
                     Rect::new(0, 0, size.width, size.height),
                     review_view.searching(),
@@ -228,10 +221,7 @@ fn handle_execution_key_event<B: Backend>(
     state: &ExecutionState,
     execution_view: &mut execution::ExecutionViewState,
     key: KeyEvent,
-) -> io::Result<Option<Action>>
-where
-    B::Error: std::fmt::Debug,
-{
+) -> Result<Option<Action>, B::Error> {
     Ok(
         match execution::execution_key_to_input(key, state.stage()) {
             Some(execution::ExecutionInput::Quit) => Some(Action::Quit),
@@ -241,9 +231,7 @@ where
                 None
             }
             Some(execution::ExecutionInput::Scroll(scroll)) => {
-                let size = terminal
-                    .size()
-                    .map_err(|error| io::Error::other(format!("{error:?}")))?;
+                let size = terminal.size()?;
                 let body =
                     execution::execution_layout(Rect::new(0, 0, size.width, size.height), state)
                         .body();
@@ -290,48 +278,26 @@ fn draw<B: Backend>(
     execution_view: execution::ExecutionViewState,
     review_view: &plan_review::PlanReviewViewState,
     confirmation_view: &plan_review::ApplyConfirmationViewState,
-) -> io::Result<()>
-where
-    B::Error: std::fmt::Debug,
-{
+    now: Instant,
+) -> Result<(), B::Error> {
     match state {
         SessionState::Execution(execution) => {
-            terminal
-                .draw(|frame| {
-                    execution::render_execution_with_view(
-                        frame,
-                        execution,
-                        execution_view,
-                        Instant::now(),
-                    );
-                })
-                .map_err(|error| io::Error::other(format!("{error:?}")))?;
+            terminal.draw(|frame| {
+                execution::render_execution_with_view(frame, execution, execution_view, now);
+            })?;
         }
         SessionState::Review(review) => {
-            terminal
-                .draw(|frame| {
-                    plan_review::render(frame, review, review_view, Instant::now());
-                })
-                .map_err(|error| io::Error::other(format!("{error:?}")))?;
+            terminal.draw(|frame| plan_review::render(frame, review, review_view, now))?;
         }
         SessionState::ApplyConfirmation(confirmation) => {
-            terminal
-                .draw(|frame| {
-                    plan_review::render_apply_confirmation(frame, confirmation, confirmation_view);
-                })
-                .map_err(|error| io::Error::other(format!("{error:?}")))?;
+            terminal.draw(|frame| {
+                plan_review::render_apply_confirmation(frame, confirmation, confirmation_view);
+            })?;
         }
         SessionState::Apply(execution) => {
-            terminal
-                .draw(|frame| {
-                    execution::render_execution_with_view(
-                        frame,
-                        execution,
-                        execution_view,
-                        Instant::now(),
-                    );
-                })
-                .map_err(|error| io::Error::other(format!("{error:?}")))?;
+            terminal.draw(|frame| {
+                execution::render_execution_with_view(frame, execution, execution_view, now);
+            })?;
         }
     }
     Ok(())
@@ -444,12 +410,12 @@ mod tests {
     use std::path::PathBuf;
 
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::backend::TestBackend;
+    use ratatui::{backend::TestBackend, style::Color};
 
     use super::*;
     use crate::app::{
         copy::CopyResult,
-        execution::{ApplyStatus, ExecutionContext},
+        execution::{ApplyStatus, ExecutionContext, ExecutionEvent, ExecutionEventKind},
         review::{PlanDocument, PlanMetadata, PlanReview},
         session::{ApplyConfirmationState, ReviewSessionState},
     };
@@ -608,16 +574,18 @@ mod tests {
         assert_eq!(action, None);
         assert_eq!(confirmation_view.input(), "y");
 
-        draw_if_needed(
-            &mut state,
-            &mut terminal,
-            execution_view,
-            &review_view,
-            &confirmation_view,
-            &mut dirty,
-            now,
-        )
-        .expect("confirmation should render");
+        assert!(
+            draw_if_needed(
+                &mut state,
+                &mut terminal,
+                execution_view,
+                &review_view,
+                &confirmation_view,
+                &mut dirty,
+                now,
+            )
+            .expect("confirmation should render")
+        );
 
         assert!(!dirty);
         assert!(terminal_text(&terminal).contains("Apply this plan? (yes/no): y|"));
@@ -626,8 +594,19 @@ mod tests {
     #[test]
     fn expired_copy_flash_draws_once_through_the_runtime_step() {
         let started_at = Instant::now();
+        let flash_active_at = started_at + Duration::from_millis(100);
         let expired_at = started_at + Duration::from_millis(200);
-        let mut state = apply_state(started_at, Some(ApplyStatus::Succeeded));
+        let mut state = apply_state(started_at, None);
+        if let SessionState::Apply(execution) = &mut state {
+            execution.record(ExecutionEvent {
+                received_at: started_at,
+                kind: ExecutionEventKind::Informational {
+                    event_type: "log".to_owned(),
+                    message: Some("flash".to_owned()),
+                },
+            });
+            execution.finish_apply(ApplyStatus::Succeeded, None, None, started_at);
+        }
         record_copy(&mut state, CopyTarget::Execution, started_at);
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
         let mut dirty = false;
@@ -635,33 +614,52 @@ mod tests {
         let review_view = plan_review::PlanReviewViewState::default();
         let confirmation_view = plan_review::ApplyConfirmationViewState::default();
 
-        draw_if_needed(
-            &mut state,
-            &mut terminal,
-            execution_view,
-            &review_view,
-            &confirmation_view,
-            &mut dirty,
-            expired_at,
-        )
-        .expect("expired flash should render");
+        assert!(
+            draw_if_needed(
+                &mut state,
+                &mut terminal,
+                execution_view,
+                &review_view,
+                &confirmation_view,
+                &mut dirty,
+                flash_active_at,
+            )
+            .expect("active flash should render")
+        );
+
+        assert!(buffer_has_flash_style(&terminal));
+        assert!(state.apply().expect("apply state").copy_flash_pending());
+
+        assert!(
+            draw_if_needed(
+                &mut state,
+                &mut terminal,
+                execution_view,
+                &review_view,
+                &confirmation_view,
+                &mut dirty,
+                expired_at,
+            )
+            .expect("expired flash should render")
+        );
 
         assert!(!state.apply().expect("apply state").copy_flash_pending());
         assert!(!should_draw(&state, false, expired_at));
+        assert!(!buffer_has_flash_style(&terminal));
         assert!(terminal_text(&terminal).contains("Apply complete"));
 
-        let rendered = terminal_text(&terminal);
-        draw_if_needed(
-            &mut state,
-            &mut terminal,
-            execution_view,
-            &review_view,
-            &confirmation_view,
-            &mut dirty,
-            expired_at,
-        )
-        .expect("static result should remain rendered");
-        assert_eq!(terminal_text(&terminal), rendered);
+        assert!(
+            !draw_if_needed(
+                &mut state,
+                &mut terminal,
+                execution_view,
+                &review_view,
+                &confirmation_view,
+                &mut dirty,
+                expired_at,
+            )
+            .expect("static result should remain rendered")
+        );
     }
 
     fn terminal_text(terminal: &Terminal<TestBackend>) -> String {
@@ -675,6 +673,15 @@ mod tests {
             text.push('\n');
         }
         text
+    }
+
+    fn buffer_has_flash_style(terminal: &Terminal<TestBackend>) -> bool {
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .any(|cell| cell.bg == Color::Rgb(0xf4, 0x9e, 0x4c))
     }
 
     fn review_state() -> SessionState {
