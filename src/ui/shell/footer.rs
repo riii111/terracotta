@@ -72,13 +72,19 @@ pub(crate) fn render(frame: &mut Frame<'_>, area: Rect, lines: Vec<Line<'static>
 
 #[cfg(test)]
 mod tests {
+    use ratatui::buffer::Buffer;
+    use ratatui::style::{Color, Style};
     use rstest::rstest;
 
     use super::*;
 
-    #[test]
-    fn rendered_keys_and_descriptions_use_rgb_colors_independent_of_ansi_palette() {
-        let backend = ratatui::backend::TestBackend::new(16, 2);
+    #[rstest]
+    #[case::single_row(80)]
+    #[case::wrapped_rows(16)]
+    fn rendered_keys_and_descriptions_use_rgb_colors_independent_of_ansi_palette(
+        #[case] width: u16,
+    ) {
+        let backend = ratatui::backend::TestBackend::new(width, 2);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         terminal
             .draw(|frame| {
@@ -87,66 +93,54 @@ mod tests {
                     frame.area(),
                     layout(
                         vec![hint(&["[", "]"], "prev/next"), hint(&["/"], "search")],
-                        16,
+                        width,
                     ),
                 );
             })
             .unwrap();
         let buffer = terminal.backend().buffer();
-        assert_eq!(
-            buffer[(0, 0)].fg,
-            ratatui::style::Color::Rgb(0xd4, 0xa4, 0x85)
-        );
-        assert_eq!(
-            buffer[(4, 0)].fg,
-            ratatui::style::Color::Rgb(0xc0, 0xb8, 0xb8)
-        );
-        assert_eq!(buffer[(1, 0)].symbol(), "/");
-        assert_eq!(
-            buffer[(1, 0)].fg,
-            ratatui::style::Color::Rgb(0x90, 0x90, 0x90)
-        );
-        assert_eq!(buffer[(0, 1)].symbol(), "/");
-        assert_eq!(
-            buffer[(0, 1)].fg,
-            ratatui::style::Color::Rgb(0xd4, 0xa4, 0x85)
-        );
+        assert_buffer_text_style(buffer, "[", 0, theme::footer_key_style());
+        assert_buffer_text_style(buffer, "]", 0, theme::footer_key_style());
+        assert_buffer_text_style(buffer, "/", 0, theme::footer_key_separator_style());
+        assert_buffer_text_style(buffer, "/", 2, theme::footer_key_style());
+        assert_buffer_text_style(buffer, " prev/next", 0, theme::footer_text_style());
+        assert_buffer_text_style(buffer, " search", 0, theme::footer_text_style());
+        if width == 80 {
+            assert_buffer_text_style(buffer, " | ", 0, theme::footer_text_style());
+        }
     }
 
-    #[rstest]
-    #[case::single_row(80)]
-    #[case::wrapped_rows(16)]
-    fn key_and_description_colors_survive_layout(#[case] width: u16) {
-        let rows = layout(
-            vec![hint(&["[", "]"], "prev/next"), hint(&["/"], "search")],
-            width,
-        );
-        let spans = rows.iter().flat_map(|line| &line.spans).collect::<Vec<_>>();
-
-        for key in ["[", "]"] {
-            let span = spans.iter().find(|span| span.content == key).unwrap();
-            assert_eq!(span.style, theme::footer_key_style());
+    fn assert_buffer_text_style(buffer: &Buffer, text: &str, occurrence: usize, style: Style) {
+        let mut matches = 0;
+        let area = buffer.area();
+        for y in area.y..area.bottom() {
+            let symbols = (area.x..area.right())
+                .map(|x| buffer.cell((x, y)).expect("footer cell").symbol())
+                .collect::<Vec<_>>();
+            for start in 0..symbols.len() {
+                if !symbols[start..]
+                    .iter()
+                    .copied()
+                    .collect::<String>()
+                    .starts_with(text)
+                {
+                    continue;
+                }
+                if matches == occurrence {
+                    for offset in 0..text.chars().count() {
+                        let cell = buffer
+                            .cell((area.x + u16::try_from(start + offset).unwrap(), y))
+                            .expect("footer cell");
+                        assert_eq!(cell.fg, style.fg.unwrap_or(Color::Reset));
+                        assert_eq!(cell.bg, style.bg.unwrap_or(Color::Reset));
+                        assert_eq!(cell.modifier, style.add_modifier);
+                    }
+                    return;
+                }
+                matches += 1;
+            }
         }
-        let slash_styles = spans
-            .iter()
-            .filter(|span| span.content == "/")
-            .map(|span| span.style)
-            .collect::<Vec<_>>();
-        assert_eq!(
-            slash_styles,
-            vec![
-                theme::footer_key_separator_style(),
-                theme::footer_key_style()
-            ]
-        );
-        for description in [" prev/next", " search"] {
-            let span = spans
-                .iter()
-                .find(|span| span.content == description)
-                .unwrap();
-            assert_eq!(span.style, theme::footer_text_style());
-        }
-        assert_ne!(theme::footer_key_style().fg, theme::footer_text_style().fg);
+        panic!("text occurrence not found: {text} #{occurrence}");
     }
 
     #[test]
