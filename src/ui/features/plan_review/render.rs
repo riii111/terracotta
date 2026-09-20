@@ -477,6 +477,7 @@ mod tests {
     use ratatui::buffer::Buffer;
 
     use crate::app::{
+        copy::{CopyResult, CopyTarget},
         execution::{ExecutionContext, ExecutionState},
         review::{
             PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata, test_support::plan_document,
@@ -812,6 +813,136 @@ End of synthetic plan body."#;
     }
 
     #[test]
+    fn copy_flash_styles_plan_cells_without_changing_the_review_shell() {
+        let (before, flash, flash_at_100ms, layout) = copy_flash_buffers();
+
+        assert_eq!(buffer_text(&flash), buffer_text(&flash_at_100ms));
+        assert!(buffer_text(&flash).contains("Copied."));
+        assert_text_prefix_uses_style(
+            &flash,
+            "terraform_data.api",
+            "terraform_data",
+            FLASH_FOREGROUND,
+            FLASH_BACKGROUND,
+            Modifier::empty(),
+        );
+        assert_text_prefix_uses_style(
+            &flash_at_100ms,
+            "terraform_data.api",
+            "terraform_data",
+            FLASH_FOREGROUND,
+            FLASH_BACKGROUND,
+            Modifier::empty(),
+        );
+
+        assert_area_unchanged(&before, &flash, layout.shell.header());
+        assert_area_unchanged(&before, &flash, layout.shell.footer());
+        assert_frame_unchanged(&before, &flash, layout.shell.content());
+        assert_area_unchanged(
+            &before,
+            &flash,
+            layout.search().expect("search input should be visible"),
+        );
+        assert_area_unchanged(
+            &before,
+            &flash,
+            Rect::new(
+                layout.body().x + layout.body().width,
+                layout.body().y,
+                u16::from(layout.vertical_scrollbar()),
+                layout.body().height,
+            ),
+        );
+        assert_area_unchanged(
+            &before,
+            &flash,
+            Rect::new(
+                layout.body().x,
+                layout.body().y + layout.body().height,
+                layout.body().width + u16::from(layout.vertical_scrollbar()),
+                u16::from(layout.horizontal_scrollbar()),
+            ),
+        );
+        assert_flash_body_cells(&before, &flash, layout.body());
+    }
+
+    fn copy_flash_buffers() -> (Buffer, Buffer, Buffer, PlanReviewLayout) {
+        let area = Rect::new(0, 0, 80, 24);
+        let mut plan = review();
+        plan.set_search_query(SEARCH_TERM.to_owned());
+        let state = review_state(plan);
+        let scroll_layout = layout(area, false, &state);
+        let mut view = PlanReviewViewState::default();
+        view.apply(
+            PlanReviewInput::Down,
+            area,
+            scroll_layout.max_vertical(),
+            scroll_layout.max_horizontal(),
+            SEARCH_TERM,
+        );
+        view.apply(
+            PlanReviewInput::Right,
+            area,
+            scroll_layout.max_vertical(),
+            scroll_layout.max_horizontal(),
+            SEARCH_TERM,
+        );
+        view.apply(
+            PlanReviewInput::SearchStart,
+            area,
+            scroll_layout.max_vertical(),
+            scroll_layout.max_horizontal(),
+            SEARCH_TERM,
+        );
+        assert_eq!(view.scroll(), (1, 1));
+
+        let started_at = Instant::now();
+        let before = render_to_buffer((area.width, area.height), |frame| {
+            render(frame, &state, &view, started_at);
+        });
+        let mut session = SessionState::new(ExecutionState::with_context(
+            started_at,
+            ExecutionContext::loading("/repo"),
+        ));
+        session::update(
+            &mut session,
+            Action::ReviewCompleted(state.review().clone()),
+            started_at,
+        );
+        let layout = layout(
+            area,
+            true,
+            session.review().expect("review should be visible"),
+        );
+        session::update(
+            &mut session,
+            Action::CopyCompleted {
+                target: CopyTarget::Plan,
+                result: CopyResult::Written,
+            },
+            started_at,
+        );
+
+        let flash = render_to_buffer((area.width, area.height), |frame| {
+            render(
+                frame,
+                session.review().expect("review should be visible"),
+                &view,
+                started_at,
+            );
+        });
+        let flash_at_100ms = render_to_buffer((area.width, area.height), |frame| {
+            render(
+                frame,
+                session.review().expect("review should be visible"),
+                &view,
+                started_at + std::time::Duration::from_millis(100),
+            );
+        });
+        (before, flash, flash_at_100ms, layout)
+    }
+
+    #[test]
     fn production_confirmation_render_draws_deletion_warning_and_footer() {
         let state = confirmation_state(review());
         let view = ApplyConfirmationViewState::default();
@@ -857,5 +988,83 @@ End of synthetic plan body."#;
             lines[1].to_string(),
             "Plan: 1 to add, 0 to change, 0 to destroy."
         );
+    }
+
+    fn assert_area_unchanged(before: &Buffer, after: &Buffer, area: Rect) {
+        for y in area.y..area.bottom() {
+            for x in area.x..area.right() {
+                assert_eq!(
+                    before.cell((x, y)).expect("before cell"),
+                    after.cell((x, y)).expect("after cell"),
+                    "cell changed at ({x}, {y})"
+                );
+            }
+        }
+    }
+
+    fn assert_frame_unchanged(before: &Buffer, after: &Buffer, area: Rect) {
+        for x in area.x..area.right() {
+            assert_eq!(
+                before.cell((x, area.y)).expect("top frame cell"),
+                after.cell((x, area.y)).expect("top frame cell")
+            );
+            assert_eq!(
+                before
+                    .cell((x, area.bottom() - 1))
+                    .expect("bottom frame cell"),
+                after
+                    .cell((x, area.bottom() - 1))
+                    .expect("bottom frame cell")
+            );
+        }
+        for y in area.y..area.bottom() {
+            assert_eq!(
+                before.cell((area.x, y)).expect("left frame cell"),
+                after.cell((area.x, y)).expect("left frame cell")
+            );
+            assert_eq!(
+                before
+                    .cell((area.right() - 1, y))
+                    .expect("right frame cell"),
+                after.cell((area.right() - 1, y)).expect("right frame cell")
+            );
+        }
+    }
+
+    fn assert_flash_body_cells(before: &Buffer, after: &Buffer, body: Rect) {
+        let mut flashed_cells = 0;
+        for y in body.y..body.bottom() {
+            if y == body.y {
+                continue;
+            }
+            let last_content = (body.x..body.right()).rev().find(|&x| {
+                let cell = before.cell((x, y)).expect("before plan cell");
+                !cell.symbol().is_empty() && !cell.symbol().chars().all(char::is_whitespace)
+            });
+            let Some(last_content) = last_content else {
+                for x in body.x..body.right() {
+                    assert_eq!(
+                        before.cell((x, y)).expect("before blank cell"),
+                        after.cell((x, y)).expect("after blank cell"),
+                        "empty row changed at ({x}, {y})"
+                    );
+                }
+                continue;
+            };
+            for x in body.x..body.right() {
+                let before_cell = before.cell((x, y)).expect("before plan cell");
+                let after_cell = after.cell((x, y)).expect("after plan cell");
+
+                assert_eq!(before_cell.symbol(), after_cell.symbol());
+                if x > last_content || before_cell.symbol().is_empty() {
+                    assert_eq!(before_cell, after_cell, "blank cell changed at ({x}, {y})");
+                } else {
+                    assert_eq!(after_cell.fg, FLASH_FOREGROUND);
+                    assert_eq!(after_cell.bg, FLASH_BACKGROUND);
+                    flashed_cells += 1;
+                }
+            }
+        }
+        assert!(flashed_cells > 0);
     }
 }
