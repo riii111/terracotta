@@ -7,11 +7,11 @@ expression: buffer_text(buffer)
 
  ┌Plan | Filter───────────────────────────────────────────────────────────────────────────────────────────────────────┐
  │/terraform_data                                                                                                     │
- │Filter matches: resources 4/4 | outputs 0/2                                                                         │
- │Scope: full plan (apply / yank)                                                                                     │
- │Terraform will perform the following actions:                                                                      ▲│
- │                                                                                                                   ┃│
- │  # terraform_data.api will be updated in-place                                                                    ┃│
+ │Matches: resources 4/4 | outputs 0/2                                                                                │
+ │Filter changes display only                                                                                         │
+ │Plan: 2 to add, 2 to change, 1 to destroy.                                                                          │
+ │ Matching changes ──────────────────────────────────────────────────────────────────────────────────────────────────│
+ │  # terraform_data.api will be updated in-place                                                                    ▲│
  │  ~ resource "terraform_data" "api" {                                                                              ┃│
  │      id       = "api-20260920"                                                                                    ┃│
  │      ~ input  = "before" -> "after"                                                                               ┃│
@@ -30,14 +30,14 @@ expression: buffer_text(buffer)
  │      id = "old-20260920"                                                                                          ┃│
  │    }                                                                                                              ┃│
  │                                                                                                                   ┃│
- │  # terraform_data.new will be created                                                                             ││
- │  + resource "terraform_data" "new" {                                                                              ││
+ │  # terraform_data.new will be created                                                                             ┃│
+ │  + resource "terraform_data" "new" {                                                                              ┃│
  │      input = "new-value"                                                                                          ││
  │      note  = "A deliberately long synthetic value keeps horizontal scrolling visible"                             ││
  │    }                                                                                                              ││
  │                                                                                                                   ││
- │Changes to Outputs:                                                                                                ││
  │                                                                                                                   ││
- │Warning: Value for "pending" is not known until apply                                                              ▼│
+ │Warning: Value for "pending" is not known until apply                                                              ││
+ │                                                                                                                   ▼│
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  Enter confirm | Esc cancel

@@ -6,9 +6,7 @@ expression: buffer_text(buffer)
  Terracotta | main
 
  ┌Plan────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │Terraform will perform the following actions:                                                                      ▲│
- │                                                                                                                   ┃│
- │  # terraform_data.api will be updated in-place                                                                    ┃│
+ │  # terraform_data.api will be updated in-place                                                                    ▲│
  │  ~ resource "terraform_data" "api" {                                                                              ┃│
  │      id       = "api-20260920"                                                                                    ┃│
  │      ~ input  = "before" -> "after"                                                                               ┃│
@@ -31,13 +29,15 @@ expression: buffer_text(buffer)
  │  + resource "terraform_data" "new" {                                                                              ┃│
  │      input = "new-value"                                                                                          ┃│
  │      note  = "A deliberately long synthetic value keeps horizontal scrolling visible"                             ┃│
- │    }                                                                                                              ││
- │                                                                                                                   ││
- │Changes to Outputs:                                                                                                ││
+ │    }                                                                                                              ┃│
+ │                                                                                                                   ┃│
+ │Changes to Outputs:                                                                                                ┃│
  │  + endpoint = (known after apply)                                                                                 ││
  │  ~ summary  = "old summary" -> "new summary with a deliberately long value for review"                            ││
  │                                                                                                                   ││
  │Warning: Value for "pending" is not known until apply                                                              ││
+ │                                                                                                                   ││
+ │Plan: 2 to add, 2 to change, 1 to destroy.                                                                         ││
  │                                                                                                                   ▼│
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  ↑/↓/←/→ scroll | / filter | y yank | a apply | q quit
