@@ -239,28 +239,6 @@ fn should_draw(state: &SessionState, dirty: bool, now: Instant) -> bool {
         })
 }
 
-#[cfg(test)]
-fn draw_if_needed<B: Backend>(
-    state: &mut SessionState,
-    terminal: &mut Terminal<B>,
-    execution_view: execution::ExecutionViewState,
-    review_view: &plan_review::PlanReviewViewState,
-    confirmation_view: &plan_review::ApplyConfirmationViewState,
-    dirty: &mut bool,
-    now: Instant,
-) -> Result<bool, B::Error> {
-    draw_if_needed_with_quit_confirmation(
-        state,
-        terminal,
-        execution_view,
-        review_view,
-        confirmation_view,
-        dirty,
-        now,
-        false,
-    )
-}
-
 #[expect(
     clippy::too_many_arguments,
     reason = "the draw step receives the runtime-owned views and rendering state"
@@ -685,6 +663,27 @@ mod tests {
         dirty: bool,
         now: Instant,
         expected: bool,
+    }
+
+    fn draw_if_needed<B: Backend>(
+        state: &mut SessionState,
+        terminal: &mut Terminal<B>,
+        execution_view: execution::ExecutionViewState,
+        review_view: &plan_review::PlanReviewViewState,
+        confirmation_view: &plan_review::ApplyConfirmationViewState,
+        dirty: &mut bool,
+        now: Instant,
+    ) -> Result<bool, B::Error> {
+        draw_if_needed_with_quit_confirmation(
+            state,
+            terminal,
+            execution_view,
+            review_view,
+            confirmation_view,
+            dirty,
+            now,
+            false,
+        )
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -1569,19 +1568,21 @@ mod tests {
         let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
         let review = state.review().expect("review state");
         let layout = plan_review::layout(Rect::new(0, 0, 80, 24), false, review);
-        review_view.apply(
+        review_view.apply_with_matches(
             plan_review::PlanReviewInput::Down,
             layout.body(),
             layout.max_vertical(),
             layout.max_horizontal(),
             review.review().search_query(),
+            &[],
         );
-        review_view.apply(
+        review_view.apply_with_matches(
             plan_review::PlanReviewInput::Right,
             layout.body(),
             layout.max_vertical(),
             layout.max_horizontal(),
             review.review().search_query(),
+            &[],
         );
         let position = review_view.scroll();
 
@@ -2505,26 +2506,29 @@ mod tests {
         let query = review.review().search_query();
         let layout = plan_review::layout(area, false, review);
         let mut view = plan_review::PlanReviewViewState::default();
-        view.apply(
+        view.apply_with_matches(
             plan_review::PlanReviewInput::Down,
             area,
             layout.max_vertical(),
             layout.max_horizontal(),
             query,
+            &[],
         );
-        view.apply(
+        view.apply_with_matches(
             plan_review::PlanReviewInput::Right,
             area,
             layout.max_vertical(),
             layout.max_horizontal(),
             query,
+            &[],
         );
-        view.apply(
+        view.apply_with_matches(
             plan_review::PlanReviewInput::SearchStart,
             area,
             layout.max_vertical(),
             layout.max_horizontal(),
             query,
+            &[],
         );
         view
     }

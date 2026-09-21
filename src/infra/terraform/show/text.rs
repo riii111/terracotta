@@ -18,15 +18,6 @@ pub(super) fn parse_document(
         .map_err(|_| PlanParseError::InvalidUtf8)
 }
 
-#[cfg(test)]
-fn split_blocks(
-    text: &str,
-    resource_addresses: &[String],
-    output_names: &[String],
-) -> Vec<PlanBlock> {
-    split_blocks_with_line_kinds(text, resource_addresses, output_names).0
-}
-
 fn split_blocks_with_line_kinds(
     text: &str,
     resource_addresses: &[String],
@@ -310,6 +301,14 @@ fn heredoc_end(line: &str, terminator: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn split_blocks(
+        text: &str,
+        resource_addresses: &[String],
+        output_names: &[String],
+    ) -> Vec<PlanBlock> {
+        split_blocks_with_line_kinds(text, resource_addresses, output_names).0
+    }
 
     #[test]
     fn preserves_text_order_newlines_and_sensitive_markers() {

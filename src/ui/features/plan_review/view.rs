@@ -46,25 +46,6 @@ pub(crate) struct PlanReviewViewState {
 }
 
 impl PlanReviewViewState {
-    #[cfg(test)]
-    pub(crate) fn apply(
-        &mut self,
-        input: PlanReviewInput,
-        body: Rect,
-        max_vertical: u16,
-        max_horizontal: u16,
-        current_query: &str,
-    ) -> Option<String> {
-        self.apply_with_matches(
-            input,
-            body,
-            max_vertical,
-            max_horizontal,
-            current_query,
-            &[],
-        )
-    }
-
     pub(crate) fn apply_with_matches(
         &mut self,
         input: PlanReviewInput,
@@ -409,19 +390,43 @@ mod tests {
     const MAX_VERTICAL: u16 = 20;
     const MAX_HORIZONTAL: u16 = 30;
 
-    fn apply(view: &mut PlanReviewViewState, input: PlanReviewInput) -> Option<String> {
-        view.apply(input, BODY, MAX_VERTICAL, MAX_HORIZONTAL, "existing")
-    }
-
     #[test]
     fn search_input_changes_query_and_resets_scroll() {
         let mut view = PlanReviewViewState::default();
-        apply(&mut view, PlanReviewInput::Bottom);
-        apply(&mut view, PlanReviewInput::RightEdge);
-        apply(&mut view, PlanReviewInput::SearchStart);
+        view.apply_with_matches(
+            PlanReviewInput::Bottom,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "existing",
+            &[],
+        );
+        view.apply_with_matches(
+            PlanReviewInput::RightEdge,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "existing",
+            &[],
+        );
+        view.apply_with_matches(
+            PlanReviewInput::SearchStart,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "existing",
+            &[],
+        );
 
         assert_eq!(
-            apply(&mut view, PlanReviewInput::SearchChar('a')),
+            view.apply_with_matches(
+                PlanReviewInput::SearchChar('a'),
+                BODY,
+                MAX_VERTICAL,
+                MAX_HORIZONTAL,
+                "existing",
+                &[]
+            ),
             Some("existinga".to_owned())
         );
         assert_eq!(view.search_query(), Some("existinga"));
@@ -461,11 +466,32 @@ mod tests {
             &matches,
         );
         let previous = view.scroll();
-        apply(&mut view, PlanReviewInput::SearchStart);
-        apply(&mut view, PlanReviewInput::SearchChar('a'));
+        view.apply_with_matches(
+            PlanReviewInput::SearchStart,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "existing",
+            &[],
+        );
+        view.apply_with_matches(
+            PlanReviewInput::SearchChar('a'),
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "existing",
+            &[],
+        );
 
         assert_eq!(
-            apply(&mut view, PlanReviewInput::SearchCancel),
+            view.apply_with_matches(
+                PlanReviewInput::SearchCancel,
+                BODY,
+                MAX_VERTICAL,
+                MAX_HORIZONTAL,
+                "existing",
+                &[]
+            ),
             Some("existing".to_owned())
         );
         assert!(!view.searching());
@@ -476,13 +502,62 @@ mod tests {
     #[test]
     fn search_right_moves_to_the_next_grapheme_boundary() {
         let mut view = PlanReviewViewState::default();
-        apply(&mut view, PlanReviewInput::SearchStart);
-        apply(&mut view, PlanReviewInput::SearchHome);
-        apply(&mut view, PlanReviewInput::SearchChar('あ'));
-        apply(&mut view, PlanReviewInput::SearchChar('b'));
-        apply(&mut view, PlanReviewInput::SearchHome);
-        apply(&mut view, PlanReviewInput::SearchRight);
-        apply(&mut view, PlanReviewInput::SearchChar('X'));
+        view.apply_with_matches(
+            PlanReviewInput::SearchStart,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "existing",
+            &[],
+        );
+        view.apply_with_matches(
+            PlanReviewInput::SearchHome,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "existing",
+            &[],
+        );
+        view.apply_with_matches(
+            PlanReviewInput::SearchChar('あ'),
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "existing",
+            &[],
+        );
+        view.apply_with_matches(
+            PlanReviewInput::SearchChar('b'),
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "existing",
+            &[],
+        );
+        view.apply_with_matches(
+            PlanReviewInput::SearchHome,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "existing",
+            &[],
+        );
+        view.apply_with_matches(
+            PlanReviewInput::SearchRight,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "existing",
+            &[],
+        );
+        view.apply_with_matches(
+            PlanReviewInput::SearchChar('X'),
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "existing",
+            &[],
+        );
 
         assert_eq!(view.search_query(), Some("あXbexisting"));
         assert_eq!(view.search_cursor(), Some("あX".len()));
@@ -491,12 +566,47 @@ mod tests {
     #[test]
     fn backspace_removes_a_combining_grapheme_as_one_input_unit() {
         let mut view = PlanReviewViewState::default();
-        apply(&mut view, PlanReviewInput::SearchStart);
-        apply(&mut view, PlanReviewInput::SearchHome);
-        apply(&mut view, PlanReviewInput::SearchChar('e'));
-        apply(&mut view, PlanReviewInput::SearchChar('\u{301}'));
+        view.apply_with_matches(
+            PlanReviewInput::SearchStart,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "existing",
+            &[],
+        );
+        view.apply_with_matches(
+            PlanReviewInput::SearchHome,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "existing",
+            &[],
+        );
+        view.apply_with_matches(
+            PlanReviewInput::SearchChar('e'),
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "existing",
+            &[],
+        );
+        view.apply_with_matches(
+            PlanReviewInput::SearchChar('\u{301}'),
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "existing",
+            &[],
+        );
 
-        apply(&mut view, PlanReviewInput::SearchBackspace);
+        view.apply_with_matches(
+            PlanReviewInput::SearchBackspace,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "existing",
+            &[],
+        );
 
         assert_eq!(view.search_query(), Some("existing"));
         assert_eq!(view.search_cursor(), Some(0));
@@ -505,57 +615,64 @@ mod tests {
     #[test]
     fn inserted_zwj_keeps_the_cursor_at_the_joined_grapheme_boundary() {
         let mut view = PlanReviewViewState::default();
-        view.apply(
+        view.apply_with_matches(
             PlanReviewInput::SearchStart,
             BODY,
             MAX_VERTICAL,
             MAX_HORIZONTAL,
             "",
+            &[],
         );
-        view.apply(
+        view.apply_with_matches(
             PlanReviewInput::SearchHome,
             BODY,
             MAX_VERTICAL,
             MAX_HORIZONTAL,
             "",
+            &[],
         );
-        view.apply(
+        view.apply_with_matches(
             PlanReviewInput::SearchChar('👩'),
             BODY,
             MAX_VERTICAL,
             MAX_HORIZONTAL,
             "",
+            &[],
         );
-        view.apply(
+        view.apply_with_matches(
             PlanReviewInput::SearchChar('💻'),
             BODY,
             MAX_VERTICAL,
             MAX_HORIZONTAL,
             "",
+            &[],
         );
-        view.apply(
+        view.apply_with_matches(
             PlanReviewInput::SearchLeft,
             BODY,
             MAX_VERTICAL,
             MAX_HORIZONTAL,
             "",
+            &[],
         );
-        view.apply(
+        view.apply_with_matches(
             PlanReviewInput::SearchChar('\u{200d}'),
             BODY,
             MAX_VERTICAL,
             MAX_HORIZONTAL,
             "",
+            &[],
         );
 
         assert_eq!(view.search_query(), Some("👩\u{200d}💻"));
         assert_eq!(view.search_cursor(), Some("👩\u{200d}💻".len()));
-        view.apply(
+        view.apply_with_matches(
             PlanReviewInput::SearchBackspace,
             BODY,
             MAX_VERTICAL,
             MAX_HORIZONTAL,
             "",
+            &[],
         );
         assert_eq!(view.search_query(), Some(""));
         assert_eq!(view.search_cursor(), Some(0));
@@ -657,8 +774,22 @@ mod tests {
         let mut view = PlanReviewViewState::default();
 
         for _ in 0..30 {
-            apply(&mut view, PlanReviewInput::Down);
-            apply(&mut view, PlanReviewInput::Right);
+            view.apply_with_matches(
+                PlanReviewInput::Down,
+                BODY,
+                MAX_VERTICAL,
+                MAX_HORIZONTAL,
+                "existing",
+                &[],
+            );
+            view.apply_with_matches(
+                PlanReviewInput::Right,
+                BODY,
+                MAX_VERTICAL,
+                MAX_HORIZONTAL,
+                "existing",
+                &[],
+            );
         }
 
         assert_eq!(view.scroll(), (MAX_VERTICAL, MAX_HORIZONTAL));
