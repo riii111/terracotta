@@ -9,6 +9,8 @@ expression: buffer_text(buffer)
  Terracotta | main
 
  ┌Plan────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+ │Plan: 2 to add, 2 to change, 1 to destroy.                                                                          │
+ │────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
  │  # terraform_data.api will be updated in-place                                                                    ▲│
  │  ~ resource "terraform_data" "api" {                                                                              ┃│
  │      id       = "api-20260920"                                                                                    ┃│
@@ -24,8 +26,8 @@ expression: buffer_text(buffer)
  │    }                                                                                                              ┃│
  │                                                                                                                   ┃│
  │  # terraform_data.old will be destroyed                                                                           ┃│
- │  - resource "terraform_data" "old" {                                                                              ┃│
- │      id = "old-20260920"                                                                                          ┃│
+ │  - resource "terraform_data" "old" {                                                                              ││
+ │      id = "old-20260920"                                                                                          ││
  │    }                                                                                                              ││
  │                                                                                                                   ││
  │  # terraform_data.new will be created                                                                             ││
@@ -33,8 +35,6 @@ expression: buffer_text(buffer)
  │      input = "new-value"                                                                                          ││
  │      note  = "A deliberately long synthetic value keeps horizontal scrolling visible"                             ││
  │    }                                                                                                              ││
- │                                                                                                                   ││
- │Changes to Outputs:                                                                                                ││
- │  + endpoint = (known after apply)                                                                                 ▼│
+ │                                                                                                                   ▼│
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- ↑/↓/←/→ scroll | / filter | y yank | a apply | q quit
+ ↑/↓/←/→ scroll | / filter | y copy plan | a apply | q quit

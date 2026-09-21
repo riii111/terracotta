@@ -94,9 +94,8 @@ impl ApplyConfirmationLayout {
 pub(crate) struct PlanReviewLayout {
     shell: shell_layout::ShellLayout,
     body: Rect,
-    search: Option<Rect>,
-    filter_details: Option<Rect>,
-    separator: Option<Rect>,
+    status: Rect,
+    separator: Rect,
     vertical_scrollbar: bool,
     horizontal_scrollbar: bool,
     max_vertical: u16,
@@ -109,15 +108,11 @@ impl PlanReviewLayout {
         self.body
     }
 
-    pub(crate) const fn search(&self) -> Option<Rect> {
-        self.search
+    pub(crate) const fn status(&self) -> Rect {
+        self.status
     }
 
-    pub(crate) const fn filter_details(&self) -> Option<Rect> {
-        self.filter_details
-    }
-
-    pub(crate) const fn separator(&self) -> Option<Rect> {
+    pub(crate) const fn separator(&self) -> Rect {
         self.separator
     }
 
@@ -181,92 +176,68 @@ fn layout_with_content(
     quit_confirmation: bool,
 ) -> PlanReviewLayout {
     let panel_width = shell_layout::centered_width(area);
+    let filter_visible = filter_active(searching, state);
     let normal_footer_lines = footer::layout_with_notice(
         footer_items(
             searching,
             state.review().metadata().applyable(),
             content.matches.len(),
-            !state.review().search_query().is_empty(),
+            filter_visible,
         ),
         panel_width,
         notice,
     );
     let normal_required = footer::layout_with_notice(
-        required_footer_items(
-            searching,
-            content.matches.len(),
-            !state.review().search_query().is_empty(),
-        ),
+        required_footer_items(searching, content.matches.len(), filter_visible),
         panel_width,
         notice,
-    );
-    let filter_visible = filter_active(searching, state);
-    let footer_height_lines = sizing_footer_lines(
-        searching,
-        state,
-        content.matches.len(),
-        filter_visible,
-        panel_width,
-        notice,
-        &normal_footer_lines,
     );
     let inner_width = panel_width.saturating_sub(2);
-    let filter_details_height = filter_details_height(state, filter_visible, inner_width);
-    let fixed_filter_height = fixed_filter_height(filter_visible, filter_details_height);
     let body_height = shell_layout::required_body_height(
         base_content.lines.len(),
         base_content.max_width,
         inner_width,
     );
+    let fixed_status_height: u16 = 2;
     let content_height = 2u16
-        .saturating_add(fixed_filter_height)
+        .saturating_add(fixed_status_height)
         .saturating_add(body_height);
+    let footer_height = common_footer_height(
+        state.review().metadata().applyable(),
+        content.matches.len(),
+        panel_width,
+        notice,
+    );
+    let frame_footer_lines = footer::pad_lines(normal_footer_lines, footer_height);
+    let frame_required = footer::pad_lines(normal_required, footer_height);
     let requested_height =
-        shell_layout::required_height(content_height, &footer_height_lines, &normal_required);
+        shell_layout::required_height(content_height, &frame_footer_lines, &frame_required);
     let panel = shell_layout::centered_area(area, requested_height);
     let footer_lines = if quit_confirmation {
         footer::pad_lines(
             footer::quit_confirmation_lines(panel_width, notice),
-            normal_footer_lines.len(),
+            footer_height,
         )
     } else {
-        normal_footer_lines
+        frame_footer_lines
     };
     let required = if quit_confirmation {
         footer::pad_lines(
             footer::quit_confirmation_lines(panel_width, notice),
-            normal_required.len(),
+            footer_height,
         )
     } else {
-        normal_required
+        frame_required
     };
     let shell = shell_layout::layout(panel, footer_lines, required, 1);
     let inner = shell.content_inner();
-    let search = filter_visible.then(|| Rect::new(inner.x, inner.y, inner.width, 1));
-    let filter_details = filter_visible.then(|| {
-        Rect::new(
-            inner.x,
-            inner.y.saturating_add(1),
-            inner.width,
-            filter_details_height,
-        )
-    });
-    let separator = filter_visible.then(|| {
-        Rect::new(
-            inner.x,
-            inner
-                .y
-                .saturating_add(1)
-                .saturating_add(filter_details_height),
-            inner.width,
-            1,
-        )
-    });
+    let status = Rect::new(inner.x, inner.y, inner.width, 1);
+    let separator = Rect::new(inner.x, inner.y.saturating_add(1), inner.width, 1);
     let available = Rect::new(
         inner.x,
-        inner.y.saturating_add(fixed_filter_height),
+        inner.y.saturating_add(fixed_status_height),
         inner.width,
-        inner.height.saturating_sub(fixed_filter_height),
+        inner.height.saturating_sub(fixed_status_height),
     );
     let (vertical_scrollbar, horizontal_scrollbar) =
         scrollbar_reservations(content.lines.len(), content.max_width, available);
@@ -284,8 +255,7 @@ fn layout_with_content(
     PlanReviewLayout {
         shell,
         body,
-        search,
-        filter_details,
+        status,
         separator,
         vertical_scrollbar,
         horizontal_scrollbar,
@@ -295,46 +265,24 @@ fn layout_with_content(
     }
 }
 
-fn filter_details_height(state: &ReviewSessionState, filter_visible: bool, width: u16) -> u16 {
-    if filter_visible {
-        u16::try_from(filter_details_lines(state, width).len()).unwrap_or(u16::MAX)
-    } else {
-        0
-    }
-}
-
-fn fixed_filter_height(filter_visible: bool, details_height: u16) -> u16 {
-    u16::from(filter_visible)
-        .saturating_add(details_height)
-        .saturating_add(u16::from(filter_visible))
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "footer sizing needs the same feature state as the surrounding layout"
-)]
-fn sizing_footer_lines(
-    searching: bool,
-    state: &ReviewSessionState,
+fn common_footer_height(
+    applyable: bool,
     match_count: usize,
-    filter_visible: bool,
     width: u16,
     notice: Option<&str>,
-    footer_lines: &[Line<'static>],
-) -> Vec<Line<'static>> {
-    if !filter_visible {
-        return footer_lines.to_owned();
-    }
-    footer::layout_with_notice(
-        footer_items(
-            searching,
-            state.review().metadata().applyable(),
-            match_count.max(2),
-            !state.review().search_query().is_empty(),
-        ),
-        width,
-        notice,
-    )
+) -> usize {
+    [
+        footer_items(false, applyable, match_count, false),
+        footer_items(true, applyable, match_count, true),
+        footer_items(false, applyable, match_count.max(2), true),
+        required_footer_items(false, match_count, false),
+        required_footer_items(true, match_count, true),
+        required_footer_items(false, match_count.max(2), true),
+    ]
+    .into_iter()
+    .map(|items| footer::layout_with_notice(items, width, notice).len())
+    .max()
+    .unwrap_or(1)
 }
 
 pub(crate) fn render_apply_confirmation(
@@ -571,7 +519,7 @@ pub(crate) fn render_with_quit_confirmation(
     let inner = shell_layout::render_content_block_line(frame, layout.shell.content(), title);
     debug_assert_eq!(inner, layout.shell.content_inner());
 
-    render_filter_header(frame, &layout, state, view);
+    render_status(frame, &layout, state, view);
 
     let line_count = content.lines.len();
     let max_line_width = content.max_width;
@@ -671,39 +619,27 @@ fn prepare_content<'a>(
     }
 }
 
-fn render_filter_header(
+fn render_status(
     frame: &mut Frame<'_>,
     layout: &PlanReviewLayout,
     state: &ReviewSessionState,
     view: &PlanReviewViewState,
 ) {
-    if !filter_active(view.searching(), state) {
-        return;
-    }
-    if let Some(search_area) = layout.search()
-        && let Some((line, horizontal)) =
-            filter_prompt(view, state, view.searching(), search_area.width)
-    {
-        frame.render_widget(
-            Paragraph::new(line)
-                .style(theme::body_style())
-                .scroll((0, horizontal)),
-            search_area,
-        );
-    }
-    if let Some(filter_details) = layout.filter_details() {
-        frame.render_widget(
-            Paragraph::new(filter_details_lines(state, filter_details.width))
-                .style(theme::secondary_style()),
-            filter_details,
-        );
-    }
-    if let Some(separator_area) = layout.separator() {
-        frame.render_widget(
-            separator::render_labeled(separator_area.width, "Matching changes"),
-            separator_area,
-        );
-    }
+    let (line, horizontal) = if filter_active(view.searching(), state) {
+        filter_status_line(view, state, layout.status().width)
+    } else {
+        (plan_status_line(state), 0)
+    };
+    frame.render_widget(
+        Paragraph::new(line)
+            .style(theme::body_style())
+            .scroll((0, horizontal)),
+        layout.status(),
+    );
+    frame.render_widget(
+        separator::render(layout.separator().width),
+        layout.separator(),
+    );
 }
 
 fn review_lines<'a>(
@@ -719,6 +655,7 @@ fn review_lines<'a>(
     let mut lines = diagnostic_lines(review);
     let mut sources = vec![None; lines.len()];
     let mut matches = Vec::new();
+    let mut removed_summary = false;
     if filtered.matching_resources() == 0
         && filtered.matching_outputs() == 0
         && !filter_query.is_empty()
@@ -736,7 +673,8 @@ fn review_lines<'a>(
         if kind == PlanLineKind::Intro {
             continue;
         }
-        if filtered_view && kind == PlanLineKind::Summary {
+        if kind == PlanLineKind::Summary {
+            removed_summary = true;
             continue;
         }
         if filtered_view && filtered.matching_outputs() == 0 && kind == PlanLineKind::OutputSection
@@ -747,6 +685,12 @@ fn review_lines<'a>(
         lines.push(plan_line(line, filter_query, None, kind));
         sources.push(Some(PlanSource { text: line, kind }));
         matches.extend(line_matches(line, filter_query, line_index));
+    }
+    if removed_summary {
+        while lines.last().is_some_and(|line| line.width() == 0) {
+            lines.pop();
+            sources.pop();
+        }
     }
     (lines, sources, matches)
 }
@@ -925,87 +869,82 @@ const fn terminal_notice_message(
     }
 }
 
-fn filter_details_lines(state: &ReviewSessionState, width: u16) -> Vec<Line<'static>> {
-    let filtered = state.review().filtered_document();
-    let matches = format!(
-        "Matches: resources {}/{} | outputs {}/{}",
-        filtered.matching_resources(),
-        filtered.resource_count(),
-        filtered.matching_outputs(),
-        filtered.output_count(),
-    );
-    let mut lines = wrap_filter_line(&matches, width);
-    lines.extend(wrap_filter_line("Filter changes display only", width));
-    lines.extend(wrap_filter_line(
-        &format!(
+fn plan_status_line(state: &ReviewSessionState) -> Line<'static> {
+    Line::from(Span::styled(
+        format!(
             "Plan: {} to add, {} to change, {} to destroy.",
             state.review().metadata().additions(),
             state.review().metadata().changes(),
             state.review().metadata().deletions(),
         ),
-        width,
-    ));
-    lines
-}
-
-fn wrap_filter_line(text: &str, width: u16) -> Vec<Line<'static>> {
-    let width = usize::from(width).max(1);
-    let mut chunks = Vec::new();
-    let mut current = String::new();
-    for word in text.split_whitespace() {
-        if word.chars().count() > width {
-            if !current.is_empty() {
-                chunks.push(current);
-                current = String::new();
-            }
-            chunks.extend(
-                word.chars()
-                    .collect::<Vec<_>>()
-                    .chunks(width)
-                    .map(|chunk| chunk.iter().collect()),
-            );
-        } else if current.is_empty() {
-            current.push_str(word);
-        } else if current.chars().count() + 1 + word.chars().count() <= width {
-            current.push(' ');
-            current.push_str(word);
-        } else {
-            chunks.push(std::mem::take(&mut current));
-            current.push_str(word);
-        }
-    }
-    if !current.is_empty() {
-        chunks.push(current);
-    }
-    chunks
-        .into_iter()
-        .map(|chunk| Line::from(Span::styled(chunk, theme::secondary_style())))
-        .collect()
-}
-
-fn filter_prompt(
-    view: &PlanReviewViewState,
-    state: &ReviewSessionState,
-    searching: bool,
-    width: u16,
-) -> Option<(Line<'static>, u16)> {
-    if searching {
-        return search_prompt(view, width);
-    }
-    let query = state.review().search_query();
-    if query.is_empty() {
-        return None;
-    }
-    Some((
-        Line::from(vec![
-            Span::styled("/", theme::secondary_style()),
-            Span::styled(query.to_owned(), theme::secondary_style()),
-        ]),
-        0,
+        theme::body_style(),
     ))
 }
 
+fn filter_status_line(
+    view: &PlanReviewViewState,
+    state: &ReviewSessionState,
+    width: u16,
+) -> (Line<'static>, u16) {
+    let searching = view.searching();
+    let (query_line, cursor) = if searching {
+        let Some((line, cursor)) = search_query_line(view) else {
+            return (Line::default(), 0);
+        };
+        (line, Some(cursor))
+    } else {
+        (
+            Line::from(vec![
+                Span::styled("/", theme::secondary_style()),
+                Span::styled(
+                    state.review().search_query().to_owned(),
+                    theme::secondary_style(),
+                ),
+            ]),
+            None,
+        )
+    };
+    let prefix = Span::styled("Filter: ", theme::secondary_style());
+    let prefix_width = Line::from(prefix.clone()).width();
+    let mut query_only = Line::from(prefix.clone());
+    query_only.extend(query_line.spans.clone());
+
+    let filtered = state.review().filtered_document();
+    let matches = format!(
+        "  Matches: resources {}/{} | outputs {}/{}",
+        filtered.matching_resources(),
+        filtered.resource_count(),
+        filtered.matching_outputs(),
+        filtered.output_count(),
+    );
+    let mut full = query_only.clone();
+    full.push_span(Span::styled(matches, theme::secondary_style()));
+    let line = if full.width() <= usize::from(width) {
+        full
+    } else {
+        query_only
+    };
+    let horizontal = cursor.map_or(0, |(start, end)| {
+        horizontal_offset(
+            prefix_width + start,
+            prefix_width + end,
+            line.width(),
+            width,
+        )
+    });
+    (line, horizontal)
+}
+
+#[cfg(test)]
 fn search_prompt(view: &PlanReviewViewState, width: u16) -> Option<(Line<'static>, u16)> {
+    let (line, (cursor_start, cursor_end)) = search_query_line(view)?;
+    Some((
+        line.clone(),
+        horizontal_offset(cursor_start, cursor_end, line.width(), width),
+    ))
+}
+
+fn search_query_line(view: &PlanReviewViewState) -> Option<(Line<'static>, (usize, usize))> {
     let query = view.search_query()?;
     let cursor = view.search_cursor()?;
     let before = query[..cursor].to_owned();
@@ -1019,8 +958,7 @@ fn search_prompt(view: &PlanReviewViewState, width: u16) -> Option<(Line<'static
     ]);
     let cursor_start = 1 + Line::from(before).width();
     let cursor_end = cursor_start + Line::from(cursor_grapheme).width().max(1);
-    let horizontal = horizontal_offset(cursor_start, cursor_end, line.width(), width);
-    Some((line, horizontal))
+    Some((line, (cursor_start, cursor_end)))
 }
 
 fn next_grapheme(text: &str) -> (String, String) {
@@ -1071,7 +1009,7 @@ fn footer_items(
         let mut items = vec![
             footer::hint(&["↑", "↓", "←", "→"], "scroll"),
             footer::hint(&["/"], "filter"),
-            footer::hint(&["y"], "yank"),
+            footer::hint(&["y"], "copy plan"),
         ];
         if applyable {
             items.push(footer::hint(&["a"], "apply"));
@@ -1104,6 +1042,7 @@ fn required_footer_items(
     } else {
         vec![
             footer::hint(&["↑", "↓"], "scroll"),
+            footer::hint(&["y"], "copy plan"),
             footer::hint(&["q"], "quit"),
         ]
     }
@@ -1627,6 +1566,7 @@ End of synthetic plan body."#;
         let second_filter_state = review_state(plan);
         let first_filter = layout(area, false, &first_filter_state);
         let second_filter = layout(area, false, &second_filter_state);
+        let searching = layout(area, true, &state);
 
         assert_eq!(
             first_filter.shell.header().y,
@@ -1636,7 +1576,18 @@ End of synthetic plan body."#;
             first_filter.shell.footer().bottom(),
             second_filter.shell.footer().bottom()
         );
-        assert!(first_filter.shell.footer().bottom() > normal.shell.footer().bottom());
+        assert_eq!(first_filter.shell.content(), normal.shell.content());
+        assert_eq!(first_filter.body(), normal.body());
+        assert_eq!(first_filter.status(), normal.status());
+        assert_eq!(first_filter.separator(), normal.separator());
+        assert_eq!(
+            first_filter.shell.footer().bottom(),
+            normal.shell.footer().bottom()
+        );
+        assert_eq!(searching.shell.content(), normal.shell.content());
+        assert_eq!(searching.body(), normal.body());
+        assert_eq!(searching.status(), normal.status());
+        assert_eq!(searching.separator(), normal.separator());
     }
 
     #[test]
@@ -1770,10 +1721,10 @@ End of synthetic plan body."#;
         }
 
         let area = Rect::new(0, 0, 80, 24);
-        let available = layout(area, false, &state).shell.content_inner();
+        let base_layout = layout(area, false, &state);
         let vertical_state = review_state(review_with_content(
-            available.height.saturating_add(1),
-            available.width.saturating_sub(1),
+            base_layout.body().height.saturating_add(2),
+            base_layout.body().width,
         ));
         let (vertical_layout, vertical_buffer) = review_buffer_at(area, &vertical_state, 1, 0);
         assert_eq!(vertical_layout.max_vertical(), 1);
@@ -1781,8 +1732,8 @@ End of synthetic plan body."#;
         assert_scrollbar_positions(&vertical_buffer, &vertical_layout, 1, 0);
 
         let horizontal_state = review_state(review_with_content(
-            available.height.saturating_sub(1),
-            available.width.saturating_add(1),
+            base_layout.body().height.saturating_sub(1),
+            base_layout.body().width.saturating_add(2),
         ));
         let (horizontal_layout, horizontal_buffer) =
             review_buffer_at(area, &horizontal_state, 0, 1);
@@ -1901,7 +1852,7 @@ End of synthetic plan body."#;
             })
             .find(|row| row.contains("/全"))
             .expect("search row should be visible");
-        assert!(!search_row.contains('|'));
+        assert!(search_row.contains(" | outputs"));
 
         let mut found = false;
         for y in buffer.area().y..buffer.area().bottom() {
@@ -2126,10 +2077,9 @@ End of synthetic plan body."#;
         let input_text = buffer_text(&input_buffer);
         write_buffer_captures("ux02-filter-input", &input_buffer);
         assert!(input_text.contains("Plan | Filter"));
-        assert!(input_text.contains("/ "));
-        assert!(input_text.contains("Matches: resources 4/4 | outputs 2/2"));
-        assert!(input_text.contains("Filter changes display only"));
-        assert!(input_text.contains("Plan: 2 to add, 2 to change, 1 to destroy."));
+        assert!(input_text.contains("Filter: /   Matches: resources 4/4 | outputs 2/2"));
+        assert!(!input_text.contains("Filter changes display only"));
+        assert!(!input_text.contains("Matching changes"));
 
         let mut confirmed = review();
         confirmed.set_search_query("worker".to_owned());
@@ -2145,9 +2095,9 @@ End of synthetic plan body."#;
         let confirmed_text = buffer_text(&confirmed_buffer);
         write_buffer_captures("ux02-filter-confirmed", &confirmed_buffer);
         assert!(confirmed_text.contains("Plan | Filter"));
-        assert!(confirmed_text.contains("/worker"));
-        assert!(confirmed_text.contains("Matches: resources 1/4 | outputs 0/2"));
-        assert!(confirmed_text.contains("Filter changes display only"));
+        assert!(confirmed_text.contains("Filter: /worker  Matches: resources 1/4 | outputs 0/2"));
+        assert!(!confirmed_text.contains("Filter changes display only"));
+        assert!(!confirmed_text.contains("Matching changes"));
         assert!(!confirmed_text.contains("terraform_data.api will be updated"));
 
         let cleared_buffer = render_to_buffer((120, 40), |frame| {
@@ -2211,22 +2161,16 @@ End of synthetic plan body."#;
     }
 
     #[test]
-    fn production_filter_layout_wraps_details_and_keeps_scope_at_bottom() {
+    fn production_filter_layout_uses_a_single_status_row_and_separator() {
         let mut plan = review();
         plan.set_search_query("worker".to_owned());
         let state = review_state(plan);
-        let area = Rect::new(0, 0, 40, 20);
+        let area = Rect::new(0, 0, 80, 20);
         let layout = layout(area, false, &state);
-        let search = layout.search().expect("filter query should be visible");
-        let details = layout
-            .filter_details()
-            .expect("filter details should be visible");
-        assert!(details.height > 2);
-        assert_eq!(details.y, search.y + search.height);
-        let separator = layout
-            .separator()
-            .expect("filter separator should be visible");
-        assert_eq!(separator.y, details.y + details.height);
+        let status = layout.status();
+        let separator = layout.separator();
+        assert_eq!(status.height, 1);
+        assert_eq!(separator.y, status.y + status.height);
         assert_eq!(layout.body().y, separator.y + separator.height);
         assert!(layout.body().height > 0);
 
@@ -2246,7 +2190,8 @@ End of synthetic plan body."#;
         let text = buffer_text(&buffer);
         write_buffer_captures("ux02-filter-narrow", &buffer);
         assert!(text.contains("Matches:"));
-        assert!(text.contains("Filter changes display only"));
+        assert!(!text.contains("Filter changes display only"));
+        assert!(!text.contains("Matching changes"));
 
         let tiny_buffer = render_to_buffer((24, 6), |frame| {
             render(
@@ -2520,8 +2465,8 @@ End of synthetic plan body."#;
 
         assert_text_prefix_uses_style(
             &buffer,
-            "Plan: 2 to add, 2 to change, 1 to destroy.",
-            "Plan: 2 to add, 2 to change, 1 to destroy.",
+            "Matches: resources 4/4 | outputs 0/2",
+            "Matches: resources 4/4 | outputs 0/2",
             Color::Rgb(0xc0, 0xb8, 0xb8),
             Color::Reset,
             Modifier::empty(),
@@ -2562,25 +2507,8 @@ End of synthetic plan body."#;
             Modifier::empty(),
         );
         assert_frame_unchanged(&before, &flash, layout.shell.content());
-        assert_area_unchanged(
-            &before,
-            &flash,
-            layout.search().expect("search input should be visible"),
-        );
-        assert_area_unchanged(
-            &before,
-            &flash,
-            layout
-                .filter_details()
-                .expect("filter details should be visible"),
-        );
-        assert_area_unchanged(
-            &before,
-            &flash,
-            layout
-                .separator()
-                .expect("filter separator should be visible"),
-        );
+        assert_area_unchanged(&before, &flash, layout.status());
+        assert_area_unchanged(&before, &flash, layout.separator());
         assert_area_unchanged(
             &before,
             &flash,
@@ -2701,7 +2629,7 @@ End of synthetic plan body."#;
         assert!(position("Error: Invalid configuration") < position("error detail line 1"));
         assert!(position("error detail line 2") < position("Warning: Deprecated configuration"));
         assert!(position("Warning: Deprecated configuration") < position("warning detail line 1"));
-        assert!(position("warning detail line 2") < position("Plan: 1 to add"));
+        assert!(position("Plan: 1 to add") < position("Error: Invalid configuration"));
         assert_text_prefix_uses_style(
             &buffer,
             "Error: Invalid configuration",
@@ -2739,7 +2667,7 @@ End of synthetic plan body."#;
 
         assert!(!footer_text.contains("a apply"), "{footer_text}");
         assert!(footer_text.contains("/ filter"), "{footer_text}");
-        assert!(footer_text.contains("y yank"), "{footer_text}");
+        assert!(footer_text.contains("y copy plan"), "{footer_text}");
         assert!(footer_text.contains("q quit"), "{footer_text}");
     }
 
@@ -2797,6 +2725,42 @@ End of synthetic plan body."#;
             lines
                 .iter()
                 .all(|line| { line.to_string() != "Plan: 1 to add, 0 to change, 0 to destroy." })
+        );
+    }
+
+    #[test]
+    fn normal_body_omits_only_the_final_summary_and_its_trailing_blank() {
+        let review = PlanReview::new(
+            PathBuf::from("/project"),
+            "default".to_owned(),
+            plan_document("body\nPlan: 1 to add, 0 to change, 0 to destroy.\n".to_owned()),
+            PlanMetadata::new(Vec::new(), Vec::new(), 1, 0, 0, true),
+            Vec::new(),
+        );
+        let filtered = review.filtered_document();
+        let lines = review_lines(&review, &filtered, false, "").0;
+
+        assert_eq!(
+            lines.iter().map(Line::to_string).collect::<Vec<_>>(),
+            ["body"]
+        );
+    }
+
+    #[test]
+    fn normal_body_keeps_unknown_plan_text_and_following_lines() {
+        let review = PlanReview::new(
+            PathBuf::from("/project"),
+            "default".to_owned(),
+            plan_document("Plan: application text\nfollowing body text\n".to_owned()),
+            PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
+            Vec::new(),
+        );
+        let filtered = review.filtered_document();
+        let lines = review_lines(&review, &filtered, false, "").0;
+
+        assert_eq!(
+            lines.iter().map(Line::to_string).collect::<Vec<_>>(),
+            ["Plan: application text", "following body text", ""]
         );
     }
 

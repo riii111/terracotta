@@ -185,9 +185,15 @@ impl PlanDocument {
     }
 }
 
-fn classify_display_lines(text: &str) -> Vec<PlanLineKind> {
+pub(crate) fn classify_display_lines(text: &str) -> Vec<PlanLineKind> {
     let lines = text.split('\n').collect::<Vec<_>>();
     let intro_end = leading_intro_end(&lines);
+    let final_summary = lines
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, line)| !line.trim().is_empty())
+        .and_then(|(index, line)| is_terraform_summary(line).then_some(index));
     let mut kinds = vec![PlanLineKind::Body; lines.len()];
     for kind in kinds.iter_mut().take(intro_end) {
         *kind = PlanLineKind::Intro;
@@ -203,7 +209,7 @@ fn classify_display_lines(text: &str) -> Vec<PlanLineKind> {
         }
         if line == &"Changes to Outputs:" {
             kinds[line_index] = PlanLineKind::OutputSection;
-        } else if line.starts_with("Plan:") {
+        } else if Some(line_index) == final_summary {
             kinds[line_index] = PlanLineKind::Summary;
         } else if is_note_line(line) {
             kinds[line_index] = PlanLineKind::Note;
@@ -211,6 +217,42 @@ fn classify_display_lines(text: &str) -> Vec<PlanLineKind> {
         heredoc_terminator = heredoc_start(line);
     }
     kinds
+}
+
+fn is_terraform_summary(line: &str) -> bool {
+    let Some(summary) = line
+        .strip_prefix("Plan: ")
+        .and_then(|summary| summary.strip_suffix('.'))
+    else {
+        return false;
+    };
+    let mut parts = summary.split(", ");
+    let Some(additions) = parts.next().and_then(|part| part.strip_suffix(" to add")) else {
+        return false;
+    };
+    let Some(changes) = parts
+        .next()
+        .and_then(|part| part.strip_suffix(" to change"))
+    else {
+        return false;
+    };
+    let Some(deletions) = parts
+        .next()
+        .and_then(|part| part.strip_suffix(" to destroy"))
+    else {
+        return false;
+    };
+    parts.next().is_none()
+        && !additions.is_empty()
+        && !changes.is_empty()
+        && !deletions.is_empty()
+        && additions
+            .chars()
+            .all(|character| character.is_ascii_digit())
+        && changes.chars().all(|character| character.is_ascii_digit())
+        && deletions
+            .chars()
+            .all(|character| character.is_ascii_digit())
 }
 
 fn leading_intro_end(lines: &[&str]) -> usize {
@@ -591,5 +633,28 @@ mod tests {
 
         assert_eq!(review.search_query(), "body");
         assert_eq!(review.document().text(), "Terraform body\n");
+    }
+
+    #[test]
+    fn classifies_only_a_final_standard_summary_outside_a_heredoc() {
+        let text = "  value = <<EOF\n".to_owned()
+            + "Plan: 9 to add, 9 to change, 9 to destroy.\n"
+            + "EOF\n"
+            + "Plan: 1 to add, 2 to change, 3 to destroy.\n";
+        let document = plan_document(text);
+        let lines = document.text().split('\n').collect::<Vec<_>>();
+
+        assert_eq!(document.line_kind(1), PlanLineKind::Body);
+        assert_eq!(document.line_kind(3), PlanLineKind::Summary);
+        assert_eq!(lines[1], "Plan: 9 to add, 9 to change, 9 to destroy.");
+    }
+
+    #[test]
+    fn keeps_unknown_plan_text_when_it_is_not_the_final_standard_summary() {
+        let document =
+            plan_document("Plan: this is application text\nfollowing body text\n".to_owned());
+
+        assert_eq!(document.line_kind(0), PlanLineKind::Body);
+        assert_eq!(document.line_kind(1), PlanLineKind::Body);
     }
 }

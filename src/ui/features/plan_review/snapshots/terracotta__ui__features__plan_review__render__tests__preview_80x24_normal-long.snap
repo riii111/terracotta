@@ -6,12 +6,12 @@ expression: buffer_text(buffer)
  Terracotta | repo
 
  ┌Plan────────────────────────────────────────────────────────────────────────┐
+ │Plan: 0 to add, 0 to change, 0 to destroy.                                  │
+ │────────────────────────────────────────────────────────────────────────────│
  │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx                           ▲│
  │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx                           ┃│
  │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx                           ┃│
  │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx                           ┃│
- │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx                           ┃│
- │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx                           ││
  │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx                           ││
  │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx                           ││
  │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx                           ││
@@ -24,4 +24,4 @@ expression: buffer_text(buffer)
  │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx                           ││
  │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx                           ▼│
  └────────────────────────────────────────────────────────────────────────────┘
- ↑/↓/←/→ scroll | / filter | y yank | a apply | q quit
+ ↑/↓/←/→ scroll | / filter | y copy plan | a apply | q quit

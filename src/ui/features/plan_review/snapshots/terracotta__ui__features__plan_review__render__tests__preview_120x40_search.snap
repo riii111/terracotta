@@ -9,11 +9,8 @@ expression: buffer_text(buffer)
  Terracotta | main
 
  ┌Plan | Filter───────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │/terraform_data                                                                                                     │
- │Matches: resources 4/4 | outputs 0/2                                                                                │
- │Filter changes display only                                                                                         │
- │Plan: 2 to add, 2 to change, 1 to destroy.                                                                          │
- │ Matching changes ──────────────────────────────────────────────────────────────────────────────────────────────────│
+ │Filter: /terraform_data   Matches: resources 4/4 | outputs 0/2                                                      │
+ │────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
  │  # terraform_data.api will be updated in-place                                                                    ▲│
  │  ~ resource "terraform_data" "api" {                                                                              ┃│
  │      id       = "api-20260920"                                                                                    ┃│
@@ -27,14 +24,17 @@ expression: buffer_text(buffer)
  │      - old_checksum = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef"                                   ┃│
  │      + new_checksum = (known after apply)                                                                         ┃│
  │    }                                                                                                              ┃│
- │                                                                                                                   ││
- │  # terraform_data.old will be destroyed                                                                           ││
- │  - resource "terraform_data" "old" {                                                                              ││
+ │                                                                                                                   ┃│
+ │  # terraform_data.old will be destroyed                                                                           ┃│
+ │  - resource "terraform_data" "old" {                                                                              ┃│
  │      id = "old-20260920"                                                                                          ││
  │    }                                                                                                              ││
  │                                                                                                                   ││
  │  # terraform_data.new will be created                                                                             ││
  │  + resource "terraform_data" "new" {                                                                              ││
- │      input = "new-value"                                                                                          ▼│
+ │      input = "new-value"                                                                                          ││
+ │      note  = "A deliberately long synthetic value keeps horizontal scrolling visible"                             ││
+ │    }                                                                                                              ││
+ │                                                                                                                   ▼│
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  Enter confirm | Esc cancel
