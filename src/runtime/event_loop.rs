@@ -119,12 +119,16 @@ fn should_draw(state: &SessionState, dirty: bool, now: Instant) -> bool {
     dirty
         || state.execution().is_some()
         || state.apply().is_some_and(|apply| apply.result().is_none())
-        || state
-            .review()
-            .is_some_and(|review| review.copy_flash_active(now) || review.copy_flash_pending())
-        || state
-            .apply()
-            .is_some_and(|apply| apply.copy_flash_active(now) || apply.copy_flash_pending())
+        || state.review().is_some_and(|review| {
+            review.copy_flash_active(now)
+                || review.copy_flash_pending()
+                || review.copy_notice_pending()
+        })
+        || state.apply().is_some_and(|apply| {
+            apply.copy_flash_active(now)
+                || apply.copy_flash_pending()
+                || apply.copy_notice_pending()
+        })
 }
 
 fn draw_if_needed<B: Backend>(
@@ -148,27 +152,38 @@ fn draw_if_needed<B: Backend>(
         confirmation_view,
         now,
     )?;
-    clear_expired_copy_flash(state, now);
+    clear_expired_copy_feedback(state, now);
     *dirty = false;
     Ok(true)
 }
 
-fn clear_expired_copy_flash(state: &mut SessionState, now: Instant) {
+fn clear_expired_copy_feedback(state: &mut SessionState, now: Instant) {
     match state {
-        SessionState::Review(review)
-            if review.copy_flash_pending() && !review.copy_flash_active(now) =>
-        {
-            review.clear_copy_flash();
+        SessionState::Execution(execution) => {
+            if execution.copy_notice_pending() && execution.copy_notice_at(now).is_none() {
+                execution.clear_copy_notice();
+            }
+            if execution.copy_flash_pending() && !execution.copy_flash_active(now) {
+                execution.clear_copy_flash();
+            }
         }
-        SessionState::Apply(apply)
-            if apply.copy_flash_pending() && !apply.copy_flash_active(now) =>
-        {
-            apply.clear_copy_flash();
+        SessionState::Review(review) => {
+            if review.copy_notice_pending() && review.copy_notice_at(now).is_none() {
+                review.clear_copy_notice();
+            }
+            if review.copy_flash_pending() && !review.copy_flash_active(now) {
+                review.clear_copy_flash();
+            }
         }
-        SessionState::Execution(_)
-        | SessionState::ApplyConfirmation(_)
-        | SessionState::Review(_)
-        | SessionState::Apply(_) => {}
+        SessionState::Apply(apply) => {
+            if apply.copy_notice_pending() && apply.copy_notice_at(now).is_none() {
+                apply.clear_copy_notice();
+            }
+            if apply.copy_flash_pending() && !apply.copy_flash_active(now) {
+                apply.clear_copy_flash();
+            }
+        }
+        SessionState::ApplyConfirmation(_) => {}
     }
 }
 
@@ -665,8 +680,8 @@ mod tests {
 
         assert!(!dirty);
         let text = terminal_text(&terminal);
-        assert!(text.contains("Apply this plan? (yes/no):"));
-        assert!(text.contains("│ y|"), "{text}");
+        assert!(text.contains("Apply this plan? Type yes or no."));
+        assert!(text.contains("│ > y|"), "{text}");
     }
 
     #[test]
@@ -889,7 +904,7 @@ mod tests {
         );
 
         assert!(!copy_flash_pending(&state, target));
-        assert!(!should_draw(&state, false, expired_at));
+        assert!(should_draw(&state, false, expired_at));
         assert!(!copy_target_has_flash_style(target, &terminal));
         match target {
             CopyFlashTarget::Review => {
@@ -909,7 +924,7 @@ mod tests {
         }
 
         assert!(
-            !draw_if_needed(
+            draw_if_needed(
                 &mut state,
                 &mut terminal,
                 execution_view,
@@ -918,8 +933,23 @@ mod tests {
                 &mut dirty,
                 expired_at,
             )
-            .expect("static result should remain rendered")
+            .expect("copy notice should keep the static result rendered")
         );
+
+        let notice_expired_at = started_at + Duration::from_secs(3);
+        assert!(
+            draw_if_needed(
+                &mut state,
+                &mut terminal,
+                execution_view,
+                &review_view,
+                &confirmation_view,
+                &mut dirty,
+                notice_expired_at,
+            )
+            .expect("expired copy notice should render once")
+        );
+        assert!(!should_draw(&state, false, notice_expired_at));
     }
 
     #[rstest]
@@ -946,8 +976,23 @@ mod tests {
             .expect("failed copy result should render")
         );
         assert!(!copy_target_has_flash_style(target, &terminal));
-        assert!(terminal_text(&terminal).contains("Copy failed: clipboard unavailable."));
-        assert!(!should_draw(&state, false, started_at));
+        assert!(terminal_text(&terminal).contains("Copy failed."));
+        assert!(should_draw(&state, false, started_at));
+        let notice_expired_at = started_at + Duration::from_secs(5);
+        assert!(
+            draw_if_needed(
+                &mut state,
+                &mut terminal,
+                execution_view,
+                &review_view,
+                &confirmation_view,
+                &mut dirty,
+                notice_expired_at,
+            )
+            .expect("expired copy failure notice should render once")
+        );
+        assert!(!terminal_text(&terminal).contains("Copy failed."));
+        assert!(!should_draw(&state, false, notice_expired_at));
     }
 
     #[rstest]

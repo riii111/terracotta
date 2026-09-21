@@ -335,11 +335,11 @@ try:
         send_key(b"a")
         wait_new("Apply this reviewed plan?", "apply_confirmation")
         send_key(b"y")
-        wait_parts(["Apply this plan? (yes/no):", "y"], "apply_input_y")
+        wait_parts(["Apply this plan? Type yes or no.", "y"], "apply_input_y")
         send_key(b"e")
-        wait_parts(["Apply this plan? (yes/no):", "ye"], "apply_input_ye")
+        wait_parts(["Apply this plan? Type yes or no.", "ye"], "apply_input_ye")
         send_key(b"s")
-        wait_parts(["Apply this plan? (yes/no):", "yes"], "apply_input_yes")
+        wait_parts(["Apply this plan? Type yes or no.", "yes"], "apply_input_yes")
         resize(24, 6)
         wait_new("Terminal too small", "apply_confirmation_narrow")
         send_key(b"\r")
@@ -349,7 +349,7 @@ try:
             raise RuntimeError("apply started while confirmation was not renderable")
         resize(100, 24)
         wait_parts(
-            ["Apply this plan? (yes/no):", "yes"],
+            ["Apply this plan? Type yes or no.", "yes"],
             "apply_confirmation_resized",
         )
         send_key(b"\r")

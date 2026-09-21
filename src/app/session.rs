@@ -1,5 +1,5 @@
 use std::fmt::{Debug, Formatter};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::{
     copy::{self, CopyEffect, CopyNotice, CopyResult, CopyTarget},
@@ -33,6 +33,7 @@ pub(crate) enum SessionState {
 pub(crate) struct ReviewSessionState {
     review: PlanReview,
     copy_notice: Option<CopyNotice>,
+    copy_notice_until: Option<Instant>,
     copy_flash_until: Option<Instant>,
 }
 
@@ -42,6 +43,7 @@ impl ReviewSessionState {
         Self {
             review,
             copy_notice: None,
+            copy_notice_until: None,
             copy_flash_until: None,
         }
     }
@@ -54,6 +56,24 @@ impl ReviewSessionState {
     #[must_use]
     pub(crate) const fn copy_notice(&self) -> Option<CopyNotice> {
         self.copy_notice
+    }
+
+    #[must_use]
+    pub(crate) fn copy_notice_at(&self, now: Instant) -> Option<CopyNotice> {
+        self.copy_notice_until
+            .is_some_and(|until| now < until)
+            .then_some(self.copy_notice)
+            .flatten()
+    }
+
+    #[must_use]
+    pub(crate) const fn copy_notice_pending(&self) -> bool {
+        self.copy_notice_until.is_some()
+    }
+
+    pub(crate) const fn clear_copy_notice(&mut self) {
+        self.copy_notice = None;
+        self.copy_notice_until = None;
     }
 
     #[must_use]
@@ -355,8 +375,9 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
                 }
                 SessionState::Review(review) => {
                     review.copy_notice = Some(notice);
-                    review.copy_flash_until = (result == CopyResult::Written)
-                        .then(|| now + std::time::Duration::from_millis(200));
+                    review.copy_notice_until = Some(now + notice.duration());
+                    review.copy_flash_until =
+                        (result == CopyResult::Written).then(|| now + Duration::from_millis(200));
                 }
                 SessionState::ApplyConfirmation(_) => {}
             }
@@ -521,6 +542,44 @@ mod tests {
         review.clear_copy_flash();
         assert!(!review.copy_flash_pending());
         assert!(review.copy_notice().is_some());
+    }
+
+    #[test]
+    fn copy_notice_replacement_resets_the_success_and_failure_deadlines() {
+        let started_at = Instant::now();
+        let mut state = SessionState::new(ExecutionState::with_context(
+            started_at,
+            ExecutionContext::loading("/project"),
+        ));
+        update(&mut state, Action::ReviewCompleted(review()), started_at);
+        update(
+            &mut state,
+            Action::CopyCompleted {
+                target: CopyTarget::Plan,
+                result: CopyResult::Written,
+            },
+            started_at,
+        );
+        update(
+            &mut state,
+            Action::CopyCompleted {
+                target: CopyTarget::Plan,
+                result: CopyResult::Failed,
+            },
+            started_at + Duration::from_secs(1),
+        );
+
+        let SessionState::Review(review) = &state else {
+            panic!("review should remain visible");
+        };
+        assert_eq!(
+            review.copy_notice_at(started_at + Duration::from_millis(3_999)),
+            Some(CopyNotice::Failed)
+        );
+        assert_eq!(
+            review.copy_notice_at(started_at + Duration::from_secs(6)),
+            None
+        );
     }
 
     #[test]
