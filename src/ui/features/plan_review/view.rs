@@ -1,6 +1,31 @@
-use ratatui::layout::Rect;
+use ratatui::{layout::Rect, style::Style, text::Line};
 
 use super::PlanReviewInput;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PlanReviewMatch {
+    line: usize,
+    start: u16,
+    end: u16,
+}
+
+impl PlanReviewMatch {
+    pub(crate) const fn new(line: usize, start: u16, end: u16) -> Self {
+        Self { line, start, end }
+    }
+
+    pub(crate) const fn line(self) -> usize {
+        self.line
+    }
+
+    pub(crate) const fn start(self) -> u16 {
+        self.start
+    }
+
+    pub(crate) const fn end(self) -> u16 {
+        self.end
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SearchInputState {
@@ -9,6 +34,7 @@ struct SearchInputState {
     previous_query: String,
     previous_vertical: u16,
     previous_horizontal: u16,
+    previous_selected: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -16,9 +42,11 @@ pub(crate) struct PlanReviewViewState {
     vertical: u16,
     horizontal: u16,
     search: Option<SearchInputState>,
+    selected: Option<usize>,
 }
 
 impl PlanReviewViewState {
+    #[cfg(test)]
     pub(crate) fn apply(
         &mut self,
         input: PlanReviewInput,
@@ -27,22 +55,42 @@ impl PlanReviewViewState {
         max_horizontal: u16,
         current_query: &str,
     ) -> Option<String> {
-        self.vertical = self.vertical.min(max_vertical);
-        self.horizontal = self.horizontal.min(max_horizontal);
+        self.apply_with_matches(
+            input,
+            body,
+            max_vertical,
+            max_horizontal,
+            current_query,
+            &[],
+        )
+    }
+
+    pub(crate) fn apply_with_matches(
+        &mut self,
+        input: PlanReviewInput,
+        body: Rect,
+        max_vertical: u16,
+        max_horizontal: u16,
+        current_query: &str,
+        matches: &[PlanReviewMatch],
+    ) -> Option<String> {
+        self.clamp_scroll(max_vertical, max_horizontal);
         if self.search.is_some() {
-            return self.apply_search_input(input);
+            return self.apply_search_input(input, body, max_vertical, max_horizontal, matches);
         }
 
         match input {
             PlanReviewInput::SearchStart => {
                 let query = current_query.to_owned();
                 self.search = Some(SearchInputState {
-                    cursor: query.len(),
+                    cursor: last_grapheme_boundary(&query),
                     previous_query: query.clone(),
                     query,
                     previous_vertical: self.vertical,
                     previous_horizontal: self.horizontal,
+                    previous_selected: self.selected,
                 });
+                self.selected = None;
                 None
             }
             PlanReviewInput::Up => self.scroll_vertical(-1, max_vertical),
@@ -76,6 +124,23 @@ impl PlanReviewViewState {
                 self.horizontal = max_horizontal;
                 None
             }
+            PlanReviewInput::SearchCancel => {
+                if current_query.is_empty() {
+                    return None;
+                }
+                self.selected = None;
+                self.vertical = 0;
+                self.horizontal = 0;
+                Some(String::new())
+            }
+            PlanReviewInput::SearchNext => {
+                self.move_selection(1, body, max_vertical, max_horizontal, matches);
+                None
+            }
+            PlanReviewInput::SearchPrevious => {
+                self.move_selection(-1, body, max_vertical, max_horizontal, matches);
+                None
+            }
             PlanReviewInput::SearchChar(_)
             | PlanReviewInput::SearchBackspace
             | PlanReviewInput::SearchLeft
@@ -83,11 +148,28 @@ impl PlanReviewViewState {
             | PlanReviewInput::SearchHome
             | PlanReviewInput::SearchEnd
             | PlanReviewInput::SearchConfirm
-            | PlanReviewInput::SearchCancel
             | PlanReviewInput::Apply
             | PlanReviewInput::Copy
             | PlanReviewInput::Quit => None,
         }
+    }
+
+    pub(crate) fn reconcile(
+        &mut self,
+        body: Rect,
+        max_vertical: u16,
+        max_horizontal: u16,
+        matches: &[PlanReviewMatch],
+    ) {
+        self.clamp_scroll(max_vertical, max_horizontal);
+        let Some(selected) = self.selected else {
+            return;
+        };
+        if selected >= matches.len() {
+            self.selected = None;
+            return;
+        }
+        self.ensure_selected_visible(body, max_vertical, max_horizontal, matches);
     }
 
     pub(crate) const fn searching(&self) -> bool {
@@ -105,45 +187,75 @@ impl PlanReviewViewState {
         }
     }
 
+    pub(crate) const fn selected(&self) -> Option<usize> {
+        self.selected
+    }
+
     pub(crate) const fn scroll(&self) -> (u16, u16) {
         (self.vertical, self.horizontal)
     }
 
-    fn apply_search_input(&mut self, input: PlanReviewInput) -> Option<String> {
+    fn apply_search_input(
+        &mut self,
+        input: PlanReviewInput,
+        body: Rect,
+        max_vertical: u16,
+        max_horizontal: u16,
+        matches: &[PlanReviewMatch],
+    ) -> Option<String> {
+        if matches!(
+            input,
+            PlanReviewInput::SearchConfirm | PlanReviewInput::SearchCancel
+        ) {
+            let search = self.search.take()?;
+            return match input {
+                PlanReviewInput::SearchConfirm => {
+                    self.selected = (!search.query.is_empty() && !matches.is_empty()).then_some(0);
+                    if self.selected.is_some() {
+                        self.ensure_selected_visible(body, max_vertical, max_horizontal, matches);
+                    }
+                    None
+                }
+                PlanReviewInput::SearchCancel => {
+                    self.vertical = search.previous_vertical;
+                    self.horizontal = search.previous_horizontal;
+                    self.selected = search.previous_selected;
+                    Some(search.previous_query)
+                }
+                _ => unreachable!("search lifecycle input should match the guard"),
+            };
+        }
+
         let search = self.search.as_mut()?;
         match input {
             PlanReviewInput::SearchChar(character) => {
                 search.query.insert(search.cursor, character);
-                search.cursor += character.len_utf8();
+                search.cursor = next_grapheme_boundary_at_or_after(
+                    &search.query,
+                    search.cursor + character.len_utf8(),
+                );
+                self.selected = None;
                 self.vertical = 0;
                 self.horizontal = 0;
                 Some(search.query.clone())
             }
             PlanReviewInput::SearchBackspace => {
                 if search.cursor > 0 {
-                    let previous = search.query[..search.cursor]
-                        .char_indices()
-                        .next_back()
-                        .map_or(0, |(index, _)| index);
+                    let previous = previous_grapheme_boundary(&search.query, search.cursor);
                     search.query.drain(previous..search.cursor);
                     search.cursor = previous;
+                    self.selected = None;
                     self.vertical = 0;
                     self.horizontal = 0;
                 }
                 Some(search.query.clone())
             }
             PlanReviewInput::SearchLeft => {
-                search.cursor = search.query[..search.cursor]
-                    .char_indices()
-                    .next_back()
-                    .map_or(0, |(index, _)| index);
+                search.cursor = previous_grapheme_boundary(&search.query, search.cursor);
                 None
             }
             PlanReviewInput::SearchRight => {
-                search.cursor = search.query[search.cursor..]
-                    .char_indices()
-                    .nth(1)
-                    .map_or(search.query.len(), |(index, _)| search.cursor + index);
+                search.cursor = next_grapheme_boundary(&search.query, search.cursor);
                 None
             }
             PlanReviewInput::SearchHome => {
@@ -154,23 +266,76 @@ impl PlanReviewViewState {
                 search.cursor = search.query.len();
                 None
             }
-            PlanReviewInput::SearchConfirm => {
-                self.search = None;
-                None
-            }
-            PlanReviewInput::SearchCancel => {
-                let (previous_query, previous_vertical, previous_horizontal) = (
-                    search.previous_query.clone(),
-                    search.previous_vertical,
-                    search.previous_horizontal,
-                );
-                self.vertical = previous_vertical;
-                self.horizontal = previous_horizontal;
-                self.search = None;
-                Some(previous_query)
-            }
             _ => None,
         }
+    }
+
+    fn move_selection(
+        &mut self,
+        direction: i8,
+        body: Rect,
+        max_vertical: u16,
+        max_horizontal: u16,
+        matches: &[PlanReviewMatch],
+    ) {
+        if matches.is_empty() {
+            return;
+        }
+        let next = match (self.selected, direction.is_negative()) {
+            (Some(selected), false) => selected.saturating_add(1) % matches.len(),
+            (Some(selected), true) => selected.checked_sub(1).unwrap_or(matches.len() - 1),
+            (None, false) => 0,
+            (None, true) => matches.len() - 1,
+        };
+        self.selected = Some(next);
+        self.ensure_selected_visible(body, max_vertical, max_horizontal, matches);
+    }
+
+    fn ensure_selected_visible(
+        &mut self,
+        body: Rect,
+        max_vertical: u16,
+        max_horizontal: u16,
+        matches: &[PlanReviewMatch],
+    ) {
+        let Some(selected) = self.selected else {
+            return;
+        };
+        let Some(selected) = matches.get(selected).copied() else {
+            return;
+        };
+        if body.height > 0 {
+            let line = u16::try_from(selected.line()).unwrap_or(u16::MAX);
+            let bottom = u32::from(self.vertical) + u32::from(body.height);
+            if line < self.vertical {
+                self.vertical = line;
+            } else if u32::from(line) >= bottom {
+                self.vertical = line
+                    .saturating_sub(body.height.saturating_sub(1))
+                    .min(max_vertical);
+            }
+        }
+        if body.width == 0 {
+            return;
+        }
+        let start = selected.start();
+        let end = selected.end();
+        let match_width = end.saturating_sub(start);
+        if match_width >= body.width {
+            self.horizontal = start.min(max_horizontal);
+        } else if start < self.horizontal {
+            self.horizontal = start;
+        } else {
+            let right_edge = u32::from(self.horizontal) + u32::from(body.width);
+            if u32::from(end) > right_edge {
+                self.horizontal = end.saturating_sub(body.width).min(max_horizontal);
+            }
+        }
+    }
+
+    fn clamp_scroll(&mut self, max_vertical: u16, max_horizontal: u16) {
+        self.vertical = self.vertical.min(max_vertical);
+        self.horizontal = self.horizontal.min(max_horizontal);
     }
 
     fn scroll_vertical(&mut self, delta: i16, max: u16) -> Option<String> {
@@ -192,6 +357,48 @@ impl PlanReviewViewState {
         };
         None
     }
+}
+
+fn grapheme_boundaries(query: &str) -> Vec<usize> {
+    let mut boundaries = vec![0];
+    let mut offset = 0;
+    for grapheme in Line::from(query).styled_graphemes(Style::default()) {
+        offset += grapheme.symbol.len();
+        boundaries.push(offset);
+    }
+    if boundaries.last().copied() != Some(query.len()) {
+        boundaries.push(query.len());
+    }
+    boundaries
+}
+
+fn last_grapheme_boundary(query: &str) -> usize {
+    grapheme_boundaries(query)
+        .into_iter()
+        .next_back()
+        .unwrap_or(0)
+}
+
+fn previous_grapheme_boundary(query: &str, cursor: usize) -> usize {
+    grapheme_boundaries(query)
+        .into_iter()
+        .rev()
+        .find(|&boundary| boundary < cursor)
+        .unwrap_or(0)
+}
+
+fn next_grapheme_boundary(query: &str, cursor: usize) -> usize {
+    grapheme_boundaries(query)
+        .into_iter()
+        .find(|&boundary| boundary > cursor)
+        .unwrap_or(query.len())
+}
+
+fn next_grapheme_boundary_at_or_after(query: &str, cursor: usize) -> usize {
+    grapheme_boundaries(query)
+        .into_iter()
+        .find(|&boundary| boundary >= cursor)
+        .unwrap_or(query.len())
 }
 
 #[cfg(test)]
@@ -222,10 +429,38 @@ mod tests {
     }
 
     #[test]
-    fn escape_restores_query_and_position() {
+    fn escape_restores_query_position_and_selection() {
+        let matches = [PlanReviewMatch {
+            line: 1,
+            start: 0,
+            end: 4,
+        }];
         let mut view = PlanReviewViewState::default();
-        apply(&mut view, PlanReviewInput::Bottom);
-        apply(&mut view, PlanReviewInput::RightEdge);
+        view.apply_with_matches(
+            PlanReviewInput::SearchStart,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "existing",
+            &matches,
+        );
+        view.apply_with_matches(
+            PlanReviewInput::SearchConfirm,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "existing",
+            &matches,
+        );
+        view.apply_with_matches(
+            PlanReviewInput::Bottom,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "existing",
+            &matches,
+        );
+        let previous = view.scroll();
         apply(&mut view, PlanReviewInput::SearchStart);
         apply(&mut view, PlanReviewInput::SearchChar('a'));
 
@@ -234,11 +469,12 @@ mod tests {
             Some("existing".to_owned())
         );
         assert!(!view.searching());
-        assert_eq!(view.scroll(), (MAX_VERTICAL, MAX_HORIZONTAL));
+        assert_eq!(view.scroll(), previous);
+        assert_eq!(view.selected(), Some(0));
     }
 
     #[test]
-    fn search_right_moves_to_the_next_character_boundary() {
+    fn search_right_moves_to_the_next_grapheme_boundary() {
         let mut view = PlanReviewViewState::default();
         apply(&mut view, PlanReviewInput::SearchStart);
         apply(&mut view, PlanReviewInput::SearchHome);
@@ -250,6 +486,170 @@ mod tests {
 
         assert_eq!(view.search_query(), Some("あXbexisting"));
         assert_eq!(view.search_cursor(), Some("あX".len()));
+    }
+
+    #[test]
+    fn backspace_removes_a_combining_grapheme_as_one_input_unit() {
+        let mut view = PlanReviewViewState::default();
+        apply(&mut view, PlanReviewInput::SearchStart);
+        apply(&mut view, PlanReviewInput::SearchHome);
+        apply(&mut view, PlanReviewInput::SearchChar('e'));
+        apply(&mut view, PlanReviewInput::SearchChar('\u{301}'));
+
+        apply(&mut view, PlanReviewInput::SearchBackspace);
+
+        assert_eq!(view.search_query(), Some("existing"));
+        assert_eq!(view.search_cursor(), Some(0));
+    }
+
+    #[test]
+    fn inserted_zwj_keeps_the_cursor_at_the_joined_grapheme_boundary() {
+        let mut view = PlanReviewViewState::default();
+        view.apply(
+            PlanReviewInput::SearchStart,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "",
+        );
+        view.apply(
+            PlanReviewInput::SearchHome,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "",
+        );
+        view.apply(
+            PlanReviewInput::SearchChar('👩'),
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "",
+        );
+        view.apply(
+            PlanReviewInput::SearchChar('💻'),
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "",
+        );
+        view.apply(
+            PlanReviewInput::SearchLeft,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "",
+        );
+        view.apply(
+            PlanReviewInput::SearchChar('\u{200d}'),
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "",
+        );
+
+        assert_eq!(view.search_query(), Some("👩\u{200d}💻"));
+        assert_eq!(view.search_cursor(), Some("👩\u{200d}💻".len()));
+        view.apply(
+            PlanReviewInput::SearchBackspace,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "",
+        );
+        assert_eq!(view.search_query(), Some(""));
+        assert_eq!(view.search_cursor(), Some(0));
+    }
+
+    #[test]
+    fn next_and_previous_wrap_and_keep_a_single_selection() {
+        let matches = [
+            PlanReviewMatch {
+                line: 0,
+                start: 0,
+                end: 2,
+            },
+            PlanReviewMatch {
+                line: 4,
+                start: 1,
+                end: 3,
+            },
+        ];
+        let mut view = PlanReviewViewState::default();
+        view.apply_with_matches(
+            PlanReviewInput::SearchStart,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "x",
+            &matches,
+        );
+        view.apply_with_matches(
+            PlanReviewInput::SearchConfirm,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "x",
+            &matches,
+        );
+        assert_eq!(view.selected(), Some(0));
+
+        view.apply_with_matches(
+            PlanReviewInput::SearchNext,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "x",
+            &matches,
+        );
+        assert_eq!(view.selected(), Some(1));
+        view.apply_with_matches(
+            PlanReviewInput::SearchNext,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "x",
+            &matches,
+        );
+        assert_eq!(view.selected(), Some(0));
+        view.apply_with_matches(
+            PlanReviewInput::SearchPrevious,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "x",
+            &matches,
+        );
+        assert_eq!(view.selected(), Some(1));
+    }
+
+    #[test]
+    fn resize_reconciles_selected_match_visibility_without_clearing_it() {
+        let matches = [PlanReviewMatch::new(8, 9, 40)];
+        let mut view = PlanReviewViewState::default();
+        view.apply_with_matches(
+            PlanReviewInput::SearchStart,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "x",
+            &matches,
+        );
+        view.apply_with_matches(
+            PlanReviewInput::SearchConfirm,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "x",
+            &matches,
+        );
+        assert_eq!(view.selected(), Some(0));
+        assert_eq!(view.scroll(), (6, 9));
+
+        view.reconcile(Rect::new(0, 0, 30, 10), 0, 10, &matches);
+
+        assert_eq!(view.selected(), Some(0));
+        assert_eq!(view.scroll(), (0, 9));
     }
 
     #[test]

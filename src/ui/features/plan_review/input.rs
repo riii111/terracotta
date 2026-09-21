@@ -23,6 +23,8 @@ pub(crate) enum PlanReviewInput {
     SearchEnd,
     SearchConfirm,
     SearchCancel,
+    SearchNext,
+    SearchPrevious,
     Apply,
     Copy,
     Quit,
@@ -76,6 +78,9 @@ pub(crate) fn key_to_input(key: KeyEvent, searching: bool) -> Option<PlanReviewI
         (KeyCode::Home, _) => Some(PlanReviewInput::Top),
         (KeyCode::End, _) => Some(PlanReviewInput::Bottom),
         (KeyCode::Char('/'), KeyModifiers::NONE) => Some(PlanReviewInput::SearchStart),
+        (KeyCode::Esc, KeyModifiers::NONE) => Some(PlanReviewInput::SearchCancel),
+        (KeyCode::Char('n'), KeyModifiers::NONE) => Some(PlanReviewInput::SearchNext),
+        (KeyCode::Char('N'), KeyModifiers::NONE) => Some(PlanReviewInput::SearchPrevious),
         (KeyCode::Char('y'), KeyModifiers::NONE) => Some(PlanReviewInput::Copy),
         (KeyCode::Char('a'), KeyModifiers::NONE) => Some(PlanReviewInput::Apply),
         (KeyCode::Char('c'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
@@ -187,6 +192,29 @@ mod tests {
         assert_eq!(
             key_to_input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), true),
             Some(PlanReviewInput::SearchCancel)
+        );
+        assert_eq!(
+            key_to_input(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE), true),
+            Some(PlanReviewInput::SearchChar('n'))
+        );
+    }
+
+    #[test]
+    fn confirmed_filter_keys_clear_or_move_matches() {
+        assert_eq!(
+            key_to_input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), false),
+            Some(PlanReviewInput::SearchCancel)
+        );
+        assert_eq!(
+            key_to_input(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE), false),
+            Some(PlanReviewInput::SearchNext)
+        );
+        assert_eq!(
+            key_to_input(
+                KeyEvent::new(KeyCode::Char('N'), KeyModifiers::SHIFT),
+                false
+            ),
+            Some(PlanReviewInput::SearchPrevious)
         );
     }
 

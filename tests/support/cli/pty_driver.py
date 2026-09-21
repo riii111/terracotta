@@ -300,6 +300,25 @@ try:
         wait_parts(["Terraform will perform", "terraform_data.api"], "plan_text", timeout=30)
         send_key(b"q")
         exit_code = wait_exit()
+    elif scenario == "filter_navigation":
+        wait_parts(["Terraform will perform", "terraform_data.api"], "plan_text", timeout=30)
+        send_key(b"/")
+        wait_new("/ ", "filter_input")
+        send_text("api")
+        wait_new("Filter matches: resources", "filter_matches")
+        send_key(b"\r")
+        wait_new("n/N next/prev", "filter_confirmed")
+        send_key(b"n")
+        send_key(b"N")
+        send_key(b"\x1b")
+        wait_screen(
+            lambda current: "Plan | Filter" not in current
+            and "Terraform will perform" in current,
+            "filter_cleared",
+            "full review after Escape",
+        )
+        send_key(b"q")
+        exit_code = wait_exit()
     elif scenario == "basic_workflow":
         wait_parts(["Terraform will perform", "terraform_data.api"], "plan_text", timeout=30)
         send_key(b"a")

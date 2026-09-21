@@ -6,7 +6,7 @@ expression: buffer_text(buffer)
  Terracotta | main
 
  ┌Plan | Filter───────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │/terraform_data|                                                                                                    │
+ │/terraform_data                                                                                                     │
  │Filter matches: resources 4/4 | outputs 0/2                                                                         │
  │Scope: full plan (apply / yank)                                                                                     │
  │Terraform will perform the following actions:                                                                      ▲│
@@ -40,4 +40,4 @@ expression: buffer_text(buffer)
  │                                                                                                                   ││
  │Warning: Value for "pending" is not known until apply                                                              ▼│
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- Enter confirm | Esc cancel | Ctrl-A/Ctrl-E move
+ Enter confirm | Esc cancel

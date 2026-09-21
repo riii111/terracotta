@@ -44,7 +44,24 @@ pub(super) fn run_synthetic() -> io::Result<()> {
                     .min(Duration::from_millis(100))
             });
             if event::poll(timeout)? {
-                let Event::Key(key) = event::read()? else {
+                let event = event::read()?;
+                if let Event::Resize(width, height) = event {
+                    if let SessionState::Review(review) = &state {
+                        let layout = plan_review::layout(
+                            ratatui::layout::Rect::new(0, 0, width, height),
+                            view.searching(),
+                            review,
+                        );
+                        view.reconcile(
+                            layout.body(),
+                            layout.max_vertical(),
+                            layout.max_horizontal(),
+                            layout.matches(),
+                        );
+                    }
+                    continue;
+                }
+                let Event::Key(key) = event else {
                     continue;
                 };
                 if !key.is_press() {
@@ -156,12 +173,13 @@ fn synthetic_review_key(
                 view.searching(),
                 review,
             );
-            view.apply(
+            view.apply_with_matches(
                 input,
                 layout.body(),
                 layout.max_vertical(),
                 layout.max_horizontal(),
                 review.review().search_query(),
+                layout.matches(),
             )
             .map(Action::ReviewSearchChanged)
         }

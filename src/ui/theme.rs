@@ -31,6 +31,19 @@ pub(crate) fn search_match_style() -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
+pub(crate) fn search_cursor_style() -> Style {
+    Style::default()
+        .fg(Color::Rgb(0x11, 0x14, 0x19))
+        .bg(Color::Rgb(0xf4, 0x9e, 0x4c))
+}
+
+pub(crate) fn selected_search_match_style() -> Style {
+    Style::default()
+        .fg(Color::Rgb(0x11, 0x14, 0x19))
+        .bg(Color::Rgb(0xff, 0xd0, 0x8a))
+        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+}
+
 pub(crate) fn copy_flash_style() -> Style {
     Style::default()
         .fg(Color::Rgb(0x11, 0x14, 0x19))

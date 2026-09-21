@@ -77,7 +77,22 @@ pub(crate) fn run_connected(
 
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {
-                Event::Resize(_, _) => dirty = true,
+                Event::Resize(width, height) => {
+                    dirty = true;
+                    if let Some(review) = state.review() {
+                        let layout = plan_review::layout(
+                            Rect::new(0, 0, width, height),
+                            review_view.searching(),
+                            review,
+                        );
+                        review_view.reconcile(
+                            layout.body(),
+                            layout.max_vertical(),
+                            layout.max_horizontal(),
+                            layout.matches(),
+                        );
+                    }
+                }
                 Event::Key(key) if key.is_press() => {
                     dirty = true;
                     if let Some(action) = handle_key_event(
@@ -237,12 +252,13 @@ fn handle_key_event<B: Backend>(
                     review,
                 );
                 review_view
-                    .apply(
+                    .apply_with_matches(
                         input,
                         body.body(),
                         body.max_vertical(),
                         body.max_horizontal(),
                         review.review().search_query(),
+                        body.matches(),
                     )
                     .map(Action::ReviewSearchChanged)
             }
