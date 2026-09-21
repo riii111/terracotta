@@ -30,9 +30,23 @@ const CONFIRMATION_HEADER_HEIGHT: u16 = 2;
 const CONFIRMATION_NOTICE: &str = "Terminal too small. Resize or press Esc to go back.";
 struct PreparedContent<'a> {
     lines: Vec<Line<'a>>,
-    max_width: usize,
     sources: Vec<Option<PlanSource<'a>>>,
     matches: Vec<PlanReviewMatch>,
+}
+
+#[derive(Clone, Copy)]
+struct ContentMetrics {
+    line_count: usize,
+    max_width: usize,
+}
+
+impl PreparedContent<'_> {
+    fn metrics(&self) -> ContentMetrics {
+        ContentMetrics {
+            line_count: self.lines.len(),
+            max_width: max_line_width(&self.lines),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -149,14 +163,13 @@ pub(crate) fn layout_with_quit_confirmation(
     quit_confirmation: bool,
 ) -> PlanReviewLayout {
     let filtered_view = filter_active(searching, state);
-    let base_content = prepare_content(state, false, "");
-    let content = prepare_content(state, filtered_view, state.review().search_query());
+    let (content, base_metrics) = prepare_view_content(state, filtered_view);
     layout_with_content(
         area,
         searching,
         state,
         &content,
-        &base_content,
+        base_metrics,
         state.copy_notice(),
         quit_confirmation,
     )
@@ -171,11 +184,12 @@ fn layout_with_content(
     searching: bool,
     state: &ReviewSessionState,
     content: &PreparedContent<'_>,
-    base_content: &PreparedContent<'_>,
+    base_metrics: ContentMetrics,
     copy_notice: Option<CopyNotice>,
     quit_confirmation: bool,
 ) -> PlanReviewLayout {
     let panel_width = shell_layout::centered_width(area);
+    let content_metrics = content.metrics();
     let filter_visible = filter_active(searching, state);
     let showing = filter_footer_status(
         state.review().search_query(),
@@ -220,8 +234,8 @@ fn layout_with_content(
     );
     let inner_width = panel_width.saturating_sub(2);
     let body_height = shell_layout::required_body_height(
-        base_content.lines.len(),
-        base_content.max_width,
+        base_metrics.line_count,
+        base_metrics.max_width,
         inner_width,
     );
     let fixed_status_height: u16 = 2;
@@ -266,8 +280,11 @@ fn layout_with_content(
         inner.width,
         inner.height.saturating_sub(fixed_status_height),
     );
-    let (vertical_scrollbar, horizontal_scrollbar) =
-        scrollbar_reservations(content.lines.len(), content.max_width, available);
+    let (vertical_scrollbar, horizontal_scrollbar) = scrollbar_reservations(
+        content_metrics.line_count,
+        content_metrics.max_width,
+        available,
+    );
     let body = Rect::new(
         available.x,
         available.y,
@@ -278,7 +295,8 @@ fn layout_with_content(
             .height
             .saturating_sub(u16::from(horizontal_scrollbar)),
     );
-    let (max_vertical, max_horizontal) = limits(content.lines.len(), content.max_width, body);
+    let (max_vertical, max_horizontal) =
+        limits(content_metrics.line_count, content_metrics.max_width, body);
     PlanReviewLayout {
         shell,
         body,
@@ -519,14 +537,13 @@ pub(crate) fn render_with_quit_confirmation(
     }
 
     let filtered_view = filter_active(view.searching(), state);
-    let base_content = prepare_content(state, false, "");
-    let content = prepare_content(state, filtered_view, state.review().search_query());
+    let (content, base_metrics) = prepare_view_content(state, filtered_view);
     let layout = layout_with_content(
         area,
         view.searching(),
         state,
         &content,
-        &base_content,
+        base_metrics,
         state.copy_notice_at(now),
         quit_confirmation,
     );
@@ -553,8 +570,9 @@ pub(crate) fn render_with_quit_confirmation(
 
     render_status(frame, &layout, state, view);
 
-    let line_count = content.lines.len();
-    let max_line_width = content.max_width;
+    let content_metrics = content.metrics();
+    let line_count = content_metrics.line_count;
+    let max_line_width = content_metrics.max_width;
     let max_vertical = layout.max_vertical();
     let max_horizontal = layout.max_horizontal();
     let (vertical, horizontal) = view.scroll();
@@ -622,13 +640,24 @@ fn prepare_content<'a>(
     let review = state.review();
     let filtered = review.document().filter(filter_query);
     let (lines, sources, matches) = review_lines(review, &filtered, filtered_view, filter_query);
-    let max_width = max_line_width(&lines);
     PreparedContent {
         lines,
-        max_width,
         sources,
         matches,
     }
+}
+
+fn prepare_view_content(
+    state: &ReviewSessionState,
+    filtered_view: bool,
+) -> (PreparedContent<'_>, ContentMetrics) {
+    let content = prepare_content(state, filtered_view, state.review().search_query());
+    let base_metrics = if filtered_view {
+        prepare_content(state, false, "").metrics()
+    } else {
+        content.metrics()
+    };
+    (content, base_metrics)
 }
 
 fn render_status(
@@ -694,9 +723,11 @@ fn review_lines<'a>(
             continue;
         }
         let line_index = lines.len();
-        lines.push(plan_line(line, filter_query, None, kind));
+        let (rendered, line_matches) =
+            plan_line_and_matches(line, filter_query, line_index, None, kind);
+        lines.push(rendered);
         sources.push(Some(PlanSource { text: line, kind }));
-        matches.extend(line_matches(line, filter_query, line_index));
+        matches.extend(line_matches);
     }
     if removed_summary {
         while lines.last().is_some_and(|line| line.width() == 0) {
@@ -729,28 +760,38 @@ fn diagnostic_lines(review: &PlanReview) -> Vec<Line<'_>> {
     lines
 }
 
-fn plan_line<'a>(
+fn plan_line_and_matches<'a>(
     line: &'a str,
     query: &str,
+    line_index: usize,
     selected: Option<&PlanReviewMatch>,
     kind: PlanLineKind,
-) -> Line<'a> {
+) -> (Line<'a>, Vec<PlanReviewMatch>) {
     if query.is_empty() {
-        return Line::from(Span::styled(line, plan_line_style(line, kind)));
+        return (
+            Line::from(Span::styled(line, plan_line_style(line, kind))),
+            Vec::new(),
+        );
     }
-    let search_matches = line_matches(line, query, 0);
     let mut result = Line::default();
+    let mut matches = Vec::new();
     let mut rest = line;
-    let mut match_index = 0;
+    let mut rendered_column = 0;
     while let Some(index) = rest.find(query) {
         let (before, matched_and_after) = rest.split_at(index);
         if !before.is_empty() {
             result.push_span(Span::styled(before, plan_line_style(line, kind)));
         }
+        rendered_column += Line::from(before).width();
         let (match_text, after) = matched_and_after.split_at(query.len());
-        let rendered_match = search_matches
-            .get(match_index)
-            .expect("rendered matches should follow the search spans");
+        let start_column = rendered_column;
+        rendered_column += Line::from(match_text).width();
+        let end_column = rendered_column;
+        let rendered_match = PlanReviewMatch::new(
+            line_index,
+            u16::try_from(start_column).unwrap_or(u16::MAX),
+            u16::try_from(end_column).unwrap_or(u16::MAX),
+        );
         let style = selected
             .filter(|selected| {
                 selected.start() == rendered_match.start() && selected.end() == rendered_match.end()
@@ -759,13 +800,13 @@ fn plan_line<'a>(
                 theme::selected_search_match_style()
             });
         result.push_span(Span::styled(match_text, style));
+        matches.push(rendered_match);
         rest = after;
-        match_index += 1;
     }
     if !rest.is_empty() {
         result.push_span(Span::styled(rest, plan_line_style(line, kind)));
     }
-    result
+    (result, matches)
 }
 
 fn plan_line_style(line: &str, kind: PlanLineKind) -> Style {
@@ -797,40 +838,25 @@ fn content_lines_with_selection<'a>(
             source.map_or_else(
                 || line.clone(),
                 |source| {
-                    plan_line(
-                        source.text,
-                        query,
-                        selected.filter(|selected| selected.line() == line_index),
-                        source.kind,
-                    )
+                    selected
+                        .filter(|selected| selected.line() == line_index)
+                        .map_or_else(
+                            || line.clone(),
+                            |selected| {
+                                plan_line_and_matches(
+                                    source.text,
+                                    query,
+                                    line_index,
+                                    Some(selected),
+                                    source.kind,
+                                )
+                                .0
+                            },
+                        )
                 },
             )
         })
         .collect()
-}
-
-fn line_matches(line: &str, query: &str, line_index: usize) -> Vec<PlanReviewMatch> {
-    if query.is_empty() {
-        return Vec::new();
-    }
-    let mut search_matches = Vec::new();
-    let mut rest = line;
-    let mut rendered_column = 0;
-    while let Some(index) = rest.find(query) {
-        let (before, matched_and_after) = rest.split_at(index);
-        rendered_column += Line::from(before).width();
-        let (match_text, after) = matched_and_after.split_at(query.len());
-        let start_column = rendered_column;
-        rendered_column += Line::from(match_text).width();
-        let end_column = rendered_column;
-        search_matches.push(PlanReviewMatch::new(
-            line_index,
-            u16::try_from(start_column).unwrap_or(u16::MAX),
-            u16::try_from(end_column).unwrap_or(u16::MAX),
-        ));
-        rest = after;
-    }
-    search_matches
 }
 
 fn limits(line_count: usize, line_width: usize, body: Rect) -> (u16, u16) {
@@ -1958,10 +1984,11 @@ End of synthetic plan body."#;
     fn production_partial_zwj_match_tracks_the_rendered_span_columns() {
         let line = format!("{}👩\u{200d}💻", "a".repeat(20));
         let query = "💻";
-        let matches = line_matches(&line, query, 0);
+        let (_, matches) = plan_line_and_matches(&line, query, 0, None, PlanLineKind::Body);
         assert_eq!(matches, [PlanReviewMatch::new(0, 22, 24)]);
 
-        let selected_line = plan_line(&line, query, matches.first(), PlanLineKind::Body);
+        let (selected_line, _) =
+            plan_line_and_matches(&line, query, 0, matches.first(), PlanLineKind::Body);
         let mut buffer = Buffer::empty(Rect::new(0, 0, 30, 1));
         Paragraph::new(vec![selected_line]).render(*buffer.area(), &mut buffer);
         let cell = buffer
