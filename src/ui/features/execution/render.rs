@@ -24,11 +24,22 @@ struct PreparedContent<'a> {
     max_width: usize,
 }
 
+#[cfg(test)]
 pub(crate) fn render_execution_with_view(
     frame: &mut Frame<'_>,
     state: &ExecutionState,
     view: ExecutionViewState,
     now: Instant,
+) {
+    render_execution_with_quit_confirmation(frame, state, view, now, false);
+}
+
+pub(crate) fn render_execution_with_quit_confirmation(
+    frame: &mut Frame<'_>,
+    state: &ExecutionState,
+    view: ExecutionViewState,
+    now: Instant,
+    quit_confirmation: bool,
 ) {
     let area = frame.area();
     let content = prepare_content(state);
@@ -40,6 +51,7 @@ pub(crate) fn render_execution_with_view(
         &content,
         &status,
         notice.map(CopyNotice::message),
+        quit_confirmation,
     );
     if area.width < MIN_WIDTH
         || area.height < MIN_HEIGHT
@@ -52,7 +64,9 @@ pub(crate) fn render_execution_with_view(
                 | ExecutionStage::ApplyFailed
                 | ExecutionStage::ApplyInterrupted
         );
-        let message = if state.stage() == ExecutionStage::Failed || finished_apply {
+        let message = if quit_confirmation {
+            "Quit? Enter exit / Esc cancel"
+        } else if state.stage() == ExecutionStage::Failed || finished_apply {
             "Terminal too small. Resize or press q to quit."
         } else {
             "Terminal too small. Resize or press Ctrl-C to cancel."
@@ -200,6 +214,14 @@ impl ExecutionLayout {
 }
 
 pub(crate) fn execution_layout(area: Rect, state: &ExecutionState) -> ExecutionLayout {
+    execution_layout_with_quit_confirmation(area, state, false)
+}
+
+pub(crate) fn execution_layout_with_quit_confirmation(
+    area: Rect,
+    state: &ExecutionState,
+    quit_confirmation: bool,
+) -> ExecutionLayout {
     let content = prepare_content(state);
     let status = status_lines(state, ExecutionViewState::default(), Instant::now());
     execution_layout_with_content(
@@ -208,6 +230,7 @@ pub(crate) fn execution_layout(area: Rect, state: &ExecutionState) -> ExecutionL
         &content,
         &status,
         state.copy_notice().map(CopyNotice::message),
+        quit_confirmation,
     )
 }
 
@@ -217,10 +240,19 @@ fn execution_layout_with_content(
     content: &PreparedContent<'_>,
     status: &[Line<'static>],
     notice: Option<&str>,
+    quit_confirmation: bool,
 ) -> ExecutionLayout {
     let panel_width = shell_layout::centered_width(area);
-    let footer_lines = footer_lines(state, panel_width, notice);
-    let required_footer_lines = required_footer_lines(state, panel_width, notice);
+    let footer_lines = if quit_confirmation {
+        footer::quit_confirmation_lines(panel_width, notice)
+    } else {
+        footer_lines(state, panel_width, notice)
+    };
+    let required_footer_lines = if quit_confirmation {
+        footer::quit_confirmation_lines(panel_width, notice)
+    } else {
+        required_footer_lines(state, panel_width, notice)
+    };
     let status_height = status_height(state, status, panel_width.saturating_sub(2));
     let requested_height = if result_screen(state) {
         let body_height = shell_layout::required_body_height(
@@ -774,6 +806,55 @@ mod tests {
 
             snapshot(&format!("preview_{width}x{height}_apply-failure"), &buffer);
         }
+    }
+
+    #[test]
+    fn renders_apply_quit_confirmation_at_all_supported_sizes() {
+        for &(width, height) in &SIZES {
+            let (state, now) = apply_state(ApplyStatus::Succeeded);
+            let buffer = render_to_buffer((width, height), |frame| {
+                render_execution_with_quit_confirmation(
+                    frame,
+                    &state,
+                    ExecutionViewState::default(),
+                    now,
+                    true,
+                );
+            });
+
+            snapshot(
+                &format!("preview_{width}x{height}_quit-confirmation"),
+                &buffer,
+            );
+        }
+    }
+
+    #[test]
+    fn quit_confirmation_replaces_the_result_footer_and_has_a_narrow_notice() {
+        let (state, now) = apply_state(ApplyStatus::Succeeded);
+        let buffer = render_to_buffer((80, 24), |frame| {
+            render_execution_with_quit_confirmation(
+                frame,
+                &state,
+                ExecutionViewState::default(),
+                now,
+                true,
+            );
+        });
+        let text = buffer_text(&buffer);
+        assert!(text.contains("Quit Terracotta? Enter quit | Esc cancel"));
+        assert!(!text.contains("q/Ctrl-C quit"));
+
+        let narrow = render_to_buffer((32, 9), |frame| {
+            render_execution_with_quit_confirmation(
+                frame,
+                &state,
+                ExecutionViewState::default(),
+                now,
+                true,
+            );
+        });
+        assert!(buffer_text(&narrow).contains("Quit? Enter exit / Esc cancel"));
     }
 
     #[test]

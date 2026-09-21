@@ -300,6 +300,22 @@ Plan: 0 to add, 1 to change, 0 to destroy.
     }
 
     #[test]
+    fn pty_quit_requires_enter_and_keeps_other_result_actions_available() {
+        let fixture = Fixture::new();
+        let result = fixture.run("quit_confirmation", 100, 24);
+
+        assert_eq!(result.exit_code, 0);
+        result.assert_restored();
+        result.observed("quit_confirmation");
+        result.observed("quit_repeat");
+        result.observed("quit_cancelled");
+        result.observed("quit_ctrl_c");
+        result.observed("quit_ctrl_c_cancelled");
+        result.observed("quit_copy");
+        fixture.assert_saved_plan_removed();
+    }
+
+    #[test]
     fn pty_apply_success_uses_the_saved_plan_once_and_cleans_it_after_quit() {
         let fixture = Fixture::new();
         let result = fixture.run("apply_success", 100, 24);

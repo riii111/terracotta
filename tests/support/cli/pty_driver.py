@@ -270,6 +270,13 @@ def send_text(text):
         send_key(character.encode())
 
 
+def quit_with_enter():
+    send_key(b"q")
+    wait_new("Quit Terracotta?", "quit_confirmation")
+    send_key(b"\r")
+    return wait_exit()
+
+
 def drain_after_exit(status):
     while True:
         ready, _, _ = select.select([fd], [], [], 0.2)
@@ -311,8 +318,7 @@ def kill_child():
 try:
     if scenario == "full_text":
         wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
-        send_key(b"q")
-        exit_code = wait_exit()
+        exit_code = quit_with_enter()
     elif scenario == "filter_navigation":
         wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
         send_key(b"/")
@@ -333,18 +339,17 @@ try:
             "filter_cleared",
             "full review after Escape",
         )
-        send_key(b"q")
-        exit_code = wait_exit()
+        exit_code = quit_with_enter()
     elif scenario == "basic_workflow":
         wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
+        wait_new("a apply", "plan_ready")
         send_key(b"a")
         wait_new("Apply this reviewed plan?", "apply_confirmation")
         send_text("yes")
         send_key(b"\r")
         wait_parts(["Apply complete", "Apply complete! Resources:"], "apply_result", timeout=60)
         send_key(b"y")
-        send_key(b"q")
-        exit_code = wait_exit()
+        exit_code = quit_with_enter()
     elif scenario in ("apply_success", "apply_failure", "apply_interrupt"):
         wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
         send_key(b"a")
@@ -354,17 +359,14 @@ try:
         wait_new("Applying...", "apply_started")
         if scenario == "apply_success":
             wait_parts(["Apply complete", "endpoint ="], "apply_success")
-            send_key(b"q")
-            exit_code = wait_exit()
+            exit_code = quit_with_enter()
         elif scenario == "apply_failure":
             wait_parts(["Apply failed", "synthetic apply failure"], "apply_failure")
-            send_key(b"q")
-            exit_code = wait_exit()
+            exit_code = quit_with_enter()
         else:
             send_key(b"\x03")
             wait_parts(["Stopping apply", "Apply interrupted"], "apply_interrupted")
-            send_key(b"q")
-            exit_code = wait_exit()
+            exit_code = quit_with_enter()
     elif scenario == "apply_resize":
         wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
         send_key(b"a")
@@ -390,8 +392,7 @@ try:
         send_key(b"\r")
         wait_new("Applying...", "apply_started")
         wait_new("Apply complete", "apply_result", timeout=60)
-        send_key(b"q")
-        exit_code = wait_exit()
+        exit_code = quit_with_enter()
     elif scenario in ("apply_no", "apply_escape"):
         wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
         send_key(b"a")
@@ -400,8 +401,7 @@ try:
         if scenario == "apply_no":
             send_key(b"\r")
         wait_new("terraform_data.api", "plan_restored")
-        send_key(b"q")
-        exit_code = wait_exit()
+        exit_code = quit_with_enter()
     elif scenario == "diagnostic_success":
         wait_screen(
             diagnostic_and_plan_is_ordered,
@@ -413,13 +413,35 @@ try:
                 "terraform_data.api",
             ),
         )
+        exit_code = quit_with_enter()
+    elif scenario == "quit_confirmation":
+        wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
         send_key(b"q")
+        wait_new("Quit Terracotta?", "quit_confirmation")
+        send_key(b"q")
+        assert_screen_unchanged("quit_repeat")
+        send_key(b"\x1b")
+        wait_new("q quit", "quit_cancelled")
+        send_key(b"\x03")
+        wait_new("Quit Terracotta?", "quit_ctrl_c")
+        send_key(b"\x1b")
+        wait_new("q quit", "quit_ctrl_c_cancelled")
+        send_key(b"q")
+        wait_new("Quit Terracotta?", "quit_confirmation_again")
+        send_key(b"y")
+        wait_screen(
+            lambda current: "Copied." in current or "Copy failed." in current,
+            "quit_copy",
+            "copy notice after cancelling quit confirmation",
+        )
+        send_key(b"q")
+        wait_new("Quit Terracotta?", "quit_confirmation_after_copy")
+        send_key(b"\r")
         exit_code = wait_exit()
     elif scenario in ("failure", "init_failure"):
         marker = "synthetic init failure" if scenario == "init_failure" else "synthetic plan failure"
         wait_parts(["Terraform failed", marker], "failed")
-        send_key(b"q")
-        exit_code = wait_exit()
+        exit_code = quit_with_enter()
     elif scenario == "interrupt":
         wait_file(os.environ["TERRACOTTA_FAKE_PID_PATH"], "terraform_started")
         send_key(b"\x03")
@@ -429,8 +451,7 @@ try:
         wait_new("Terminal too small", "narrow")
         resize(100, 24)
         wait_new("Plan:", "resized")
-        send_key(b"q")
-        exit_code = wait_exit()
+        exit_code = quit_with_enter()
     elif scenario == "panic":
         exit_code = wait_exit()
     else:

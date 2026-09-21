@@ -11,8 +11,8 @@ use crate::{
     app::{
         copy::CopyResult,
         execution::{
-            ApplyStatus, EventStream, ExecutionContext, ExecutionEvent, ExecutionEventKind,
-            ExecutionLogLine, ExecutionPhase, ExecutionState,
+            ApplyStatus, EventStream, ExecutionAction, ExecutionContext, ExecutionEvent,
+            ExecutionEventKind, ExecutionLogLine, ExecutionPhase, ExecutionState,
         },
         review::{PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata, PlanReview},
         session::{Action, Effect, ReviewSessionState, SessionState},
@@ -20,17 +20,29 @@ use crate::{
     ui::features::{execution, plan_review},
 };
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the synthetic runtime mirrors the connected event loop in one development entry point"
+)]
 pub(super) fn run_synthetic() -> io::Result<()> {
     let mut state = SessionState::Review(Box::new(synthetic_review()));
     let mut view = plan_review::PlanReviewViewState::default();
     let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
     let mut complete_apply_at: Option<Instant> = None;
     let mut execution_view = execution::ExecutionViewState::default();
+    let mut quit_confirmation = false;
 
     ratatui::run(|terminal| {
         loop {
             terminal.draw(|frame| {
-                render_synthetic(frame, &state, &view, &confirmation_view, execution_view);
+                render_synthetic(
+                    frame,
+                    &state,
+                    &view,
+                    &confirmation_view,
+                    execution_view,
+                    quit_confirmation,
+                );
             })?;
 
             if complete_apply_at.is_some_and(|at| Instant::now() >= at) {
@@ -47,10 +59,11 @@ pub(super) fn run_synthetic() -> io::Result<()> {
                 let event = event::read()?;
                 if let Event::Resize(width, height) = event {
                     if let SessionState::Review(review) = &state {
-                        let layout = plan_review::layout(
+                        let layout = plan_review::layout_with_quit_confirmation(
                             ratatui::layout::Rect::new(0, 0, width, height),
                             view.searching(),
                             review,
+                            quit_confirmation,
                         );
                         view.reconcile(
                             layout.body(),
@@ -67,21 +80,64 @@ pub(super) fn run_synthetic() -> io::Result<()> {
                 if !key.is_press() {
                     continue;
                 }
-                let action = match &mut state {
-                    SessionState::Review(review) => {
-                        synthetic_review_key(terminal, &mut view, review, key)?
+                let mut confirmed_quit = false;
+                let action = if quit_confirmation {
+                    match (key.code, key.modifiers) {
+                        (KeyCode::Enter, _) => {
+                            quit_confirmation = false;
+                            confirmed_quit = true;
+                            Some(Action::Quit)
+                        }
+                        (KeyCode::Esc, _) => {
+                            quit_confirmation = false;
+                            None
+                        }
+                        (KeyCode::Char('q'), crossterm::event::KeyModifiers::NONE) => None,
+                        (KeyCode::Char('c'), modifiers)
+                            if modifiers.contains(crossterm::event::KeyModifiers::CONTROL) =>
+                        {
+                            None
+                        }
+                        _ => {
+                            quit_confirmation = false;
+                            match &mut state {
+                                SessionState::Review(review) => {
+                                    synthetic_review_key(terminal, &mut view, review, key)?
+                                }
+                                SessionState::ApplyConfirmation(_) => {
+                                    synthetic_confirmation_key(&mut confirmation_view, key)
+                                }
+                                SessionState::Apply(execution) => synthetic_execution_key(
+                                    terminal,
+                                    execution,
+                                    &mut execution_view,
+                                    key,
+                                )?,
+                                SessionState::Execution(_) => None,
+                            }
+                        }
                     }
-                    SessionState::ApplyConfirmation(_) => {
-                        synthetic_confirmation_key(&mut confirmation_view, key)
+                } else {
+                    match &mut state {
+                        SessionState::Review(review) => {
+                            synthetic_review_key(terminal, &mut view, review, key)?
+                        }
+                        SessionState::ApplyConfirmation(_) => {
+                            synthetic_confirmation_key(&mut confirmation_view, key)
+                        }
+                        SessionState::Apply(execution) => {
+                            synthetic_execution_key(terminal, execution, &mut execution_view, key)?
+                        }
+                        SessionState::Execution(_) => None,
                     }
-                    SessionState::Apply(execution) => {
-                        synthetic_execution_key(terminal, execution, &mut execution_view, key)?
-                    }
-                    SessionState::Execution(_) => None,
                 };
                 let Some(action) = action else {
                     continue;
                 };
+                if matches!(action, Action::Quit) && !confirmed_quit {
+                    quit_confirmation = true;
+                    continue;
+                }
                 match super::event_loop::update_session(
                     &mut state,
                     action,
@@ -145,14 +201,27 @@ fn render_synthetic(
     view: &plan_review::PlanReviewViewState,
     confirmation_view: &plan_review::ApplyConfirmationViewState,
     execution_view: execution::ExecutionViewState,
+    quit_confirmation: bool,
 ) {
     match state {
-        SessionState::Review(review) => plan_review::render(frame, review, view, Instant::now()),
+        SessionState::Review(review) => plan_review::render_with_quit_confirmation(
+            frame,
+            review,
+            view,
+            Instant::now(),
+            quit_confirmation,
+        ),
         SessionState::ApplyConfirmation(confirmation) => {
             plan_review::render_apply_confirmation(frame, confirmation, confirmation_view);
         }
         SessionState::Apply(execution) | SessionState::Execution(execution) => {
-            execution::render_execution_with_view(frame, execution, execution_view, Instant::now());
+            execution::render_execution_with_quit_confirmation(
+                frame,
+                execution,
+                execution_view,
+                Instant::now(),
+                quit_confirmation,
+            );
         }
     }
 }
@@ -274,17 +343,30 @@ pub(super) fn run_synthetic_execution() -> io::Result<()> {
             text: "Planning Terraform changes...".to_owned(),
         }),
     });
-    let view = execution::ExecutionViewState::default();
+    let mut view = execution::ExecutionViewState::default();
     ratatui::run(|terminal| {
         loop {
             terminal.draw(|frame| {
-                execution::render_execution_with_view(frame, &state, view, Instant::now());
+                execution::render_execution_with_quit_confirmation(
+                    frame,
+                    &state,
+                    view,
+                    Instant::now(),
+                    false,
+                );
             })?;
-            if let Event::Key(key) = event::read()?
-                && key.is_press()
-                && matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
-            {
-                return Ok(());
+            if let Event::Key(key) = event::read()? {
+                if !key.is_press() {
+                    continue;
+                }
+                if key.code == KeyCode::Esc {
+                    return Ok(());
+                }
+                if synthetic_execution_key(terminal, &state, &mut view, key)?
+                    == Some(Action::Execution(ExecutionAction::RequestCancellation))
+                {
+                    state.apply(ExecutionAction::RequestCancellation);
+                }
             }
         }
     })
