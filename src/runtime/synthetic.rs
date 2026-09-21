@@ -163,28 +163,34 @@ fn synthetic_review_key(
     review: &ReviewSessionState,
     key: KeyEvent,
 ) -> io::Result<Option<Action>> {
-    Ok(match plan_review::key_to_input(key, view.searching()) {
-        Some(plan_review::PlanReviewInput::Quit) => Some(Action::Quit),
-        Some(plan_review::PlanReviewInput::Apply) => Some(Action::OpenApplyConfirmation),
-        Some(input) => {
-            let size = terminal.size()?;
-            let layout = plan_review::layout(
-                ratatui::layout::Rect::new(0, 0, size.width, size.height),
-                view.searching(),
-                review,
-            );
-            view.apply_with_matches(
-                input,
-                layout.body(),
-                layout.max_vertical(),
-                layout.max_horizontal(),
-                review.review().search_query(),
-                layout.matches(),
-            )
-            .map(Action::ReviewSearchChanged)
-        }
-        None => None,
-    })
+    Ok(
+        match plan_review::key_to_input(
+            key,
+            view.searching(),
+            !review.review().search_query().is_empty(),
+        ) {
+            Some(plan_review::PlanReviewInput::Quit) => Some(Action::Quit),
+            Some(plan_review::PlanReviewInput::Apply) => Some(Action::OpenApplyConfirmation),
+            Some(input) => {
+                let size = terminal.size()?;
+                let layout = plan_review::layout(
+                    ratatui::layout::Rect::new(0, 0, size.width, size.height),
+                    view.searching(),
+                    review,
+                );
+                view.apply_with_matches(
+                    input,
+                    layout.body(),
+                    layout.max_vertical(),
+                    layout.max_horizontal(),
+                    review.review().search_query(),
+                    layout.matches(),
+                )
+                .map(Action::ReviewSearchChanged)
+            }
+            None => None,
+        },
+    )
 }
 
 fn synthetic_execution_key(

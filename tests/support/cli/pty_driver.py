@@ -252,6 +252,19 @@ def send_key(key):
     time.sleep(0.1)
 
 
+def assert_screen_unchanged(name, timeout=1):
+    before = screen.text()
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        read_available()
+        if screen.text() != before:
+            raise RuntimeError(f"screen changed while {name}")
+        if child_status() is not None:
+            raise RuntimeError(f"child exited while {name}")
+        time.sleep(0.05)
+    observed.append(name)
+
+
 def send_text(text):
     for character in text:
         send_key(character.encode())
@@ -308,6 +321,9 @@ try:
         wait_new("Matches: resources", "filter_matches")
         send_key(b"\r")
         wait_new("n/N next/prev", "filter_confirmed")
+        for key in (b"a", b"y", b"q", b"\x03"):
+            send_key(key)
+            assert_screen_unchanged("confirmed_filter_action_blocked")
         send_key(b"n")
         send_key(b"N")
         send_key(b"\x1b")
