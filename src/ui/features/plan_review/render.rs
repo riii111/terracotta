@@ -601,7 +601,7 @@ fn prepare_content<'a>(
 ) -> PreparedContent<'a> {
     let review = state.review();
     let filtered = review.document().filter(filter_query);
-    let (lines, sources, matches) = review_lines(review, &filtered, filtered_view);
+    let (lines, sources, matches) = review_lines(review, &filtered, filtered_view, filter_query);
     let max_width = max_line_width(&lines);
     PreparedContent {
         lines,
@@ -650,6 +650,7 @@ fn review_lines<'a>(
     review: &'a PlanReview,
     filtered: &FilteredPlan<'a>,
     filtered_view: bool,
+    filter_query: &str,
 ) -> (
     Vec<Line<'a>>,
     Vec<Option<PlanSource<'a>>>,
@@ -660,7 +661,7 @@ fn review_lines<'a>(
     let mut matches = Vec::new();
     if filtered.matching_resources() == 0
         && filtered.matching_outputs() == 0
-        && !review.search_query().is_empty()
+        && !filter_query.is_empty()
     {
         lines.push(Line::from(Span::styled(
             "No matching resources or outputs.",
@@ -683,9 +684,9 @@ fn review_lines<'a>(
             continue;
         }
         let line_index = lines.len();
-        lines.push(plan_line(line, review.search_query(), None, kind));
+        lines.push(plan_line(line, filter_query, None, kind));
         sources.push(Some(PlanSource { text: line, kind }));
-        matches.extend(line_matches(line, review.search_query(), line_index));
+        matches.extend(line_matches(line, filter_query, line_index));
     }
     (lines, sources, matches)
 }
@@ -1497,6 +1498,22 @@ End of synthetic plan body."#;
             second_filter.shell.footer().bottom()
         );
         assert!(first_filter.shell.footer().bottom() > normal.shell.footer().bottom());
+    }
+
+    #[test]
+    fn filter_input_keeps_a_common_only_plan_height_stable() {
+        let mut plan = common_only_review();
+        let area = Rect::new(0, 0, 80, 24);
+        let empty_filter = layout(area, true, &review_state(plan.clone()));
+
+        plan.set_search_query("missing".to_owned());
+        let typed_filter = layout(area, true, &review_state(plan));
+
+        assert_eq!(typed_filter.shell.header().y, empty_filter.shell.header().y);
+        assert_eq!(
+            typed_filter.shell.footer().bottom(),
+            empty_filter.shell.footer().bottom()
+        );
     }
 
     #[test]
@@ -2631,7 +2648,7 @@ End of synthetic plan body."#;
         review.set_search_query("api".to_owned());
 
         let filtered = review.filtered_document();
-        let lines = review_lines(&review, &filtered, true).0;
+        let lines = review_lines(&review, &filtered, true, "api").0;
         assert!(
             lines
                 .iter()
@@ -2717,6 +2734,19 @@ End of synthetic plan body."#;
                 0,
                 true,
             ),
+            Vec::new(),
+        )
+    }
+
+    fn common_only_review() -> PlanReview {
+        PlanReview::new(
+            PathBuf::from("/repo"),
+            "default".to_owned(),
+            PlanDocument::with_blocks(
+                "common line 1\ncommon line 2\n".to_owned(),
+                vec![PlanBlock::new(0..2, PlanBlockKind::Common)],
+            ),
+            PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, true),
             Vec::new(),
         )
     }
