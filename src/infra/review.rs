@@ -52,6 +52,10 @@ impl From<git::GitInterrupted> for ReviewError {
 }
 
 #[derive(Debug)]
+#[expect(
+    dead_code,
+    reason = "dormant review events retain intermediate results for attribution"
+)]
 enum ReviewEvent {
     Terraform(ExecutionEvent),
     RepositoryRoot(Option<PathBuf>),
@@ -77,7 +81,7 @@ fn run_review(
     )
 }
 
-#[allow(
+#[expect(
     clippy::too_many_lines,
     reason = "review stages keep their cancellation boundaries in execution order"
 )]

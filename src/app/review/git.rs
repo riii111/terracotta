@@ -1,10 +1,5 @@
 //! Dormant Git comparison models retained for the attribution unit tests.
 
-#![allow(
-    dead_code,
-    reason = "Git comparison models remain available only to dormant attribution tests"
-)]
-
 use std::{
     fmt::{self, Display, Formatter},
     path::{Path, PathBuf},
@@ -36,6 +31,10 @@ pub(crate) enum ReviewComparisonStatus {
 
 impl ReviewComparisonStatus {
     #[must_use]
+    #[expect(
+        dead_code,
+        reason = "dormant Git comparison retains status diagnostics for attribution"
+    )]
     pub(crate) fn message(&self) -> Option<&str> {
         match self {
             Self::Complete => None,
@@ -182,6 +181,10 @@ impl PlanReview {
     }
 
     #[must_use]
+    #[expect(
+        dead_code,
+        reason = "dormant Git comparison retains the reviewed source accessor"
+    )]
     pub(crate) fn git(&self) -> &str {
         &self.git
     }
@@ -192,6 +195,10 @@ impl PlanReview {
     }
 
     #[must_use]
+    #[expect(
+        dead_code,
+        reason = "dormant Git comparison retains source analyses for attribution"
+    )]
     pub(crate) fn source_files(&self) -> &[SourceFileAnalysis] {
         &self.source_files
     }

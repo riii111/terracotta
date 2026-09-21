@@ -4,10 +4,6 @@ mod events;
 mod line_buffer;
 // HCL parsing is dormant with Git attribution and remains covered by unit tests.
 #[cfg(test)]
-#[allow(
-    dead_code,
-    reason = "dormant HCL attribution remains compiled only for unit tests"
-)]
 pub(crate) mod hcl;
 mod plan;
 mod show;

@@ -21,7 +21,7 @@ use crate::{
     ui::features::{execution, plan_review},
 };
 
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     clippy::too_many_lines,
     reason = "the event loop receives the explicit runtime resources it coordinates"
@@ -208,7 +208,7 @@ fn draw_if_needed<B: Backend>(
     )
 }
 
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "the draw step receives the runtime-owned views and rendering state"
 )]

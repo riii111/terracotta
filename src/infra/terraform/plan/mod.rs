@@ -191,10 +191,6 @@ fn collect_and_forward_review_event(
     event_sink(event);
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "command execution keeps root, cancellation, runner, and event ownership explicit"
-)]
 fn run_required_command(
     root: &Path,
     command: TerraformCommand,
