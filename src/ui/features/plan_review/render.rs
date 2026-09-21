@@ -30,6 +30,7 @@ const CONFIRMATION_HEADER_HEIGHT: u16 = 2;
 const CONFIRMATION_NOTICE: &str = "Terminal too small. Resize or press Esc to go back.";
 struct PreparedContent<'a> {
     lines: Vec<Line<'a>>,
+    metrics: ContentMetrics,
     sources: Vec<Option<PlanSource<'a>>>,
     matches: Vec<PlanReviewMatch>,
 }
@@ -41,11 +42,8 @@ struct ContentMetrics {
 }
 
 impl PreparedContent<'_> {
-    fn metrics(&self) -> ContentMetrics {
-        ContentMetrics {
-            line_count: self.lines.len(),
-            max_width: max_line_width(&self.lines),
-        }
+    const fn metrics(&self) -> ContentMetrics {
+        self.metrics
     }
 }
 
@@ -640,8 +638,13 @@ fn prepare_content<'a>(
     let review = state.review();
     let filtered = review.document().filter(filter_query);
     let (lines, sources, matches) = review_lines(review, &filtered, filtered_view, filter_query);
+    let metrics = ContentMetrics {
+        line_count: lines.len(),
+        max_width: max_line_width(&lines),
+    };
     PreparedContent {
         lines,
+        metrics,
         sources,
         matches,
     }
