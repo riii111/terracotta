@@ -143,12 +143,15 @@ impl PlanReviewLayout {
 }
 
 pub(crate) fn layout(area: Rect, searching: bool, state: &ReviewSessionState) -> PlanReviewLayout {
-    let content = prepare_content(state, filter_active(searching, state));
+    let filtered_view = filter_active(searching, state);
+    let base_content = prepare_content(state, false, "");
+    let content = prepare_content(state, filtered_view, state.review().search_query());
     layout_with_content(
         area,
         searching,
         state,
         &content,
+        &base_content,
         state.copy_notice().map(CopyNotice::message),
     )
 }
@@ -158,9 +161,10 @@ fn layout_with_content(
     searching: bool,
     state: &ReviewSessionState,
     content: &PreparedContent<'_>,
+    base_content: &PreparedContent<'_>,
     notice: Option<&str>,
 ) -> PlanReviewLayout {
-    let panel = shell_layout::centered_area(area);
+    let panel_width = shell_layout::centered_width(area);
     let footer_lines = footer::layout_with_notice(
         footer_items(
             searching,
@@ -168,7 +172,7 @@ fn layout_with_content(
             content.matches.len(),
             !state.review().search_query().is_empty(),
         ),
-        panel.width,
+        panel_width,
         notice,
     );
     let required = footer::layout_with_notice(
@@ -177,18 +181,36 @@ fn layout_with_content(
             content.matches.len(),
             !state.review().search_query().is_empty(),
         ),
-        panel.width,
+        panel_width,
         notice,
     );
+    let filter_visible = filter_active(searching, state);
+    let footer_height_lines = sizing_footer_lines(
+        searching,
+        state,
+        content.matches.len(),
+        filter_visible,
+        panel_width,
+        notice,
+        &footer_lines,
+    );
+    let inner_width = panel_width.saturating_sub(2);
+    let filter_details_height = filter_details_height(state, filter_visible, inner_width);
+    let fixed_filter_height = fixed_filter_height(filter_visible, filter_details_height);
+    let body_height = shell_layout::required_body_height(
+        base_content.lines.len(),
+        base_content.max_width,
+        inner_width,
+    );
+    let content_height = 2u16
+        .saturating_add(fixed_filter_height)
+        .saturating_add(body_height);
+    let requested_height =
+        shell_layout::required_height(content_height, &footer_height_lines, &required);
+    let panel = shell_layout::centered_area(area, requested_height);
     let shell = shell_layout::layout(panel, footer_lines, required, 1);
     let inner = shell.content_inner();
-    let filter_visible = filter_active(searching, state);
     let search = filter_visible.then(|| Rect::new(inner.x, inner.y, inner.width, 1));
-    let filter_details_height = if filter_visible {
-        u16::try_from(filter_details_lines(state, inner.width).len()).unwrap_or(u16::MAX)
-    } else {
-        0
-    };
     let filter_details = filter_visible.then(|| {
         Rect::new(
             inner.x,
@@ -208,14 +230,11 @@ fn layout_with_content(
             1,
         )
     });
-    let filter_height = u16::from(filter_visible)
-        .saturating_add(filter_details_height)
-        .saturating_add(u16::from(filter_visible));
     let available = Rect::new(
         inner.x,
-        inner.y.saturating_add(filter_height),
+        inner.y.saturating_add(fixed_filter_height),
         inner.width,
-        inner.height.saturating_sub(filter_height),
+        inner.height.saturating_sub(fixed_filter_height),
     );
     let (vertical_scrollbar, horizontal_scrollbar) =
         scrollbar_reservations(content.lines.len(), content.max_width, available);
@@ -242,6 +261,44 @@ fn layout_with_content(
         max_horizontal,
         matches: content.matches.clone(),
     }
+}
+
+fn filter_details_height(state: &ReviewSessionState, filter_visible: bool, width: u16) -> u16 {
+    if filter_visible {
+        u16::try_from(filter_details_lines(state, width).len()).unwrap_or(u16::MAX)
+    } else {
+        0
+    }
+}
+
+fn fixed_filter_height(filter_visible: bool, details_height: u16) -> u16 {
+    u16::from(filter_visible)
+        .saturating_add(details_height)
+        .saturating_add(u16::from(filter_visible))
+}
+
+fn sizing_footer_lines(
+    searching: bool,
+    state: &ReviewSessionState,
+    match_count: usize,
+    filter_visible: bool,
+    width: u16,
+    notice: Option<&str>,
+    footer_lines: &[Line<'static>],
+) -> Vec<Line<'static>> {
+    if !filter_visible {
+        return footer_lines.to_owned();
+    }
+    footer::layout_with_notice(
+        footer_items(
+            searching,
+            state.review().metadata().applyable(),
+            match_count.max(2),
+            !state.review().search_query().is_empty(),
+        ),
+        width,
+        notice,
+    )
 }
 
 pub(crate) fn render_apply_confirmation(
@@ -288,7 +345,7 @@ pub(crate) fn apply_confirmation_layout(
     area: Rect,
     state: &ApplyConfirmationState,
 ) -> ApplyConfirmationLayout {
-    let panel = shell_layout::centered_area(area);
+    let panel = shell_layout::max_centered_area(area);
     let header_height = panel.height.min(CONFIRMATION_HEADER_HEIGHT);
     let header = Rect::new(panel.x, panel.y, panel.width, header_height);
     let available = Rect::new(
@@ -425,13 +482,16 @@ pub(crate) fn render(
         return;
     }
 
-    let content = prepare_content(state, filter_active(view.searching(), state));
+    let filtered_view = filter_active(view.searching(), state);
+    let base_content = prepare_content(state, false, "");
+    let content = prepare_content(state, filtered_view, state.review().search_query());
     let notice = state.copy_notice_at(now);
     let layout = layout_with_content(
         area,
         view.searching(),
         state,
         &content,
+        &base_content,
         notice.map(CopyNotice::message),
     );
     if layout.body().width == 0 || layout.body().height == 0 {
@@ -534,10 +594,14 @@ fn render_footer(
     );
 }
 
-fn prepare_content(state: &ReviewSessionState, filtered_view: bool) -> PreparedContent<'_> {
+fn prepare_content<'a>(
+    state: &'a ReviewSessionState,
+    filtered_view: bool,
+    filter_query: &str,
+) -> PreparedContent<'a> {
     let review = state.review();
-    let filtered = review.filtered_document();
-    let (lines, sources, matches) = review_lines(review, &filtered, filtered_view);
+    let filtered = review.document().filter(filter_query);
+    let (lines, sources, matches) = review_lines(review, &filtered, filtered_view, filter_query);
     let max_width = max_line_width(&lines);
     PreparedContent {
         lines,
@@ -586,6 +650,7 @@ fn review_lines<'a>(
     review: &'a PlanReview,
     filtered: &FilteredPlan<'a>,
     filtered_view: bool,
+    filter_query: &str,
 ) -> (
     Vec<Line<'a>>,
     Vec<Option<PlanSource<'a>>>,
@@ -596,7 +661,7 @@ fn review_lines<'a>(
     let mut matches = Vec::new();
     if filtered.matching_resources() == 0
         && filtered.matching_outputs() == 0
-        && !review.search_query().is_empty()
+        && !filter_query.is_empty()
     {
         lines.push(Line::from(Span::styled(
             "No matching resources or outputs.",
@@ -619,9 +684,9 @@ fn review_lines<'a>(
             continue;
         }
         let line_index = lines.len();
-        lines.push(plan_line(line, review.search_query(), None, kind));
+        lines.push(plan_line(line, filter_query, None, kind));
         sources.push(Some(PlanSource { text: line, kind }));
-        matches.extend(line_matches(line, review.search_query(), line_index));
+        matches.extend(line_matches(line, filter_query, line_index));
     }
     (lines, sources, matches)
 }
@@ -1347,6 +1412,108 @@ End of synthetic plan body."#;
 
             snapshot(&format!("preview_{width}x{height}_normal"), &buffer);
         }
+    }
+
+    #[test]
+    fn renders_normal_plan_height_variants_at_small_and_large_sizes() {
+        struct HeightCase {
+            name: &'static str,
+            line_count: u16,
+        }
+
+        for height_case in [
+            HeightCase {
+                name: "short",
+                line_count: 3,
+            },
+            HeightCase {
+                name: "medium",
+                line_count: 25,
+            },
+            HeightCase {
+                name: "long",
+                line_count: 60,
+            },
+        ] {
+            for &(width, height) in &[(80, 24), (160, 60)] {
+                let state = review_state(review_with_content(height_case.line_count, 48));
+                let area = Rect::new(0, 0, width, height);
+                let layout = layout(area, false, &state);
+                let buffer = render_to_buffer((width, height), |frame| {
+                    render(
+                        frame,
+                        &state,
+                        &PlanReviewViewState::default(),
+                        Instant::now(),
+                    );
+                });
+
+                let panel_height = layout.shell.footer().bottom() - layout.shell.header().y;
+                let top_margin = layout.shell.header().y;
+                let bottom_margin = height.saturating_sub(layout.shell.footer().bottom());
+                assert_eq!(
+                    top_margin,
+                    (height - panel_height) / 2,
+                    "case: {} {width}x{height}",
+                    height_case.name
+                );
+                assert!(
+                    top_margin.abs_diff(bottom_margin) <= 1,
+                    "case: {} {width}x{height}",
+                    height_case.name
+                );
+                match (height_case.name, width) {
+                    ("short", _) | ("medium", 160) => assert!(!layout.vertical_scrollbar()),
+                    ("medium", 80) | ("long", _) => assert!(layout.vertical_scrollbar()),
+                    _ => unreachable!(),
+                }
+                snapshot(
+                    &format!("preview_{width}x{height}_normal-{}", height_case.name),
+                    &buffer,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn filter_height_uses_the_unfiltered_plan_as_its_baseline() {
+        let mut plan = filter_height_review();
+        let state = review_state(plan.clone());
+        let area = Rect::new(0, 0, 80, 24);
+        let normal = layout(area, false, &state);
+
+        plan.set_search_query("api".to_owned());
+        let first_filter_state = review_state(plan.clone());
+        plan.set_search_query("missing".to_owned());
+        let second_filter_state = review_state(plan);
+        let first_filter = layout(area, false, &first_filter_state);
+        let second_filter = layout(area, false, &second_filter_state);
+
+        assert_eq!(
+            first_filter.shell.header().y,
+            second_filter.shell.header().y
+        );
+        assert_eq!(
+            first_filter.shell.footer().bottom(),
+            second_filter.shell.footer().bottom()
+        );
+        assert!(first_filter.shell.footer().bottom() > normal.shell.footer().bottom());
+    }
+
+    #[test]
+    fn filter_input_keeps_a_common_only_plan_height_stable() {
+        let mut plan = common_only_review();
+        let area = Rect::new(0, 0, 80, 24);
+        let empty_filter = layout(area, true, &review_state(plan.clone()));
+
+        plan.set_search_query("missing".to_owned());
+        let typed_filter = layout(area, true, &review_state(plan));
+
+        assert_eq!(typed_filter.shell.header().y, empty_filter.shell.header().y);
+        assert_eq!(
+            typed_filter.shell.footer().bottom(),
+            empty_filter.shell.footer().bottom()
+        );
     }
 
     #[test]
@@ -2481,7 +2648,7 @@ End of synthetic plan body."#;
         review.set_search_query("api".to_owned());
 
         let filtered = review.filtered_document();
-        let lines = review_lines(&review, &filtered, true).0;
+        let lines = review_lines(&review, &filtered, true, "api").0;
         assert!(
             lines
                 .iter()
@@ -2541,6 +2708,43 @@ End of synthetic plan body."#;
                     0..usize::from(line_count),
                     PlanBlockKind::Common,
                 )],
+            ),
+            PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, true),
+            Vec::new(),
+        )
+    }
+
+    fn filter_height_review() -> PlanReview {
+        PlanReview::new(
+            PathBuf::from("/repo"),
+            "default".to_owned(),
+            PlanDocument::with_blocks(
+                "api line 1\napi line 2\nworker line 1\nworker line 2\ncommon line\n".to_owned(),
+                vec![
+                    PlanBlock::new(0..2, PlanBlockKind::Resource),
+                    PlanBlock::new(2..4, PlanBlockKind::Resource),
+                    PlanBlock::new(4..5, PlanBlockKind::Common),
+                ],
+            ),
+            PlanMetadata::new(
+                vec!["api".to_owned(), "worker".to_owned()],
+                Vec::new(),
+                0,
+                2,
+                0,
+                true,
+            ),
+            Vec::new(),
+        )
+    }
+
+    fn common_only_review() -> PlanReview {
+        PlanReview::new(
+            PathBuf::from("/repo"),
+            "default".to_owned(),
+            PlanDocument::with_blocks(
+                "common line 1\ncommon line 2\n".to_owned(),
+                vec![PlanBlock::new(0..2, PlanBlockKind::Common)],
             ),
             PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, true),
             Vec::new(),

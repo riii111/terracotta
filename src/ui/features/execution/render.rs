@@ -218,17 +218,26 @@ fn execution_layout_with_content(
     status: &[Line<'static>],
     notice: Option<&str>,
 ) -> ExecutionLayout {
-    let shell_area = shell_layout::centered_area(area);
-    let footer_lines = footer_lines(state, shell_area.width, notice);
-    let required_footer_lines = required_footer_lines(state, shell_area.width, notice);
-    let shell = shell_layout::layout(shell_area, footer_lines, required_footer_lines, 1);
-    let status_height = if finished_apply(state) {
-        status_line_count(status, shell.content_inner().width)
-    } else if state.stage() == ExecutionStage::Applying && !state.is_cancelling() {
-        u16::try_from(status.len()).unwrap_or(u16::MAX).max(1)
+    let panel_width = shell_layout::centered_width(area);
+    let footer_lines = footer_lines(state, panel_width, notice);
+    let required_footer_lines = required_footer_lines(state, panel_width, notice);
+    let status_height = status_height(state, status, panel_width.saturating_sub(2));
+    let requested_height = if result_screen(state) {
+        let body_height = shell_layout::required_body_height(
+            content.lines.len(),
+            content.max_width,
+            panel_width.saturating_sub(2),
+        );
+        let content_height = status_height
+            .saturating_add(1)
+            .saturating_add(body_height)
+            .saturating_add(2);
+        shell_layout::required_height(content_height, &footer_lines, &required_footer_lines)
     } else {
-        STATUS_HEIGHT
+        shell_layout::max_centered_height(area)
     };
+    let shell_area = shell_layout::centered_area(area, requested_height);
+    let shell = shell_layout::layout(shell_area, footer_lines, required_footer_lines, 1);
     let constraints = if finished_apply(state) {
         [
             Constraint::Length(status_height),
@@ -276,6 +285,16 @@ fn execution_layout_with_content(
         horizontal_scrollbar,
         max_vertical,
         max_horizontal,
+    }
+}
+
+fn status_height(state: &ExecutionState, status: &[Line<'static>], width: u16) -> u16 {
+    if finished_apply(state) {
+        status_line_count(status, width)
+    } else if state.stage() == ExecutionStage::Applying && !state.is_cancelling() {
+        u16::try_from(status.len()).unwrap_or(u16::MAX).max(1)
+    } else {
+        STATUS_HEIGHT
     }
 }
 
@@ -441,6 +460,10 @@ const fn finished_apply(state: &ExecutionState) -> bool {
             | ExecutionStage::ApplyFailed
             | ExecutionStage::ApplyInterrupted
     )
+}
+
+fn result_screen(state: &ExecutionState) -> bool {
+    state.stage() == ExecutionStage::Failed || finished_apply(state)
 }
 
 fn status_paragraph(status: Vec<Line<'static>>, wrap: bool) -> Paragraph<'static> {
@@ -750,6 +773,26 @@ mod tests {
             });
 
             snapshot(&format!("preview_{width}x{height}_apply-failure"), &buffer);
+        }
+    }
+
+    #[test]
+    fn running_execution_uses_the_full_height_cap_as_logs_grow() {
+        for &(width, height) in &SIZES {
+            let (short_state, _) = applying_state_with_content(1, 1);
+            let (long_state, _) = applying_state_with_content(40, 1);
+            let short_layout = execution_layout(Rect::new(0, 0, width, height), &short_state);
+            let long_layout = execution_layout(Rect::new(0, 0, width, height), &long_state);
+            let max_height = shell_layout::max_centered_height(Rect::new(0, 0, width, height));
+
+            assert_eq!(
+                short_layout.shell.footer().bottom() - short_layout.shell.header().y,
+                max_height
+            );
+            assert_eq!(
+                long_layout.shell.footer().bottom() - long_layout.shell.header().y,
+                max_height
+            );
         }
     }
 
