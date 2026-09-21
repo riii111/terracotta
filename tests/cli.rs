@@ -275,7 +275,7 @@ Plan: 0 to add, 1 to change, 0 to destroy.
     }
 
     #[test]
-    fn pty_success_keeps_diagnostics_above_the_exact_plan_text() {
+    fn pty_success_keeps_plan_status_above_diagnostics_and_plan_text() {
         let fixture = Fixture::new();
         let result = fixture.run("diagnostic_success", 100, 24);
 

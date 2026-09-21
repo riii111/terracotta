@@ -1,6 +1,8 @@
 use std::{collections::HashMap, ops::Range};
 
-use crate::app::review::{PlanBlock, PlanBlockKind, PlanDocument, PlanLineKind};
+use crate::app::review::{
+    PlanBlock, PlanBlockKind, PlanDocument, PlanLineKind, classify_display_lines,
+};
 
 use super::PlanParseError;
 
@@ -34,10 +36,7 @@ fn split_blocks_with_line_kinds(
 ) -> (Vec<PlanBlock>, Vec<PlanLineKind>) {
     let lines = text.split('\n').collect::<Vec<_>>();
     let intro_end = leading_intro_end(&lines);
-    let mut line_kinds = vec![PlanLineKind::Body; lines.len()];
-    for kind in line_kinds.iter_mut().take(intro_end) {
-        *kind = PlanLineKind::Intro;
-    }
+    let line_kinds = classify_display_lines(text);
     let mut resource_indices = HashMap::with_capacity(resource_addresses.len());
     for (index, address) in resource_addresses.iter().enumerate() {
         resource_indices.entry(address.as_str()).or_insert(index);
@@ -59,13 +58,6 @@ fn split_blocks_with_line_kinds(
         }
         if line < intro_end {
             continue;
-        }
-        if *text == "Changes to Outputs:" {
-            line_kinds[line] = PlanLineKind::OutputSection;
-        } else if text.starts_with("Plan:") {
-            line_kinds[line] = PlanLineKind::Summary;
-        } else if text.trim_start().starts_with('#') {
-            line_kinds[line] = PlanLineKind::Note;
         }
         if *text == "Changes to Outputs:" {
             in_output_section = true;

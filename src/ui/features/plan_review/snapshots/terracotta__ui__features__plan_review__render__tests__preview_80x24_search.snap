@@ -6,22 +6,22 @@ expression: buffer_text(buffer)
  Terracotta | main
 
  ┌Plan | Filter───────────────────────────────────────────────────────────────┐
- │/terraform_data                                                             │
- │Matches: resources 4/4 | outputs 0/2                                        │
- │Filter changes display only                                                 │
- │Plan: 2 to add, 2 to change, 1 to destroy.                                  │
- │ Matching changes ──────────────────────────────────────────────────────────│
+ │Filter: /terraform_data   Matches: resources 4/4 | outputs 0/2              │
+ │────────────────────────────────────────────────────────────────────────────│
  │  # terraform_data.api will be updated in-place                            ▲│
  │  ~ resource "terraform_data" "api" {                                      ┃│
  │      id       = "api-20260920"                                            ┃│
  │      ~ input  = "before" -> "after"                                       ┃│
- │      # (4 unchanged attributes hidden)                                    ││
- │    }                                                                      ││
+ │      # (4 unchanged attributes hidden)                                    ┃│
+ │    }                                                                      ┃│
  │                                                                           ││
  │  # terraform_data.worker must be replaced                                 ││
  │-/+ resource "terraform_data" "worker" {                                   ││
  │      ~ input = "worker-before" -> "worker-after" # forces replacement     ││
  │      - old_checksum = "sha256:0123456789abcdef0123456789abcdef0123456789ab││
+ │      + new_checksum = (known after apply)                                 ││
+ │    }                                                                      ││
+ │                                                                           ││
  │◀︎════════════════════════════════════════════════════════════──────────────▶︎│
  └────────────────────────────────────────────────────────────────────────────┘
  Enter confirm | Esc cancel

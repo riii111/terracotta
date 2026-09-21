@@ -147,7 +147,9 @@ mod tests {
             ApplyStatus, DiagnosticSeverity, DiagnosticSource, EventStream, ExecutionContext,
             ExecutionEvent, ExecutionEventKind, ExecutionLogLine,
         },
-        review::{PlanMetadata, test_support::plan_document},
+        review::{
+            PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata, test_support::plan_document,
+        },
     };
 
     use super::*;
@@ -172,6 +174,63 @@ mod tests {
 
         assert_eq!(effect.text(), "Provider warning\nTerraform plan body\n");
         assert!(!format!("{effect:?}").contains("Terraform plan body"));
+    }
+
+    #[test]
+    fn plan_copy_preserves_the_complete_sanitized_show_text() {
+        let source = "Terraform used the selected providers to generate the following execution\n"
+            .to_owned()
+            + "plan. Resource actions are indicated with the following symbols:\n\n"
+            + "  # terraform_data.api will be created\n"
+            + "  + resource \"terraform_data\" \"api\" {\n"
+            + "      value = (sensitive value)\n"
+            + "    }\n\n"
+            + "Changes to Outputs:\n"
+            + "  + endpoint = (known after apply)\n\n"
+            + "Plan: 1 to add, 0 to change, 0 to destroy.\n";
+        let end = source.split('\n').count();
+        let review = PlanReview::new(
+            PathBuf::from("/project"),
+            "default".to_owned(),
+            PlanDocument::with_blocks(
+                source.clone(),
+                vec![PlanBlock::new(0..end, PlanBlockKind::Common)],
+            ),
+            PlanMetadata::new(
+                vec!["terraform_data.api".to_owned()],
+                vec!["endpoint".to_owned()],
+                1,
+                0,
+                0,
+                true,
+            ),
+            Vec::new(),
+        );
+
+        assert_eq!(plan_effect(&review).text(), source);
+    }
+
+    #[test]
+    fn plan_copy_prefixes_diagnostics_without_rewriting_the_plan_text() {
+        let source = "Plan: 0 to add, 0 to change, 0 to destroy.\n";
+        let review = PlanReview::new(
+            PathBuf::from("/project"),
+            "default".to_owned(),
+            plan_document(source.to_owned()),
+            PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
+            vec![Diagnostic {
+                severity: DiagnosticSeverity::Warning,
+                summary: "Provider warning".to_owned(),
+                detail: Some("warning detail".to_owned()),
+                position: None,
+                source: DiagnosticSource::Terraform,
+            }],
+        );
+
+        assert_eq!(
+            plan_effect(&review).text(),
+            "Provider warning\nwarning detail\nPlan: 0 to add, 0 to change, 0 to destroy.\n"
+        );
     }
 
     #[test]

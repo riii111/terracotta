@@ -11,11 +11,8 @@ expression: buffer_text(buffer)
  Terracotta | main
 
  ┌Plan | Filter───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │/terraform_data                                                                                                                                             │
- │Matches: resources 4/4 | outputs 0/2                                                                                                                        │
- │Filter changes display only                                                                                                                                 │
- │Plan: 2 to add, 2 to change, 1 to destroy.                                                                                                                  │
- │ Matching changes ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
+ │Filter: /terraform_data   Matches: resources 4/4 | outputs 0/2                                                                                              │
+ │────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
  │  # terraform_data.api will be updated in-place                                                                                                             │
  │  ~ resource "terraform_data" "api" {                                                                                                                       │
  │      id       = "api-20260920"                                                                                                                             │
@@ -44,6 +41,7 @@ expression: buffer_text(buffer)
  │                                                                                                                                                            │
  │Warning: Value for "pending" is not known until apply                                                                                                       │
  │                                                                                                                                                            │
+ │Plan: 2 to add, 2 to change, 1 to destroy.                                                                                                                  │
  │                                                                                                                                                            │
  │Synthetic review text continues below so the viewport and scrollbar remain meaningful.                                                                      │
  │The same long body is intentionally reused across every review state and terminal size.                                                                     │
@@ -53,6 +51,8 @@ expression: buffer_text(buffer)
  │Vertical movement exposes later lines in this synthetic plan body.                                                                                          │
  │                                                                                                                                                            │
  │End of synthetic plan body.                                                                                                                                 │
+ │                                                                                                                                                            │
+ │                                                                                                                                                            │
  │                                                                                                                                                            │
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  Enter confirm | Esc cancel

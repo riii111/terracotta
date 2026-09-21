@@ -224,15 +224,15 @@ def wait_file(path, name, timeout=20):
 
 def diagnostic_and_plan_is_ordered(current):
     markers = (
+        "Plan:",
         "synthetic init warning",
         "synthetic plan warning",
-        "Plan:",
         "terraform_data.api",
     )
     positions = [current.find(marker) for marker in markers]
     if any(position < 0 for position in positions):
         return False
-    return positions[0] < positions[2] and positions[1] < positions[2]
+    return positions[0] < positions[1] < positions[3] and positions[0] < positions[2] < positions[3]
 
 
 def wait_exit(timeout=20):
@@ -407,9 +407,9 @@ try:
             diagnostic_and_plan_is_ordered,
             "diagnostic_and_plan",
             (
+                "Plan:",
                 "synthetic init warning",
                 "synthetic plan warning",
-                "Plan:",
                 "terraform_data.api",
             ),
         )
