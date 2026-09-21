@@ -324,7 +324,7 @@ try:
         send_key(b"/")
         wait_new("/ ", "filter_input")
         send_text("api")
-        wait_new("Matches: resources", "filter_matches")
+        wait_new(" matches", "filter_matches")
         send_key(b"\r")
         wait_new("n/N next/prev", "filter_confirmed")
         for key in (b"a", b"y", b"q", b"\x03"):

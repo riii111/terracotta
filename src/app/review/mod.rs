@@ -62,9 +62,7 @@ pub(crate) struct PlanDocument {
 pub(crate) struct FilteredPlan<'a> {
     lines: Vec<&'a str>,
     line_indices: Vec<usize>,
-    resource_count: usize,
     matching_resources: usize,
-    output_count: usize,
     matching_outputs: usize,
 }
 
@@ -83,18 +81,8 @@ impl<'a> FilteredPlan<'a> {
     }
 
     #[must_use]
-    pub(crate) const fn resource_count(&self) -> usize {
-        self.resource_count
-    }
-
-    #[must_use]
     pub(crate) const fn matching_resources(&self) -> usize {
         self.matching_resources
-    }
-
-    #[must_use]
-    pub(crate) const fn output_count(&self) -> usize {
-        self.output_count
     }
 
     #[must_use]
@@ -137,16 +125,9 @@ impl PlanDocument {
         let lines = self.text.split('\n').collect::<Vec<_>>();
         let mut filtered = Vec::new();
         let mut line_indices = Vec::new();
-        let mut resource_count = 0;
         let mut matching_resources = 0;
-        let mut output_count = 0;
         let mut matching_outputs = 0;
         for block in &self.blocks {
-            match block.kind {
-                PlanBlockKind::Resource => resource_count += 1,
-                PlanBlockKind::Output => output_count += 1,
-                PlanBlockKind::Common => {}
-            }
             let matches = query.is_empty()
                 || block.is_common()
                 || block
@@ -169,9 +150,7 @@ impl PlanDocument {
         FilteredPlan {
             lines: filtered,
             line_indices,
-            resource_count,
             matching_resources,
-            output_count,
             matching_outputs,
         }
     }
@@ -472,11 +451,6 @@ impl PlanReview {
     pub(crate) fn set_search_query(&mut self, query: String) {
         self.search_query = query;
     }
-
-    #[must_use]
-    pub(crate) fn filtered_document(&self) -> FilteredPlan<'_> {
-        self.document.filter(&self.search_query)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -541,9 +515,7 @@ mod tests {
             filtered.lines(),
             ["preamble", "resource worker", "worker value", "summary", ""]
         );
-        assert_eq!(filtered.resource_count(), 2);
         assert_eq!(filtered.matching_resources(), 1);
-        assert_eq!(filtered.output_count(), 0);
         assert_eq!(filtered.matching_outputs(), 0);
     }
 
@@ -566,9 +538,7 @@ mod tests {
             resource.lines(),
             ["common api", "resource api api api", "unknown endpoint", ""]
         );
-        assert_eq!(resource.resource_count(), 2);
         assert_eq!(resource.matching_resources(), 1);
-        assert_eq!(resource.output_count(), 1);
         assert_eq!(resource.matching_outputs(), 0);
 
         let output = document.filter("endpoint");
@@ -576,9 +546,7 @@ mod tests {
             output.lines(),
             ["common api", "output endpoint", "unknown endpoint", ""]
         );
-        assert_eq!(output.resource_count(), 2);
         assert_eq!(output.matching_resources(), 0);
-        assert_eq!(output.output_count(), 1);
         assert_eq!(output.matching_outputs(), 1);
 
         let mixed = document.filter("e");
@@ -587,9 +555,7 @@ mod tests {
         assert_eq!(mixed.matching_resources() + mixed.matching_outputs(), 3);
 
         let empty = document.filter("");
-        assert_eq!(empty.resource_count(), 2);
         assert_eq!(empty.matching_resources(), 2);
-        assert_eq!(empty.output_count(), 1);
         assert_eq!(empty.matching_outputs(), 1);
     }
 
@@ -615,8 +581,6 @@ mod tests {
             filtered.matching_resources() + filtered.matching_outputs(),
             0
         );
-        assert_eq!(filtered.resource_count(), 1);
-        assert_eq!(filtered.output_count(), 1);
     }
 
     #[test]

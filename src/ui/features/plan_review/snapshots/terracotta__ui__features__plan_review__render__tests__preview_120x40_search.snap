@@ -9,7 +9,7 @@ expression: buffer_text(buffer)
  Terracotta | main
 
  ┌Plan | Filter───────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │Filter: /terraform_data   Matches: resources 4/4 | outputs 0/2                                                      │
+ │Filter: /terraform_data                                                                                             │
  │────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
  │  # terraform_data.api will be updated in-place                                                                    ▲│
  │  ~ resource "terraform_data" "api" {                                                                              ┃│
@@ -37,4 +37,4 @@ expression: buffer_text(buffer)
  │    }                                                                                                              ││
  │                                                                                                                   ▼│
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- Enter confirm | Esc cancel
+ Enter confirm | Esc cancel                                                                                   8 matches
