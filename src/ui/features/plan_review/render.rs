@@ -605,25 +605,29 @@ fn plan_line<'a>(line: &'a str, query: &str, selected: Option<&PlanReviewMatch>)
     if query.is_empty() {
         return Line::from(Span::styled(line, theme::plan_line_style(line)));
     }
+    let search_matches = line_matches(line, query, 0);
     let mut result = Line::default();
     let mut rest = line;
+    let mut match_index = 0;
     while let Some(index) = rest.find(query) {
         let (before, matched_and_after) = rest.split_at(index);
         if !before.is_empty() {
             result.push_span(Span::styled(before, theme::plan_line_style(line)));
         }
-        let (matched, after) = matched_and_after.split_at(query.len());
-        let match_start = line.len().saturating_sub(rest.len()) + index;
+        let (match_text, after) = matched_and_after.split_at(query.len());
+        let rendered_match = search_matches
+            .get(match_index)
+            .expect("rendered matches should follow the search spans");
         let style = selected
             .filter(|selected| {
-                selected.start()
-                    == u16::try_from(display_byte_column(line, match_start)).unwrap_or(u16::MAX)
+                selected.start() == rendered_match.start() && selected.end() == rendered_match.end()
             })
             .map_or_else(theme::search_match_style, |_| {
                 theme::selected_search_match_style()
             });
-        result.push_span(Span::styled(matched, style));
+        result.push_span(Span::styled(match_text, style));
         rest = after;
+        match_index += 1;
     }
     if !rest.is_empty() {
         result.push_span(Span::styled(rest, theme::plan_line_style(line)));
@@ -667,27 +671,24 @@ fn line_matches(line: &str, query: &str, line_index: usize) -> Vec<PlanReviewMat
     if query.is_empty() {
         return Vec::new();
     }
-    let mut matches = Vec::new();
-    let mut offset = 0;
+    let mut search_matches = Vec::new();
     let mut rest = line;
+    let mut rendered_column = 0;
     while let Some(index) = rest.find(query) {
-        let start = offset + index;
-        let end = start + query.len();
-        let start_column = display_byte_column(line, start);
-        let end_column = display_byte_column(line, end);
-        matches.push(PlanReviewMatch::new(
+        let (before, matched_and_after) = rest.split_at(index);
+        rendered_column += Line::from(before).width();
+        let (match_text, after) = matched_and_after.split_at(query.len());
+        let start_column = rendered_column;
+        rendered_column += Line::from(match_text).width();
+        let end_column = rendered_column;
+        search_matches.push(PlanReviewMatch::new(
             line_index,
             u16::try_from(start_column).unwrap_or(u16::MAX),
             u16::try_from(end_column).unwrap_or(u16::MAX),
         ));
-        offset = end;
-        rest = &line[offset..];
+        rest = after;
     }
-    matches
-}
-
-fn display_byte_column(line: &str, byte_index: usize) -> usize {
-    Line::from(&line[..byte_index]).width()
+    search_matches
 }
 
 fn limits(line_count: usize, line_width: usize, body: Rect) -> (u16, u16) {
@@ -922,6 +923,7 @@ mod tests {
     use ratatui::{
         buffer::Buffer,
         style::{Color, Modifier},
+        widgets::Widget,
     };
 
     use crate::app::{
@@ -1551,6 +1553,24 @@ End of synthetic plan body."#;
             }),
             "end cursor should style a blank cell",
         );
+    }
+
+    #[test]
+    fn production_partial_zwj_match_tracks_the_rendered_span_columns() {
+        let line = format!("{}👩\u{200d}💻", "a".repeat(20));
+        let query = "💻";
+        let matches = line_matches(&line, query, 0);
+        assert_eq!(matches, [PlanReviewMatch::new(0, 22, 24)]);
+
+        let selected_line = plan_line(&line, query, matches.first());
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 30, 1));
+        Paragraph::new(vec![selected_line]).render(*buffer.area(), &mut buffer);
+        let cell = buffer
+            .cell((22, 0))
+            .expect("selected partial grapheme cell");
+        assert_eq!(cell.fg, Color::Rgb(0x11, 0x14, 0x19));
+        assert_eq!(cell.bg, Color::Rgb(0xff, 0xd0, 0x8a));
+        assert_eq!(cell.modifier, Modifier::BOLD | Modifier::UNDERLINED);
     }
 
     #[test]
