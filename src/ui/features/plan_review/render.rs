@@ -1532,10 +1532,22 @@ End of synthetic plan body."#;
     #[test]
     fn quit_confirmation_preserves_the_plan_body_and_scroll_limits() {
         let state = review_state(review());
-        let area = Rect::new(0, 0, 80, 24);
+        let area = Rect::new(0, 0, 50, 24);
         let normal = layout(area, false, &state);
         let waiting = layout_with_quit_confirmation(area, false, &state, true);
+        let content = prepare_content(&state, false, "");
+        let footer = footer::layout_with_notice(
+            footer_items(
+                false,
+                state.review().metadata().applyable(),
+                content.matches.len(),
+                false,
+            ),
+            shell_layout::centered_width(area),
+            None,
+        );
 
+        assert!(footer.len() >= 2);
         assert_eq!(waiting.body(), normal.body());
         assert_eq!(waiting.max_vertical(), normal.max_vertical());
         assert_eq!(waiting.max_horizontal(), normal.max_horizontal());

@@ -872,10 +872,11 @@ mod tests {
     #[test]
     fn quit_confirmation_preserves_the_execution_body_and_scroll_limits() {
         let (state, _) = apply_state(ApplyStatus::Succeeded);
-        let area = Rect::new(0, 0, 80, 24);
+        let area = Rect::new(0, 0, 50, 24);
         let normal = execution_layout(area, &state);
         let waiting = execution_layout_with_quit_confirmation(area, &state, true);
 
+        assert!(footer_lines(&state, shell_layout::centered_width(area), None).len() >= 2);
         assert_eq!(waiting.body(), normal.body());
         assert_eq!(waiting.max_vertical(), normal.max_vertical());
         assert_eq!(waiting.max_horizontal(), normal.max_horizontal());
