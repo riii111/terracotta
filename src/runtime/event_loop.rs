@@ -3,7 +3,6 @@ use std::{
     path::Path,
     sync::mpsc::{Receiver, TryRecvError},
     sync::{Arc, Mutex},
-    thread::JoinHandle,
     time::{Duration, Instant},
 };
 
@@ -22,32 +21,19 @@ use crate::{
 };
 
 #[expect(
-    clippy::too_many_arguments,
     clippy::too_many_lines,
-    reason = "the event loop receives the explicit runtime resources it coordinates"
+    reason = "the event loop keeps the connected session lifecycle together"
 )]
 pub(crate) fn run_connected(
     terminal: &mut DefaultTerminal,
-    root: &Path,
     execution: ExecutionState,
     messages: &Receiver<PlanReviewMessage>,
-    sender: &std::sync::mpsc::Sender<PlanReviewMessage>,
-    saved_plan_slot: &Arc<Mutex<Option<SavedPlan>>>,
-    cancellation: &CancellationToken,
-    clipboard: &mut ClipboardExecutor,
-    apply_worker: &mut Option<JoinHandle<()>>,
+    plan_worker: &mut super::WorkerGuard,
+    mut effects: RuntimeEffects<'_, ClipboardExecutor>,
 ) -> io::Result<SessionOutcome> {
     let mut execution_view = execution::ExecutionViewState::default();
     let mut review_view = plan_review::PlanReviewViewState::default();
     let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
-    let mut effects = RuntimeEffects {
-        root,
-        sender,
-        saved_plan_slot,
-        cancellation,
-        clipboard,
-        apply_worker,
-    };
     let mut state = SessionState::new(execution);
     let mut worker_disconnected = false;
     let mut quit_confirmation = false;
@@ -63,6 +49,27 @@ pub(crate) fn run_connected(
         );
         dirty |= received;
         if let Some(outcome) = outcome {
+            return Ok(outcome);
+        }
+
+        let finished_workers = reap_workers(plan_worker, &mut effects)?;
+        let (outcome, received) = receive_messages(
+            messages,
+            &mut state,
+            &mut execution_view,
+            &mut worker_disconnected,
+            &mut effects,
+        );
+        dirty |= received;
+        if let Some(outcome) = outcome {
+            return Ok(outcome);
+        }
+        if let Some(outcome) = dispatch_finished_workers(
+            &mut state,
+            &mut execution_view,
+            finished_workers,
+            &mut effects,
+        ) {
             return Ok(outcome);
         }
 
@@ -168,6 +175,49 @@ pub(crate) fn run_connected(
             }
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct FinishedWorkers {
+    plan: bool,
+    apply: bool,
+}
+
+fn reap_workers(
+    plan_worker: &mut super::WorkerGuard,
+    effects: &mut RuntimeEffects<'_, impl ClipboardWriter>,
+) -> io::Result<FinishedWorkers> {
+    let plan_join = plan_worker.poll_finished();
+    let apply_join = effects.apply_worker.poll_finished();
+    if apply_join.as_ref().is_some_and(Result::is_err) {
+        return Err(super::worker_panic_error(super::WorkerKind::Apply));
+    }
+    if plan_join.as_ref().is_some_and(Result::is_err) {
+        return Err(super::worker_panic_error(super::WorkerKind::Plan));
+    }
+    Ok(FinishedWorkers {
+        plan: plan_join.is_some(),
+        apply: apply_join.is_some(),
+    })
+}
+
+fn dispatch_finished_workers<C: ClipboardWriter>(
+    state: &mut SessionState,
+    execution_view: &mut execution::ExecutionViewState,
+    finished_workers: FinishedWorkers,
+    effects: &mut RuntimeEffects<'_, C>,
+) -> Option<SessionOutcome> {
+    if finished_workers.plan
+        && state
+            .execution()
+            .is_some_and(|execution| execution.result().is_none())
+    {
+        return dispatch(state, Action::WorkerDisconnected, execution_view, effects);
+    }
+    if finished_workers.apply && state.apply().is_some_and(|apply| apply.result().is_none()) {
+        return dispatch(state, Action::WorkerDisconnected, execution_view, effects);
+    }
+    None
 }
 
 fn should_draw(state: &SessionState, dirty: bool, now: Instant) -> bool {
@@ -553,7 +603,7 @@ fn apply_effect<C: ClipboardWriter>(
                 effects.cancellation,
                 effects.sender,
             ) {
-                Ok(handle) => *effects.apply_worker = Some(handle),
+                Ok(handle) => effects.apply_worker.set_handle(handle),
                 Err(error) => {
                     return dispatch(
                         state,
@@ -581,7 +631,7 @@ fn apply_effect<C: ClipboardWriter>(
     }
 }
 
-trait ClipboardWriter {
+pub(super) trait ClipboardWriter {
     fn execute(&mut self, effect: &CopyEffect) -> CopyResult;
 }
 
@@ -591,18 +641,22 @@ impl ClipboardWriter for ClipboardExecutor {
     }
 }
 
-struct RuntimeEffects<'a, C: ClipboardWriter = ClipboardExecutor> {
-    root: &'a Path,
-    sender: &'a std::sync::mpsc::Sender<PlanReviewMessage>,
-    saved_plan_slot: &'a Arc<Mutex<Option<SavedPlan>>>,
-    cancellation: &'a CancellationToken,
-    clipboard: &'a mut C,
-    apply_worker: &'a mut Option<JoinHandle<()>>,
+pub(super) struct RuntimeEffects<'a, C: ClipboardWriter = ClipboardExecutor> {
+    pub(super) root: &'a Path,
+    pub(super) sender: &'a std::sync::mpsc::Sender<PlanReviewMessage>,
+    pub(super) saved_plan_slot: &'a Arc<Mutex<Option<SavedPlan>>>,
+    pub(super) cancellation: &'a CancellationToken,
+    pub(super) clipboard: &'a mut C,
+    pub(super) apply_worker: &'a mut super::WorkerGuard,
 }
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{
+        path::PathBuf,
+        sync::mpsc::{self, Sender},
+        thread::{self, JoinHandle},
+    };
 
     use crossterm::event::{KeyCode, KeyModifiers};
     use ratatui::{
@@ -614,12 +668,13 @@ mod tests {
     use super::*;
     use crate::app::{
         execution::{
-            ApplyStatus, EventStream, ExecutionContext, ExecutionEvent, ExecutionEventKind,
-            ExecutionLogLine,
+            ApplyStatus, EventStream, ExecutionAction, ExecutionContext, ExecutionEvent,
+            ExecutionEventKind, ExecutionLogLine,
         },
         review::{PlanMetadata, PlanReview, test_support::plan_document},
         session::{ApplyConfirmationState, ReviewSessionState},
     };
+    use crate::runtime::{WorkerGuard, finalize_ui_result};
 
     struct DrawCase {
         name: &'static str,
@@ -640,6 +695,512 @@ mod tests {
     impl ClipboardWriter for TestClipboard {
         fn execute(&mut self, _effect: &CopyEffect) -> CopyResult {
             CopyResult::Written
+        }
+    }
+
+    #[test]
+    fn finished_plan_without_final_message_becomes_a_failed_outcome() {
+        let (sender, receiver) = mpsc::channel();
+        let handle = thread::spawn(|| {});
+        wait_for_finished(&handle);
+        let mut plan_worker = worker_guard(Some(handle));
+        let mut apply_worker = worker_guard(None);
+        let cancellation = CancellationToken::new();
+        let saved_plan_slot = Arc::new(Mutex::new(None));
+        let mut clipboard = TestClipboard;
+        let mut effects = test_effects(
+            &sender,
+            &saved_plan_slot,
+            &cancellation,
+            &mut clipboard,
+            &mut apply_worker,
+        );
+        let mut state = SessionState::new(ExecutionState::with_context(
+            Instant::now(),
+            ExecutionContext::loading("/project"),
+        ));
+        let mut execution_view = execution::ExecutionViewState::default();
+        let mut worker_disconnected = false;
+
+        let (_, drained) = receive_messages(
+            &receiver,
+            &mut state,
+            &mut execution_view,
+            &mut worker_disconnected,
+            &mut effects,
+        );
+        assert!(!drained);
+        let finished = reap_workers(&mut plan_worker, &mut effects)
+            .expect("a normal worker exit should be reaped");
+        assert_eq!(
+            finished,
+            FinishedWorkers {
+                plan: true,
+                apply: false
+            }
+        );
+
+        let (_, drained) = receive_messages(
+            &receiver,
+            &mut state,
+            &mut execution_view,
+            &mut worker_disconnected,
+            &mut effects,
+        );
+        assert!(!drained);
+        assert!(matches!(
+            dispatch_finished_workers(&mut state, &mut execution_view, finished, &mut effects,),
+            Some(SessionOutcome::Failed(ExecutionStage::Initializing))
+        ));
+    }
+
+    #[test]
+    fn finished_apply_without_final_message_keeps_the_failed_result() {
+        let (sender, _receiver) = mpsc::channel();
+        let handle = thread::spawn(|| {});
+        wait_for_finished(&handle);
+        let mut plan_worker = worker_guard(None);
+        let mut apply_worker = worker_guard(Some(handle));
+        let cancellation = CancellationToken::new();
+        let saved_plan_slot = Arc::new(Mutex::new(None));
+        let mut clipboard = TestClipboard;
+        let mut effects = test_effects(
+            &sender,
+            &saved_plan_slot,
+            &cancellation,
+            &mut clipboard,
+            &mut apply_worker,
+        );
+        let mut state = SessionState::Apply(Box::new(ExecutionState::applying(
+            Instant::now(),
+            ExecutionContext::loading("/project"),
+        )));
+        let mut execution_view = execution::ExecutionViewState::default();
+
+        let finished = reap_workers(&mut plan_worker, &mut effects)
+            .expect("a normal worker exit should be reaped");
+        assert_eq!(
+            finished,
+            FinishedWorkers {
+                plan: false,
+                apply: true
+            }
+        );
+        assert!(
+            dispatch_finished_workers(&mut state, &mut execution_view, finished, &mut effects,)
+                .is_none()
+        );
+        let apply = state.apply().expect("apply state should remain visible");
+        assert_eq!(apply.stage(), ExecutionStage::ApplyFailed);
+        assert!(apply.result().is_some());
+    }
+
+    #[test]
+    fn finished_plan_after_apply_started_does_not_fail_apply() {
+        let (sender, _receiver) = mpsc::channel();
+        let handle = thread::spawn(|| {});
+        wait_for_finished(&handle);
+        let mut plan_worker = worker_guard(Some(handle));
+        let mut apply_worker = worker_guard(None);
+        let cancellation = CancellationToken::new();
+        let saved_plan_slot = Arc::new(Mutex::new(None));
+        let mut clipboard = TestClipboard;
+        let mut effects = test_effects(
+            &sender,
+            &saved_plan_slot,
+            &cancellation,
+            &mut clipboard,
+            &mut apply_worker,
+        );
+        let mut state = apply_state(Instant::now(), None);
+        let mut execution_view = execution::ExecutionViewState::default();
+
+        let finished = reap_workers(&mut plan_worker, &mut effects)
+            .expect("a normal worker exit should be reaped");
+        assert_eq!(
+            finished,
+            FinishedWorkers {
+                plan: true,
+                apply: false
+            }
+        );
+        assert!(
+            dispatch_finished_workers(&mut state, &mut execution_view, finished, &mut effects,)
+                .is_none()
+        );
+        assert!(state.apply().is_some_and(|apply| apply.result().is_none()));
+    }
+
+    #[test]
+    fn plan_worker_panic_is_reported_without_exposing_its_payload() {
+        let (sender, _receiver) = mpsc::channel();
+        let handle = thread::spawn(|| panic!("secret panic payload"));
+        wait_for_finished(&handle);
+        let mut plan_worker = worker_guard(Some(handle));
+        let mut apply_worker = worker_guard(None);
+        let cancellation = CancellationToken::new();
+        let saved_plan_slot = Arc::new(Mutex::new(None));
+        let mut clipboard = TestClipboard;
+        let mut effects = test_effects(
+            &sender,
+            &saved_plan_slot,
+            &cancellation,
+            &mut clipboard,
+            &mut apply_worker,
+        );
+
+        let error = reap_workers(&mut plan_worker, &mut effects)
+            .expect_err("a panicked plan worker should fail the runtime");
+        assert_eq!(error.to_string(), "plan worker panicked");
+    }
+
+    #[test]
+    fn apply_worker_panic_is_reported_without_exposing_its_payload() {
+        let (sender, _receiver) = mpsc::channel();
+        let handle = thread::spawn(|| panic!("secret panic payload"));
+        wait_for_finished(&handle);
+        let mut plan_worker = worker_guard(None);
+        let mut apply_worker = worker_guard(Some(handle));
+        let cancellation = CancellationToken::new();
+        let saved_plan_slot = Arc::new(Mutex::new(None));
+        let mut clipboard = TestClipboard;
+        let mut effects = test_effects(
+            &sender,
+            &saved_plan_slot,
+            &cancellation,
+            &mut clipboard,
+            &mut apply_worker,
+        );
+
+        let error = reap_workers(&mut plan_worker, &mut effects)
+            .expect_err("a panicked apply worker should fail the runtime");
+        assert_eq!(error.to_string(), "apply worker panicked");
+    }
+
+    #[test]
+    fn final_message_after_the_first_drain_is_processed_before_disconnect() {
+        let (sender, receiver) = mpsc::channel();
+        let (release_sender, release_receiver) = mpsc::sync_channel(0);
+        let worker_sender = sender.clone();
+        let handle = thread::spawn(move || {
+            release_receiver
+                .recv()
+                .expect("test should release the worker");
+            worker_sender
+                .send(PlanReviewMessage::Failed {
+                    message: "late final message".to_owned(),
+                    interrupted: false,
+                })
+                .expect("the receiver should still be alive");
+        });
+        let mut plan_worker = worker_guard(Some(handle));
+        let mut apply_worker = worker_guard(None);
+        let cancellation = CancellationToken::new();
+        let saved_plan_slot = Arc::new(Mutex::new(None));
+        let mut clipboard = TestClipboard;
+        let mut effects = test_effects(
+            &sender,
+            &saved_plan_slot,
+            &cancellation,
+            &mut clipboard,
+            &mut apply_worker,
+        );
+        let mut state = SessionState::new(ExecutionState::with_context(
+            Instant::now(),
+            ExecutionContext::loading("/project"),
+        ));
+        let mut execution_view = execution::ExecutionViewState::default();
+        let mut worker_disconnected = false;
+
+        let (_, drained) = receive_messages(
+            &receiver,
+            &mut state,
+            &mut execution_view,
+            &mut worker_disconnected,
+            &mut effects,
+        );
+        assert!(!drained);
+        release_sender
+            .send(())
+            .expect("the worker should still be waiting");
+        wait_for_finished(plan_worker.handle.as_ref().expect("plan handle"));
+
+        let finished =
+            reap_workers(&mut plan_worker, &mut effects).expect("the worker should exit normally");
+        let (_, drained) = receive_messages(
+            &receiver,
+            &mut state,
+            &mut execution_view,
+            &mut worker_disconnected,
+            &mut effects,
+        );
+        assert!(drained);
+        assert!(
+            dispatch_finished_workers(&mut state, &mut execution_view, finished, &mut effects,)
+                .is_none()
+        );
+        assert!(
+            state
+                .execution()
+                .is_some_and(|execution| execution.result().is_some())
+        );
+    }
+
+    #[test]
+    fn final_message_does_not_require_a_finished_worker() {
+        let (sender, receiver) = mpsc::channel();
+        let (sent_sender, sent_receiver) = mpsc::sync_channel(0);
+        let (release_sender, release_receiver) = mpsc::sync_channel(0);
+        let worker_sender = sender.clone();
+        let handle = thread::spawn(move || {
+            worker_sender
+                .send(PlanReviewMessage::Failed {
+                    message: "worker still alive".to_owned(),
+                    interrupted: false,
+                })
+                .expect("the receiver should still be alive");
+            sent_sender
+                .send(())
+                .expect("the test should observe the send");
+            release_receiver
+                .recv()
+                .expect("the test should release the worker");
+        });
+        let mut plan_worker = worker_guard(Some(handle));
+        let mut apply_worker = worker_guard(None);
+        let cancellation = CancellationToken::new();
+        let saved_plan_slot = Arc::new(Mutex::new(None));
+        let mut clipboard = TestClipboard;
+        let mut effects = test_effects(
+            &sender,
+            &saved_plan_slot,
+            &cancellation,
+            &mut clipboard,
+            &mut apply_worker,
+        );
+        let mut state = SessionState::new(ExecutionState::with_context(
+            Instant::now(),
+            ExecutionContext::loading("/project"),
+        ));
+        let mut execution_view = execution::ExecutionViewState::default();
+        let mut worker_disconnected = false;
+        sent_receiver
+            .recv()
+            .expect("the worker should have sent its final message");
+
+        let (_, drained) = receive_messages(
+            &receiver,
+            &mut state,
+            &mut execution_view,
+            &mut worker_disconnected,
+            &mut effects,
+        );
+        assert!(drained);
+        let finished = reap_workers(&mut plan_worker, &mut effects)
+            .expect("a live worker should not be joined");
+        assert_eq!(finished, FinishedWorkers::default());
+        assert!(
+            dispatch_finished_workers(&mut state, &mut execution_view, finished, &mut effects,)
+                .is_none()
+        );
+        assert!(
+            state
+                .execution()
+                .is_some_and(|execution| execution.result().is_some())
+        );
+
+        release_sender
+            .send(())
+            .expect("the worker should still be waiting");
+        wait_for_finished(plan_worker.handle.as_ref().expect("plan handle"));
+        assert_eq!(
+            reap_workers(&mut plan_worker, &mut effects).expect("the worker should exit normally"),
+            FinishedWorkers {
+                plan: true,
+                apply: false
+            }
+        );
+    }
+
+    #[test]
+    fn delayed_final_message_after_cancellation_is_processed_before_disconnect() {
+        let (sender, receiver) = mpsc::channel();
+        let (release_sender, release_receiver) = mpsc::sync_channel(0);
+        let (sent_sender, sent_receiver) = mpsc::sync_channel(0);
+        let worker_sender = sender.clone();
+        let handle = thread::spawn(move || {
+            release_receiver
+                .recv()
+                .expect("test should release the worker");
+            worker_sender
+                .send(PlanReviewMessage::Completed(PlanReview::new(
+                    PathBuf::from("/project"),
+                    "default".to_owned(),
+                    plan_document("No changes.\n".to_owned()),
+                    PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
+                    Vec::new(),
+                )))
+                .expect("the receiver should still be alive");
+            sent_sender
+                .send(())
+                .expect("the test should observe the send");
+        });
+        let mut plan_worker = worker_guard(Some(handle));
+        let mut apply_worker = worker_guard(None);
+        let cancellation = CancellationToken::new();
+        let saved_plan_slot = Arc::new(Mutex::new(None));
+        let mut clipboard = TestClipboard;
+        let mut effects = test_effects(
+            &sender,
+            &saved_plan_slot,
+            &cancellation,
+            &mut clipboard,
+            &mut apply_worker,
+        );
+        let mut state = SessionState::new(ExecutionState::with_context(
+            Instant::now(),
+            ExecutionContext::loading("/project"),
+        ));
+        let mut execution_view = execution::ExecutionViewState::default();
+        let mut worker_disconnected = false;
+
+        assert!(
+            dispatch(
+                &mut state,
+                Action::Execution(ExecutionAction::RequestCancellation),
+                &mut execution_view,
+                &mut effects,
+            )
+            .is_none()
+        );
+        assert!(
+            state
+                .execution()
+                .is_some_and(ExecutionState::cancellation_requested)
+        );
+        release_sender
+            .send(())
+            .expect("the worker should still be waiting");
+        sent_receiver
+            .recv()
+            .expect("the test should observe the final message");
+        wait_for_finished(plan_worker.handle.as_ref().expect("plan handle"));
+
+        let finished =
+            reap_workers(&mut plan_worker, &mut effects).expect("the worker should exit normally");
+        let (outcome, drained) = receive_messages(
+            &receiver,
+            &mut state,
+            &mut execution_view,
+            &mut worker_disconnected,
+            &mut effects,
+        );
+        assert!(drained);
+        assert_eq!(
+            outcome,
+            Some(SessionOutcome::Interrupted(ExecutionStage::Initializing))
+        );
+        assert!(finished.plan);
+        assert_eq!(
+            reap_workers(&mut plan_worker, &mut effects).expect("a reaped worker has no handle"),
+            FinishedWorkers::default()
+        );
+        assert!(
+            dispatch_finished_workers(
+                &mut state,
+                &mut execution_view,
+                FinishedWorkers::default(),
+                &mut effects,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn final_message_then_worker_panic_is_reported_by_outer_join() {
+        let (sender, receiver) = mpsc::channel();
+        let worker_sender = sender.clone();
+        let handle = thread::spawn(move || {
+            worker_sender
+                .send(PlanReviewMessage::Completed(PlanReview::new(
+                    PathBuf::from("/project"),
+                    "default".to_owned(),
+                    plan_document("No changes.\n".to_owned()),
+                    PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
+                    Vec::new(),
+                )))
+                .expect("the receiver should still be alive");
+            panic!("secret panic payload");
+        });
+        wait_for_finished(&handle);
+        let mut plan_worker = worker_guard(Some(handle));
+        let mut apply_worker = worker_guard(None);
+        let cancellation = CancellationToken::new();
+        let saved_plan_slot = Arc::new(Mutex::new(None));
+        let mut clipboard = TestClipboard;
+        let mut effects = test_effects(
+            &sender,
+            &saved_plan_slot,
+            &cancellation,
+            &mut clipboard,
+            &mut apply_worker,
+        );
+        let mut state = SessionState::new(ExecutionState::with_context(
+            Instant::now(),
+            ExecutionContext::loading("/project"),
+        ));
+        let mut execution_view = execution::ExecutionViewState::default();
+        let mut worker_disconnected = false;
+
+        let (outcome, drained) = receive_messages(
+            &receiver,
+            &mut state,
+            &mut execution_view,
+            &mut worker_disconnected,
+            &mut effects,
+        );
+        assert!(drained);
+        assert!(outcome.is_none());
+        let metadata = state
+            .review()
+            .expect("the final review message should complete the UI state")
+            .review()
+            .metadata()
+            .clone();
+        let plan_join = plan_worker.join();
+        let ui_outcome = Ok(SessionOutcome::Reviewed(metadata));
+        let error = finalize_ui_result(ui_outcome, &Ok(()), &plan_join)
+            .expect_err("the outer join should report the worker panic");
+        assert_eq!(error.to_string(), "plan worker panicked");
+    }
+
+    fn worker_guard(handle: Option<JoinHandle<()>>) -> WorkerGuard {
+        WorkerGuard {
+            cancellation: CancellationToken::new(),
+            handle,
+        }
+    }
+
+    fn wait_for_finished(handle: &JoinHandle<()>) {
+        while !handle.is_finished() {
+            thread::yield_now();
+        }
+    }
+
+    fn test_effects<'a>(
+        sender: &'a Sender<PlanReviewMessage>,
+        saved_plan_slot: &'a Arc<Mutex<Option<SavedPlan>>>,
+        cancellation: &'a CancellationToken,
+        clipboard: &'a mut TestClipboard,
+        apply_worker: &'a mut WorkerGuard,
+    ) -> RuntimeEffects<'a, TestClipboard> {
+        RuntimeEffects {
+            root: Path::new("/project"),
+            sender,
+            saved_plan_slot,
+            cancellation,
+            clipboard,
+            apply_worker,
         }
     }
 
@@ -1564,7 +2125,10 @@ mod tests {
         let saved_plan_slot = Arc::new(Mutex::new(None));
         let cancellation = CancellationToken::new();
         let mut clipboard = TestClipboard;
-        let mut apply_worker = None;
+        let mut apply_worker = WorkerGuard {
+            cancellation: cancellation.clone(),
+            handle: None,
+        };
         let mut effects = RuntimeEffects {
             root: Path::new("/project"),
             sender: &sender,

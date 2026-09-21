@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     io::{self, IsTerminal, Write},
     panic::{self, AssertUnwindSafe},
     path::Path,
@@ -59,30 +60,21 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
     };
     let mut clipboard = ClipboardExecutor::new();
     let context = ExecutionContext::loading(root.display().to_string());
-    let ui_result = run_terminal(|terminal| {
-        #[cfg(feature = "test-support")]
-        if test_support::panic_after_draw_requested() {
-            terminal.draw(|_| {})?;
-            panic!("synthetic terminal panic");
-        }
-
-        event_loop::run_connected(
-            terminal,
-            root,
-            ExecutionState::with_context(Instant::now(), context),
-            &receiver,
-            &sender,
-            &saved_plan_slot,
-            &cancellation,
-            &mut clipboard,
-            &mut apply_worker.handle,
-        )
-    });
+    let effects = event_loop::RuntimeEffects {
+        root,
+        sender: &sender,
+        saved_plan_slot: &saved_plan_slot,
+        cancellation: &cancellation,
+        clipboard: &mut clipboard,
+        apply_worker: &mut apply_worker,
+    };
+    let ui_result = run_interactive(context, &receiver, &mut worker, effects);
     if ui_result.is_err() {
         cancellation.cancel();
     }
-    let _ = apply_worker.join_if_started();
-    let _ = worker.join();
+    let apply_join = apply_worker.join();
+    let plan_join = worker.join();
+    let ui_result = finalize_ui_result(ui_result, &apply_join, &plan_join);
     let cleanup_result =
         take_saved_plan(&saved_plan_slot).map_or(Ok(()), terraform::SavedPlan::cleanup);
     let primary_exit = match ui_result {
@@ -155,6 +147,29 @@ where
     }
 }
 
+fn run_interactive(
+    context: ExecutionContext,
+    receiver: &mpsc::Receiver<PlanReviewMessage>,
+    plan_worker: &mut WorkerGuard,
+    effects: event_loop::RuntimeEffects<'_, ClipboardExecutor>,
+) -> io::Result<SessionOutcome> {
+    run_terminal(|terminal| {
+        #[cfg(feature = "test-support")]
+        if test_support::panic_after_draw_requested() {
+            terminal.draw(|_| {})?;
+            panic!("synthetic terminal panic");
+        }
+
+        event_loop::run_connected(
+            terminal,
+            ExecutionState::with_context(Instant::now(), context),
+            receiver,
+            plan_worker,
+            effects,
+        )
+    })
+}
+
 fn report_reviewed(metadata: &PlanMetadata) {
     if metadata.has_changes() {
         let _ = writeln!(
@@ -193,6 +208,59 @@ fn report_interrupted(phase: ExecutionStage) {
     };
     let _ = writeln!(io::stdout(), "{message}");
 }
+
+fn finalize_ui_result(
+    ui_result: io::Result<SessionOutcome>,
+    apply_join: &thread::Result<()>,
+    plan_join: &thread::Result<()>,
+) -> io::Result<SessionOutcome> {
+    let ui_worker_panic = ui_result.as_ref().err().and_then(worker_panic_kind);
+    if ui_result.is_err() && ui_worker_panic.is_none() {
+        return ui_result;
+    }
+    if apply_join.is_err() {
+        return Err(worker_panic_error(WorkerKind::Apply));
+    }
+    if ui_worker_panic.is_some() {
+        return ui_result;
+    }
+    if plan_join.is_err() {
+        return Err(worker_panic_error(WorkerKind::Plan));
+    }
+    ui_result
+}
+
+fn worker_panic_kind(error: &io::Error) -> Option<WorkerKind> {
+    error
+        .get_ref()
+        .and_then(|source| source.downcast_ref::<WorkerPanic>())
+        .map(|panic| panic.0)
+}
+
+fn worker_panic_error(worker: WorkerKind) -> io::Error {
+    io::Error::other(WorkerPanic(worker))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkerKind {
+    Plan,
+    Apply,
+}
+
+#[derive(Debug)]
+struct WorkerPanic(WorkerKind);
+
+impl fmt::Display for WorkerPanic {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let worker = match self.0 {
+            WorkerKind::Plan => "plan",
+            WorkerKind::Apply => "apply",
+        };
+        write!(formatter, "{worker} worker panicked")
+    }
+}
+
+impl std::error::Error for WorkerPanic {}
 
 fn spawn_plan_worker(
     root: &Path,
@@ -289,20 +357,25 @@ fn report_error(message: &str) {
     let _ = writeln!(io::stderr(), "{message}");
 }
 
-struct WorkerGuard {
+pub(super) struct WorkerGuard {
     cancellation: CancellationToken,
     handle: Option<JoinHandle<()>>,
 }
 
 impl WorkerGuard {
-    fn join(&mut self) -> thread::Result<()> {
-        self.handle
-            .take()
-            .expect("plan worker should be present")
-            .join()
+    fn set_handle(&mut self, handle: JoinHandle<()>) {
+        debug_assert!(self.handle.is_none());
+        self.handle = Some(handle);
     }
 
-    fn join_if_started(&mut self) -> thread::Result<()> {
+    fn poll_finished(&mut self) -> Option<thread::Result<()>> {
+        self.handle
+            .as_ref()
+            .is_some_and(JoinHandle::is_finished)
+            .then(|| self.join())
+    }
+
+    fn join(&mut self) -> thread::Result<()> {
         self.handle.take().map_or(Ok(()), JoinHandle::join)
     }
 }
@@ -313,5 +386,99 @@ impl Drop for WorkerGuard {
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn panic_join() -> thread::Result<()> {
+        Err(Box::new("worker panic"))
+    }
+
+    #[test]
+    fn ui_error_takes_precedence_over_worker_panics() {
+        let error = finalize_ui_result(
+            Err(io::Error::other("terminal failed")),
+            &panic_join(),
+            &panic_join(),
+        )
+        .expect_err("the UI error should be returned");
+
+        assert_eq!(error.to_string(), "terminal failed");
+    }
+
+    #[test]
+    fn ui_error_with_worker_panic_text_is_not_reclassified() {
+        let ui_error = io::Error::other("apply worker panicked");
+        let error = finalize_ui_result(Err(ui_error), &panic_join(), &panic_join())
+            .expect_err("the original UI error should be returned");
+
+        assert_eq!(error.to_string(), "apply worker panicked");
+        assert!(worker_panic_kind(&error).is_none());
+    }
+
+    #[test]
+    fn apply_panic_takes_precedence_over_plan_panic_after_successful_ui() {
+        let error = finalize_ui_result(
+            Ok(SessionOutcome::Interrupted(ExecutionStage::Initializing)),
+            &panic_join(),
+            &panic_join(),
+        )
+        .expect_err("a worker panic should fail a successful UI result");
+
+        assert_eq!(error.to_string(), "apply worker panicked");
+    }
+
+    #[test]
+    fn apply_join_panic_takes_precedence_over_an_earlier_plan_panic() {
+        let apply_join = panic_join();
+        let plan_join = Ok(());
+        let error = finalize_ui_result(
+            Err(worker_panic_error(WorkerKind::Plan)),
+            &apply_join,
+            &plan_join,
+        )
+        .expect_err("a worker panic should fail the runtime");
+
+        assert_eq!(error.to_string(), "apply worker panicked");
+    }
+
+    #[test]
+    fn apply_ui_panic_takes_precedence_over_a_later_plan_join_panic() {
+        let apply_join = Ok(());
+        let plan_join = panic_join();
+        let error = finalize_ui_result(
+            Err(worker_panic_error(WorkerKind::Apply)),
+            &apply_join,
+            &plan_join,
+        )
+        .expect_err("the earlier apply panic should remain primary");
+
+        assert_eq!(error.to_string(), "apply worker panicked");
+        assert_eq!(worker_panic_kind(&error), Some(WorkerKind::Apply));
+    }
+
+    #[test]
+    fn plan_join_panic_is_reported_after_a_successful_ui() {
+        let error = finalize_ui_result(
+            Ok(SessionOutcome::Interrupted(ExecutionStage::Initializing)),
+            &Ok(()),
+            &panic_join(),
+        )
+        .expect_err("a plan worker panic should fail the runtime");
+
+        assert_eq!(error.to_string(), "plan worker panicked");
+    }
+
+    #[test]
+    fn successful_worker_joins_preserve_the_ui_outcome() {
+        let outcome = SessionOutcome::Interrupted(ExecutionStage::Initializing);
+        let apply_join = Ok(());
+        let plan_join = Ok(());
+        let actual = finalize_ui_result(Ok(outcome.clone()), &apply_join, &plan_join)
+            .expect("successful worker joins should preserve the UI result");
+        assert_eq!(actual, outcome);
     }
 }
