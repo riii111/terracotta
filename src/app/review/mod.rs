@@ -59,25 +59,20 @@ pub(crate) struct PlanDocument {
     line_kinds: Vec<PlanLineKind>,
 }
 
+struct FilteredLine<'a> {
+    line_index: usize,
+    text: &'a str,
+}
+
 pub(crate) struct FilteredPlan<'a> {
-    lines: Vec<&'a str>,
-    line_indices: Vec<usize>,
+    lines: Vec<FilteredLine<'a>>,
     matching_resources: usize,
     matching_outputs: usize,
 }
 
 impl<'a> FilteredPlan<'a> {
-    #[must_use]
-    #[cfg(test)]
-    pub(crate) fn lines(&self) -> &[&'a str] {
-        &self.lines
-    }
-
     pub(crate) fn lines_with_indices(&self) -> impl Iterator<Item = (usize, &'a str)> + '_ {
-        self.line_indices
-            .iter()
-            .copied()
-            .zip(self.lines.iter().copied())
+        self.lines.iter().map(|line| (line.line_index, line.text))
     }
 
     #[must_use]
@@ -93,8 +88,9 @@ impl<'a> FilteredPlan<'a> {
 
 impl PlanDocument {
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn with_blocks(text: String, blocks: Vec<PlanBlock>) -> Self {
-        let line_kinds = classify_display_lines(&text);
+        let line_kinds = vec![PlanLineKind::Body; text.split('\n').count()];
         Self {
             text,
             blocks,
@@ -124,7 +120,6 @@ impl PlanDocument {
     pub(crate) fn filter(&self, query: &str) -> FilteredPlan<'_> {
         let lines = self.text.split('\n').collect::<Vec<_>>();
         let mut filtered = Vec::new();
-        let mut line_indices = Vec::new();
         let mut matching_resources = 0;
         let mut matching_outputs = 0;
         for block in &self.blocks {
@@ -143,13 +138,14 @@ impl PlanDocument {
                 PlanBlockKind::Common => {}
             }
             for line in block.lines().clone() {
-                filtered.push(lines[line]);
-                line_indices.push(line);
+                filtered.push(FilteredLine {
+                    line_index: line,
+                    text: lines[line],
+                });
             }
         }
         FilteredPlan {
             lines: filtered,
-            line_indices,
             matching_resources,
             matching_outputs,
         }
@@ -162,153 +158,6 @@ impl PlanDocument {
             .copied()
             .unwrap_or(PlanLineKind::Body)
     }
-}
-
-pub(crate) fn classify_display_lines(text: &str) -> Vec<PlanLineKind> {
-    let lines = text.split('\n').collect::<Vec<_>>();
-    let intro_end = leading_intro_end(&lines);
-    let final_summary = lines
-        .iter()
-        .enumerate()
-        .rev()
-        .find(|(_, line)| !line.trim().is_empty())
-        .and_then(|(index, line)| is_terraform_summary(line).then_some(index));
-    let mut kinds = vec![PlanLineKind::Body; lines.len()];
-    for kind in kinds.iter_mut().take(intro_end) {
-        *kind = PlanLineKind::Intro;
-    }
-
-    let mut heredoc_terminator: Option<String> = None;
-    for (line_index, line) in lines.iter().enumerate().skip(intro_end) {
-        if let Some(terminator) = &heredoc_terminator {
-            if heredoc_end(line, terminator) {
-                heredoc_terminator = None;
-            }
-            continue;
-        }
-        if line == &"Changes to Outputs:" {
-            kinds[line_index] = PlanLineKind::OutputSection;
-        } else if Some(line_index) == final_summary {
-            kinds[line_index] = PlanLineKind::Summary;
-        } else if is_note_line(line) {
-            kinds[line_index] = PlanLineKind::Note;
-        }
-        heredoc_terminator = heredoc_start(line);
-    }
-    kinds
-}
-
-fn is_terraform_summary(line: &str) -> bool {
-    let Some(summary) = line
-        .strip_prefix("Plan: ")
-        .and_then(|summary| summary.strip_suffix('.'))
-    else {
-        return false;
-    };
-    let mut parts = summary.split(", ");
-    let Some(additions) = parts.next().and_then(|part| part.strip_suffix(" to add")) else {
-        return false;
-    };
-    let Some(changes) = parts
-        .next()
-        .and_then(|part| part.strip_suffix(" to change"))
-    else {
-        return false;
-    };
-    let Some(deletions) = parts
-        .next()
-        .and_then(|part| part.strip_suffix(" to destroy"))
-    else {
-        return false;
-    };
-    parts.next().is_none()
-        && !additions.is_empty()
-        && !changes.is_empty()
-        && !deletions.is_empty()
-        && additions
-            .chars()
-            .all(|character| character.is_ascii_digit())
-        && changes.chars().all(|character| character.is_ascii_digit())
-        && deletions
-            .chars()
-            .all(|character| character.is_ascii_digit())
-}
-
-fn leading_intro_end(lines: &[&str]) -> usize {
-    let mut index = 0;
-    while lines.get(index).is_some_and(|line| line.trim().is_empty()) {
-        index += 1;
-    }
-    let mut recognized = false;
-    while let Some(line) = lines.get(index) {
-        if is_intro_line(line) {
-            recognized = true;
-            index += 1;
-        } else if recognized && line.trim().is_empty() {
-            index += 1;
-        } else {
-            break;
-        }
-    }
-    index
-}
-
-fn is_intro_line(line: &str) -> bool {
-    let trimmed = line.trim();
-    trimmed.starts_with("Terraform used the selected providers")
-        || trimmed.starts_with("Resource actions are indicated with the following symbols:")
-        || trimmed.starts_with("plan. Resource actions are indicated with the following symbols:")
-        || trimmed == "+ create"
-        || trimmed == "~ update in-place"
-        || trimmed == "-/+ destroy and then create replacement"
-        || trimmed == "- destroy"
-        || trimmed == "<= read (data resources)"
-        || trimmed == "Terraform will perform the following actions:"
-}
-
-fn is_note_line(line: &str) -> bool {
-    line.trim_start().starts_with('#')
-}
-
-fn heredoc_start(line: &str) -> Option<String> {
-    let mut quoted = false;
-    let mut escaped = false;
-    let marker = line.char_indices().find_map(|(index, character)| {
-        if quoted {
-            if escaped {
-                escaped = false;
-            } else if character == '\\' {
-                escaped = true;
-            } else if character == '"' {
-                quoted = false;
-            }
-            return None;
-        }
-        if character == '"' {
-            quoted = true;
-            return None;
-        }
-        (character == '<'
-            && line[index..].starts_with("<<")
-            && line[..index].trim_end().ends_with('='))
-        .then_some(index)
-    })?;
-    let mut value = line[marker + 2..].trim_start();
-    value = value.strip_prefix('-').unwrap_or(value).trim_start();
-    let terminator = value.split_whitespace().next()?;
-    (!terminator.is_empty()
-        && terminator
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-')))
-    .then(|| terminator.to_owned())
-}
-
-fn heredoc_end(line: &str, terminator: &str) -> bool {
-    let trimmed = line.trim();
-    trimmed == terminator
-        || trimmed
-            .strip_prefix(terminator)
-            .is_some_and(|suffix| suffix.trim_start().starts_with("->"))
 }
 
 impl Debug for PlanDocument {
@@ -512,8 +361,14 @@ mod tests {
         let filtered = document.filter("worker");
 
         assert_eq!(
-            filtered.lines(),
-            ["preamble", "resource worker", "worker value", "summary", ""]
+            filtered.lines_with_indices().collect::<Vec<_>>(),
+            [
+                (0, "preamble"),
+                (3, "resource worker"),
+                (4, "worker value"),
+                (5, "summary"),
+                (6, ""),
+            ]
         );
         assert_eq!(filtered.matching_resources(), 1);
         assert_eq!(filtered.matching_outputs(), 0);
@@ -535,7 +390,10 @@ mod tests {
 
         let resource = document.filter("api");
         assert_eq!(
-            resource.lines(),
+            resource
+                .lines_with_indices()
+                .map(|(_, line)| line)
+                .collect::<Vec<_>>(),
             ["common api", "resource api api api", "unknown endpoint", ""]
         );
         assert_eq!(resource.matching_resources(), 1);
@@ -543,7 +401,10 @@ mod tests {
 
         let output = document.filter("endpoint");
         assert_eq!(
-            output.lines(),
+            output
+                .lines_with_indices()
+                .map(|(_, line)| line)
+                .collect::<Vec<_>>(),
             ["common api", "output endpoint", "unknown endpoint", ""]
         );
         assert_eq!(output.matching_resources(), 0);
@@ -574,7 +435,10 @@ mod tests {
         let filtered = document.filter("missing");
 
         assert_eq!(
-            filtered.lines(),
+            filtered
+                .lines_with_indices()
+                .map(|(_, line)| line)
+                .collect::<Vec<_>>(),
             ["diagnostic only", "unknown boundary text", ""]
         );
         assert_eq!(
@@ -597,28 +461,5 @@ mod tests {
 
         assert_eq!(review.search_query(), "body");
         assert_eq!(review.document().text(), "Terraform body\n");
-    }
-
-    #[test]
-    fn classifies_only_a_final_standard_summary_outside_a_heredoc() {
-        let text = "  value = <<EOF\n".to_owned()
-            + "Plan: 9 to add, 9 to change, 9 to destroy.\n"
-            + "EOF\n"
-            + "Plan: 1 to add, 2 to change, 3 to destroy.\n";
-        let document = plan_document(text);
-        let lines = document.text().split('\n').collect::<Vec<_>>();
-
-        assert_eq!(document.line_kind(1), PlanLineKind::Body);
-        assert_eq!(document.line_kind(3), PlanLineKind::Summary);
-        assert_eq!(lines[1], "Plan: 9 to add, 9 to change, 9 to destroy.");
-    }
-
-    #[test]
-    fn keeps_unknown_plan_text_when_it_is_not_the_final_standard_summary() {
-        let document =
-            plan_document("Plan: this is application text\nfollowing body text\n".to_owned());
-
-        assert_eq!(document.line_kind(0), PlanLineKind::Body);
-        assert_eq!(document.line_kind(1), PlanLineKind::Body);
     }
 }

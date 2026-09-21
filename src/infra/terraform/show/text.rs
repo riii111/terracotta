@@ -1,8 +1,6 @@
 use std::{collections::HashMap, ops::Range};
 
-use crate::app::review::{
-    PlanBlock, PlanBlockKind, PlanDocument, PlanLineKind, classify_display_lines,
-};
+use crate::app::review::{PlanBlock, PlanBlockKind, PlanDocument, PlanLineKind};
 
 use super::PlanParseError;
 
@@ -36,7 +34,16 @@ fn split_blocks_with_line_kinds(
 ) -> (Vec<PlanBlock>, Vec<PlanLineKind>) {
     let lines = text.split('\n').collect::<Vec<_>>();
     let intro_end = leading_intro_end(&lines);
-    let line_kinds = classify_display_lines(text);
+    let final_summary = lines
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, line)| !line.trim().is_empty())
+        .and_then(|(index, line)| is_terraform_summary(line).then_some(index));
+    let mut line_kinds = vec![PlanLineKind::Body; lines.len()];
+    for kind in line_kinds.iter_mut().take(intro_end) {
+        *kind = PlanLineKind::Intro;
+    }
     let mut resource_indices = HashMap::with_capacity(resource_addresses.len());
     for (index, address) in resource_addresses.iter().enumerate() {
         resource_indices.entry(address.as_str()).or_insert(index);
@@ -60,11 +67,17 @@ fn split_blocks_with_line_kinds(
             continue;
         }
         if *text == "Changes to Outputs:" {
+            line_kinds[line] = PlanLineKind::OutputSection;
             in_output_section = true;
             section_boundaries.push(line);
         } else if text.starts_with("Plan:") {
+            if Some(line) == final_summary {
+                line_kinds[line] = PlanLineKind::Summary;
+            }
             in_output_section = false;
             section_boundaries.push(line);
+        } else if is_note_line(text) {
+            line_kinds[line] = PlanLineKind::Note;
         }
         if in_output_section {
             if output_header(text, &output_indices).is_some() {
@@ -136,6 +149,46 @@ fn is_intro_line(line: &str) -> bool {
         || trimmed == "- destroy"
         || trimmed == "<= read (data resources)"
         || trimmed == "Terraform will perform the following actions:"
+}
+
+fn is_terraform_summary(line: &str) -> bool {
+    let Some(summary) = line
+        .strip_prefix("Plan: ")
+        .and_then(|summary| summary.strip_suffix('.'))
+    else {
+        return false;
+    };
+    let mut parts = summary.split(", ");
+    let Some(additions) = parts.next().and_then(|part| part.strip_suffix(" to add")) else {
+        return false;
+    };
+    let Some(changes) = parts
+        .next()
+        .and_then(|part| part.strip_suffix(" to change"))
+    else {
+        return false;
+    };
+    let Some(deletions) = parts
+        .next()
+        .and_then(|part| part.strip_suffix(" to destroy"))
+    else {
+        return false;
+    };
+    parts.next().is_none()
+        && !additions.is_empty()
+        && !changes.is_empty()
+        && !deletions.is_empty()
+        && additions
+            .chars()
+            .all(|character| character.is_ascii_digit())
+        && changes.chars().all(|character| character.is_ascii_digit())
+        && deletions
+            .chars()
+            .all(|character| character.is_ascii_digit())
+}
+
+fn is_note_line(line: &str) -> bool {
+    line.trim_start().starts_with('#')
 }
 
 fn push_block(blocks: &mut Vec<PlanBlock>, lines: Range<usize>, kind: PlanBlockKind) {
@@ -283,7 +336,7 @@ mod tests {
 
     #[test]
     fn classifies_display_intro_notes_and_heredoc_values_without_changing_source() {
-        let source = "\nTerraform used the selected providers to generate the following execution\nplan. Resource actions are indicated with the following symbols:\n  + create\n\nTerraform will perform the following actions:\n\n  # terraform_data.api will be created\n  + resource \"terraform_data\" \"api\" {\n      value = <<EOF\n  # Terraform will perform the following actions:\n  # value remains a body value\nEOF\n    }\n\nChanges to Outputs:\n  + endpoint = (known after apply)\n\nPlan: 1 to add, 0 to change, 0 to destroy.\n";
+        let source = "\nTerraform used the selected providers to generate the following execution\nplan. Resource actions are indicated with the following symbols:\n  + create\n\nTerraform will perform the following actions:\n\n  # terraform_data.api will be created\n  + resource \"terraform_data\" \"api\" {\n      value = <<EOF\n  Plan: 9 to add, 9 to change, 9 to destroy.\n  # value remains a body value\nEOF\n    }\n\nChanges to Outputs:\n  + endpoint = (known after apply)\n\nPlan: 1 to add, 0 to change, 0 to destroy.\n";
         let document = parse_document(
             source.as_bytes().to_vec(),
             &["terraform_data.api".to_owned()],
@@ -301,6 +354,16 @@ mod tests {
         assert_eq!(document.line_kind(10), PlanLineKind::Body);
         assert_eq!(document.line_kind(15), PlanLineKind::OutputSection);
         assert_eq!(document.line_kind(18), PlanLineKind::Summary);
+    }
+
+    #[test]
+    fn keeps_unknown_plan_text_as_body() {
+        let source = "Plan: this is application text\nfollowing body text\n";
+        let document =
+            parse_document(source.as_bytes().to_vec(), &[], &[]).expect("text should parse");
+
+        assert_eq!(document.line_kind(0), PlanLineKind::Body);
+        assert_eq!(document.line_kind(1), PlanLineKind::Body);
     }
 
     #[test]
@@ -519,7 +582,11 @@ mod tests {
         assert_eq!(blocks[1].lines(), &(8..13));
         assert_eq!(blocks[2].lines(), &(13..15));
         assert_eq!(
-            document.filter("worker").lines(),
+            document
+                .filter("worker")
+                .lines_with_indices()
+                .map(|(_, line)| line)
+                .collect::<Vec<_>>(),
             vec![
                 "  # terraform_data.worker will be updated in-place",
                 "  ~ resource \"terraform_data\" \"worker\" {",
