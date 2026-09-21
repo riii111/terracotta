@@ -1,5 +1,25 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QuitConfirmationInput {
+    Confirm,
+    Cancel,
+    Consume,
+    Forward(KeyEvent),
+}
+
+pub(crate) const fn quit_confirmation_key_to_input(key: KeyEvent) -> QuitConfirmationInput {
+    match (key.code, key.modifiers) {
+        (KeyCode::Enter, _) => QuitConfirmationInput::Confirm,
+        (KeyCode::Esc, _) => QuitConfirmationInput::Cancel,
+        (KeyCode::Char('q'), KeyModifiers::NONE) => QuitConfirmationInput::Consume,
+        (KeyCode::Char('c'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
+            QuitConfirmationInput::Consume
+        }
+        _ => QuitConfirmationInput::Forward(key),
+    }
+}
+
 pub(super) fn normalize_key(mut key: KeyEvent) -> KeyEvent {
     if key.modifiers == KeyModifiers::CONTROL {
         let code = match key.code {
@@ -97,6 +117,55 @@ mod tests {
             assert_eq!(
                 normalize_key(KeyEvent::new(KeyCode::Char(case.character), case.modifiers,))
                     .modifiers,
+                case.expected,
+                "case: {}",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn quit_confirmation_key_mapping_preserves_the_raw_forwarded_key() {
+        struct Case {
+            name: &'static str,
+            key: KeyEvent,
+            expected: QuitConfirmationInput,
+        }
+
+        let cases = [
+            Case {
+                name: "enter_with_alt",
+                key: KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT),
+                expected: QuitConfirmationInput::Confirm,
+            },
+            Case {
+                name: "esc_with_control",
+                key: KeyEvent::new(KeyCode::Esc, KeyModifiers::CONTROL),
+                expected: QuitConfirmationInput::Cancel,
+            },
+            Case {
+                name: "q_without_modifiers",
+                key: KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+                expected: QuitConfirmationInput::Consume,
+            },
+            Case {
+                name: "control_c",
+                key: KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                expected: QuitConfirmationInput::Consume,
+            },
+            Case {
+                name: "q_with_control",
+                key: KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL),
+                expected: QuitConfirmationInput::Forward(KeyEvent::new(
+                    KeyCode::Char('q'),
+                    KeyModifiers::CONTROL,
+                )),
+            },
+        ];
+
+        for case in cases {
+            assert_eq!(
+                quit_confirmation_key_to_input(case.key),
                 case.expected,
                 "case: {}",
                 case.name

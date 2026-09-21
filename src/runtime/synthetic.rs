@@ -17,13 +17,13 @@ use crate::{
         review::{PlanBlock, PlanBlockKind, PlanDocument, PlanLineKind, PlanMetadata, PlanReview},
         session::{Action, Effect, ReviewSessionState, SessionState},
     },
-    ui::features::{execution, plan_review},
+    ui::{
+        QuitConfirmationInput,
+        features::{execution, plan_review},
+        quit_confirmation_key_to_input,
+    },
 };
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "the synthetic runtime mirrors the connected event loop in one development entry point"
-)]
 pub(super) fn run_synthetic() -> io::Result<()> {
     let mut state = SessionState::Review(Box::new(synthetic_review()));
     let mut view = plan_review::PlanReviewViewState::default();
@@ -55,116 +55,145 @@ pub(super) fn run_synthetic() -> io::Result<()> {
                 at.saturating_duration_since(Instant::now())
                     .min(Duration::from_millis(100))
             });
-            if event::poll(timeout)? {
-                let event = event::read()?;
-                if let Event::Resize(width, height) = event {
-                    if let SessionState::Review(review) = &state {
-                        let layout = plan_review::layout_with_quit_confirmation(
-                            ratatui::layout::Rect::new(0, 0, width, height),
-                            view.searching(),
-                            review,
-                            quit_confirmation,
-                        );
-                        view.reconcile(
-                            layout.body(),
-                            layout.max_vertical(),
-                            layout.max_horizontal(),
-                            layout.matches(),
-                        );
-                    }
-                    continue;
+            if !event::poll(timeout)? {
+                continue;
+            }
+            let Some(action) = handle_synthetic_event(
+                &event::read()?,
+                terminal,
+                &mut state,
+                &mut view,
+                &mut confirmation_view,
+                &mut execution_view,
+                &mut quit_confirmation,
+            )?
+            else {
+                continue;
+            };
+            match super::event_loop::update_session(
+                &mut state,
+                action,
+                &mut execution_view,
+                Instant::now(),
+            ) {
+                Some(Effect::StartApply) => {
+                    complete_apply_at = Some(Instant::now() + Duration::from_millis(250));
                 }
-                let Event::Key(key) = event else {
-                    continue;
-                };
-                if !key.is_press() {
-                    continue;
+                Some(Effect::WriteClipboard(effect)) => {
+                    let target = effect.target();
+                    let _ = super::event_loop::update_session(
+                        &mut state,
+                        Action::CopyCompleted {
+                            target,
+                            result: CopyResult::Written,
+                        },
+                        &mut execution_view,
+                        Instant::now(),
+                    );
                 }
-                let mut confirmed_quit = false;
-                let action = if quit_confirmation {
-                    match (key.code, key.modifiers) {
-                        (KeyCode::Enter, _) => {
-                            quit_confirmation = false;
-                            confirmed_quit = true;
-                            Some(Action::Quit)
-                        }
-                        (KeyCode::Esc, _) => {
-                            quit_confirmation = false;
-                            None
-                        }
-                        (KeyCode::Char('q'), crossterm::event::KeyModifiers::NONE) => None,
-                        (KeyCode::Char('c'), modifiers)
-                            if modifiers.contains(crossterm::event::KeyModifiers::CONTROL) =>
-                        {
-                            None
-                        }
-                        _ => {
-                            quit_confirmation = false;
-                            match &mut state {
-                                SessionState::Review(review) => {
-                                    synthetic_review_key(terminal, &mut view, review, key)?
-                                }
-                                SessionState::ApplyConfirmation(_) => {
-                                    synthetic_confirmation_key(&mut confirmation_view, key)
-                                }
-                                SessionState::Apply(execution) => synthetic_execution_key(
-                                    terminal,
-                                    execution,
-                                    &mut execution_view,
-                                    key,
-                                )?,
-                                SessionState::Execution(_) => None,
-                            }
-                        }
-                    }
-                } else {
-                    match &mut state {
-                        SessionState::Review(review) => {
-                            synthetic_review_key(terminal, &mut view, review, key)?
-                        }
-                        SessionState::ApplyConfirmation(_) => {
-                            synthetic_confirmation_key(&mut confirmation_view, key)
-                        }
-                        SessionState::Apply(execution) => {
-                            synthetic_execution_key(terminal, execution, &mut execution_view, key)?
-                        }
-                        SessionState::Execution(_) => None,
-                    }
-                };
-                let Some(action) = action else {
-                    continue;
-                };
-                if matches!(action, Action::Quit) && !confirmed_quit {
-                    quit_confirmation = true;
-                    continue;
-                }
-                match super::event_loop::update_session(
-                    &mut state,
-                    action,
-                    &mut execution_view,
-                    Instant::now(),
-                ) {
-                    Some(Effect::StartApply) => {
-                        complete_apply_at = Some(Instant::now() + Duration::from_millis(250));
-                    }
-                    Some(Effect::WriteClipboard(effect)) => {
-                        let target = effect.target();
-                        let _ = super::event_loop::update_session(
-                            &mut state,
-                            Action::CopyCompleted {
-                                target,
-                                result: CopyResult::Written,
-                            },
-                            &mut execution_view,
-                            Instant::now(),
-                        );
-                    }
-                    Some(Effect::Finish(_)) => return Ok(()),
-                    Some(Effect::CancelExecution) | None => {}
-                }
+                Some(Effect::Finish(_)) => return Ok(()),
+                Some(Effect::CancelExecution) | None => {}
             }
         }
     })
+}
+
+fn handle_synthetic_event(
+    event: &Event,
+    terminal: &DefaultTerminal,
+    state: &mut SessionState,
+    view: &mut plan_review::PlanReviewViewState,
+    confirmation_view: &mut plan_review::ApplyConfirmationViewState,
+    execution_view: &mut execution::ExecutionViewState,
+    quit_confirmation: &mut bool,
+) -> io::Result<Option<Action>> {
+    let Event::Key(key) = event else {
+        if let Event::Resize(width, height) = event
+            && let SessionState::Review(review) = state
+        {
+            let layout = plan_review::layout_with_quit_confirmation(
+                ratatui::layout::Rect::new(0, 0, *width, *height),
+                view.searching(),
+                review,
+                *quit_confirmation,
+            );
+            view.reconcile(
+                layout.body(),
+                layout.max_vertical(),
+                layout.max_horizontal(),
+                layout.matches(),
+            );
+        }
+        return Ok(None);
+    };
+    if !key.is_press() {
+        return Ok(None);
+    }
+
+    let key = *key;
+    let mut confirmed_quit = false;
+    let action = if *quit_confirmation {
+        match quit_confirmation_key_to_input(key) {
+            QuitConfirmationInput::Confirm => {
+                *quit_confirmation = false;
+                confirmed_quit = true;
+                Some(Action::Quit)
+            }
+            QuitConfirmationInput::Cancel => {
+                *quit_confirmation = false;
+                None
+            }
+            QuitConfirmationInput::Consume => None,
+            QuitConfirmationInput::Forward(key) => {
+                *quit_confirmation = false;
+                handle_synthetic_key(
+                    terminal,
+                    state,
+                    view,
+                    confirmation_view,
+                    execution_view,
+                    key,
+                )?
+            }
+        }
+    } else {
+        handle_synthetic_key(
+            terminal,
+            state,
+            view,
+            confirmation_view,
+            execution_view,
+            key,
+        )?
+    };
+    let Some(action) = action else {
+        return Ok(None);
+    };
+    if matches!(action, Action::Quit) && !confirmed_quit {
+        *quit_confirmation = true;
+        return Ok(None);
+    }
+    Ok(Some(action))
+}
+
+fn handle_synthetic_key(
+    terminal: &DefaultTerminal,
+    state: &mut SessionState,
+    view: &mut plan_review::PlanReviewViewState,
+    confirmation_view: &mut plan_review::ApplyConfirmationViewState,
+    execution_view: &mut execution::ExecutionViewState,
+    key: KeyEvent,
+) -> io::Result<Option<Action>> {
+    match state {
+        SessionState::Review(review) => synthetic_review_key(terminal, view, review, key),
+        SessionState::ApplyConfirmation(_) => {
+            Ok(synthetic_confirmation_key(confirmation_view, key))
+        }
+        SessionState::Apply(execution) => {
+            synthetic_execution_key(terminal, execution, execution_view, key)
+        }
+        SessionState::Execution(_) => Ok(None),
+    }
 }
 
 fn synthetic_review() -> ReviewSessionState {
