@@ -668,8 +668,8 @@ mod tests {
     use super::*;
     use crate::app::{
         execution::{
-            ApplyStatus, EventStream, ExecutionContext, ExecutionEvent, ExecutionEventKind,
-            ExecutionLogLine,
+            ApplyStatus, EventStream, ExecutionAction, ExecutionContext, ExecutionEvent,
+            ExecutionEventKind, ExecutionLogLine,
         },
         review::{PlanMetadata, PlanReview, test_support::plan_document},
         session::{ApplyConfirmationState, ReviewSessionState},
@@ -1026,17 +1026,24 @@ mod tests {
     fn delayed_final_message_after_cancellation_is_processed_before_disconnect() {
         let (sender, receiver) = mpsc::channel();
         let (release_sender, release_receiver) = mpsc::sync_channel(0);
+        let (sent_sender, sent_receiver) = mpsc::sync_channel(0);
         let worker_sender = sender.clone();
         let handle = thread::spawn(move || {
             release_receiver
                 .recv()
                 .expect("test should release the worker");
             worker_sender
-                .send(PlanReviewMessage::Failed {
-                    message: "late cancellation failure".to_owned(),
-                    interrupted: true,
-                })
+                .send(PlanReviewMessage::Completed(PlanReview::new(
+                    PathBuf::from("/project"),
+                    "default".to_owned(),
+                    plan_document("No changes.\n".to_owned()),
+                    PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
+                    Vec::new(),
+                )))
                 .expect("the receiver should still be alive");
+            sent_sender
+                .send(())
+                .expect("the test should observe the send");
         });
         let mut plan_worker = worker_guard(Some(handle));
         let mut apply_worker = worker_guard(None);
@@ -1057,10 +1064,26 @@ mod tests {
         let mut execution_view = execution::ExecutionViewState::default();
         let mut worker_disconnected = false;
 
-        cancellation.cancel();
+        assert!(
+            dispatch(
+                &mut state,
+                Action::Execution(ExecutionAction::RequestCancellation),
+                &mut execution_view,
+                &mut effects,
+            )
+            .is_none()
+        );
+        assert!(
+            state
+                .execution()
+                .is_some_and(ExecutionState::cancellation_requested)
+        );
         release_sender
             .send(())
             .expect("the worker should still be waiting");
+        sent_receiver
+            .recv()
+            .expect("the test should observe the final message");
         wait_for_finished(plan_worker.handle.as_ref().expect("plan handle"));
 
         let finished =
@@ -1078,6 +1101,19 @@ mod tests {
             Some(SessionOutcome::Interrupted(ExecutionStage::Initializing))
         );
         assert!(finished.plan);
+        assert_eq!(
+            reap_workers(&mut plan_worker, &mut effects).expect("a reaped worker has no handle"),
+            FinishedWorkers::default()
+        );
+        assert!(
+            dispatch_finished_workers(
+                &mut state,
+                &mut execution_view,
+                FinishedWorkers::default(),
+                &mut effects,
+            )
+            .is_none()
+        );
     }
 
     #[test]
