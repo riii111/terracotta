@@ -106,6 +106,7 @@ def demo():
         if build.returncode:
             return build.returncode
         executable = "terracotta.exe" if os.name == "nt" else "terracotta"
+        install_demo_terraform_wrapper(directory, environment)
         print("[3/3] Opening plan review...", file=sys.stderr, flush=True)
         return subprocess.run(
             [str(target / "debug" / executable), "plan"],
@@ -113,6 +114,30 @@ def demo():
         ).returncode
     finally:
         clean(directory)
+
+
+def install_demo_terraform_wrapper(directory, environment):
+    # Rust's Windows command lookup does not reliably select a .cmd shim.
+    if os.name == "nt":
+        return
+
+    terraform = shutil.which("terraform")
+    if terraform is None:
+        raise RuntimeError("Required executable not found: terraform")
+    terraform = str(Path(terraform).resolve())
+
+    wrapper_directory = directory / ".terraform" / "terracotta-demo-bin"
+    wrapper_directory.mkdir(parents=True)
+    wrapper = wrapper_directory / "terraform"
+    wrapper.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os\nimport sys\nimport time\n"
+        "if len(sys.argv) > 1 and sys.argv[1] == 'apply':\n"
+        "    time.sleep(5)\n"
+        f"os.execv({terraform!r}, [{terraform!r}, *sys.argv[1:]])\n"
+    )
+    wrapper.chmod(0o700)
+    environment["PATH"] = str(wrapper_directory) + os.pathsep + environment.get("PATH", os.defpath)
 
 
 def isolated_environment(directory):
