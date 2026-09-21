@@ -350,20 +350,33 @@ try:
         wait_parts(["Apply complete", "Apply complete! Resources:"], "apply_result", timeout=60)
         send_key(b"y")
         exit_code = quit_with_enter()
-    elif scenario in ("apply_success", "apply_failure", "apply_interrupt"):
+    elif scenario in ("apply_success", "apply_failure", "apply_interrupt", "apply_log_view"):
         wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
         send_key(b"a")
         wait_new("Apply this reviewed plan?", "apply_confirmation")
         send_text("yes")
         send_key(b"\r")
         wait_new("Applying...", "apply_started")
-        if scenario == "apply_success":
+        if scenario == "apply_log_view":
+            if "Applying saved plan..." in screen.text():
+                raise RuntimeError("apply log was visible in compact status mode")
+            send_key(b"v")
+            wait_new("Applying saved plan...", "apply_logs_open")
+            send_key(b"\x1b")
+            wait_new("v logs", "apply_logs_closed")
+            send_key(b"v")
+            wait_new("Applying saved plan...", "apply_logs_reopened")
+            wait_parts(["Apply complete", "endpoint ="], "apply_success", timeout=60)
+            exit_code = quit_with_enter()
+        elif scenario == "apply_success":
             wait_parts(["Apply complete", "endpoint ="], "apply_success")
             exit_code = quit_with_enter()
         elif scenario == "apply_failure":
             wait_parts(["Apply failed", "synthetic apply failure"], "apply_failure")
             exit_code = quit_with_enter()
         else:
+            send_key(b"v")
+            wait_new("Applying saved plan...", "apply_logs_open")
             send_key(b"\x03")
             wait_parts(["Stopping apply", "Apply interrupted"], "apply_interrupted")
             exit_code = quit_with_enter()

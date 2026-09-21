@@ -346,17 +346,28 @@ fn handle_execution_key_event<B: Backend>(
     key: KeyEvent,
 ) -> Result<Option<Action>, B::Error> {
     Ok(
-        match execution::execution_key_to_input(key, state.stage()) {
+        match execution::execution_key_to_input(key, state.stage(), execution_view.logs_open()) {
             Some(execution::ExecutionInput::Quit) => Some(Action::Quit),
             Some(execution::ExecutionInput::Action(action)) => Some(Action::Execution(action)),
+            Some(execution::ExecutionInput::OpenLogs) => {
+                execution_view.open_logs();
+                None
+            }
+            Some(execution::ExecutionInput::CloseLogs) => {
+                execution_view.close_logs();
+                None
+            }
             Some(execution::ExecutionInput::End) => {
                 execution_view.end();
                 None
             }
             Some(execution::ExecutionInput::Scroll(scroll)) => {
                 let size = terminal.size()?;
-                let layout =
-                    execution::execution_layout(Rect::new(0, 0, size.width, size.height), state);
+                let layout = execution::execution_layout_with_view(
+                    Rect::new(0, 0, size.width, size.height),
+                    state,
+                    *execution_view,
+                );
                 let (current_vertical, _) =
                     execution::execution_scroll_position_with_view(state, *execution_view, &layout);
                 match scroll {
@@ -1238,6 +1249,19 @@ mod tests {
         let mut execution_view = execution::ExecutionViewState::default();
         let mut review_view = plan_review::PlanReviewViewState::default();
         let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
+        assert_eq!(
+            handle_key_event(
+                &terminal,
+                &state,
+                &mut execution_view,
+                &mut review_view,
+                &mut confirmation_view,
+                KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
+            )
+            .expect("log viewer key should be handled"),
+            None
+        );
+        assert!(execution_view.logs_open());
         let down = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
 
         assert_eq!(
@@ -1296,6 +1320,71 @@ mod tests {
         )
         .expect("updated log should render");
         assert!(terminal_text(&terminal).contains("new tail marker"));
+
+        assert_apply_log_view_can_close_and_reopen(
+            &mut state,
+            &mut terminal,
+            &mut execution_view,
+            &mut review_view,
+            &mut confirmation_view,
+            started_at + Duration::from_secs(1),
+        );
+    }
+
+    fn assert_apply_log_view_can_close_and_reopen(
+        state: &mut SessionState,
+        terminal: &mut Terminal<TestBackend>,
+        execution_view: &mut execution::ExecutionViewState,
+        review_view: &mut plan_review::PlanReviewViewState,
+        confirmation_view: &mut plan_review::ApplyConfirmationViewState,
+        now: Instant,
+    ) {
+        assert_eq!(
+            handle_key_event(
+                terminal,
+                state,
+                execution_view,
+                review_view,
+                confirmation_view,
+                KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            )
+            .expect("escape should close the log viewer"),
+            None
+        );
+        assert!(!execution_view.logs_open());
+        let compact_text = render_apply_to_text(
+            state,
+            terminal,
+            *execution_view,
+            review_view,
+            confirmation_view,
+            now,
+        );
+        assert!(!compact_text.contains("new tail marker"));
+
+        assert_eq!(
+            handle_key_event(
+                terminal,
+                state,
+                execution_view,
+                review_view,
+                confirmation_view,
+                KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
+            )
+            .expect("v should reopen the log viewer"),
+            None
+        );
+        assert!(execution_view.logs_open());
+        assert!(execution_view.follows_latest());
+        let reopened_text = render_apply_to_text(
+            state,
+            terminal,
+            *execution_view,
+            review_view,
+            confirmation_view,
+            now,
+        );
+        assert!(reopened_text.contains("new tail marker"));
     }
 
     #[test]
@@ -1391,6 +1480,7 @@ mod tests {
         confirmation_view: &mut plan_review::ApplyConfirmationViewState,
         now: Instant,
     ) {
+        view.open_logs();
         for index in 0..40 {
             let text = if index == 0 {
                 "apply log line 0 with enough width to exercise the production horizontal scrollbar after the result is complete".to_owned()
@@ -1448,6 +1538,7 @@ mod tests {
             view,
             now,
         );
+        assert!(!view.logs_open());
         assert_eq!(view.horizontal(), 0);
         assert_eq!(view.vertical_offset(2, 90), 2);
         let text =
@@ -1526,7 +1617,11 @@ mod tests {
         execution::execution_scroll_position_with_view(
             apply,
             view,
-            &execution::execution_layout(ratatui::layout::Rect::new(0, 0, 80, 24), apply),
+            &execution::execution_layout_with_view(
+                ratatui::layout::Rect::new(0, 0, 80, 24),
+                apply,
+                view,
+            ),
         )
         .0
     }

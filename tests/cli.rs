@@ -336,6 +336,21 @@ Plan: 0 to add, 1 to change, 0 to destroy.
     }
 
     #[test]
+    fn pty_apply_progress_can_open_close_and_reopen_the_log_viewer() {
+        let fixture = Fixture::new();
+        let result = fixture.run("apply_log_view", 100, 24);
+
+        assert_eq!(result.exit_code, 0);
+        result.assert_restored();
+        result.observed("apply_started");
+        result.observed("apply_logs_open");
+        result.observed("apply_logs_closed");
+        result.observed("apply_logs_reopened");
+        result.observed("apply_success");
+        fixture.assert_saved_plan_removed();
+    }
+
+    #[test]
     fn pty_apply_failure_keeps_the_result_and_returns_failure() {
         let fixture = Fixture::new();
         let result = fixture.run("apply_failure", 100, 24);

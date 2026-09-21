@@ -12,14 +12,18 @@ pub(crate) enum ExecutionInput {
     Scroll(ExecutionScroll),
     Copy(CopyTarget),
     End,
+    OpenLogs,
+    CloseLogs,
     Quit,
 }
 
 pub(crate) fn execution_key_to_input(
     key: KeyEvent,
     stage: ExecutionStage,
+    logs_open: bool,
 ) -> Option<ExecutionInput> {
     let key = normalize_key(key);
+    let apply_in_progress = stage == ExecutionStage::Applying;
 
     let finished = matches!(
         stage,
@@ -52,6 +56,23 @@ pub(crate) fn execution_key_to_input(
         } else {
             CopyTarget::Diagnostic
         }));
+    }
+
+    if apply_in_progress && key.modifiers == KeyModifiers::NONE {
+        if key.code == KeyCode::Char('v') {
+            return Some(if logs_open {
+                ExecutionInput::CloseLogs
+            } else {
+                ExecutionInput::OpenLogs
+            });
+        }
+        if logs_open && key.code == KeyCode::Esc {
+            return Some(ExecutionInput::CloseLogs);
+        }
+    }
+
+    if apply_in_progress && !logs_open {
+        return None;
     }
 
     if key.code == KeyCode::Char('a') && key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -157,7 +178,7 @@ mod tests {
 
         for (name, input, stage, expected) in cases {
             assert_eq!(
-                execution_key_to_input(input, stage),
+                execution_key_to_input(input, stage, false),
                 expected,
                 "case: {name}"
             );
@@ -173,7 +194,11 @@ mod tests {
     #[case::alt_with_redundant_shift(KeyModifiers::ALT | KeyModifiers::SHIFT)]
     fn uppercase_y_does_not_copy_after_failure(#[case] modifiers: KeyModifiers) {
         assert_eq!(
-            execution_key_to_input(key(KeyCode::Char('Y'), modifiers), ExecutionStage::Failed),
+            execution_key_to_input(
+                key(KeyCode::Char('Y'), modifiers),
+                ExecutionStage::Failed,
+                false,
+            ),
             None
         );
     }
@@ -184,8 +209,72 @@ mod tests {
     #[case::uppercase_with_redundant_shift(KeyCode::Char('Y'), KeyModifiers::SHIFT)]
     fn copy_keys_are_ignored_while_running(#[case] code: KeyCode, #[case] modifiers: KeyModifiers) {
         assert_eq!(
-            execution_key_to_input(key(code, modifiers), ExecutionStage::Planning),
+            execution_key_to_input(key(code, modifiers), ExecutionStage::Planning, false),
             None
+        );
+    }
+
+    #[test]
+    fn plain_v_opens_and_closes_apply_logs_without_changing_other_v_keys() {
+        assert_eq!(
+            execution_key_to_input(
+                key(KeyCode::Char('v'), KeyModifiers::NONE),
+                ExecutionStage::Applying,
+                false,
+            ),
+            Some(ExecutionInput::OpenLogs)
+        );
+        assert_eq!(
+            execution_key_to_input(
+                key(KeyCode::Char('v'), KeyModifiers::NONE),
+                ExecutionStage::Applying,
+                true,
+            ),
+            Some(ExecutionInput::CloseLogs)
+        );
+        assert_eq!(
+            execution_key_to_input(
+                key(KeyCode::Esc, KeyModifiers::NONE),
+                ExecutionStage::Applying,
+                true,
+            ),
+            Some(ExecutionInput::CloseLogs)
+        );
+        assert_eq!(
+            execution_key_to_input(
+                key(KeyCode::Char('v'), KeyModifiers::ALT),
+                ExecutionStage::Applying,
+                false,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn compact_apply_ignores_log_navigation_but_keeps_cancellation() {
+        assert_eq!(
+            execution_key_to_input(
+                key(KeyCode::Down, KeyModifiers::NONE),
+                ExecutionStage::Applying,
+                false,
+            ),
+            None
+        );
+        assert_eq!(
+            execution_key_to_input(
+                key(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                ExecutionStage::Applying,
+                false,
+            ),
+            Some(ExecutionInput::Action(ExecutionAction::RequestCancellation))
+        );
+        assert_eq!(
+            execution_key_to_input(
+                key(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                ExecutionStage::Applying,
+                true,
+            ),
+            Some(ExecutionInput::Action(ExecutionAction::RequestCancellation))
         );
     }
 }
