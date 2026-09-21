@@ -143,6 +143,15 @@ impl PlanReviewLayout {
 }
 
 pub(crate) fn layout(area: Rect, searching: bool, state: &ReviewSessionState) -> PlanReviewLayout {
+    layout_with_quit_confirmation(area, searching, state, false)
+}
+
+pub(crate) fn layout_with_quit_confirmation(
+    area: Rect,
+    searching: bool,
+    state: &ReviewSessionState,
+    quit_confirmation: bool,
+) -> PlanReviewLayout {
     let filtered_view = filter_active(searching, state);
     let base_content = prepare_content(state, false, "");
     let content = prepare_content(state, filtered_view, state.review().search_query());
@@ -153,9 +162,15 @@ pub(crate) fn layout(area: Rect, searching: bool, state: &ReviewSessionState) ->
         &content,
         &base_content,
         state.copy_notice().map(CopyNotice::message),
+        quit_confirmation,
     )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "the plan layout keeps all width, height, footer, and scroll calculations together"
+)]
 fn layout_with_content(
     area: Rect,
     searching: bool,
@@ -163,9 +178,10 @@ fn layout_with_content(
     content: &PreparedContent<'_>,
     base_content: &PreparedContent<'_>,
     notice: Option<&str>,
+    quit_confirmation: bool,
 ) -> PlanReviewLayout {
     let panel_width = shell_layout::centered_width(area);
-    let footer_lines = footer::layout_with_notice(
+    let normal_footer_lines = footer::layout_with_notice(
         footer_items(
             searching,
             state.review().metadata().applyable(),
@@ -175,7 +191,7 @@ fn layout_with_content(
         panel_width,
         notice,
     );
-    let required = footer::layout_with_notice(
+    let normal_required = footer::layout_with_notice(
         required_footer_items(
             searching,
             content.matches.len(),
@@ -192,7 +208,7 @@ fn layout_with_content(
         filter_visible,
         panel_width,
         notice,
-        &footer_lines,
+        &normal_footer_lines,
     );
     let inner_width = panel_width.saturating_sub(2);
     let filter_details_height = filter_details_height(state, filter_visible, inner_width);
@@ -206,8 +222,24 @@ fn layout_with_content(
         .saturating_add(fixed_filter_height)
         .saturating_add(body_height);
     let requested_height =
-        shell_layout::required_height(content_height, &footer_height_lines, &required);
+        shell_layout::required_height(content_height, &footer_height_lines, &normal_required);
     let panel = shell_layout::centered_area(area, requested_height);
+    let footer_lines = if quit_confirmation {
+        footer::pad_lines(
+            footer::quit_confirmation_lines(panel_width, notice),
+            normal_footer_lines.len(),
+        )
+    } else {
+        normal_footer_lines
+    };
+    let required = if quit_confirmation {
+        footer::pad_lines(
+            footer::quit_confirmation_lines(panel_width, notice),
+            normal_required.len(),
+        )
+    } else {
+        normal_required
+    };
     let shell = shell_layout::layout(panel, footer_lines, required, 1);
     let inner = shell.content_inner();
     let search = filter_visible.then(|| Rect::new(inner.x, inner.y, inner.width, 1));
@@ -277,6 +309,10 @@ fn fixed_filter_height(filter_visible: bool, details_height: u16) -> u16 {
         .saturating_add(u16::from(filter_visible))
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "footer sizing needs the same feature state as the surrounding layout"
+)]
 fn sizing_footer_lines(
     searching: bool,
     state: &ReviewSessionState,
@@ -466,18 +502,37 @@ fn confirmation_input_scroll(view: &ApplyConfirmationViewState, width: u16) -> u
     u16::try_from(cursor_width.saturating_sub(width.saturating_sub(1))).unwrap_or(u16::MAX)
 }
 
+#[cfg(test)]
 pub(crate) fn render(
     frame: &mut Frame<'_>,
     state: &ReviewSessionState,
     view: &PlanReviewViewState,
     now: Instant,
 ) {
+    render_with_quit_confirmation(frame, state, view, now, false);
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "the plan renderer keeps the feature layout and content projection in one path"
+)]
+pub(crate) fn render_with_quit_confirmation(
+    frame: &mut Frame<'_>,
+    state: &ReviewSessionState,
+    view: &PlanReviewViewState,
+    now: Instant,
+    quit_confirmation: bool,
+) {
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         terminal_notice::render_wrapped(
             frame,
             area,
-            terminal_notice_message(view.searching(), filter_active(view.searching(), state)),
+            terminal_notice_message(
+                view.searching(),
+                filter_active(view.searching(), state),
+                quit_confirmation,
+            ),
         );
         return;
     }
@@ -493,12 +548,17 @@ pub(crate) fn render(
         &content,
         &base_content,
         notice.map(CopyNotice::message),
+        quit_confirmation,
     );
     if layout.body().width == 0 || layout.body().height == 0 {
         terminal_notice::render_wrapped(
             frame,
             area,
-            terminal_notice_message(view.searching(), filter_active(view.searching(), state)),
+            terminal_notice_message(
+                view.searching(),
+                filter_active(view.searching(), state),
+                quit_confirmation,
+            ),
         );
         return;
     }
@@ -849,8 +909,14 @@ fn filter_active(searching: bool, state: &ReviewSessionState) -> bool {
     searching || !state.review().search_query().is_empty()
 }
 
-const fn terminal_notice_message(searching: bool, filtered: bool) -> &'static str {
-    if searching {
+const fn terminal_notice_message(
+    searching: bool,
+    filtered: bool,
+    quit_confirmation: bool,
+) -> &'static str {
+    if quit_confirmation {
+        "Quit? Enter exit / Esc cancel"
+    } else if searching {
         "Terminal too small. Resize or press Esc to cancel filter."
     } else if filtered {
         "Terminal too small. Resize or press Esc to clear filter."
@@ -1412,6 +1478,79 @@ End of synthetic plan body."#;
 
             snapshot(&format!("preview_{width}x{height}_normal"), &buffer);
         }
+    }
+
+    #[test]
+    fn renders_plan_review_quit_confirmation_at_all_supported_sizes() {
+        for &(width, height) in &SIZES {
+            let state = review_state(review());
+            let buffer = render_to_buffer((width, height), |frame| {
+                render_with_quit_confirmation(
+                    frame,
+                    &state,
+                    &PlanReviewViewState::default(),
+                    Instant::now(),
+                    true,
+                );
+            });
+
+            snapshot(
+                &format!("preview_{width}x{height}_quit-confirmation"),
+                &buffer,
+            );
+        }
+    }
+
+    #[test]
+    fn quit_confirmation_replaces_the_plan_footer_and_has_a_narrow_notice() {
+        let state = review_state(review_with_applyable(false));
+        let buffer = render_to_buffer((80, 24), |frame| {
+            render_with_quit_confirmation(
+                frame,
+                &state,
+                &PlanReviewViewState::default(),
+                Instant::now(),
+                true,
+            );
+        });
+        let text = buffer_text(&buffer);
+        assert!(text.contains("Quit Terracotta? Enter quit | Esc cancel"));
+        assert!(!text.contains("q quit"));
+
+        let narrow = render_to_buffer((32, 9), |frame| {
+            render_with_quit_confirmation(
+                frame,
+                &state,
+                &PlanReviewViewState::default(),
+                Instant::now(),
+                true,
+            );
+        });
+        assert!(buffer_text(&narrow).contains("Quit? Enter exit / Esc cancel"));
+    }
+
+    #[test]
+    fn quit_confirmation_preserves_the_plan_body_and_scroll_limits() {
+        let state = review_state(review());
+        let area = Rect::new(0, 0, 50, 24);
+        let normal = layout(area, false, &state);
+        let waiting = layout_with_quit_confirmation(area, false, &state, true);
+        let content = prepare_content(&state, false, "");
+        let footer = footer::layout_with_notice(
+            footer_items(
+                false,
+                state.review().metadata().applyable(),
+                content.matches.len(),
+                false,
+            ),
+            shell_layout::centered_width(area),
+            None,
+        );
+
+        assert!(footer.len() >= 2);
+        assert_eq!(waiting.body(), normal.body());
+        assert_eq!(waiting.max_vertical(), normal.max_vertical());
+        assert_eq!(waiting.max_horizontal(), normal.max_horizontal());
     }
 
     #[test]

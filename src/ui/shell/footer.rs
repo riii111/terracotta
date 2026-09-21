@@ -28,6 +28,56 @@ pub(crate) fn hint(alternative_keys: &[&'static str], description: &'static str)
     Line::from(spans)
 }
 
+pub(crate) fn quit_confirmation_lines(width: u16, notice: Option<&str>) -> Vec<Line<'static>> {
+    let available = available_width(width, notice);
+    let full = quit_confirmation_line();
+    let compact = compact_quit_confirmation_line();
+    let line = if full.width() <= usize::from(available) {
+        full
+    } else if compact.width() <= usize::from(available) {
+        compact
+    } else {
+        minimal_quit_confirmation_line()
+    };
+    layout_with_notice(vec![line], width, notice)
+}
+
+pub(crate) fn pad_lines(mut lines: Vec<Line<'static>>, height: usize) -> Vec<Line<'static>> {
+    lines.resize(height.max(1), Line::default());
+    lines
+}
+
+fn quit_confirmation_line() -> Line<'static> {
+    Line::from(vec![
+        Span::styled("Quit Terracotta? ", theme::footer_text_style()),
+        Span::styled("Enter", theme::footer_key_style()),
+        Span::styled(" quit | ", theme::footer_text_style()),
+        Span::styled("Esc", theme::footer_key_style()),
+        Span::styled(" cancel", theme::footer_text_style()),
+    ])
+}
+
+fn compact_quit_confirmation_line() -> Line<'static> {
+    Line::from(vec![
+        Span::styled("Quit? ", theme::footer_text_style()),
+        Span::styled("Enter", theme::footer_key_style()),
+        Span::styled(" exit ", theme::footer_text_style()),
+        Span::styled("/", theme::footer_key_separator_style()),
+        Span::styled(" ", theme::footer_text_style()),
+        Span::styled("Esc", theme::footer_key_style()),
+        Span::styled(" cancel", theme::footer_text_style()),
+    ])
+}
+
+fn minimal_quit_confirmation_line() -> Line<'static> {
+    Line::from(vec![
+        Span::styled("Quit? ", theme::footer_text_style()),
+        Span::styled("Enter", theme::footer_key_style()),
+        Span::styled("/", theme::footer_key_separator_style()),
+        Span::styled("Esc", theme::footer_key_style()),
+    ])
+}
+
 pub(crate) fn layout(items: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
     let width = usize::from(width);
     let mut rows = vec![Line::default()];
@@ -311,6 +361,36 @@ mod tests {
         for (name, keys, expected) in cases {
             assert_eq!(hint(keys, "confirm").to_string(), *expected, "case: {name}");
         }
+    }
+
+    #[test]
+    fn quit_confirmation_uses_the_full_prompt_when_it_fits() {
+        let lines = quit_confirmation_lines(80, None);
+
+        assert_eq!(
+            lines.iter().map(Line::to_string).collect::<Vec<_>>(),
+            vec!["Quit Terracotta? Enter quit | Esc cancel".to_owned()]
+        );
+    }
+
+    #[test]
+    fn quit_confirmation_uses_a_short_prompt_when_the_footer_is_narrow() {
+        let lines = quit_confirmation_lines(32, None);
+
+        assert_eq!(
+            lines.iter().map(Line::to_string).collect::<Vec<_>>(),
+            vec!["Quit? Enter exit / Esc cancel".to_owned()]
+        );
+    }
+
+    #[test]
+    fn quit_confirmation_keeps_a_copy_notice_visible_when_the_footer_is_narrow() {
+        let lines = quit_confirmation_lines(32, Some("Copied."));
+
+        assert_eq!(
+            lines.iter().map(Line::to_string).collect::<Vec<_>>(),
+            vec!["Quit? Enter/Esc".to_owned()]
+        );
     }
 
     #[rstest]

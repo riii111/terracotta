@@ -327,5 +327,14 @@ mod tests {
             )),
             Some(ApplyConfirmationInput::Right)
         );
+        for character in ['q', 'y'] {
+            assert_eq!(
+                apply_confirmation_key_to_input(KeyEvent::new(
+                    KeyCode::Char(character),
+                    KeyModifiers::NONE,
+                )),
+                Some(ApplyConfirmationInput::Character(character))
+            );
+        }
     }
 }

@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crossterm::event::{self, Event, KeyEvent};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{DefaultTerminal, Terminal, backend::Backend, layout::Rect};
 
 use crate::{
@@ -23,6 +23,7 @@ use crate::{
 
 #[allow(
     clippy::too_many_arguments,
+    clippy::too_many_lines,
     reason = "the event loop receives the explicit runtime resources it coordinates"
 )]
 pub(crate) fn run_connected(
@@ -49,6 +50,7 @@ pub(crate) fn run_connected(
     };
     let mut state = SessionState::new(execution);
     let mut worker_disconnected = false;
+    let mut quit_confirmation = false;
     let mut dirty = true;
 
     loop {
@@ -65,7 +67,7 @@ pub(crate) fn run_connected(
         }
 
         let now = Instant::now();
-        draw_if_needed(
+        draw_if_needed_with_quit_confirmation(
             &mut state,
             terminal,
             execution_view,
@@ -73,6 +75,7 @@ pub(crate) fn run_connected(
             &confirmation_view,
             &mut dirty,
             now,
+            quit_confirmation,
         )?;
 
         if event::poll(Duration::from_millis(100))? {
@@ -80,10 +83,11 @@ pub(crate) fn run_connected(
                 Event::Resize(width, height) => {
                     dirty = true;
                     if let Some(review) = state.review() {
-                        let layout = plan_review::layout(
+                        let layout = plan_review::layout_with_quit_confirmation(
                             Rect::new(0, 0, width, height),
                             review_view.searching(),
                             review,
+                            quit_confirmation,
                         );
                         review_view.reconcile(
                             layout.body(),
@@ -95,15 +99,50 @@ pub(crate) fn run_connected(
                 }
                 Event::Key(key) if key.is_press() => {
                     dirty = true;
-                    if let Some(action) = handle_key_event(
-                        terminal,
-                        &state,
-                        &mut execution_view,
-                        &mut review_view,
-                        &mut confirmation_view,
-                        key,
-                    )? {
-                        if let Some(outcome) =
+                    let mut confirmed_quit = false;
+                    let action = if quit_confirmation {
+                        match (key.code, key.modifiers) {
+                            (KeyCode::Enter, _) => {
+                                quit_confirmation = false;
+                                confirmed_quit = true;
+                                Some(Action::Quit)
+                            }
+                            (KeyCode::Esc, _) => {
+                                quit_confirmation = false;
+                                None
+                            }
+                            (KeyCode::Char('q'), KeyModifiers::NONE) => None,
+                            (KeyCode::Char('c'), modifiers)
+                                if modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
+                                None
+                            }
+                            _ => {
+                                quit_confirmation = false;
+                                handle_key_event(
+                                    terminal,
+                                    &state,
+                                    &mut execution_view,
+                                    &mut review_view,
+                                    &mut confirmation_view,
+                                    key,
+                                )?
+                            }
+                        }
+                    } else {
+                        handle_key_event(
+                            terminal,
+                            &state,
+                            &mut execution_view,
+                            &mut review_view,
+                            &mut confirmation_view,
+                            key,
+                        )?
+                    };
+                    if let Some(action) = action {
+                        if matches!(action, Action::Quit) && !confirmed_quit {
+                            quit_confirmation = true;
+                        } else if let Some(outcome) =
                             dispatch(&mut state, action, &mut execution_view, &mut effects)
                         {
                             return Ok(outcome);
@@ -112,7 +151,7 @@ pub(crate) fn run_connected(
                             .apply()
                             .is_some_and(|apply| apply.stage() == ExecutionStage::Applying)
                         {
-                            draw_if_needed(
+                            draw_if_needed_with_quit_confirmation(
                                 &mut state,
                                 terminal,
                                 execution_view,
@@ -120,6 +159,7 @@ pub(crate) fn run_connected(
                                 &confirmation_view,
                                 &mut dirty,
                                 Instant::now(),
+                                quit_confirmation,
                             )?;
                         }
                     }
@@ -146,6 +186,7 @@ fn should_draw(state: &SessionState, dirty: bool, now: Instant) -> bool {
         })
 }
 
+#[cfg(test)]
 fn draw_if_needed<B: Backend>(
     state: &mut SessionState,
     terminal: &mut Terminal<B>,
@@ -155,17 +196,44 @@ fn draw_if_needed<B: Backend>(
     dirty: &mut bool,
     now: Instant,
 ) -> Result<bool, B::Error> {
+    draw_if_needed_with_quit_confirmation(
+        state,
+        terminal,
+        execution_view,
+        review_view,
+        confirmation_view,
+        dirty,
+        now,
+        false,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the draw step receives the runtime-owned views and rendering state"
+)]
+fn draw_if_needed_with_quit_confirmation<B: Backend>(
+    state: &mut SessionState,
+    terminal: &mut Terminal<B>,
+    execution_view: execution::ExecutionViewState,
+    review_view: &plan_review::PlanReviewViewState,
+    confirmation_view: &plan_review::ApplyConfirmationViewState,
+    dirty: &mut bool,
+    now: Instant,
+    quit_confirmation: bool,
+) -> Result<bool, B::Error> {
     if !should_draw(state, *dirty, now) {
         return Ok(false);
     }
 
-    draw(
+    draw_with_quit_confirmation(
         state,
         terminal,
         execution_view,
         review_view,
         confirmation_view,
         now,
+        quit_confirmation,
     )?;
     clear_expired_copy_feedback(state, now);
     *dirty = false;
@@ -325,22 +393,37 @@ fn handle_execution_key_event<B: Backend>(
     )
 }
 
-fn draw<B: Backend>(
+fn draw_with_quit_confirmation<B: Backend>(
     state: &SessionState,
     terminal: &mut Terminal<B>,
     execution_view: execution::ExecutionViewState,
     review_view: &plan_review::PlanReviewViewState,
     confirmation_view: &plan_review::ApplyConfirmationViewState,
     now: Instant,
+    quit_confirmation: bool,
 ) -> Result<(), B::Error> {
     match state {
         SessionState::Execution(execution) => {
             terminal.draw(|frame| {
-                execution::render_execution_with_view(frame, execution, execution_view, now);
+                execution::render_execution_with_quit_confirmation(
+                    frame,
+                    execution,
+                    execution_view,
+                    now,
+                    quit_confirmation,
+                );
             })?;
         }
         SessionState::Review(review) => {
-            terminal.draw(|frame| plan_review::render(frame, review, review_view, now))?;
+            terminal.draw(|frame| {
+                plan_review::render_with_quit_confirmation(
+                    frame,
+                    review,
+                    review_view,
+                    now,
+                    quit_confirmation,
+                );
+            })?;
         }
         SessionState::ApplyConfirmation(confirmation) => {
             terminal.draw(|frame| {
@@ -349,7 +432,13 @@ fn draw<B: Backend>(
         }
         SessionState::Apply(execution) => {
             terminal.draw(|frame| {
-                execution::render_execution_with_view(frame, execution, execution_view, now);
+                execution::render_execution_with_quit_confirmation(
+                    frame,
+                    execution,
+                    execution_view,
+                    now,
+                    quit_confirmation,
+                );
             })?;
         }
     }
