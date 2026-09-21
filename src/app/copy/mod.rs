@@ -1,4 +1,5 @@
 use std::fmt::{Debug, Formatter};
+use std::time::Duration;
 
 use super::{
     execution::{Diagnostic, ExecutionStage, ExecutionState},
@@ -29,7 +30,15 @@ impl CopyNotice {
     pub(crate) const fn message(self) -> &'static str {
         match self {
             Self::Copied { .. } => "Copied.",
-            Self::Failed => "Copy failed: clipboard unavailable.",
+            Self::Failed => "Copy failed.",
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn duration(self) -> Duration {
+        match self {
+            Self::Copied { .. } => Duration::from_secs(3),
+            Self::Failed => Duration::from_secs(5),
         }
     }
 }

@@ -17,8 +17,8 @@ expression: buffer_text(buffer)
  │                                                                            │
  │ This plan includes resource deletion.                                      │
  │                                                                            │
- │ Apply this plan? (yes/no):                                                 │
- │ |                                                                          │
+ │ Apply this plan? Type yes or no.                                           │
+ │ > |                                                                        │
  │                                                                            │
  └────────────────────────────────────────────────────────────────────────────┘
  Enter confirm | Esc back

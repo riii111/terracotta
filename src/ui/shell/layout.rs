@@ -6,7 +6,6 @@ use ratatui::widgets::{Block, Borders};
 use crate::ui::theme;
 
 const HEADER_HEIGHT: u16 = 2;
-pub(crate) const MAX_WIDTH: u16 = 120;
 pub(crate) const MAX_HEIGHT: u16 = 40;
 
 pub(crate) struct ShellLayout {
@@ -84,7 +83,7 @@ pub(crate) fn layout(
 }
 
 pub(crate) fn centered_area(area: Rect) -> Rect {
-    let width = area.width.saturating_sub(2).min(MAX_WIDTH);
+    let width = area.width.saturating_sub(2);
     let height = area.height.saturating_sub(2).min(MAX_HEIGHT);
     Rect::new(
         area.x + area.width.saturating_sub(width) / 2,
@@ -149,5 +148,17 @@ mod tests {
         );
 
         assert_eq!(layout.footer_lines()[0].to_string(), "required");
+    }
+
+    #[test]
+    fn expands_the_centered_area_to_the_terminal_width_but_keeps_the_height_cap() {
+        assert_eq!(
+            centered_area(Rect::new(0, 0, 160, 60)),
+            Rect::new(1, 10, 158, 40)
+        );
+        assert_eq!(
+            centered_area(Rect::new(0, 0, 120, 40)),
+            Rect::new(1, 1, 118, 38)
+        );
     }
 }

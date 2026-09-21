@@ -61,6 +61,12 @@ pub(crate) fn error_style() -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
+pub(crate) fn success_style() -> Style {
+    Style::default()
+        .fg(Color::Rgb(0xa3, 0xbe, 0x8c))
+        .add_modifier(Modifier::BOLD)
+}
+
 pub(crate) fn plan_line_style(line: &str) -> Style {
     match line.trim_start().chars().next() {
         Some('+') => Style::default().fg(Color::Rgb(0xa3, 0xbe, 0x8c)),

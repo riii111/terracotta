@@ -1,5 +1,6 @@
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Alignment, Rect};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -63,10 +64,53 @@ pub(crate) fn layout(items: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>
         .collect()
 }
 
-pub(crate) fn render(frame: &mut Frame<'_>, area: Rect, lines: Vec<Line<'static>>) {
+pub(crate) fn layout_with_notice(
+    items: Vec<Line<'static>>,
+    width: u16,
+    notice: Option<&str>,
+) -> Vec<Line<'static>> {
+    layout(items, available_width(width, notice))
+}
+
+pub(crate) fn available_width(width: u16, notice: Option<&str>) -> u16 {
+    let Some(notice) = notice else {
+        return width;
+    };
+    let notice_width = u16::try_from(Line::from(notice).width()).unwrap_or(u16::MAX);
+    width.saturating_sub(notice_width.saturating_add(1))
+}
+
+pub(crate) fn render(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    lines: &[Line<'static>],
+    notice: Option<(&str, Style)>,
+) {
     frame.render_widget(
-        Paragraph::new(lines).style(theme::footer_text_style()),
+        Paragraph::new(lines.to_owned()).style(theme::footer_text_style()),
         area,
+    );
+    let Some((message, style)) = notice else {
+        return;
+    };
+    let notice_width = u16::try_from(Line::from(message).width())
+        .unwrap_or(u16::MAX)
+        .min(area.width);
+    if notice_width == 0 || area.height == 0 {
+        return;
+    }
+    let notice_area = Rect::new(
+        area.right().saturating_sub(notice_width),
+        area.y
+            .saturating_add(u16::try_from(lines.len().saturating_sub(1)).unwrap_or(u16::MAX)),
+        notice_width,
+        1,
+    );
+    frame.render_widget(
+        Paragraph::new(message)
+            .style(style)
+            .alignment(Alignment::Right),
+        notice_area,
     );
 }
 
@@ -91,10 +135,11 @@ mod tests {
                 render(
                     frame,
                     frame.area(),
-                    layout(
+                    &layout(
                         vec![hint(&["[", "]"], "prev/next"), hint(&["/"], "search")],
                         width,
                     ),
+                    None,
                 );
             })
             .unwrap();
@@ -157,6 +202,58 @@ mod tests {
                 Modifier::empty(),
             );
         }
+    }
+
+    #[test]
+    fn notice_stays_at_the_right_edge_and_reserves_left_footer_space() {
+        let width = 32;
+        let notice = "Copied.";
+        let lines = layout_with_notice(
+            vec![
+                hint(&["Ctrl-C"], "cancel"),
+                hint(&["↑", "↓", "PgUp", "PgDn"], "scroll"),
+                hint(&["End"], "follow latest"),
+            ],
+            width,
+            Some(notice),
+        );
+        assert!(
+            lines
+                .iter()
+                .all(|line| { line.width() <= usize::from(available_width(width, Some(notice))) })
+        );
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, 2)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(
+                    frame,
+                    frame.area(),
+                    &lines,
+                    Some((notice, theme::accent_style())),
+                );
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let notice_width = notice.chars().count();
+        for y in 0..buffer.area().height {
+            for x in 0..width {
+                let found = notice.chars().enumerate().all(|(offset, character)| {
+                    let Some(cell) = buffer.cell((x + u16::try_from(offset).unwrap(), y)) else {
+                        return false;
+                    };
+
+                    cell.symbol() == character.to_string()
+                });
+
+                if found {
+                    assert_eq!(usize::from(x) + notice_width, usize::from(width));
+                    return;
+                }
+            }
+        }
+        panic!("footer notice should be rendered");
     }
 
     fn assert_buffer_text_style(

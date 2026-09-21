@@ -5,7 +5,10 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 
-use crate::app::execution::{EventStream, ExecutionResult, ExecutionStage, ExecutionState};
+use crate::app::{
+    copy::CopyNotice,
+    execution::{EventStream, ExecutionResult, ExecutionStage, ExecutionState},
+};
 use crate::ui::primitives::atoms::{scrollbar, separator};
 use crate::ui::primitives::molecules::terminal_notice;
 use crate::ui::shell::{footer, header, layout as shell_layout};
@@ -30,7 +33,14 @@ pub(crate) fn render_execution_with_view(
     let area = frame.area();
     let content = prepare_content(state);
     let status = status_lines(state, view, now);
-    let layout = execution_layout_with_content(area, state, &content, &status);
+    let notice = state.copy_notice_at(now);
+    let layout = execution_layout_with_content(
+        area,
+        state,
+        &content,
+        &status,
+        notice.map(CopyNotice::message),
+    );
     if area.width < MIN_WIDTH
         || area.height < MIN_HEIGHT
         || layout.body().width == 0
@@ -112,16 +122,34 @@ pub(crate) fn render_execution_with_view(
         separator::render(layout.separator().width),
         layout.separator(),
     );
-    if let Some(notice) = state.copy_notice() {
-        frame.render_widget(
-            Paragraph::new(notice.message()).style(theme::secondary_style()),
-            layout.notice(),
-        );
-    }
-    footer::render(
+    render_footer(
         frame,
         layout.shell.footer(),
-        layout.shell.footer_lines().to_owned(),
+        layout.shell.footer_lines(),
+        notice,
+    );
+}
+
+fn render_footer(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    lines: &[Line<'static>],
+    notice: Option<CopyNotice>,
+) {
+    footer::render(
+        frame,
+        area,
+        lines,
+        notice.map(|notice| {
+            (
+                notice.message(),
+                if matches!(notice, CopyNotice::Failed) {
+                    theme::error_style()
+                } else {
+                    theme::accent_style()
+                },
+            )
+        }),
     );
 }
 
@@ -130,7 +158,6 @@ pub(crate) struct ExecutionLayout {
     status: Rect,
     log_area: Rect,
     separator: Rect,
-    notice: Rect,
     body: Rect,
     vertical_scrollbar: bool,
     horizontal_scrollbar: bool,
@@ -149,10 +176,6 @@ impl ExecutionLayout {
 
     pub(crate) const fn separator(&self) -> Rect {
         self.separator
-    }
-
-    pub(crate) const fn notice(&self) -> Rect {
-        self.notice
     }
 
     pub(crate) const fn body(&self) -> Rect {
@@ -179,7 +202,13 @@ impl ExecutionLayout {
 pub(crate) fn execution_layout(area: Rect, state: &ExecutionState) -> ExecutionLayout {
     let content = prepare_content(state);
     let status = status_lines(state, ExecutionViewState::default(), Instant::now());
-    execution_layout_with_content(area, state, &content, &status)
+    execution_layout_with_content(
+        area,
+        state,
+        &content,
+        &status,
+        state.copy_notice().map(CopyNotice::message),
+    )
 }
 
 fn execution_layout_with_content(
@@ -187,13 +216,16 @@ fn execution_layout_with_content(
     state: &ExecutionState,
     content: &PreparedContent<'_>,
     status: &[Line<'static>],
+    notice: Option<&str>,
 ) -> ExecutionLayout {
     let shell_area = shell_layout::centered_area(area);
-    let footer_lines = footer_lines(state, shell_area.width);
-    let shell = shell_layout::layout(shell_area, footer_lines.clone(), footer_lines, 1);
-    let notice_height = u16::from(state.copy_notice().is_some());
+    let footer_lines = footer_lines(state, shell_area.width, notice);
+    let required_footer_lines = required_footer_lines(state, shell_area.width, notice);
+    let shell = shell_layout::layout(shell_area, footer_lines, required_footer_lines, 1);
     let status_height = if finished_apply(state) {
         status_line_count(status, shell.content_inner().width)
+    } else if state.stage() == ExecutionStage::Applying && !state.is_cancelling() {
+        u16::try_from(status.len()).unwrap_or(u16::MAX).max(1)
     } else {
         STATUS_HEIGHT
     };
@@ -202,14 +234,12 @@ fn execution_layout_with_content(
             Constraint::Length(status_height),
             Constraint::Length(1),
             Constraint::Min(1),
-            Constraint::Length(notice_height),
         ]
     } else {
         [
             Constraint::Length(status_height),
             Constraint::Min(1),
             Constraint::Length(1),
-            Constraint::Length(notice_height),
         ]
     };
     let chunks = Layout::default()
@@ -217,10 +247,10 @@ fn execution_layout_with_content(
         .constraints(constraints)
         .split(shell.content_inner())
         .to_vec();
-    let (status_area, separator_area, available, notice_area) = if finished_apply(state) {
-        (chunks[0], chunks[1], chunks[2], chunks[3])
+    let (status_area, separator_area, available) = if finished_apply(state) {
+        (chunks[0], chunks[1], chunks[2])
     } else {
-        (chunks[0], chunks[2], chunks[1], chunks[3])
+        (chunks[0], chunks[2], chunks[1])
     };
     let (vertical_scrollbar, horizontal_scrollbar) =
         scrollbar_reservations(content.lines.len(), content.max_width, available);
@@ -241,7 +271,6 @@ fn execution_layout_with_content(
         status: status_area,
         log_area: available,
         separator: separator_area,
-        notice: notice_area,
         body,
         vertical_scrollbar,
         horizontal_scrollbar,
@@ -308,49 +337,66 @@ fn status_lines(
 
     let status = if state.is_cancelling() {
         if state.is_apply() {
-            "Stopping... Changes may already be applied.".to_owned()
+            Line::from("Stopping... Changes may already be applied.")
         } else {
-            "Stopping...".to_owned()
+            Line::from("Stopping...")
         }
     } else {
         match state.stage() {
-            ExecutionStage::Initializing => "Initializing...".to_owned(),
-            ExecutionStage::Planning => "Planning...".to_owned(),
-            ExecutionStage::Reading => "Reading plan...".to_owned(),
-            ExecutionStage::Applying => "Applying...".to_owned(),
-            ExecutionStage::ApplySucceeded => "Apply complete".to_owned(),
-            ExecutionStage::ApplyFailed => "Apply failed".to_owned(),
-            ExecutionStage::ApplyInterrupted => "Apply interrupted".to_owned(),
-            ExecutionStage::Failed => state.result().map_or_else(
+            ExecutionStage::Initializing => running_status_line("Initializing...", state, now),
+            ExecutionStage::Planning => running_status_line("Planning...", state, now),
+            ExecutionStage::Reading => running_status_line("Reading plan...", state, now),
+            ExecutionStage::Applying => running_status_line("Applying...", state, now),
+            ExecutionStage::ApplySucceeded => Line::from("Apply complete"),
+            ExecutionStage::ApplyFailed => Line::from("Apply failed"),
+            ExecutionStage::ApplyInterrupted => Line::from("Apply interrupted"),
+            ExecutionStage::Failed => Line::from(state.result().map_or_else(
                 || "Terraform failed.".to_owned(),
                 |result| format!("Terraform failed: {:?}", result.termination().status),
-            ),
+            )),
         }
     };
-    let detail = if state.is_apply() {
-        match state.stage() {
-            ExecutionStage::ApplySucceeded => state
-                .result()
-                .and_then(|result| result.summary_line())
-                .unwrap_or("Apply complete."),
-            ExecutionStage::ApplyFailed | ExecutionStage::ApplyInterrupted => {
-                "Changes may already be applied."
+    let detail = if state.is_apply() && state.stage() == ExecutionStage::Applying {
+        None
+    } else if state.is_apply() {
+        Some(Line::from(
+            match state.stage() {
+                ExecutionStage::ApplySucceeded => state
+                    .result()
+                    .and_then(|result| result.summary_line())
+                    .unwrap_or("Apply complete."),
+                ExecutionStage::ApplyFailed | ExecutionStage::ApplyInterrupted => {
+                    "Changes may already be applied."
+                }
+                _ => "Applying...",
             }
-            _ => "Applying...",
-        }
-        .to_owned()
+            .to_owned(),
+        ))
     } else {
-        format!(
+        Some(Line::from(format!(
             "Waiting {}s    Follow: {}",
             state.waiting_at(now).as_secs(),
             if view.follows_latest() { "On" } else { "Off" }
-        )
+        )))
     };
-    vec![
-        Line::from(status),
-        Line::from(detail),
-        Line::from(format!("Elapsed {}", format_elapsed(state.elapsed_at(now)))),
-    ]
+    let mut lines = vec![status];
+    if let Some(detail) = detail {
+        lines.push(detail);
+    }
+    lines.push(Line::from(format!(
+        "Elapsed {}",
+        format_elapsed(state.elapsed_at(now))
+    )));
+    lines
+}
+
+fn running_status_line(label: &str, state: &ExecutionState, now: Instant) -> Line<'static> {
+    let spinner = ['|', '/', '-', '\\']
+        [usize::try_from(state.elapsed_at(now).as_millis() / 100).unwrap_or(0) % 4];
+    Line::from(vec![
+        Span::styled(spinner.to_string(), theme::accent_style()),
+        Span::styled(format!(" {label}"), theme::body_style()),
+    ])
 }
 
 fn completed_apply_status_lines(state: &ExecutionState, now: Instant) -> Vec<Line<'static>> {
@@ -360,7 +406,7 @@ fn completed_apply_status_lines(state: &ExecutionState, now: Instant) -> Vec<Lin
                 .result()
                 .and_then(|result| result.summary_line())
                 .map_or_else(|| "Apply complete.".to_owned(), str::to_owned),
-            theme::body_style().add_modifier(ratatui::style::Modifier::BOLD),
+            theme::success_style(),
         )),
         ExecutionStage::ApplyFailed => {
             Line::from(Span::styled("Apply failed", theme::error_style()))
@@ -414,7 +460,7 @@ fn status_line_count(status: &[Line<'static>], width: u16) -> u16 {
         .max(1)
 }
 
-fn footer_lines(state: &ExecutionState, width: u16) -> Vec<Line<'static>> {
+fn footer_lines(state: &ExecutionState, width: u16, notice: Option<&str>) -> Vec<Line<'static>> {
     let items = if state.stage() == ExecutionStage::Failed || finished_apply(state) {
         vec![
             footer::hint(&["q", "Ctrl-C"], "quit"),
@@ -435,7 +481,20 @@ fn footer_lines(state: &ExecutionState, width: u16) -> Vec<Line<'static>> {
             footer::hint(&["End"], "follow latest"),
         ]
     };
-    footer::layout(items, width)
+    footer::layout_with_notice(items, width, notice)
+}
+
+fn required_footer_lines(
+    state: &ExecutionState,
+    width: u16,
+    notice: Option<&str>,
+) -> Vec<Line<'static>> {
+    let item = if state.stage() == ExecutionStage::Failed || finished_apply(state) {
+        footer::hint(&["q", "Ctrl-C"], "quit")
+    } else {
+        footer::hint(&["Ctrl-C"], "cancel")
+    };
+    footer::layout_with_notice(vec![item], width, notice)
 }
 
 fn scroll_limits(line_count: usize, line_width: usize, body: Rect) -> (u16, u16) {
@@ -911,7 +970,7 @@ mod tests {
                 name: "success_summary",
                 status: ApplyStatus::Succeeded,
                 headline: "Resources: 2 added, 2 changed, 1 destroyed.",
-                headline_color: Color::Rgb(0xe9, 0xdb, 0xdb),
+                headline_color: Color::Rgb(0xa3, 0xbe, 0x8c),
                 warning: None,
             },
             StatusCase {
@@ -1126,6 +1185,36 @@ mod tests {
         assert_eq!(layout.separator().y, layout.log_area().bottom());
         let text = buffer_text(&buffer);
         assert!(text.contains("Elapsed 10000.0s"), "{text}");
+    }
+
+    #[test]
+    fn running_status_cycles_the_ascii_spinner_without_repeating_apply_progress() {
+        let started_at = Instant::now();
+        let state = ExecutionState::with_context(started_at, ExecutionContext::loading("/project"));
+        let frames = ["|", "/", "-", "\\"];
+
+        for (index, frame) in frames.into_iter().enumerate() {
+            let status = status_lines(
+                &state,
+                ExecutionViewState::default(),
+                started_at + Duration::from_millis(u64::try_from(index).unwrap() * 100),
+            );
+            assert_eq!(status[0].to_string(), format!("{frame} Initializing..."));
+        }
+
+        let applying = ExecutionState::applying(started_at, ExecutionContext::loading("/project"));
+        let status = status_lines(
+            &applying,
+            ExecutionViewState::default(),
+            started_at + Duration::from_millis(100),
+        );
+        assert_eq!(status.len(), 2);
+        assert_eq!(status[0].to_string(), "/ Applying...");
+        assert!(
+            status
+                .iter()
+                .all(|line| !line.to_string().contains("Applying...") || line == &status[0])
+        );
     }
 
     #[test]

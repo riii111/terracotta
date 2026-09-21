@@ -8,6 +8,7 @@ use ratatui::{
 };
 
 use crate::app::{
+    copy::CopyNotice,
     execution::DiagnosticSeverity,
     review::{FilteredPlan, PlanReview},
     session::{ApplyConfirmationState, ReviewSessionState},
@@ -121,7 +122,13 @@ impl PlanReviewLayout {
 
 pub(crate) fn layout(area: Rect, searching: bool, state: &ReviewSessionState) -> PlanReviewLayout {
     let content = prepare_content(state);
-    layout_with_content(area, searching, state, &content)
+    layout_with_content(
+        area,
+        searching,
+        state,
+        &content,
+        state.copy_notice().map(CopyNotice::message),
+    )
 }
 
 fn layout_with_content(
@@ -129,18 +136,21 @@ fn layout_with_content(
     searching: bool,
     state: &ReviewSessionState,
     content: &PreparedContent<'_>,
+    notice: Option<&str>,
 ) -> PlanReviewLayout {
     let panel = shell_layout::centered_area(area);
-    let footer_lines = footer::layout(
+    let footer_lines = footer::layout_with_notice(
         footer_items(searching, state.review().metadata().applyable()),
         panel.width,
+        notice,
     );
-    let required = footer::layout(
+    let required = footer::layout_with_notice(
         vec![
             footer::hint(&["↑", "↓"], "scroll"),
             footer::hint(&["q"], "quit"),
         ],
         panel.width,
+        notice,
     );
     let shell = shell_layout::layout(panel, footer_lines, required, 1);
     let inner = shell.content_inner();
@@ -228,7 +238,7 @@ pub(crate) fn render_apply_confirmation(
             .scroll((0, confirmation_input_scroll(view, layout.input().width))),
         layout.input(),
     );
-    footer::render(frame, layout.footer(), layout.footer_lines().to_owned());
+    footer::render(frame, layout.footer(), layout.footer_lines(), None);
 }
 
 pub(crate) fn apply_confirmation_layout(
@@ -335,13 +345,14 @@ fn confirmation_lines(state: &ApplyConfirmationState) -> Vec<Line<'static>> {
         )));
         lines.push(Line::default());
     }
-    lines.push(Line::from("Apply this plan? (yes/no):"));
+    lines.push(Line::from("Apply this plan? Type yes or no."));
     lines
 }
 
 fn confirmation_input_line(view: &ApplyConfirmationViewState) -> Line<'static> {
     let cursor = view.cursor().min(view.input().len());
     Line::from(vec![
+        Span::styled("> ", theme::body_style()),
         Span::styled(view.input()[..cursor].to_owned(), theme::body_style()),
         Span::styled("|", theme::accent_style()),
         Span::styled(view.input()[cursor..].to_owned(), theme::body_style()),
@@ -351,7 +362,7 @@ fn confirmation_input_line(view: &ApplyConfirmationViewState) -> Line<'static> {
 fn confirmation_input_scroll(view: &ApplyConfirmationViewState, width: u16) -> u16 {
     let width = usize::from(width);
     let cursor = view.cursor().min(view.input().len());
-    let cursor_width = Line::from(view.input()[..cursor].to_owned()).width();
+    let cursor_width = 2 + Line::from(view.input()[..cursor].to_owned()).width();
     u16::try_from(cursor_width.saturating_sub(width.saturating_sub(1))).unwrap_or(u16::MAX)
 }
 
@@ -368,7 +379,14 @@ pub(crate) fn render(
     }
 
     let content = prepare_content(state);
-    let layout = layout_with_content(area, view.searching(), state, &content);
+    let notice = state.copy_notice_at(now);
+    let layout = layout_with_content(
+        area,
+        view.searching(),
+        state,
+        &content,
+        notice.map(CopyNotice::message),
+    );
     if layout.body().width == 0 || layout.body().height == 0 {
         terminal_notice::render_wrapped(frame, area, terminal_notice_message(view.searching()));
         return;
@@ -402,12 +420,6 @@ pub(crate) fn render(
             .scroll((vertical, horizontal)),
         layout.body(),
     );
-    if let Some(notice) = state.copy_notice() {
-        frame.render_widget(
-            Paragraph::new(notice.message()).style(theme::secondary_style()),
-            Rect::new(layout.body().x, layout.body().y, layout.body().width, 1),
-        );
-    }
     let body = layout.body();
     let scrollbar_area = Rect::new(
         body.x,
@@ -435,10 +447,34 @@ pub(crate) fn render(
             usize::from(horizontal),
         );
     }
-    footer::render(
+    render_footer(
         frame,
         layout.shell.footer(),
-        layout.shell.footer_lines().to_owned(),
+        layout.shell.footer_lines(),
+        notice,
+    );
+}
+
+fn render_footer(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    lines: &[Line<'static>],
+    notice: Option<CopyNotice>,
+) {
+    footer::render(
+        frame,
+        area,
+        lines,
+        notice.map(|notice| {
+            (
+                notice.message(),
+                if matches!(notice, CopyNotice::Failed) {
+                    theme::error_style()
+                } else {
+                    theme::accent_style()
+                },
+            )
+        }),
     );
 }
 
@@ -1481,6 +1517,7 @@ End of synthetic plan body."#;
             Color::Reset,
             Modifier::empty(),
         );
+        assert!(buffer_text(&buffer).contains("> yes|"));
         assert_text_segment_uses_style(
             &buffer,
             "yes|",
@@ -1683,7 +1720,7 @@ End of synthetic plan body."#;
     }
 
     #[test]
-    fn copy_flash_styles_plan_cells_without_changing_the_review_shell() {
+    fn copy_flash_styles_plan_cells_without_overwriting_the_review_shell() {
         let (before, flash, flash_at_100ms, after, layout) = copy_flash_buffers();
 
         assert_eq!(buffer_text(&flash), buffer_text(&flash_at_100ms));
@@ -1707,7 +1744,14 @@ End of synthetic plan body."#;
         assert_area_restored_after_flash(&before, &after, layout.body());
 
         assert_area_unchanged(&before, &flash, layout.shell.header());
-        assert_area_unchanged(&before, &flash, layout.shell.footer());
+        assert_text_prefix_uses_style(
+            &flash,
+            "Copied.",
+            "Copied.",
+            Color::Rgb(0xf4, 0x9e, 0x4c),
+            Color::Reset,
+            Modifier::empty(),
+        );
         assert_frame_unchanged(&before, &flash, layout.shell.content());
         assert_area_unchanged(
             &before,
