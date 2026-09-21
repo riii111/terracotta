@@ -829,19 +829,6 @@ mod tests {
         execution_layout_with_view(area, state, ExecutionViewState::default())
     }
 
-    fn execution_layout_with_quit_confirmation(
-        area: Rect,
-        state: &ExecutionState,
-        quit_confirmation: bool,
-    ) -> ExecutionLayout {
-        super::execution_layout_with_quit_confirmation_and_view(
-            area,
-            state,
-            ExecutionViewState::default(),
-            quit_confirmation,
-        )
-    }
-
     fn apply_state(status: ApplyStatus) -> (ExecutionState, Instant) {
         let started_at = Instant::now();
         let finished_at = started_at + Duration::from_secs(4);
@@ -921,36 +908,6 @@ mod tests {
         write_buffer_captures(name, buffer);
     }
 
-    fn assert_text_uses_style(buffer: &Buffer, text: &str, color: Color, modifier: Modifier) {
-        let area = buffer.area();
-        for y in area.y..area.bottom() {
-            let symbols = (area.x..area.right())
-                .map(|x| buffer.cell((x, y)).expect("execution cell").symbol())
-                .collect::<Vec<_>>();
-            let Some(start) = (0..symbols.len()).find(|&start| {
-                symbols[start..]
-                    .iter()
-                    .copied()
-                    .collect::<String>()
-                    .starts_with(text)
-            }) else {
-                continue;
-            };
-            for offset in 0..text.chars().count() {
-                let cell = buffer
-                    .cell((
-                        area.x + u16::try_from(start + offset).expect("execution offset"),
-                        y,
-                    ))
-                    .expect("execution cell");
-                assert_eq!(cell.fg, color, "{text}");
-                assert!(cell.modifier.contains(modifier), "{text}");
-            }
-            return;
-        }
-        panic!("text should be visible: {text}");
-    }
-
     #[test]
     fn renders_apply_success_at_all_supported_sizes() {
         for &(width, height) in &SIZES {
@@ -1026,6 +983,23 @@ mod tests {
         }
     }
 
+    #[test]
+    fn compact_stopping_at_minimum_size_keeps_warning_and_elapsed_visible() {
+        let (state, now) = applying_state_with_content(1, 1);
+        let mut stopping_state = state;
+        stopping_state.apply(ExecutionAction::RequestCancellation);
+        let buffer = render_to_buffer((32, 9), |frame| {
+            render_execution_with_view(frame, &stopping_state, ExecutionViewState::default(), now);
+        });
+
+        snapshot("ux12r_32x9_apply-stopping", &buffer);
+        let text = buffer_text(&buffer);
+        assert!(text.contains("Stopping..."));
+        assert!(text.contains("Changes may"));
+        assert!(text.contains("already be applied."));
+        assert!(text.contains("Elapsed"));
+    }
+
     fn find_text_cell<'a>(buffer: &'a Buffer, area: Rect, text: &str) -> &'a ratatui::buffer::Cell {
         for y in area.y..area.bottom() {
             let symbols = (area.x..area.right())
@@ -1047,58 +1021,6 @@ mod tests {
         panic!("text should be visible: {text}");
     }
 
-    fn execution_buffer_at(
-        area: Rect,
-        state: &ExecutionState,
-        now: Instant,
-        vertical: u16,
-        horizontal: u16,
-    ) -> (ExecutionLayout, Buffer) {
-        let mut view = ExecutionViewState::default();
-        view.open_logs();
-        let layout = execution_layout_with_view(area, state, view);
-        let mut current_vertical = 0;
-        view.apply_scroll(
-            ExecutionScroll::Top,
-            current_vertical,
-            layout.max_vertical(),
-            layout.body().height,
-        );
-        for _ in 0..vertical {
-            view.apply_scroll(
-                ExecutionScroll::Down,
-                current_vertical,
-                layout.max_vertical(),
-                layout.body().height,
-            );
-            current_vertical = current_vertical
-                .saturating_add(1)
-                .min(layout.max_vertical());
-        }
-        let mut current_horizontal = 0;
-        view.apply_horizontal_scroll(
-            ExecutionScroll::LeftEdge,
-            current_horizontal,
-            layout.max_horizontal(),
-            current_vertical,
-        );
-        for _ in 0..horizontal {
-            view.apply_horizontal_scroll(
-                ExecutionScroll::Right,
-                current_horizontal,
-                layout.max_horizontal(),
-                current_vertical,
-            );
-            current_horizontal = current_horizontal
-                .saturating_add(1)
-                .min(layout.max_horizontal());
-        }
-        let buffer = render_to_buffer((area.width, area.height), |frame| {
-            render_execution_with_view(frame, state, view, now);
-        });
-        (layout, buffer)
-    }
-
     fn applying_state_with_content(line_count: u16, line_width: u16) -> (ExecutionState, Instant) {
         let now = Instant::now();
         let mut state = ExecutionState::applying(now, ExecutionContext::loading("/repo"));
@@ -1115,100 +1037,195 @@ mod tests {
         (state, now)
     }
 
-    fn assert_scrollbar_positions(
-        buffer: &Buffer,
-        layout: &ExecutionLayout,
-        vertical: u16,
-        horizontal: u16,
-    ) {
-        let body = layout.body();
-        if layout.vertical_scrollbar() {
-            let height = body.height + u16::from(layout.horizontal_scrollbar());
-            let symbols = (body.y..body.y + height)
-                .map(|y| {
-                    buffer
-                        .cell((body.x + body.width, y))
-                        .expect("vertical cell")
-                        .symbol()
-                        .to_owned()
-                })
-                .collect::<Vec<_>>();
-            assert_eq!(symbols.first().map(String::as_str), Some("▲"));
-            assert_thumb_segments(
-                &symbols[1..symbols.len() - 1],
-                "│",
-                "┃",
-                usize::from(vertical),
-                usize::from(layout.max_vertical()),
-            );
-        }
-        if layout.horizontal_scrollbar() {
-            let width = body.width + u16::from(layout.vertical_scrollbar());
-            let symbols = (body.x..body.x + width)
-                .map(|x| {
-                    buffer
-                        .cell((x, body.y + body.height))
-                        .expect("horizontal cell")
-                        .symbol()
-                        .to_owned()
-                })
-                .collect::<Vec<_>>();
-            assert_eq!(symbols.first().map(String::as_str), Some("◀︎"));
-            assert_eq!(symbols.last().map(String::as_str), Some("▶︎"));
-            assert_thumb_segments(
-                &symbols[1..symbols.len() - 1],
-                "─",
-                "═",
-                usize::from(horizontal),
-                usize::from(layout.max_horizontal()),
-            );
-        }
-    }
-
-    fn assert_thumb_segments(
-        track: &[String],
-        track_symbol: &str,
-        thumb_symbol: &str,
-        position: usize,
-        max_position: usize,
-    ) {
-        let thumb_start = track
-            .iter()
-            .position(|symbol| symbol == thumb_symbol)
-            .expect("scrollbar should contain a thumb");
-        let thumb_end = track
-            .iter()
-            .rposition(|symbol| symbol == thumb_symbol)
-            .expect("scrollbar should contain a thumb");
-        assert!(
-            track[thumb_start..=thumb_end]
-                .iter()
-                .all(|symbol| symbol == thumb_symbol)
-        );
-        assert!(
-            track[..thumb_start]
-                .iter()
-                .all(|symbol| symbol == track_symbol)
-        );
-        assert!(
-            track[thumb_end + 1..]
-                .iter()
-                .all(|symbol| symbol == track_symbol)
-        );
-        if position == 0 {
-            assert_eq!(thumb_start, 0);
-        } else {
-            assert!(thumb_start > 0);
-        }
-        if position == max_position {
-            assert_eq!(thumb_end, track.len() - 1);
-        } else {
-            assert!(thumb_end < track.len() - 1);
-        }
-    }
-
     mod layout {
         use super::*;
+
+        fn execution_layout_with_quit_confirmation(
+            area: Rect,
+            state: &ExecutionState,
+            quit_confirmation: bool,
+        ) -> ExecutionLayout {
+            super::execution_layout_with_quit_confirmation_and_view(
+                area,
+                state,
+                ExecutionViewState::default(),
+                quit_confirmation,
+            )
+        }
+
+        fn assert_text_uses_style(buffer: &Buffer, text: &str, color: Color, modifier: Modifier) {
+            let area = buffer.area();
+            for y in area.y..area.bottom() {
+                let symbols = (area.x..area.right())
+                    .map(|x| buffer.cell((x, y)).expect("execution cell").symbol())
+                    .collect::<Vec<_>>();
+                let Some(start) = (0..symbols.len()).find(|&start| {
+                    symbols[start..]
+                        .iter()
+                        .copied()
+                        .collect::<String>()
+                        .starts_with(text)
+                }) else {
+                    continue;
+                };
+                for offset in 0..text.chars().count() {
+                    let cell = buffer
+                        .cell((
+                            area.x + u16::try_from(start + offset).expect("execution offset"),
+                            y,
+                        ))
+                        .expect("execution cell");
+                    assert_eq!(cell.fg, color, "{text}");
+                    assert!(cell.modifier.contains(modifier), "{text}");
+                }
+                return;
+            }
+            panic!("text should be visible: {text}");
+        }
+
+        fn execution_buffer_at(
+            area: Rect,
+            state: &ExecutionState,
+            now: Instant,
+            vertical: u16,
+            horizontal: u16,
+        ) -> (ExecutionLayout, Buffer) {
+            let mut view = ExecutionViewState::default();
+            view.open_logs();
+            let layout = execution_layout_with_view(area, state, view);
+            let mut current_vertical = 0;
+            view.apply_scroll(
+                ExecutionScroll::Top,
+                current_vertical,
+                layout.max_vertical(),
+                layout.body().height,
+            );
+            for _ in 0..vertical {
+                view.apply_scroll(
+                    ExecutionScroll::Down,
+                    current_vertical,
+                    layout.max_vertical(),
+                    layout.body().height,
+                );
+                current_vertical = current_vertical
+                    .saturating_add(1)
+                    .min(layout.max_vertical());
+            }
+            let mut current_horizontal = 0;
+            view.apply_horizontal_scroll(
+                ExecutionScroll::LeftEdge,
+                current_horizontal,
+                layout.max_horizontal(),
+                current_vertical,
+            );
+            for _ in 0..horizontal {
+                view.apply_horizontal_scroll(
+                    ExecutionScroll::Right,
+                    current_horizontal,
+                    layout.max_horizontal(),
+                    current_vertical,
+                );
+                current_horizontal = current_horizontal
+                    .saturating_add(1)
+                    .min(layout.max_horizontal());
+            }
+            let buffer = render_to_buffer((area.width, area.height), |frame| {
+                render_execution_with_view(frame, state, view, now);
+            });
+            (layout, buffer)
+        }
+
+        fn assert_scrollbar_positions(
+            buffer: &Buffer,
+            layout: &ExecutionLayout,
+            vertical: u16,
+            horizontal: u16,
+        ) {
+            let body = layout.body();
+            if layout.vertical_scrollbar() {
+                let height = body.height + u16::from(layout.horizontal_scrollbar());
+                let symbols = (body.y..body.y + height)
+                    .map(|y| {
+                        buffer
+                            .cell((body.x + body.width, y))
+                            .expect("vertical cell")
+                            .symbol()
+                            .to_owned()
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(symbols.first().map(String::as_str), Some("▲"));
+                assert_thumb_segments(
+                    &symbols[1..symbols.len() - 1],
+                    "│",
+                    "┃",
+                    usize::from(vertical),
+                    usize::from(layout.max_vertical()),
+                );
+            }
+            if layout.horizontal_scrollbar() {
+                let width = body.width + u16::from(layout.vertical_scrollbar());
+                let symbols = (body.x..body.x + width)
+                    .map(|x| {
+                        buffer
+                            .cell((x, body.y + body.height))
+                            .expect("horizontal cell")
+                            .symbol()
+                            .to_owned()
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(symbols.first().map(String::as_str), Some("◀︎"));
+                assert_eq!(symbols.last().map(String::as_str), Some("▶︎"));
+                assert_thumb_segments(
+                    &symbols[1..symbols.len() - 1],
+                    "─",
+                    "═",
+                    usize::from(horizontal),
+                    usize::from(layout.max_horizontal()),
+                );
+            }
+        }
+
+        fn assert_thumb_segments(
+            track: &[String],
+            track_symbol: &str,
+            thumb_symbol: &str,
+            position: usize,
+            max_position: usize,
+        ) {
+            let thumb_start = track
+                .iter()
+                .position(|symbol| symbol == thumb_symbol)
+                .expect("scrollbar should contain a thumb");
+            let thumb_end = track
+                .iter()
+                .rposition(|symbol| symbol == thumb_symbol)
+                .expect("scrollbar should contain a thumb");
+            assert!(
+                track[thumb_start..=thumb_end]
+                    .iter()
+                    .all(|symbol| symbol == thumb_symbol)
+            );
+            assert!(
+                track[..thumb_start]
+                    .iter()
+                    .all(|symbol| symbol == track_symbol)
+            );
+            assert!(
+                track[thumb_end + 1..]
+                    .iter()
+                    .all(|symbol| symbol == track_symbol)
+            );
+            if position == 0 {
+                assert_eq!(thumb_start, 0);
+            } else {
+                assert!(thumb_start > 0);
+            }
+            if position == max_position {
+                assert_eq!(thumb_end, track.len() - 1);
+            } else {
+                assert!(thumb_end < track.len() - 1);
+            }
+        }
 
         #[test]
         fn quit_confirmation_replaces_the_result_footer_and_has_a_narrow_notice() {
@@ -1752,28 +1769,6 @@ mod tests {
 
     mod progress {
         use super::*;
-
-        #[test]
-        fn compact_stopping_at_minimum_size_keeps_warning_and_elapsed_visible() {
-            let (state, now) = applying_state_with_content(1, 1);
-            let mut stopping_state = state;
-            stopping_state.apply(ExecutionAction::RequestCancellation);
-            let buffer = render_to_buffer((32, 9), |frame| {
-                render_execution_with_view(
-                    frame,
-                    &stopping_state,
-                    ExecutionViewState::default(),
-                    now,
-                );
-            });
-
-            snapshot("ux12r_32x9_apply-stopping", &buffer);
-            let text = buffer_text(&buffer);
-            assert!(text.contains("Stopping..."));
-            assert!(text.contains("Changes may"));
-            assert!(text.contains("already be applied."));
-            assert!(text.contains("Elapsed"));
-        }
 
         #[test]
         fn running_apply_keeps_the_compact_frame_fixed_as_logs_and_state_change() {

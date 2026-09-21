@@ -1281,35 +1281,6 @@ End of synthetic plan body."#;
         write_buffer_captures(name, buffer);
     }
 
-    fn assert_text_color(buffer: &Buffer, text: &str, color: Color) {
-        let area = buffer.area();
-        for y in area.y..area.bottom() {
-            let symbols = (area.x..area.right())
-                .map(|x| buffer.cell((x, y)).expect("plan cell").symbol())
-                .collect::<Vec<_>>();
-            let Some(start) = (0..symbols.len()).find(|&start| {
-                symbols[start..]
-                    .iter()
-                    .copied()
-                    .collect::<String>()
-                    .starts_with(text)
-            }) else {
-                continue;
-            };
-            for offset in 0..text.chars().count() {
-                let cell = buffer
-                    .cell((
-                        area.x + u16::try_from(start + offset).expect("plan offset"),
-                        y,
-                    ))
-                    .expect("plan cell");
-                assert_eq!(cell.fg, color, "{text}");
-            }
-            return;
-        }
-        panic!("text should be visible: {text}");
-    }
-
     fn assert_text_prefix_uses_style(
         buffer: &Buffer,
         text: &str,
@@ -1523,45 +1494,75 @@ End of synthetic plan body."#;
         )
     }
 
-    fn filter_height_review() -> PlanReview {
-        PlanReview::new(
-            PathBuf::from("/repo"),
-            "default".to_owned(),
-            PlanDocument::with_blocks(
-                "api line 1\napi line 2\nworker line 1\nworker line 2\ncommon line\n".to_owned(),
-                vec![
-                    PlanBlock::new(0..2, PlanBlockKind::Resource),
-                    PlanBlock::new(2..4, PlanBlockKind::Resource),
-                    PlanBlock::new(4..5, PlanBlockKind::Common),
-                ],
-            ),
-            PlanMetadata::new(
-                vec!["api".to_owned(), "worker".to_owned()],
-                Vec::new(),
-                0,
-                2,
-                0,
-                true,
-            ),
-            Vec::new(),
-        )
-    }
-
-    fn common_only_review() -> PlanReview {
-        PlanReview::new(
-            PathBuf::from("/repo"),
-            "default".to_owned(),
-            PlanDocument::with_blocks(
-                "common line 1\ncommon line 2\n".to_owned(),
-                vec![PlanBlock::new(0..2, PlanBlockKind::Common)],
-            ),
-            PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, true),
-            Vec::new(),
-        )
-    }
-
     mod layout {
         use super::*;
+
+        fn assert_text_color(buffer: &Buffer, text: &str, color: Color) {
+            let area = buffer.area();
+            for y in area.y..area.bottom() {
+                let symbols = (area.x..area.right())
+                    .map(|x| buffer.cell((x, y)).expect("plan cell").symbol())
+                    .collect::<Vec<_>>();
+                let Some(start) = (0..symbols.len()).find(|&start| {
+                    symbols[start..]
+                        .iter()
+                        .copied()
+                        .collect::<String>()
+                        .starts_with(text)
+                }) else {
+                    continue;
+                };
+                for offset in 0..text.chars().count() {
+                    let cell = buffer
+                        .cell((
+                            area.x + u16::try_from(start + offset).expect("plan offset"),
+                            y,
+                        ))
+                        .expect("plan cell");
+                    assert_eq!(cell.fg, color, "{text}");
+                }
+                return;
+            }
+            panic!("text should be visible: {text}");
+        }
+
+        fn filter_height_review() -> PlanReview {
+            PlanReview::new(
+                PathBuf::from("/repo"),
+                "default".to_owned(),
+                PlanDocument::with_blocks(
+                    "api line 1\napi line 2\nworker line 1\nworker line 2\ncommon line\n"
+                        .to_owned(),
+                    vec![
+                        PlanBlock::new(0..2, PlanBlockKind::Resource),
+                        PlanBlock::new(2..4, PlanBlockKind::Resource),
+                        PlanBlock::new(4..5, PlanBlockKind::Common),
+                    ],
+                ),
+                PlanMetadata::new(
+                    vec!["api".to_owned(), "worker".to_owned()],
+                    Vec::new(),
+                    0,
+                    2,
+                    0,
+                    true,
+                ),
+                Vec::new(),
+            )
+        }
+
+        fn common_only_review() -> PlanReview {
+            PlanReview::new(
+                PathBuf::from("/repo"),
+                "default".to_owned(),
+                PlanDocument::with_blocks(
+                    "common line 1\ncommon line 2\n".to_owned(),
+                    vec![PlanBlock::new(0..2, PlanBlockKind::Common)],
+                ),
+                PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, true),
+                Vec::new(),
+            )
+        }
 
         fn review_buffer_at(
             area: Rect,
