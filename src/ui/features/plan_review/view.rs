@@ -230,7 +230,10 @@ impl PlanReviewViewState {
         match input {
             PlanReviewInput::SearchChar(character) => {
                 search.query.insert(search.cursor, character);
-                search.cursor += character.len_utf8();
+                search.cursor = next_grapheme_boundary_at_or_after(
+                    &search.query,
+                    search.cursor + character.len_utf8(),
+                );
                 self.selected = None;
                 self.vertical = 0;
                 self.horizontal = 0;
@@ -391,6 +394,13 @@ fn next_grapheme_boundary(query: &str, cursor: usize) -> usize {
         .unwrap_or(query.len())
 }
 
+fn next_grapheme_boundary_at_or_after(query: &str, cursor: usize) -> usize {
+    grapheme_boundaries(query)
+        .into_iter()
+        .find(|&boundary| boundary >= cursor)
+        .unwrap_or(query.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -489,6 +499,65 @@ mod tests {
         apply(&mut view, PlanReviewInput::SearchBackspace);
 
         assert_eq!(view.search_query(), Some("existing"));
+        assert_eq!(view.search_cursor(), Some(0));
+    }
+
+    #[test]
+    fn inserted_zwj_keeps_the_cursor_at_the_joined_grapheme_boundary() {
+        let mut view = PlanReviewViewState::default();
+        view.apply(
+            PlanReviewInput::SearchStart,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "",
+        );
+        view.apply(
+            PlanReviewInput::SearchHome,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "",
+        );
+        view.apply(
+            PlanReviewInput::SearchChar('👩'),
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "",
+        );
+        view.apply(
+            PlanReviewInput::SearchChar('💻'),
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "",
+        );
+        view.apply(
+            PlanReviewInput::SearchLeft,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "",
+        );
+        view.apply(
+            PlanReviewInput::SearchChar('\u{200d}'),
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "",
+        );
+
+        assert_eq!(view.search_query(), Some("👩\u{200d}💻"));
+        assert_eq!(view.search_cursor(), Some("👩\u{200d}💻".len()));
+        view.apply(
+            PlanReviewInput::SearchBackspace,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "",
+        );
+        assert_eq!(view.search_query(), Some(""));
         assert_eq!(view.search_cursor(), Some(0));
     }
 
