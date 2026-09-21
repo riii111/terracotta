@@ -222,7 +222,11 @@ fn dispatch_finished_workers<C: ClipboardWriter>(
 
 fn should_draw(state: &SessionState, dirty: bool, now: Instant) -> bool {
     dirty
-        || state.execution().is_some()
+        || state.execution().is_some_and(|execution| {
+            execution.result().is_none()
+                || execution.copy_flash_pending()
+                || execution.copy_notice_pending()
+        })
         || state.apply().is_some_and(|apply| apply.result().is_none())
         || state.review().is_some_and(|review| {
             review.copy_flash_active(now)
@@ -1207,6 +1211,9 @@ mod tests {
     #[test]
     fn draw_decision_covers_dirty_and_runtime_states() {
         let started_at = Instant::now();
+        let mut failed_execution =
+            ExecutionState::with_context(started_at, ExecutionContext::loading("failed"));
+        failed_execution.fail("plan failed".to_owned(), started_at);
 
         assert_draw_cases([
             DrawCase {
@@ -1234,6 +1241,20 @@ mod tests {
                 expected: true,
             },
             DrawCase {
+                name: "failed_execution_static",
+                state: SessionState::new(failed_execution.clone()),
+                dirty: false,
+                now: started_at,
+                expected: false,
+            },
+            DrawCase {
+                name: "failed_execution_after_resize",
+                state: SessionState::new(failed_execution),
+                dirty: true,
+                now: started_at,
+                expected: true,
+            },
+            DrawCase {
                 name: "apply_in_progress",
                 state: apply_state(started_at, None),
                 dirty: false,
@@ -1248,6 +1269,56 @@ mod tests {
                 expected: false,
             },
         ]);
+    }
+
+    #[test]
+    fn failed_execution_copy_notice_draws_once_when_it_expires() {
+        let started_at = Instant::now();
+        let mut execution =
+            ExecutionState::with_context(started_at, ExecutionContext::loading("failed"));
+        execution.fail("plan failed".to_owned(), started_at);
+        let mut state = SessionState::new(execution);
+        let copied_at = started_at + Duration::from_millis(100);
+        let notice_expired_at = copied_at + Duration::from_secs(5);
+        record_copy(
+            &mut state,
+            CopyTarget::Diagnostic,
+            CopyResult::Written,
+            copied_at,
+        );
+
+        assert!(should_draw(&state, false, copied_at));
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+        let execution_view = execution::ExecutionViewState::default();
+        let review_view = plan_review::PlanReviewViewState::default();
+        let confirmation_view = plan_review::ApplyConfirmationViewState::default();
+        let mut dirty = false;
+        assert!(
+            draw_if_needed(
+                &mut state,
+                &mut terminal,
+                execution_view,
+                &review_view,
+                &confirmation_view,
+                &mut dirty,
+                notice_expired_at,
+            )
+            .expect("expired diagnostic copy notice should render once")
+        );
+        assert!(!should_draw(&state, false, notice_expired_at));
+        assert!(
+            !draw_if_needed(
+                &mut state,
+                &mut terminal,
+                execution_view,
+                &review_view,
+                &confirmation_view,
+                &mut dirty,
+                notice_expired_at,
+            )
+            .expect("cleared diagnostic copy notice should stop rendering")
+        );
     }
 
     #[test]
