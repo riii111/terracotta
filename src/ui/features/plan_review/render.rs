@@ -928,13 +928,13 @@ fn footer_items(
         ]
     } else if filtered {
         let mut items = vec![footer::hint(&["Esc"], "clear")];
+        items.extend([
+            footer::hint(&["/"], "edit"),
+            footer::hint(&["↑", "↓", "←", "→"], "scroll"),
+        ]);
         if match_count >= 2 {
             items.push(footer::hint(&["n/N"], "next/prev"));
         }
-        items.extend([
-            footer::hint(&["↑", "↓", "←", "→"], "scroll"),
-            footer::hint(&["/"], "edit"),
-        ]);
         items
     } else {
         let mut items = vec![
@@ -962,13 +962,13 @@ fn required_footer_items(
         ]
     } else if filtered {
         let mut items = vec![footer::hint(&["Esc"], "clear")];
+        items.extend([
+            footer::hint(&["/"], "edit"),
+            footer::hint(&["↑", "↓", "←", "→"], "scroll"),
+        ]);
         if match_count >= 2 {
             items.push(footer::hint(&["n/N"], "next/prev"));
         }
-        items.extend([
-            footer::hint(&["↑", "↓", "←", "→"], "scroll"),
-            footer::hint(&["/"], "edit"),
-        ]);
         items
     } else {
         vec![
@@ -1775,6 +1775,32 @@ End of synthetic plan body."#;
             assert!(!text.contains("y yank"), "case: {}", case.name);
             assert!(!text.contains("a apply"), "case: {}", case.name);
             assert!(!text.contains("q quit"), "case: {}", case.name);
+        }
+    }
+
+    #[test]
+    fn confirmed_filter_narrow_footer_keeps_required_actions_before_match_navigation() {
+        for (query, plan) in [
+            ("not-present", zero_match_review()),
+            ("endpoint", review()),
+            (SEARCH_TERM, review()),
+        ] {
+            let mut plan = plan;
+            plan.set_search_query(query.to_owned());
+            let state = review_state(plan);
+            let buffer = render_to_buffer((24, 24), |frame| {
+                render(
+                    frame,
+                    &state,
+                    &PlanReviewViewState::default(),
+                    Instant::now(),
+                );
+            });
+            let text = buffer_text(&buffer);
+            assert!(text.contains("Esc clear"), "query: {query}");
+            assert!(text.contains("↑/↓/←/→ scroll"), "query: {query}");
+            assert!(text.contains("/ edit"), "query: {query}");
+            assert!(!text.contains("n/N next/prev"), "query: {query}");
         }
     }
 
