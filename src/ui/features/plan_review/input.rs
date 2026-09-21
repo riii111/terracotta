@@ -30,15 +30,48 @@ pub(crate) enum PlanReviewInput {
     Quit,
 }
 
-pub(crate) fn key_to_input(key: KeyEvent, searching: bool) -> Option<PlanReviewInput> {
+pub(crate) fn key_to_input(
+    key: KeyEvent,
+    searching: bool,
+    filter_confirmed: bool,
+) -> Option<PlanReviewInput> {
     let key = normalize_key(key);
     if searching {
         return search_key_to_input(key);
+    }
+    if filter_confirmed {
+        return confirmed_filter_key_to_input(key);
+    }
+    if let Some(input) = navigation_key_to_input(key) {
+        return Some(input);
     }
     match (key.code, key.modifiers) {
         (KeyCode::Char('c'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
             Some(PlanReviewInput::Quit)
         }
+        (KeyCode::Char('/'), KeyModifiers::NONE) => Some(PlanReviewInput::SearchStart),
+        (KeyCode::Esc, KeyModifiers::NONE) => Some(PlanReviewInput::SearchCancel),
+        (KeyCode::Char('n'), KeyModifiers::NONE) => Some(PlanReviewInput::SearchNext),
+        (KeyCode::Char('N'), KeyModifiers::NONE) => Some(PlanReviewInput::SearchPrevious),
+        (KeyCode::Char('y'), KeyModifiers::NONE) => Some(PlanReviewInput::Copy),
+        (KeyCode::Char('a'), KeyModifiers::NONE) => Some(PlanReviewInput::Apply),
+        (KeyCode::Char('q'), KeyModifiers::NONE) => Some(PlanReviewInput::Quit),
+        _ => None,
+    }
+}
+
+const fn confirmed_filter_key_to_input(key: KeyEvent) -> Option<PlanReviewInput> {
+    match (key.code, key.modifiers) {
+        (KeyCode::Char('/'), KeyModifiers::NONE) => Some(PlanReviewInput::SearchStart),
+        (KeyCode::Esc, KeyModifiers::NONE) => Some(PlanReviewInput::SearchCancel),
+        (KeyCode::Char('n'), KeyModifiers::NONE) => Some(PlanReviewInput::SearchNext),
+        (KeyCode::Char('N'), KeyModifiers::NONE) => Some(PlanReviewInput::SearchPrevious),
+        _ => navigation_key_to_input(key),
+    }
+}
+
+const fn navigation_key_to_input(key: KeyEvent) -> Option<PlanReviewInput> {
+    match (key.code, key.modifiers) {
         (KeyCode::Char('p'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
             Some(PlanReviewInput::Up)
         }
@@ -77,16 +110,6 @@ pub(crate) fn key_to_input(key: KeyEvent, searching: bool) -> Option<PlanReviewI
         (KeyCode::PageDown, _) => Some(PlanReviewInput::PageDown),
         (KeyCode::Home, _) => Some(PlanReviewInput::Top),
         (KeyCode::End, _) => Some(PlanReviewInput::Bottom),
-        (KeyCode::Char('/'), KeyModifiers::NONE) => Some(PlanReviewInput::SearchStart),
-        (KeyCode::Esc, KeyModifiers::NONE) => Some(PlanReviewInput::SearchCancel),
-        (KeyCode::Char('n'), KeyModifiers::NONE) => Some(PlanReviewInput::SearchNext),
-        (KeyCode::Char('N'), KeyModifiers::NONE) => Some(PlanReviewInput::SearchPrevious),
-        (KeyCode::Char('y'), KeyModifiers::NONE) => Some(PlanReviewInput::Copy),
-        (KeyCode::Char('a'), KeyModifiers::NONE) => Some(PlanReviewInput::Apply),
-        (KeyCode::Char('c'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
-            Some(PlanReviewInput::Quit)
-        }
-        (KeyCode::Char('q'), KeyModifiers::NONE) => Some(PlanReviewInput::Quit),
         _ => None,
     }
 }
@@ -158,16 +181,19 @@ mod tests {
     #[test]
     fn old_list_and_detail_keys_have_no_special_actions() {
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-        assert_eq!(key_to_input(key, false), None);
+        assert_eq!(key_to_input(key, false, false), None);
     }
 
     #[test]
     fn slash_starts_search_only_outside_input() {
         let key = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE);
 
-        assert_eq!(key_to_input(key, false), Some(PlanReviewInput::SearchStart));
         assert_eq!(
-            key_to_input(key, true),
+            key_to_input(key, false, false),
+            Some(PlanReviewInput::SearchStart)
+        );
+        assert_eq!(
+            key_to_input(key, true, false),
             Some(PlanReviewInput::SearchChar('/'))
         );
     }
@@ -175,26 +201,39 @@ mod tests {
     #[test]
     fn search_input_prioritizes_editing_keys() {
         assert_eq!(
-            key_to_input(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE), true),
+            key_to_input(
+                KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
+                true,
+                false,
+            ),
             Some(PlanReviewInput::SearchChar('x'))
         );
         assert_eq!(
-            key_to_input(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE), true),
+            key_to_input(
+                KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+                true,
+                false,
+            ),
             Some(PlanReviewInput::SearchBackspace)
         );
         assert_eq!(
             key_to_input(
                 KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
-                true
+                true,
+                false,
             ),
             Some(PlanReviewInput::SearchRight)
         );
         assert_eq!(
-            key_to_input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), true),
+            key_to_input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), true, false,),
             Some(PlanReviewInput::SearchCancel)
         );
         assert_eq!(
-            key_to_input(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE), true),
+            key_to_input(
+                KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE),
+                true,
+                false,
+            ),
             Some(PlanReviewInput::SearchChar('n'))
         );
     }
@@ -202,20 +241,37 @@ mod tests {
     #[test]
     fn confirmed_filter_keys_clear_or_move_matches() {
         assert_eq!(
-            key_to_input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), false),
+            key_to_input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), false, true),
             Some(PlanReviewInput::SearchCancel)
         );
         assert_eq!(
-            key_to_input(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE), false),
+            key_to_input(
+                KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE),
+                false,
+                true,
+            ),
             Some(PlanReviewInput::SearchNext)
         );
         assert_eq!(
             key_to_input(
                 KeyEvent::new(KeyCode::Char('N'), KeyModifiers::SHIFT),
-                false
+                false,
+                true,
             ),
             Some(PlanReviewInput::SearchPrevious)
         );
+    }
+
+    #[test]
+    fn confirmed_filter_blocks_apply_copy_and_quit_keys() {
+        for key in [
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+        ] {
+            assert_eq!(key_to_input(key, false, true), None);
+        }
     }
 
     #[test]
@@ -229,7 +285,11 @@ mod tests {
             Some(ApplyConfirmationInput::Cancel)
         );
         assert_eq!(
-            key_to_input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), false),
+            key_to_input(
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+                false,
+                false
+            ),
             None
         );
         assert_eq!(

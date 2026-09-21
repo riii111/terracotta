@@ -240,7 +240,11 @@ fn handle_key_event<B: Backend>(
         return Ok(None);
     };
     Ok(
-        match plan_review::key_to_input(key, review_view.searching()) {
+        match plan_review::key_to_input(
+            key,
+            review_view.searching(),
+            !review.review().search_query().is_empty(),
+        ) {
             Some(plan_review::PlanReviewInput::Quit) => Some(Action::Quit),
             Some(plan_review::PlanReviewInput::Apply) => Some(Action::OpenApplyConfirmation),
             Some(plan_review::PlanReviewInput::Copy) => Some(Action::Copy(CopyTarget::Plan)),
@@ -783,9 +787,9 @@ mod tests {
     }
 
     #[test]
-    fn cancelling_confirmation_preserves_filtered_review_position() {
+    fn cancelling_confirmation_preserves_review_position() {
         let now = Instant::now();
-        let mut plan = PlanReview::new(
+        let plan = PlanReview::new(
             PathBuf::from("/project"),
             "staging".to_owned(),
             plan_document(
@@ -797,7 +801,6 @@ mod tests {
             PlanMetadata::new(Vec::new(), Vec::new(), 0, 1, 0, true),
             Vec::new(),
         );
-        plan.set_search_query("worker".to_owned());
         let mut state = SessionState::Review(Box::new(ReviewSessionState::new(plan)));
         let terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
         let mut execution_view = execution::ExecutionViewState::default();
@@ -856,8 +859,91 @@ mod tests {
         update_session(&mut state, cancel, &mut execution_view, now);
 
         let review = state.review().expect("cancel should restore review");
-        assert_eq!(review.review().search_query(), "worker");
+        assert!(review.review().search_query().is_empty());
         assert_eq!(review_view.scroll(), position);
+    }
+
+    #[test]
+    fn confirmed_filter_blocks_dangerous_keys_until_escape_clears_it() {
+        let now = Instant::now();
+        let mut plan = PlanReview::new(
+            PathBuf::from("/project"),
+            "default".to_owned(),
+            plan_document("Plan: 1 to add.\n".to_owned()),
+            PlanMetadata::new(Vec::new(), Vec::new(), 1, 0, 0, true),
+            Vec::new(),
+        );
+        plan.set_search_query("worker".to_owned());
+        let mut state = SessionState::Review(Box::new(ReviewSessionState::new(plan)));
+        let terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+        let mut execution_view = execution::ExecutionViewState::default();
+        let mut review_view = plan_review::PlanReviewViewState::default();
+        let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
+
+        for key in [
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+        ] {
+            assert_eq!(
+                handle_key_event(
+                    &terminal,
+                    &state,
+                    &mut execution_view,
+                    &mut review_view,
+                    &mut confirmation_view,
+                    key,
+                )
+                .expect("confirmed filter key should be handled"),
+                None
+            );
+        }
+
+        let clear = handle_key_event(
+            &terminal,
+            &state,
+            &mut execution_view,
+            &mut review_view,
+            &mut confirmation_view,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+        )
+        .expect("clear filter key should be handled")
+        .expect("clear filter should update the review");
+        update_session(&mut state, clear, &mut execution_view, now);
+        assert_eq!(
+            state
+                .review()
+                .expect("review state")
+                .review()
+                .search_query(),
+            ""
+        );
+
+        assert!(matches!(
+            handle_key_event(
+                &terminal,
+                &state,
+                &mut execution_view,
+                &mut review_view,
+                &mut confirmation_view,
+                KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+            )
+            .expect("apply key should be handled"),
+            Some(Action::OpenApplyConfirmation)
+        ));
+        assert!(matches!(
+            handle_key_event(
+                &terminal,
+                &state,
+                &mut execution_view,
+                &mut review_view,
+                &mut confirmation_view,
+                KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+            )
+            .expect("copy key should be handled"),
+            Some(Action::Copy(CopyTarget::Plan))
+        ));
     }
 
     #[rstest]
