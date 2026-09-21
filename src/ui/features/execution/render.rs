@@ -765,6 +765,7 @@ mod tests {
         ExecutionLogLine,
     };
     use crate::app::session::{self, Action, SessionState};
+    use crate::ui::features::execution::ExecutionScroll;
     use crate::ui::test_support::{
         assert_shell_frame_and_footer, buffer_text, render_to_buffer, write_buffer_captures,
     };
@@ -1005,23 +1006,6 @@ mod tests {
     }
 
     #[test]
-    fn compact_stopping_at_minimum_size_keeps_warning_and_elapsed_visible() {
-        let (state, now) = applying_state_with_content(1, 1);
-        let mut stopping_state = state;
-        stopping_state.apply(ExecutionAction::RequestCancellation);
-        let buffer = render_to_buffer((32, 9), |frame| {
-            render_execution_with_view(frame, &stopping_state, ExecutionViewState::default(), now);
-        });
-
-        snapshot("ux12r_32x9_apply-stopping", &buffer);
-        let text = buffer_text(&buffer);
-        assert!(text.contains("Stopping..."));
-        assert!(text.contains("Changes may"));
-        assert!(text.contains("already be applied."));
-        assert!(text.contains("Elapsed"));
-    }
-
-    #[test]
     fn renders_apply_quit_confirmation_at_all_supported_sizes() {
         for &(width, height) in &SIZES {
             let (state, now) = apply_state(ApplyStatus::Succeeded);
@@ -1040,695 +1024,6 @@ mod tests {
                 &buffer,
             );
         }
-    }
-
-    #[test]
-    fn quit_confirmation_replaces_the_result_footer_and_has_a_narrow_notice() {
-        let (state, now) = apply_state(ApplyStatus::Succeeded);
-        let buffer = render_to_buffer((80, 24), |frame| {
-            render_execution_with_quit_confirmation(
-                frame,
-                &state,
-                ExecutionViewState::default(),
-                now,
-                true,
-            );
-        });
-        let text = buffer_text(&buffer);
-        assert!(text.contains("Quit Terracotta?   [Enter] Quit   [Esc] Cancel"));
-        assert!(!text.contains("q/Ctrl-C quit"));
-
-        let narrow = render_to_buffer((32, 9), |frame| {
-            render_execution_with_quit_confirmation(
-                frame,
-                &state,
-                ExecutionViewState::default(),
-                now,
-                true,
-            );
-        });
-        assert!(buffer_text(&narrow).contains("Quit? Enter exit / Esc cancel"));
-    }
-
-    #[test]
-    fn quit_confirmation_preserves_the_execution_body_and_scroll_limits() {
-        let (state, _) = apply_state(ApplyStatus::Succeeded);
-        let area = Rect::new(0, 0, 50, 24);
-        let normal = execution_layout(area, &state);
-        let waiting = execution_layout_with_quit_confirmation(area, &state, true);
-
-        assert!(
-            footer_lines(
-                &state,
-                ExecutionViewState::default(),
-                shell_layout::centered_width(area),
-                None,
-            )
-            .len()
-                >= 2
-        );
-        assert_eq!(waiting.body(), normal.body());
-        assert_eq!(waiting.max_vertical(), normal.max_vertical());
-        assert_eq!(waiting.max_horizontal(), normal.max_horizontal());
-    }
-
-    #[test]
-    fn running_apply_keeps_the_compact_frame_fixed_as_logs_and_state_change() {
-        for &(width, height) in &SIZES {
-            let (empty_state, _) = applying_state_with_content(0, 0);
-            let (short_state, _) = applying_state_with_content(1, 1);
-            let (long_state, _) = applying_state_with_content(40, 1);
-            let mut stopping_state = short_state.clone();
-            stopping_state.apply(ExecutionAction::RequestCancellation);
-            let area = Rect::new(0, 0, width, height);
-            let empty_layout = execution_layout(area, &empty_state);
-            let short_layout = execution_layout(area, &short_state);
-            let long_layout = execution_layout(area, &long_state);
-            let stopping_layout = execution_layout(area, &stopping_state);
-
-            assert_eq!(empty_layout.shell.content(), short_layout.shell.content());
-            assert_eq!(short_layout.shell.content(), long_layout.shell.content());
-            assert_eq!(
-                short_layout.shell.content(),
-                stopping_layout.shell.content()
-            );
-            assert_eq!(empty_layout.shell.footer(), short_layout.shell.footer());
-            assert_eq!(short_layout.shell.footer(), long_layout.shell.footer());
-            assert_eq!(short_layout.shell.footer(), stopping_layout.shell.footer());
-            assert_eq!(short_layout.status(), long_layout.status());
-            assert_eq!(short_layout.status(), stopping_layout.status());
-            assert_eq!(
-                short_layout.shell.footer().bottom() - short_layout.shell.header().y,
-                9
-            );
-
-            let long_buffer = render_to_buffer((width, height), |frame| {
-                render_execution_with_view(
-                    frame,
-                    &long_state,
-                    ExecutionViewState::default(),
-                    Instant::now(),
-                );
-            });
-            let long_text = buffer_text(&long_buffer);
-            assert!(long_text.contains("Applying..."));
-            assert!(long_text.contains("v logs"));
-            assert!(!long_text.contains("log line"));
-            assert!(!long_text.contains("Waiting for Terraform output..."));
-
-            let stopping_buffer = render_to_buffer((width, height), |frame| {
-                render_execution_with_view(
-                    frame,
-                    &stopping_state,
-                    ExecutionViewState::default(),
-                    Instant::now(),
-                );
-            });
-            let stopping_text = buffer_text(&stopping_buffer);
-            assert!(stopping_text.contains("Stopping..."));
-            assert!(stopping_text.contains("Changes may already be applied."));
-        }
-    }
-
-    #[test]
-    fn reopening_apply_logs_starts_at_the_newest_line() {
-        let started_at = Instant::now();
-        let mut state = ExecutionState::applying(started_at, ExecutionContext::loading("/repo"));
-        for text in ["first", "second", "tail"] {
-            state.record(ExecutionEvent {
-                received_at: started_at,
-                kind: ExecutionEventKind::Log(ExecutionLogLine {
-                    stream: EventStream::Stdout,
-                    text: text.to_owned(),
-                }),
-            });
-        }
-
-        let mut view = ExecutionViewState::default();
-        view.open_logs();
-        view.apply_scroll(super::super::ExecutionScroll::Top, 0, 2, 1);
-        view.close_logs();
-        view.open_logs();
-
-        assert!(view.logs_open());
-        assert!(view.follows_latest());
-        let layout = execution_layout_with_view(Rect::new(0, 0, 80, 24), &state, view);
-        assert_eq!(
-            view.vertical_offset(0, layout.max_vertical()),
-            layout.max_vertical()
-        );
-    }
-
-    #[test]
-    fn cancelling_apply_keeps_the_warning_and_cancel_action_in_both_views() {
-        let started_at = Instant::now();
-        let mut state = ExecutionState::applying(started_at, ExecutionContext::loading("/repo"));
-        state.record(ExecutionEvent {
-            received_at: started_at,
-            kind: ExecutionEventKind::Log(ExecutionLogLine {
-                stream: EventStream::Stdout,
-                text: "Applying saved plan...".to_owned(),
-            }),
-        });
-        state.apply(ExecutionAction::RequestCancellation);
-
-        let compact = render_to_buffer((80, 24), |frame| {
-            render_execution_with_view(frame, &state, ExecutionViewState::default(), started_at);
-        });
-        let mut logs_view = ExecutionViewState::default();
-        logs_view.open_logs();
-        let logs = render_to_buffer((80, 24), |frame| {
-            render_execution_with_view(frame, &state, logs_view, started_at);
-        });
-
-        for buffer in [&compact, &logs] {
-            let text = buffer_text(buffer);
-            assert!(text.contains("Stopping..."));
-            assert!(text.contains("Changes may already be applied."));
-            assert!(text.contains("Ctrl-C cancel"));
-        }
-        assert!(buffer_text(&compact).contains("v logs"));
-        assert!(buffer_text(&logs).contains("Esc close"));
-    }
-
-    #[test]
-    fn initial_execution_position_depends_on_the_completed_result() {
-        struct InitialPositionCase {
-            name: &'static str,
-            status: ApplyStatus,
-            expected_marker: &'static str,
-            tail_is_visible: bool,
-        }
-
-        for case in [
-            InitialPositionCase {
-                name: "success_follows_tail",
-                status: ApplyStatus::Succeeded,
-                expected_marker: "tail marker",
-                tail_is_visible: true,
-            },
-            InitialPositionCase {
-                name: "failure_starts_at_first_error",
-                status: ApplyStatus::Failed,
-                expected_marker: "Error: initial failure",
-                tail_is_visible: false,
-            },
-            InitialPositionCase {
-                name: "interrupted_follows_tail",
-                status: ApplyStatus::Interrupted,
-                expected_marker: "tail marker",
-                tail_is_visible: true,
-            },
-        ] {
-            let (state, now) = long_apply_state(case.status);
-            let buffer = render_to_buffer((80, 24), |frame| {
-                render_execution_with_view(frame, &state, ExecutionViewState::default(), now);
-            });
-            let text = buffer_text(&buffer);
-
-            assert!(text.contains(case.expected_marker), "case: {}", case.name);
-            assert_eq!(
-                text.contains("tail marker"),
-                case.tail_is_visible,
-                "case: {}",
-                case.name
-            );
-        }
-    }
-
-    #[test]
-    fn end_uses_the_log_tail_after_a_failed_apply() {
-        let (state, now) = long_apply_state(ApplyStatus::Failed);
-        let mut view = ExecutionViewState::default();
-        view.end();
-        let buffer = render_to_buffer((80, 24), |frame| {
-            render_execution_with_view(frame, &state, view, now);
-        });
-
-        assert!(buffer_text(&buffer).contains("tail marker"));
-    }
-
-    #[test]
-    fn production_execution_render_draws_shell_scrollbars_and_stream_colors() {
-        let (state, now) = long_apply_state(ApplyStatus::Succeeded);
-        let area = Rect::new(0, 0, 80, 24);
-        let layout = execution_layout(area, &state);
-        let buffer = render_to_buffer((area.width, area.height), |frame| {
-            render_execution_with_view(frame, &state, ExecutionViewState::default(), now);
-        });
-        let mut top_view = ExecutionViewState::default();
-        top_view.apply_scroll(
-            super::super::ExecutionScroll::Top,
-            0,
-            layout.max_vertical(),
-            layout.body().height,
-        );
-        let top_buffer = render_to_buffer((area.width, area.height), |frame| {
-            render_execution_with_view(frame, &state, top_view, now);
-        });
-
-        assert_shell_frame_and_footer(
-            &buffer,
-            layout.shell.content(),
-            layout.shell.footer(),
-            "y yank result",
-        );
-        let text = buffer_text(&buffer);
-        assert!(text.contains("Apply result"));
-        assert!(text.contains("Apply complete."));
-        assert!(layout.vertical_scrollbar());
-        assert!(layout.horizontal_scrollbar());
-        let body = layout.body();
-        let vertical_x = body.x.saturating_add(body.width);
-        let horizontal_y = body.y.saturating_add(body.height);
-        let horizontal_end_x = vertical_x;
-        assert_eq!(buffer[(vertical_x, body.y)].symbol(), "▲");
-        assert_eq!(
-            buffer[(vertical_x, body.y)].fg,
-            Color::Rgb(0xc0, 0xb8, 0xb0)
-        );
-        assert_eq!(buffer[(body.x, horizontal_y)].symbol(), "◀︎");
-        assert_eq!(
-            buffer[(body.x, horizontal_y)].fg,
-            Color::Rgb(0x50, 0x52, 0x5e)
-        );
-        assert_eq!(buffer[(horizontal_end_x, horizontal_y)].symbol(), "▶︎");
-        assert_eq!(
-            buffer[(horizontal_end_x, horizontal_y)].fg,
-            Color::Rgb(0xc0, 0xb8, 0xb0)
-        );
-        assert_text_uses_style(
-            &top_buffer,
-            "Warning: synthetic provider emitted a non-blocking diagnostic",
-            Color::Rgb(0xeb, 0xcb, 0x8b),
-            Modifier::BOLD,
-        );
-    }
-
-    #[test]
-    fn production_execution_scrollbars_reach_offsets_after_resize_and_single_overflow() {
-        let (state, now) = long_apply_state(ApplyStatus::Succeeded);
-        let mut previous_body = None;
-        for area in [Rect::new(0, 0, 80, 24), Rect::new(0, 0, 88, 24)] {
-            let layout = execution_layout(area, &state);
-            assert!(layout.vertical_scrollbar());
-            assert!(layout.horizontal_scrollbar());
-            assert!(layout.max_vertical() > 1);
-            assert!(layout.max_horizontal() > 1);
-            assert_ne!(previous_body, Some(layout.body()));
-            previous_body = Some(layout.body());
-
-            for (vertical, horizontal) in [
-                (0, 0),
-                (layout.max_vertical() / 2, layout.max_horizontal() / 2),
-                (layout.max_vertical(), layout.max_horizontal()),
-            ] {
-                let (layout, buffer) = execution_buffer_at(area, &state, now, vertical, horizontal);
-                assert_scrollbar_positions(&buffer, &layout, vertical, horizontal);
-            }
-        }
-
-        let area = Rect::new(0, 0, 80, 24);
-        let (base_state, _) = applying_state_with_content(1, 1);
-        let mut logs_view = ExecutionViewState::default();
-        logs_view.open_logs();
-        let available = execution_layout_with_view(area, &base_state, logs_view).log_area();
-
-        let (vertical_state, vertical_now) = applying_state_with_content(
-            available.height.saturating_add(1),
-            available.width.saturating_sub(1),
-        );
-        let (vertical_layout, vertical_buffer) =
-            execution_buffer_at(area, &vertical_state, vertical_now, 1, 0);
-        assert_eq!(vertical_layout.max_vertical(), 1);
-        assert!(!vertical_layout.horizontal_scrollbar());
-        assert_scrollbar_positions(&vertical_buffer, &vertical_layout, 1, 0);
-
-        let (horizontal_state, horizontal_now) = applying_state_with_content(
-            available.height.saturating_sub(1),
-            available.width.saturating_add(1),
-        );
-        let (horizontal_layout, horizontal_buffer) =
-            execution_buffer_at(area, &horizontal_state, horizontal_now, 0, 1);
-        assert_eq!(horizontal_layout.max_horizontal(), 1);
-        assert!(!horizontal_layout.vertical_scrollbar());
-        assert_scrollbar_positions(&horizontal_buffer, &horizontal_layout, 0, 1);
-    }
-
-    #[test]
-    fn production_execution_failure_render_draws_diagnostic_color() {
-        let (state, now) = apply_state(ApplyStatus::Failed);
-        let buffer = render_to_buffer((80, 24), |frame| {
-            render_execution_with_view(frame, &state, ExecutionViewState::default(), now);
-        });
-
-        assert!(
-            buffer_text(&buffer).contains("AccessDenied: synthetic provider rejected the request")
-        );
-        let diagnostic = "AccessDenied: synthetic provider rejected the request";
-        let area = buffer.area();
-        for y in area.y..area.bottom() {
-            let symbols = (area.x..area.right())
-                .map(|x| buffer.cell((x, y)).expect("diagnostic cell").symbol())
-                .collect::<Vec<_>>();
-            let Some(start) = (0..symbols.len()).find(|&start| {
-                symbols[start..]
-                    .iter()
-                    .copied()
-                    .collect::<String>()
-                    .starts_with(diagnostic)
-            }) else {
-                continue;
-            };
-            for offset in 0..diagnostic.chars().count() {
-                let cell = buffer
-                    .cell((
-                        area.x + u16::try_from(start + offset).expect("diagnostic offset"),
-                        y,
-                    ))
-                    .expect("diagnostic cell");
-                assert_eq!(cell.fg, Color::Rgb(0xeb, 0xcb, 0x8b));
-                assert!(cell.modifier.contains(Modifier::BOLD));
-            }
-            return;
-        }
-        panic!("diagnostic row should be visible");
-    }
-
-    #[test]
-    fn completed_apply_statuses_use_their_result_styles() {
-        struct StatusCase {
-            name: &'static str,
-            status: ApplyStatus,
-            headline: &'static str,
-            headline_color: Color,
-            warning: Option<&'static str>,
-        }
-
-        for case in [
-            StatusCase {
-                name: "success_summary",
-                status: ApplyStatus::Succeeded,
-                headline: "Resources: 2 added, 2 changed, 1 destroyed.",
-                headline_color: Color::Rgb(0xa3, 0xbe, 0x8c),
-                warning: None,
-            },
-            StatusCase {
-                name: "failure_status",
-                status: ApplyStatus::Failed,
-                headline: "Apply failed",
-                headline_color: Color::Rgb(0xbf, 0x61, 0x6a),
-                warning: Some("Changes may already be applied."),
-            },
-            StatusCase {
-                name: "interrupted_status",
-                status: ApplyStatus::Interrupted,
-                headline: "Apply interrupted",
-                headline_color: Color::Rgb(0xeb, 0xcb, 0x8b),
-                warning: Some("Changes may already be applied."),
-            },
-        ] {
-            let (state, now) = apply_state(case.status);
-            let area = Rect::new(0, 0, 80, 24);
-            let layout = execution_layout(area, &state);
-            let buffer = render_to_buffer((area.width, area.height), |frame| {
-                render_execution_with_view(frame, &state, ExecutionViewState::default(), now);
-            });
-            let headline = find_text_cell(&buffer, layout.status(), case.headline);
-
-            assert_eq!(headline.fg, case.headline_color, "case: {}", case.name);
-            assert!(
-                headline.modifier.contains(Modifier::BOLD),
-                "case: {}",
-                case.name
-            );
-            if let Some(warning) = case.warning {
-                let warning_cell = find_text_cell(&buffer, layout.status(), warning);
-                assert_eq!(
-                    warning_cell.fg,
-                    Color::Rgb(0xeb, 0xcb, 0x8b),
-                    "case: {}",
-                    case.name
-                );
-                assert!(
-                    warning_cell.modifier.contains(Modifier::BOLD),
-                    "case: {}",
-                    case.name
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn terraform_summary_stays_in_the_log_without_an_appended_copy() {
-        let now = Instant::now();
-        let summary = "Apply complete! Resources: 1 added, 0 changed, 0 destroyed.";
-        let mut state = ExecutionState::applying(now, ExecutionContext::loading("/project"));
-        state.record(ExecutionEvent {
-            received_at: now,
-            kind: ExecutionEventKind::Log(ExecutionLogLine {
-                stream: EventStream::Stdout,
-                text: summary.to_owned(),
-            }),
-        });
-        state.finish_apply(
-            ApplyStatus::Succeeded,
-            Some(summary.to_owned()),
-            None,
-            now + Duration::from_secs(1),
-        );
-
-        let buffer = render_to_buffer((80, 24), |frame| {
-            render_execution_with_view(
-                frame,
-                &state,
-                ExecutionViewState::default(),
-                now + Duration::from_secs(1),
-            );
-        });
-
-        assert_eq!(buffer_text(&buffer).matches(summary).count(), 2);
-        assert_eq!(
-            prepare_content(&state)
-                .lines
-                .iter()
-                .map(Line::to_string)
-                .filter(|line| line == summary)
-                .count(),
-            1
-        );
-    }
-
-    #[test]
-    fn completed_apply_without_log_shows_a_distinct_empty_output_message() {
-        let started_at = Instant::now();
-        let mut state = ExecutionState::applying(
-            started_at,
-            ExecutionContext::loading("/repo/environments/production/main"),
-        );
-        state.finish_apply(
-            ApplyStatus::Succeeded,
-            None,
-            None,
-            started_at + Duration::from_secs(1),
-        );
-
-        let buffer = render_to_buffer((80, 24), |frame| {
-            render_execution_with_view(
-                frame,
-                &state,
-                ExecutionViewState::default(),
-                started_at + Duration::from_secs(1),
-            );
-        });
-        let text = buffer_text(&buffer);
-
-        assert!(text.contains("Apply result"));
-        assert!(text.contains("Apply complete."));
-        assert!(text.contains("No execution output."));
-        assert!(!text.contains("Waiting for Terraform output..."));
-    }
-
-    #[test]
-    fn completed_apply_wraps_the_fixed_warning_before_the_log_separator() {
-        let (state, now) = apply_state(ApplyStatus::Failed);
-        let area = Rect::new(0, 0, 32, 24);
-        let layout = execution_layout(area, &state);
-        let mut view = ExecutionViewState::default();
-        view.apply_scroll(
-            super::super::ExecutionScroll::Top,
-            0,
-            layout.max_vertical(),
-            layout.body().height,
-        );
-        let buffer = render_to_buffer((area.width, area.height), |frame| {
-            render_execution_with_view(frame, &state, view, now);
-        });
-        let text = buffer_text(&buffer);
-
-        assert!(layout.body().height > 0);
-        assert!(layout.status().height > 3);
-        assert!(text.contains("Apply result"));
-        assert!(text.contains("Changes may already be"));
-        assert_eq!(
-            layout.separator().y,
-            layout.status().y + layout.status().height
-        );
-        assert!(layout.log_area().y > layout.separator().y);
-        assert!((layout.separator().x..layout.separator().right()).all(|x| {
-            buffer
-                .cell((x, layout.separator().y))
-                .expect("separator cell")
-                .symbol()
-                == "─"
-        }));
-    }
-
-    #[test]
-    fn completed_apply_keeps_all_wrapped_summary_lines_before_the_log() {
-        let now = Instant::now();
-        let summary = "Resources: 12345 added, 67890 changed, 12345 destroyed.";
-        let mut state = ExecutionState::applying(now, ExecutionContext::loading("/project"));
-        state.record(ExecutionEvent {
-            received_at: now,
-            kind: ExecutionEventKind::Log(ExecutionLogLine {
-                stream: EventStream::Stdout,
-                text: "log output".to_owned(),
-            }),
-        });
-        state.finish_apply(
-            ApplyStatus::Succeeded,
-            Some(summary.to_owned()),
-            None,
-            now + Duration::from_secs(1),
-        );
-
-        let area = Rect::new(0, 0, 40, 24);
-        let layout = execution_layout(area, &state);
-        let buffer = render_to_buffer((area.width, area.height), |frame| {
-            render_execution_with_view(
-                frame,
-                &state,
-                ExecutionViewState::default(),
-                now + Duration::from_secs(1),
-            );
-        });
-        let text = buffer_text(&buffer);
-
-        assert!(layout.status().height > 2);
-        assert!(layout.log_area().height > 0);
-        assert_eq!(layout.separator().y + 1, layout.log_area().y);
-        assert!(text.contains("Elapsed 1.0s"));
-        assert!(text.contains("log output"));
-    }
-
-    #[test]
-    fn running_status_keeps_fixed_height_when_following_is_off() {
-        let started_at = Instant::now();
-        let now = started_at + Duration::from_secs(10_000);
-        let state = ExecutionState::with_context(started_at, ExecutionContext::loading("/project"));
-        let area = Rect::new(0, 0, 32, 24);
-        let layout = execution_layout(area, &state);
-        let mut view = ExecutionViewState::default();
-        view.apply_scroll(
-            super::super::ExecutionScroll::Down,
-            0,
-            layout.max_vertical(),
-            layout.body().height,
-        );
-        let buffer = render_to_buffer((area.width, area.height), |frame| {
-            render_execution_with_view(frame, &state, view, now);
-        });
-
-        assert_eq!(layout.status().height, STATUS_HEIGHT);
-        assert_eq!(layout.log_area().y, layout.status().bottom());
-        assert_eq!(layout.separator().y, layout.log_area().bottom());
-        let text = buffer_text(&buffer);
-        assert!(text.contains("Elapsed 10000.0s"), "{text}");
-    }
-
-    #[test]
-    fn running_status_cycles_the_ascii_spinner_without_repeating_apply_progress() {
-        let started_at = Instant::now();
-        let state = ExecutionState::with_context(started_at, ExecutionContext::loading("/project"));
-        let frames = ["|", "/", "-", "\\"];
-
-        for (index, frame) in frames.into_iter().enumerate() {
-            let status = status_lines(
-                &state,
-                ExecutionViewState::default(),
-                started_at + Duration::from_millis(u64::try_from(index).unwrap() * 100),
-            );
-            assert_eq!(status[0].to_string(), format!("{frame} Initializing..."));
-        }
-
-        let applying = ExecutionState::applying(started_at, ExecutionContext::loading("/project"));
-        let status = status_lines(
-            &applying,
-            ExecutionViewState::default(),
-            started_at + Duration::from_millis(100),
-        );
-        assert_eq!(status.len(), 3);
-        assert_eq!(status[0].to_string(), "/ Applying...");
-        assert!(
-            status
-                .iter()
-                .all(|line| !line.to_string().contains("Applying...") || line == &status[0])
-        );
-    }
-
-    #[test]
-    fn production_execution_copy_flash_uses_accent_background_then_restores_log_style() {
-        let started_at = Instant::now();
-        let mut state = ExecutionState::applying(started_at, ExecutionContext::loading("/repo"));
-        state.record(ExecutionEvent {
-            received_at: started_at,
-            kind: ExecutionEventKind::Log(ExecutionLogLine {
-                stream: EventStream::Stdout,
-                text: "terraform apply review.tfplan".to_owned(),
-            }),
-        });
-        state.record(ExecutionEvent {
-            received_at: started_at,
-            kind: ExecutionEventKind::Log(ExecutionLogLine {
-                stream: EventStream::Stdout,
-                text: "apply output".to_owned(),
-            }),
-        });
-        let mut session = SessionState::new(state);
-        let mut view = ExecutionViewState::default();
-        view.open_logs();
-        let before = render_to_buffer((80, 24), |frame| {
-            render_execution_with_view(
-                frame,
-                session.execution().expect("execution should be visible"),
-                view,
-                started_at,
-            );
-        });
-        session::update(
-            &mut session,
-            Action::CopyCompleted {
-                target: CopyTarget::Execution,
-                result: CopyResult::Written,
-            },
-            started_at,
-        );
-        let state = session.execution().expect("execution should be visible");
-        let flash = render_to_buffer((80, 24), |frame| {
-            render_execution_with_view(frame, state, view, started_at);
-        });
-        let after = render_to_buffer((80, 24), |frame| {
-            render_execution_with_view(frame, state, view, started_at + Duration::from_millis(201));
-        });
-
-        let body = execution_layout_with_view(Rect::new(0, 0, 80, 24), state, view).body();
-        let flash_cell = find_text_cell(&flash, body, "terraform apply review.tfplan");
-        assert_eq!(flash_cell.fg, Color::Rgb(0x11, 0x14, 0x19));
-        assert_eq!(flash_cell.bg, Color::Rgb(0xf4, 0x9e, 0x4c));
-        let before_cell = find_text_cell(&before, body, "terraform apply review.tfplan");
-        let after_cell = find_text_cell(&after, body, "terraform apply review.tfplan");
-        assert_eq!(after_cell, before_cell);
     }
 
     fn find_text_cell<'a>(buffer: &'a Buffer, area: Rect, text: &str) -> &'a ratatui::buffer::Cell {
@@ -1752,98 +1047,6 @@ mod tests {
         panic!("text should be visible: {text}");
     }
 
-    #[test]
-    fn append_only_log_is_rendered_in_receive_order() {
-        let now = Instant::now();
-        let mut state = ExecutionState::with_context(now, ExecutionContext::loading("/project"));
-        for (stream, text) in [
-            (EventStream::Stdout, "first"),
-            (EventStream::Stderr, "second"),
-            (EventStream::Stdout, "third"),
-        ] {
-            state.record(ExecutionEvent {
-                received_at: now,
-                kind: ExecutionEventKind::Log(ExecutionLogLine {
-                    stream,
-                    text: text.to_owned(),
-                }),
-            });
-        }
-
-        assert_eq!(
-            prepare_content(&state)
-                .lines
-                .iter()
-                .map(Line::to_string)
-                .collect::<Vec<_>>(),
-            vec!["first", "second", "third"]
-        );
-    }
-
-    #[test]
-    fn completed_apply_statuses_keep_full_log_order_for_render_and_copy() {
-        struct ApplyCase {
-            name: &'static str,
-            status: ApplyStatus,
-            expected_copy: &'static str,
-        }
-
-        for case in [
-            ApplyCase {
-                name: "succeeded",
-                status: ApplyStatus::Succeeded,
-                expected_copy: "Apply complete.\nfirst\nsecond\nthird",
-            },
-            ApplyCase {
-                name: "failed",
-                status: ApplyStatus::Failed,
-                expected_copy: "Apply failed.\nChanges may already be applied.\nfirst\nsecond\nthird",
-            },
-            ApplyCase {
-                name: "interrupted",
-                status: ApplyStatus::Interrupted,
-                expected_copy: "Apply interrupted.\nChanges may already be applied.\nfirst\nsecond\nthird",
-            },
-        ] {
-            let now = Instant::now();
-            let mut state = ExecutionState::applying(now, ExecutionContext::loading("/project"));
-            for (stream, text) in [
-                (EventStream::Stdout, "first"),
-                (EventStream::Stderr, "second"),
-                (EventStream::Stdout, "third"),
-            ] {
-                state.record(ExecutionEvent {
-                    received_at: now,
-                    kind: ExecutionEventKind::Log(ExecutionLogLine {
-                        stream,
-                        text: text.to_owned(),
-                    }),
-                });
-            }
-            state.finish_apply(case.status, None, None, now + Duration::from_secs(1));
-
-            assert_eq!(
-                prepare_content(&state)
-                    .lines
-                    .iter()
-                    .map(Line::to_string)
-                    .collect::<Vec<_>>(),
-                ["first", "second", "third"],
-                "case: {}",
-                case.name
-            );
-            assert_eq!(
-                state
-                    .copy_effect(CopyTarget::Execution)
-                    .expect("completed apply should be copyable")
-                    .text(),
-                case.expected_copy,
-                "case: {}",
-                case.name
-            );
-        }
-    }
-
     fn execution_buffer_at(
         area: Rect,
         state: &ExecutionState,
@@ -1856,14 +1059,14 @@ mod tests {
         let layout = execution_layout_with_view(area, state, view);
         let mut current_vertical = 0;
         view.apply_scroll(
-            super::super::ExecutionScroll::Top,
+            ExecutionScroll::Top,
             current_vertical,
             layout.max_vertical(),
             layout.body().height,
         );
         for _ in 0..vertical {
             view.apply_scroll(
-                super::super::ExecutionScroll::Down,
+                ExecutionScroll::Down,
                 current_vertical,
                 layout.max_vertical(),
                 layout.body().height,
@@ -1874,14 +1077,14 @@ mod tests {
         }
         let mut current_horizontal = 0;
         view.apply_horizontal_scroll(
-            super::super::ExecutionScroll::LeftEdge,
+            ExecutionScroll::LeftEdge,
             current_horizontal,
             layout.max_horizontal(),
             current_vertical,
         );
         for _ in 0..horizontal {
             view.apply_horizontal_scroll(
-                super::super::ExecutionScroll::Right,
+                ExecutionScroll::Right,
                 current_horizontal,
                 layout.max_horizontal(),
                 current_vertical,
@@ -2001,6 +1204,849 @@ mod tests {
             assert_eq!(thumb_end, track.len() - 1);
         } else {
             assert!(thumb_end < track.len() - 1);
+        }
+    }
+
+    mod layout {
+        use super::*;
+
+        #[test]
+        fn quit_confirmation_replaces_the_result_footer_and_has_a_narrow_notice() {
+            let (state, now) = apply_state(ApplyStatus::Succeeded);
+            let buffer = render_to_buffer((80, 24), |frame| {
+                render_execution_with_quit_confirmation(
+                    frame,
+                    &state,
+                    ExecutionViewState::default(),
+                    now,
+                    true,
+                );
+            });
+            let text = buffer_text(&buffer);
+            assert!(text.contains("Quit Terracotta?   [Enter] Quit   [Esc] Cancel"));
+            assert!(!text.contains("q/Ctrl-C quit"));
+
+            let narrow = render_to_buffer((32, 9), |frame| {
+                render_execution_with_quit_confirmation(
+                    frame,
+                    &state,
+                    ExecutionViewState::default(),
+                    now,
+                    true,
+                );
+            });
+            assert!(buffer_text(&narrow).contains("Quit? Enter exit / Esc cancel"));
+        }
+
+        #[test]
+        fn quit_confirmation_preserves_the_execution_body_and_scroll_limits() {
+            let (state, _) = apply_state(ApplyStatus::Succeeded);
+            let area = Rect::new(0, 0, 50, 24);
+            let normal = execution_layout(area, &state);
+            let waiting = execution_layout_with_quit_confirmation(area, &state, true);
+
+            assert!(
+                footer_lines(
+                    &state,
+                    ExecutionViewState::default(),
+                    shell_layout::centered_width(area),
+                    None,
+                )
+                .len()
+                    >= 2
+            );
+            assert_eq!(waiting.body(), normal.body());
+            assert_eq!(waiting.max_vertical(), normal.max_vertical());
+            assert_eq!(waiting.max_horizontal(), normal.max_horizontal());
+        }
+
+        #[test]
+        fn production_execution_render_draws_shell_scrollbars_and_stream_colors() {
+            let (state, now) = long_apply_state(ApplyStatus::Succeeded);
+            let area = Rect::new(0, 0, 80, 24);
+            let layout = execution_layout(area, &state);
+            let buffer = render_to_buffer((area.width, area.height), |frame| {
+                render_execution_with_view(frame, &state, ExecutionViewState::default(), now);
+            });
+            let mut top_view = ExecutionViewState::default();
+            top_view.apply_scroll(
+                ExecutionScroll::Top,
+                0,
+                layout.max_vertical(),
+                layout.body().height,
+            );
+            let top_buffer = render_to_buffer((area.width, area.height), |frame| {
+                render_execution_with_view(frame, &state, top_view, now);
+            });
+
+            assert_shell_frame_and_footer(
+                &buffer,
+                layout.shell.content(),
+                layout.shell.footer(),
+                "y yank result",
+            );
+            let text = buffer_text(&buffer);
+            assert!(text.contains("Apply result"));
+            assert!(text.contains("Apply complete."));
+            assert!(layout.vertical_scrollbar());
+            assert!(layout.horizontal_scrollbar());
+            let body = layout.body();
+            let vertical_x = body.x.saturating_add(body.width);
+            let horizontal_y = body.y.saturating_add(body.height);
+            let horizontal_end_x = vertical_x;
+            assert_eq!(buffer[(vertical_x, body.y)].symbol(), "▲");
+            assert_eq!(
+                buffer[(vertical_x, body.y)].fg,
+                Color::Rgb(0xc0, 0xb8, 0xb0)
+            );
+            assert_eq!(buffer[(body.x, horizontal_y)].symbol(), "◀︎");
+            assert_eq!(
+                buffer[(body.x, horizontal_y)].fg,
+                Color::Rgb(0x50, 0x52, 0x5e)
+            );
+            assert_eq!(buffer[(horizontal_end_x, horizontal_y)].symbol(), "▶︎");
+            assert_eq!(
+                buffer[(horizontal_end_x, horizontal_y)].fg,
+                Color::Rgb(0xc0, 0xb8, 0xb0)
+            );
+            assert_text_uses_style(
+                &top_buffer,
+                "Warning: synthetic provider emitted a non-blocking diagnostic",
+                Color::Rgb(0xeb, 0xcb, 0x8b),
+                Modifier::BOLD,
+            );
+        }
+
+        #[test]
+        fn production_execution_scrollbars_reach_offsets_after_resize_and_single_overflow() {
+            let (state, now) = long_apply_state(ApplyStatus::Succeeded);
+            let mut previous_body = None;
+            for area in [Rect::new(0, 0, 80, 24), Rect::new(0, 0, 88, 24)] {
+                let layout = execution_layout(area, &state);
+                assert!(layout.vertical_scrollbar());
+                assert!(layout.horizontal_scrollbar());
+                assert!(layout.max_vertical() > 1);
+                assert!(layout.max_horizontal() > 1);
+                assert_ne!(previous_body, Some(layout.body()));
+                previous_body = Some(layout.body());
+
+                for (vertical, horizontal) in [
+                    (0, 0),
+                    (layout.max_vertical() / 2, layout.max_horizontal() / 2),
+                    (layout.max_vertical(), layout.max_horizontal()),
+                ] {
+                    let (layout, buffer) =
+                        execution_buffer_at(area, &state, now, vertical, horizontal);
+                    assert_scrollbar_positions(&buffer, &layout, vertical, horizontal);
+                }
+            }
+
+            let area = Rect::new(0, 0, 80, 24);
+            let (base_state, _) = applying_state_with_content(1, 1);
+            let mut logs_view = ExecutionViewState::default();
+            logs_view.open_logs();
+            let available = execution_layout_with_view(area, &base_state, logs_view).log_area();
+
+            let (vertical_state, vertical_now) = applying_state_with_content(
+                available.height.saturating_add(1),
+                available.width.saturating_sub(1),
+            );
+            let (vertical_layout, vertical_buffer) =
+                execution_buffer_at(area, &vertical_state, vertical_now, 1, 0);
+            assert_eq!(vertical_layout.max_vertical(), 1);
+            assert!(!vertical_layout.horizontal_scrollbar());
+            assert_scrollbar_positions(&vertical_buffer, &vertical_layout, 1, 0);
+
+            let (horizontal_state, horizontal_now) = applying_state_with_content(
+                available.height.saturating_sub(1),
+                available.width.saturating_add(1),
+            );
+            let (horizontal_layout, horizontal_buffer) =
+                execution_buffer_at(area, &horizontal_state, horizontal_now, 0, 1);
+            assert_eq!(horizontal_layout.max_horizontal(), 1);
+            assert!(!horizontal_layout.vertical_scrollbar());
+            assert_scrollbar_positions(&horizontal_buffer, &horizontal_layout, 0, 1);
+        }
+    }
+
+    mod scroll {
+        use super::*;
+
+        #[test]
+        fn reopening_apply_logs_starts_at_the_newest_line() {
+            let started_at = Instant::now();
+            let mut state =
+                ExecutionState::applying(started_at, ExecutionContext::loading("/repo"));
+            for text in ["first", "second", "tail"] {
+                state.record(ExecutionEvent {
+                    received_at: started_at,
+                    kind: ExecutionEventKind::Log(ExecutionLogLine {
+                        stream: EventStream::Stdout,
+                        text: text.to_owned(),
+                    }),
+                });
+            }
+
+            let mut view = ExecutionViewState::default();
+            view.open_logs();
+            view.apply_scroll(ExecutionScroll::Top, 0, 2, 1);
+            view.close_logs();
+            view.open_logs();
+
+            assert!(view.logs_open());
+            assert!(view.follows_latest());
+            let layout = execution_layout_with_view(Rect::new(0, 0, 80, 24), &state, view);
+            assert_eq!(
+                view.vertical_offset(0, layout.max_vertical()),
+                layout.max_vertical()
+            );
+        }
+
+        #[test]
+        fn cancelling_apply_keeps_the_warning_and_cancel_action_in_both_views() {
+            let started_at = Instant::now();
+            let mut state =
+                ExecutionState::applying(started_at, ExecutionContext::loading("/repo"));
+            state.record(ExecutionEvent {
+                received_at: started_at,
+                kind: ExecutionEventKind::Log(ExecutionLogLine {
+                    stream: EventStream::Stdout,
+                    text: "Applying saved plan...".to_owned(),
+                }),
+            });
+            state.apply(ExecutionAction::RequestCancellation);
+
+            let compact = render_to_buffer((80, 24), |frame| {
+                render_execution_with_view(
+                    frame,
+                    &state,
+                    ExecutionViewState::default(),
+                    started_at,
+                );
+            });
+            let mut logs_view = ExecutionViewState::default();
+            logs_view.open_logs();
+            let logs = render_to_buffer((80, 24), |frame| {
+                render_execution_with_view(frame, &state, logs_view, started_at);
+            });
+
+            for buffer in [&compact, &logs] {
+                let text = buffer_text(buffer);
+                assert!(text.contains("Stopping..."));
+                assert!(text.contains("Changes may already be applied."));
+                assert!(text.contains("Ctrl-C cancel"));
+            }
+            assert!(buffer_text(&compact).contains("v logs"));
+            assert!(buffer_text(&logs).contains("Esc close"));
+        }
+
+        #[test]
+        fn initial_execution_position_depends_on_the_completed_result() {
+            struct InitialPositionCase {
+                name: &'static str,
+                status: ApplyStatus,
+                expected_marker: &'static str,
+                tail_is_visible: bool,
+            }
+
+            for case in [
+                InitialPositionCase {
+                    name: "success_follows_tail",
+                    status: ApplyStatus::Succeeded,
+                    expected_marker: "tail marker",
+                    tail_is_visible: true,
+                },
+                InitialPositionCase {
+                    name: "failure_starts_at_first_error",
+                    status: ApplyStatus::Failed,
+                    expected_marker: "Error: initial failure",
+                    tail_is_visible: false,
+                },
+                InitialPositionCase {
+                    name: "interrupted_follows_tail",
+                    status: ApplyStatus::Interrupted,
+                    expected_marker: "tail marker",
+                    tail_is_visible: true,
+                },
+            ] {
+                let (state, now) = long_apply_state(case.status);
+                let buffer = render_to_buffer((80, 24), |frame| {
+                    render_execution_with_view(frame, &state, ExecutionViewState::default(), now);
+                });
+                let text = buffer_text(&buffer);
+
+                assert!(text.contains(case.expected_marker), "case: {}", case.name);
+                assert_eq!(
+                    text.contains("tail marker"),
+                    case.tail_is_visible,
+                    "case: {}",
+                    case.name
+                );
+            }
+        }
+
+        #[test]
+        fn end_uses_the_log_tail_after_a_failed_apply() {
+            let (state, now) = long_apply_state(ApplyStatus::Failed);
+            let mut view = ExecutionViewState::default();
+            view.end();
+            let buffer = render_to_buffer((80, 24), |frame| {
+                render_execution_with_view(frame, &state, view, now);
+            });
+
+            assert!(buffer_text(&buffer).contains("tail marker"));
+        }
+    }
+
+    mod result {
+        use super::*;
+
+        #[test]
+        fn production_execution_failure_render_draws_diagnostic_color() {
+            let (state, now) = apply_state(ApplyStatus::Failed);
+            let buffer = render_to_buffer((80, 24), |frame| {
+                render_execution_with_view(frame, &state, ExecutionViewState::default(), now);
+            });
+
+            assert!(
+                buffer_text(&buffer)
+                    .contains("AccessDenied: synthetic provider rejected the request")
+            );
+            let diagnostic = "AccessDenied: synthetic provider rejected the request";
+            let area = buffer.area();
+            for y in area.y..area.bottom() {
+                let symbols = (area.x..area.right())
+                    .map(|x| buffer.cell((x, y)).expect("diagnostic cell").symbol())
+                    .collect::<Vec<_>>();
+                let Some(start) = (0..symbols.len()).find(|&start| {
+                    symbols[start..]
+                        .iter()
+                        .copied()
+                        .collect::<String>()
+                        .starts_with(diagnostic)
+                }) else {
+                    continue;
+                };
+                for offset in 0..diagnostic.chars().count() {
+                    let cell = buffer
+                        .cell((
+                            area.x + u16::try_from(start + offset).expect("diagnostic offset"),
+                            y,
+                        ))
+                        .expect("diagnostic cell");
+                    assert_eq!(cell.fg, Color::Rgb(0xeb, 0xcb, 0x8b));
+                    assert!(cell.modifier.contains(Modifier::BOLD));
+                }
+                return;
+            }
+            panic!("diagnostic row should be visible");
+        }
+
+        #[test]
+        fn completed_apply_statuses_use_their_result_styles() {
+            struct StatusCase {
+                name: &'static str,
+                status: ApplyStatus,
+                headline: &'static str,
+                headline_color: Color,
+                warning: Option<&'static str>,
+            }
+
+            for case in [
+                StatusCase {
+                    name: "success_summary",
+                    status: ApplyStatus::Succeeded,
+                    headline: "Resources: 2 added, 2 changed, 1 destroyed.",
+                    headline_color: Color::Rgb(0xa3, 0xbe, 0x8c),
+                    warning: None,
+                },
+                StatusCase {
+                    name: "failure_status",
+                    status: ApplyStatus::Failed,
+                    headline: "Apply failed",
+                    headline_color: Color::Rgb(0xbf, 0x61, 0x6a),
+                    warning: Some("Changes may already be applied."),
+                },
+                StatusCase {
+                    name: "interrupted_status",
+                    status: ApplyStatus::Interrupted,
+                    headline: "Apply interrupted",
+                    headline_color: Color::Rgb(0xeb, 0xcb, 0x8b),
+                    warning: Some("Changes may already be applied."),
+                },
+            ] {
+                let (state, now) = apply_state(case.status);
+                let area = Rect::new(0, 0, 80, 24);
+                let layout = execution_layout(area, &state);
+                let buffer = render_to_buffer((area.width, area.height), |frame| {
+                    render_execution_with_view(frame, &state, ExecutionViewState::default(), now);
+                });
+                let headline = find_text_cell(&buffer, layout.status(), case.headline);
+
+                assert_eq!(headline.fg, case.headline_color, "case: {}", case.name);
+                assert!(
+                    headline.modifier.contains(Modifier::BOLD),
+                    "case: {}",
+                    case.name
+                );
+                if let Some(warning) = case.warning {
+                    let warning_cell = find_text_cell(&buffer, layout.status(), warning);
+                    assert_eq!(
+                        warning_cell.fg,
+                        Color::Rgb(0xeb, 0xcb, 0x8b),
+                        "case: {}",
+                        case.name
+                    );
+                    assert!(
+                        warning_cell.modifier.contains(Modifier::BOLD),
+                        "case: {}",
+                        case.name
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn terraform_summary_stays_in_the_log_without_an_appended_copy() {
+            let now = Instant::now();
+            let summary = "Apply complete! Resources: 1 added, 0 changed, 0 destroyed.";
+            let mut state = ExecutionState::applying(now, ExecutionContext::loading("/project"));
+            state.record(ExecutionEvent {
+                received_at: now,
+                kind: ExecutionEventKind::Log(ExecutionLogLine {
+                    stream: EventStream::Stdout,
+                    text: summary.to_owned(),
+                }),
+            });
+            state.finish_apply(
+                ApplyStatus::Succeeded,
+                Some(summary.to_owned()),
+                None,
+                now + Duration::from_secs(1),
+            );
+
+            let buffer = render_to_buffer((80, 24), |frame| {
+                render_execution_with_view(
+                    frame,
+                    &state,
+                    ExecutionViewState::default(),
+                    now + Duration::from_secs(1),
+                );
+            });
+
+            assert_eq!(buffer_text(&buffer).matches(summary).count(), 2);
+            assert_eq!(
+                prepare_content(&state)
+                    .lines
+                    .iter()
+                    .map(Line::to_string)
+                    .filter(|line| line == summary)
+                    .count(),
+                1
+            );
+        }
+
+        #[test]
+        fn completed_apply_without_log_shows_a_distinct_empty_output_message() {
+            let started_at = Instant::now();
+            let mut state = ExecutionState::applying(
+                started_at,
+                ExecutionContext::loading("/repo/environments/production/main"),
+            );
+            state.finish_apply(
+                ApplyStatus::Succeeded,
+                None,
+                None,
+                started_at + Duration::from_secs(1),
+            );
+
+            let buffer = render_to_buffer((80, 24), |frame| {
+                render_execution_with_view(
+                    frame,
+                    &state,
+                    ExecutionViewState::default(),
+                    started_at + Duration::from_secs(1),
+                );
+            });
+            let text = buffer_text(&buffer);
+
+            assert!(text.contains("Apply result"));
+            assert!(text.contains("Apply complete."));
+            assert!(text.contains("No execution output."));
+            assert!(!text.contains("Waiting for Terraform output..."));
+        }
+
+        #[test]
+        fn completed_apply_wraps_the_fixed_warning_before_the_log_separator() {
+            let (state, now) = apply_state(ApplyStatus::Failed);
+            let area = Rect::new(0, 0, 32, 24);
+            let layout = execution_layout(area, &state);
+            let mut view = ExecutionViewState::default();
+            view.apply_scroll(
+                ExecutionScroll::Top,
+                0,
+                layout.max_vertical(),
+                layout.body().height,
+            );
+            let buffer = render_to_buffer((area.width, area.height), |frame| {
+                render_execution_with_view(frame, &state, view, now);
+            });
+            let text = buffer_text(&buffer);
+
+            assert!(layout.body().height > 0);
+            assert!(layout.status().height > 3);
+            assert!(text.contains("Apply result"));
+            assert!(text.contains("Changes may already be"));
+            assert_eq!(
+                layout.separator().y,
+                layout.status().y + layout.status().height
+            );
+            assert!(layout.log_area().y > layout.separator().y);
+            assert!((layout.separator().x..layout.separator().right()).all(|x| {
+                buffer
+                    .cell((x, layout.separator().y))
+                    .expect("separator cell")
+                    .symbol()
+                    == "─"
+            }));
+        }
+
+        #[test]
+        fn completed_apply_keeps_all_wrapped_summary_lines_before_the_log() {
+            let now = Instant::now();
+            let summary = "Resources: 12345 added, 67890 changed, 12345 destroyed.";
+            let mut state = ExecutionState::applying(now, ExecutionContext::loading("/project"));
+            state.record(ExecutionEvent {
+                received_at: now,
+                kind: ExecutionEventKind::Log(ExecutionLogLine {
+                    stream: EventStream::Stdout,
+                    text: "log output".to_owned(),
+                }),
+            });
+            state.finish_apply(
+                ApplyStatus::Succeeded,
+                Some(summary.to_owned()),
+                None,
+                now + Duration::from_secs(1),
+            );
+
+            let area = Rect::new(0, 0, 40, 24);
+            let layout = execution_layout(area, &state);
+            let buffer = render_to_buffer((area.width, area.height), |frame| {
+                render_execution_with_view(
+                    frame,
+                    &state,
+                    ExecutionViewState::default(),
+                    now + Duration::from_secs(1),
+                );
+            });
+            let text = buffer_text(&buffer);
+
+            assert!(layout.status().height > 2);
+            assert!(layout.log_area().height > 0);
+            assert_eq!(layout.separator().y + 1, layout.log_area().y);
+            assert!(text.contains("Elapsed 1.0s"));
+            assert!(text.contains("log output"));
+        }
+    }
+
+    mod progress {
+        use super::*;
+
+        #[test]
+        fn compact_stopping_at_minimum_size_keeps_warning_and_elapsed_visible() {
+            let (state, now) = applying_state_with_content(1, 1);
+            let mut stopping_state = state;
+            stopping_state.apply(ExecutionAction::RequestCancellation);
+            let buffer = render_to_buffer((32, 9), |frame| {
+                render_execution_with_view(
+                    frame,
+                    &stopping_state,
+                    ExecutionViewState::default(),
+                    now,
+                );
+            });
+
+            snapshot("ux12r_32x9_apply-stopping", &buffer);
+            let text = buffer_text(&buffer);
+            assert!(text.contains("Stopping..."));
+            assert!(text.contains("Changes may"));
+            assert!(text.contains("already be applied."));
+            assert!(text.contains("Elapsed"));
+        }
+
+        #[test]
+        fn running_apply_keeps_the_compact_frame_fixed_as_logs_and_state_change() {
+            for &(width, height) in &SIZES {
+                let (empty_state, _) = applying_state_with_content(0, 0);
+                let (short_state, _) = applying_state_with_content(1, 1);
+                let (long_state, _) = applying_state_with_content(40, 1);
+                let mut stopping_state = short_state.clone();
+                stopping_state.apply(ExecutionAction::RequestCancellation);
+                let area = Rect::new(0, 0, width, height);
+                let empty_layout = execution_layout(area, &empty_state);
+                let short_layout = execution_layout(area, &short_state);
+                let long_layout = execution_layout(area, &long_state);
+                let stopping_layout = execution_layout(area, &stopping_state);
+
+                assert_eq!(empty_layout.shell.content(), short_layout.shell.content());
+                assert_eq!(short_layout.shell.content(), long_layout.shell.content());
+                assert_eq!(
+                    short_layout.shell.content(),
+                    stopping_layout.shell.content()
+                );
+                assert_eq!(empty_layout.shell.footer(), short_layout.shell.footer());
+                assert_eq!(short_layout.shell.footer(), long_layout.shell.footer());
+                assert_eq!(short_layout.shell.footer(), stopping_layout.shell.footer());
+                assert_eq!(short_layout.status(), long_layout.status());
+                assert_eq!(short_layout.status(), stopping_layout.status());
+                assert_eq!(
+                    short_layout.shell.footer().bottom() - short_layout.shell.header().y,
+                    9
+                );
+
+                let long_buffer = render_to_buffer((width, height), |frame| {
+                    render_execution_with_view(
+                        frame,
+                        &long_state,
+                        ExecutionViewState::default(),
+                        Instant::now(),
+                    );
+                });
+                let long_text = buffer_text(&long_buffer);
+                assert!(long_text.contains("Applying..."));
+                assert!(long_text.contains("v logs"));
+                assert!(!long_text.contains("log line"));
+                assert!(!long_text.contains("Waiting for Terraform output..."));
+
+                let stopping_buffer = render_to_buffer((width, height), |frame| {
+                    render_execution_with_view(
+                        frame,
+                        &stopping_state,
+                        ExecutionViewState::default(),
+                        Instant::now(),
+                    );
+                });
+                let stopping_text = buffer_text(&stopping_buffer);
+                assert!(stopping_text.contains("Stopping..."));
+                assert!(stopping_text.contains("Changes may already be applied."));
+            }
+        }
+
+        #[test]
+        fn running_status_keeps_fixed_height_when_following_is_off() {
+            let started_at = Instant::now();
+            let now = started_at + Duration::from_secs(10_000);
+            let state =
+                ExecutionState::with_context(started_at, ExecutionContext::loading("/project"));
+            let area = Rect::new(0, 0, 32, 24);
+            let layout = execution_layout(area, &state);
+            let mut view = ExecutionViewState::default();
+            view.apply_scroll(
+                ExecutionScroll::Down,
+                0,
+                layout.max_vertical(),
+                layout.body().height,
+            );
+            let buffer = render_to_buffer((area.width, area.height), |frame| {
+                render_execution_with_view(frame, &state, view, now);
+            });
+
+            assert_eq!(layout.status().height, STATUS_HEIGHT);
+            assert_eq!(layout.log_area().y, layout.status().bottom());
+            assert_eq!(layout.separator().y, layout.log_area().bottom());
+            let text = buffer_text(&buffer);
+            assert!(text.contains("Elapsed 10000.0s"), "{text}");
+        }
+
+        #[test]
+        fn running_status_cycles_the_ascii_spinner_without_repeating_apply_progress() {
+            let started_at = Instant::now();
+            let state =
+                ExecutionState::with_context(started_at, ExecutionContext::loading("/project"));
+            let frames = ["|", "/", "-", "\\"];
+
+            for (index, frame) in frames.into_iter().enumerate() {
+                let status = status_lines(
+                    &state,
+                    ExecutionViewState::default(),
+                    started_at + Duration::from_millis(u64::try_from(index).unwrap() * 100),
+                );
+                assert_eq!(status[0].to_string(), format!("{frame} Initializing..."));
+            }
+
+            let applying =
+                ExecutionState::applying(started_at, ExecutionContext::loading("/project"));
+            let status = status_lines(
+                &applying,
+                ExecutionViewState::default(),
+                started_at + Duration::from_millis(100),
+            );
+            assert_eq!(status.len(), 3);
+            assert_eq!(status[0].to_string(), "/ Applying...");
+            assert!(
+                status
+                    .iter()
+                    .all(|line| !line.to_string().contains("Applying...") || line == &status[0])
+            );
+        }
+
+        #[test]
+        fn append_only_log_is_rendered_in_receive_order() {
+            let now = Instant::now();
+            let mut state =
+                ExecutionState::with_context(now, ExecutionContext::loading("/project"));
+            for (stream, text) in [
+                (EventStream::Stdout, "first"),
+                (EventStream::Stderr, "second"),
+                (EventStream::Stdout, "third"),
+            ] {
+                state.record(ExecutionEvent {
+                    received_at: now,
+                    kind: ExecutionEventKind::Log(ExecutionLogLine {
+                        stream,
+                        text: text.to_owned(),
+                    }),
+                });
+            }
+
+            assert_eq!(
+                prepare_content(&state)
+                    .lines
+                    .iter()
+                    .map(Line::to_string)
+                    .collect::<Vec<_>>(),
+                vec!["first", "second", "third"]
+            );
+        }
+    }
+
+    mod copy {
+        use super::*;
+
+        #[test]
+        fn production_execution_copy_flash_uses_accent_background_then_restores_log_style() {
+            let started_at = Instant::now();
+            let mut state =
+                ExecutionState::applying(started_at, ExecutionContext::loading("/repo"));
+            state.record(ExecutionEvent {
+                received_at: started_at,
+                kind: ExecutionEventKind::Log(ExecutionLogLine {
+                    stream: EventStream::Stdout,
+                    text: "terraform apply review.tfplan".to_owned(),
+                }),
+            });
+            state.record(ExecutionEvent {
+                received_at: started_at,
+                kind: ExecutionEventKind::Log(ExecutionLogLine {
+                    stream: EventStream::Stdout,
+                    text: "apply output".to_owned(),
+                }),
+            });
+            let mut session = SessionState::new(state);
+            let mut view = ExecutionViewState::default();
+            view.open_logs();
+            let before = render_to_buffer((80, 24), |frame| {
+                render_execution_with_view(
+                    frame,
+                    session.execution().expect("execution should be visible"),
+                    view,
+                    started_at,
+                );
+            });
+            session::update(
+                &mut session,
+                Action::CopyCompleted {
+                    target: CopyTarget::Execution,
+                    result: CopyResult::Written,
+                },
+                started_at,
+            );
+            let state = session.execution().expect("execution should be visible");
+            let flash = render_to_buffer((80, 24), |frame| {
+                render_execution_with_view(frame, state, view, started_at);
+            });
+            let after = render_to_buffer((80, 24), |frame| {
+                render_execution_with_view(
+                    frame,
+                    state,
+                    view,
+                    started_at + Duration::from_millis(201),
+                );
+            });
+
+            let body = execution_layout_with_view(Rect::new(0, 0, 80, 24), state, view).body();
+            let flash_cell = find_text_cell(&flash, body, "terraform apply review.tfplan");
+            assert_eq!(flash_cell.fg, Color::Rgb(0x11, 0x14, 0x19));
+            assert_eq!(flash_cell.bg, Color::Rgb(0xf4, 0x9e, 0x4c));
+            let before_cell = find_text_cell(&before, body, "terraform apply review.tfplan");
+            let after_cell = find_text_cell(&after, body, "terraform apply review.tfplan");
+            assert_eq!(after_cell, before_cell);
+        }
+
+        #[test]
+        fn completed_apply_statuses_keep_full_log_order_for_render_and_copy() {
+            struct ApplyCase {
+                name: &'static str,
+                status: ApplyStatus,
+                expected_copy: &'static str,
+            }
+
+            for case in [
+                ApplyCase {
+                    name: "succeeded",
+                    status: ApplyStatus::Succeeded,
+                    expected_copy: "Apply complete.\nfirst\nsecond\nthird",
+                },
+                ApplyCase {
+                    name: "failed",
+                    status: ApplyStatus::Failed,
+                    expected_copy: "Apply failed.\nChanges may already be applied.\nfirst\nsecond\nthird",
+                },
+                ApplyCase {
+                    name: "interrupted",
+                    status: ApplyStatus::Interrupted,
+                    expected_copy: "Apply interrupted.\nChanges may already be applied.\nfirst\nsecond\nthird",
+                },
+            ] {
+                let now = Instant::now();
+                let mut state =
+                    ExecutionState::applying(now, ExecutionContext::loading("/project"));
+                for (stream, text) in [
+                    (EventStream::Stdout, "first"),
+                    (EventStream::Stderr, "second"),
+                    (EventStream::Stdout, "third"),
+                ] {
+                    state.record(ExecutionEvent {
+                        received_at: now,
+                        kind: ExecutionEventKind::Log(ExecutionLogLine {
+                            stream,
+                            text: text.to_owned(),
+                        }),
+                    });
+                }
+                state.finish_apply(case.status, None, None, now + Duration::from_secs(1));
+
+                assert_eq!(
+                    prepare_content(&state)
+                        .lines
+                        .iter()
+                        .map(Line::to_string)
+                        .collect::<Vec<_>>(),
+                    ["first", "second", "third"],
+                    "case: {}",
+                    case.name
+                );
+                assert_eq!(
+                    state
+                        .copy_effect(CopyTarget::Execution)
+                        .expect("completed apply should be copyable")
+                        .text(),
+                    case.expected_copy,
+                    "case: {}",
+                    case.name
+                );
+            }
         }
     }
 }
