@@ -41,4 +41,4 @@ expression: buffer_text(buffer)
  │Outputs: endpoint = synthetic                                                                                                                               │
  │Apply log remains in receive order.                                                                                                                         │
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- Quit Terracotta? Enter quit | Esc cancel
+ Quit Terracotta?   [Enter] Quit   [Esc] Cancel

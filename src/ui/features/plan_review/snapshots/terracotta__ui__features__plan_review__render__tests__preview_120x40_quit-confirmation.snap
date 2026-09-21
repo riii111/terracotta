@@ -37,4 +37,4 @@ expression: buffer_text(buffer)
  │    }                                                                                                              ││
  │                                                                                                                   ▼│
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- Quit Terracotta? Enter quit | Esc cancel
+ Quit Terracotta?   [Enter] Quit   [Esc] Cancel

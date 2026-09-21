@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -49,32 +49,51 @@ pub(crate) fn pad_lines(mut lines: Vec<Line<'static>>, height: usize) -> Vec<Lin
 
 fn quit_confirmation_line() -> Line<'static> {
     Line::from(vec![
-        Span::styled("Quit Terracotta? ", theme::footer_text_style()),
-        Span::styled("Enter", theme::footer_key_style()),
-        Span::styled(" quit | ", theme::footer_text_style()),
-        Span::styled("Esc", theme::footer_key_style()),
-        Span::styled(" cancel", theme::footer_text_style()),
+        Span::styled(
+            "Quit Terracotta?   ",
+            theme::accent_style().add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "[Enter]",
+            theme::footer_key_style().add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" Quit   ", theme::footer_text_style()),
+        Span::styled(
+            "[Esc]",
+            theme::footer_key_style().add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" Cancel", theme::footer_text_style()),
     ])
 }
 
 fn compact_quit_confirmation_line() -> Line<'static> {
     Line::from(vec![
-        Span::styled("Quit? ", theme::footer_text_style()),
-        Span::styled("Enter", theme::footer_key_style()),
-        Span::styled(" exit ", theme::footer_text_style()),
-        Span::styled("/", theme::footer_key_separator_style()),
-        Span::styled(" ", theme::footer_text_style()),
-        Span::styled("Esc", theme::footer_key_style()),
+        Span::styled("Quit? ", theme::accent_style().add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[Enter]",
+            theme::footer_key_style().add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" quit ", theme::footer_text_style()),
+        Span::styled(
+            "[Esc]",
+            theme::footer_key_style().add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" cancel", theme::footer_text_style()),
     ])
 }
 
 fn minimal_quit_confirmation_line() -> Line<'static> {
     Line::from(vec![
-        Span::styled("Quit? ", theme::footer_text_style()),
-        Span::styled("Enter", theme::footer_key_style()),
+        Span::styled("Quit? ", theme::accent_style().add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[Enter]",
+            theme::footer_key_style().add_modifier(Modifier::BOLD),
+        ),
         Span::styled("/", theme::footer_key_separator_style()),
-        Span::styled("Esc", theme::footer_key_style()),
+        Span::styled(
+            "[Esc]",
+            theme::footer_key_style().add_modifier(Modifier::BOLD),
+        ),
     ])
 }
 
@@ -167,7 +186,7 @@ pub(crate) fn render(
 #[cfg(test)]
 mod tests {
     use ratatui::buffer::Buffer;
-    use ratatui::style::{Color, Modifier};
+    use ratatui::style::Color;
     use rstest::rstest;
 
     use super::*;
@@ -369,8 +388,50 @@ mod tests {
 
         assert_eq!(
             lines.iter().map(Line::to_string).collect::<Vec<_>>(),
-            vec!["Quit Terracotta? Enter quit | Esc cancel".to_owned()]
+            vec!["Quit Terracotta?   [Enter] Quit   [Esc] Cancel".to_owned()]
         );
+    }
+
+    #[rstest]
+    #[case::full(80, None)]
+    #[case::compact(32, None)]
+    #[case::with_notice(32, Some("Copied."))]
+    fn quit_confirmation_emphasizes_the_question_and_both_keys(
+        #[case] width: u16,
+        #[case] notice: Option<&str>,
+    ) {
+        let backend = ratatui::backend::TestBackend::new(width, 2);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                render(
+                    frame,
+                    frame.area(),
+                    &quit_confirmation_lines(width, notice),
+                    None,
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        assert_buffer_text_style(
+            buffer,
+            "Quit",
+            0,
+            Color::Rgb(0xf4, 0x9e, 0x4c),
+            Color::Reset,
+            Modifier::BOLD,
+        );
+        for key in ["[Enter]", "[Esc]"] {
+            assert_buffer_text_style(
+                buffer,
+                key,
+                0,
+                Color::Rgb(0xe9, 0xdb, 0xdb),
+                Color::Reset,
+                Modifier::BOLD,
+            );
+        }
     }
 
     #[test]
@@ -379,7 +440,7 @@ mod tests {
 
         assert_eq!(
             lines.iter().map(Line::to_string).collect::<Vec<_>>(),
-            vec!["Quit? Enter exit / Esc cancel".to_owned()]
+            vec!["Quit? [Enter] quit [Esc] cancel".to_owned()]
         );
     }
 
@@ -389,7 +450,7 @@ mod tests {
 
         assert_eq!(
             lines.iter().map(Line::to_string).collect::<Vec<_>>(),
-            vec!["Quit? Enter/Esc".to_owned()]
+            vec!["Quit? [Enter]/[Esc]".to_owned()]
         );
     }
 

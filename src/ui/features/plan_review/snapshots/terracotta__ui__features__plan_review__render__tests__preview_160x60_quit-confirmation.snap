@@ -55,4 +55,4 @@ expression: buffer_text(buffer)
  │                                                                                                                                                            │
  │End of synthetic plan body.                                                                                                                                 │
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- Quit Terracotta? Enter quit | Esc cancel
+ Quit Terracotta?   [Enter] Quit   [Esc] Cancel

@@ -24,4 +24,4 @@ expression: buffer_text(buffer)
  │Apply log remains in receive order.                                         │
  │◀︎═══════════════════════════════════════════════════════───────────────────▶︎│
  └────────────────────────────────────────────────────────────────────────────┘
- Quit Terracotta? Enter quit | Esc cancel
+ Quit Terracotta?   [Enter] Quit   [Esc] Cancel
