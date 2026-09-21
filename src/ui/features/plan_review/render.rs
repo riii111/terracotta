@@ -144,8 +144,8 @@ impl PlanReviewLayout {
 
 pub(crate) fn layout(area: Rect, searching: bool, state: &ReviewSessionState) -> PlanReviewLayout {
     let filtered_view = filter_active(searching, state);
-    let base_content = prepare_content(state, false);
-    let content = prepare_content(state, filtered_view);
+    let base_content = prepare_content(state, false, "");
+    let content = prepare_content(state, filtered_view, state.review().search_query());
     layout_with_content(
         area,
         searching,
@@ -440,8 +440,8 @@ pub(crate) fn render(
     }
 
     let filtered_view = filter_active(view.searching(), state);
-    let base_content = prepare_content(state, false);
-    let content = prepare_content(state, filtered_view);
+    let base_content = prepare_content(state, false, "");
+    let content = prepare_content(state, filtered_view, state.review().search_query());
     let notice = state.copy_notice_at(now);
     let layout = layout_with_content(
         area,
@@ -551,9 +551,13 @@ fn render_footer(
     );
 }
 
-fn prepare_content(state: &ReviewSessionState, filtered_view: bool) -> PreparedContent<'_> {
+fn prepare_content<'a>(
+    state: &'a ReviewSessionState,
+    filtered_view: bool,
+    filter_query: &str,
+) -> PreparedContent<'a> {
     let review = state.review();
-    let filtered = review.filtered_document();
+    let filtered = review.document().filter(filter_query);
     let (lines, sources, matches) = review_lines(review, &filtered, filtered_view);
     let max_width = max_line_width(&lines);
     PreparedContent {
@@ -1427,13 +1431,13 @@ End of synthetic plan body."#;
 
     #[test]
     fn filter_height_uses_the_unfiltered_plan_as_its_baseline() {
-        let mut plan = review_with_content(3, 48);
+        let mut plan = filter_height_review();
         let state = review_state(plan.clone());
         let normal = layout(Rect::new(0, 0, 120, 40), false, &state);
 
-        plan.set_search_query("x".to_owned());
+        plan.set_search_query("api".to_owned());
         let first_filter_state = review_state(plan.clone());
-        plan.set_search_query("xxxxxxxxxxxxxxxxxxxxxxxx".to_owned());
+        plan.set_search_query("missing".to_owned());
         let second_filter_state = review_state(plan);
         let first_filter = layout(Rect::new(0, 0, 120, 40), false, &first_filter_state);
         let second_filter = layout(Rect::new(0, 0, 120, 40), false, &second_filter_state);
@@ -2571,6 +2575,30 @@ End of synthetic plan body."#;
                 )],
             ),
             PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, true),
+            Vec::new(),
+        )
+    }
+
+    fn filter_height_review() -> PlanReview {
+        PlanReview::new(
+            PathBuf::from("/repo"),
+            "default".to_owned(),
+            PlanDocument::with_blocks(
+                "api line 1\napi line 2\nworker line 1\nworker line 2\ncommon line\n".to_owned(),
+                vec![
+                    PlanBlock::new(0..2, PlanBlockKind::Resource),
+                    PlanBlock::new(2..4, PlanBlockKind::Resource),
+                    PlanBlock::new(4..5, PlanBlockKind::Common),
+                ],
+            ),
+            PlanMetadata::new(
+                vec!["api".to_owned(), "worker".to_owned()],
+                Vec::new(),
+                0,
+                2,
+                0,
+                true,
+            ),
             Vec::new(),
         )
     }
