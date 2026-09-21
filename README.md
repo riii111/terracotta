@@ -2,6 +2,9 @@
 
 Review and apply Terraform plans in your terminal.
 
+[![plan](https://github.com/user-attachments/assets/7c6bdb79-bf87-4f5f-9b33-7cafa038bc9e)
+
+
 ## Concept
 
 > Terraform-native · Review before apply · Ephemeral UI
