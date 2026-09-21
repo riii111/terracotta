@@ -18,7 +18,7 @@ use super::ExecutionViewState;
 
 const MIN_HEIGHT: u16 = 9;
 const MIN_WIDTH: u16 = 32;
-const STATUS_HEIGHT: u16 = 3;
+const STATUS_HEIGHT: u16 = 4;
 struct PreparedContent<'a> {
     lines: Vec<Line<'a>>,
     max_width: usize,
@@ -284,7 +284,11 @@ fn execution_layout_with_content(
         compact,
         (&normal_footer_lines, &normal_required_footer_lines),
     );
-    let shell_area = shell_layout::centered_area(area, requested_height);
+    let shell_area = if compact {
+        compact_shell_area(area, requested_height)
+    } else {
+        shell_layout::centered_area(area, requested_height)
+    };
     let footer_lines = if quit_confirmation {
         footer::pad_lines(
             footer::quit_confirmation_lines(panel_width, notice),
@@ -394,6 +398,17 @@ fn execution_requested_height(
         return shell_layout::required_height(content_height, footer_lines.0, footer_lines.1);
     }
     shell_layout::max_centered_height(area)
+}
+
+fn compact_shell_area(area: Rect, requested_height: u16) -> Rect {
+    let width = shell_layout::centered_width(area);
+    let height = requested_height.min(area.height);
+    Rect::new(
+        area.x + area.width.saturating_sub(width) / 2,
+        area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    )
 }
 
 fn status_height(
@@ -989,6 +1004,23 @@ mod tests {
     }
 
     #[test]
+    fn compact_stopping_at_minimum_size_keeps_warning_and_elapsed_visible() {
+        let (state, now) = applying_state_with_content(1, 1);
+        let mut stopping_state = state;
+        stopping_state.apply(ExecutionAction::RequestCancellation);
+        let buffer = render_to_buffer((32, 9), |frame| {
+            render_execution_with_view(frame, &stopping_state, ExecutionViewState::default(), now);
+        });
+
+        snapshot("ux12r_32x9_apply-stopping", &buffer);
+        let text = buffer_text(&buffer);
+        assert!(text.contains("Stopping..."));
+        assert!(text.contains("Changes may"));
+        assert!(text.contains("already be applied."));
+        assert!(text.contains("Elapsed"));
+    }
+
+    #[test]
     fn renders_apply_quit_confirmation_at_all_supported_sizes() {
         for &(width, height) in &SIZES {
             let (state, now) = apply_state(ApplyStatus::Succeeded);
@@ -1086,7 +1118,7 @@ mod tests {
             assert_eq!(short_layout.status(), stopping_layout.status());
             assert_eq!(
                 short_layout.shell.footer().bottom() - short_layout.shell.header().y,
-                8
+                9
             );
 
             let long_buffer = render_to_buffer((width, height), |frame| {
