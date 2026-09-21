@@ -226,7 +226,7 @@ def diagnostic_and_plan_is_ordered(current):
     markers = (
         "synthetic init warning",
         "synthetic plan warning",
-        "Terraform will perform",
+        "Plan:",
         "terraform_data.api",
     )
     positions = [current.find(marker) for marker in markers]
@@ -297,15 +297,15 @@ def kill_child():
 
 try:
     if scenario == "full_text":
-        wait_parts(["Terraform will perform", "terraform_data.api"], "plan_text", timeout=30)
+        wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
         send_key(b"q")
         exit_code = wait_exit()
     elif scenario == "filter_navigation":
-        wait_parts(["Terraform will perform", "terraform_data.api"], "plan_text", timeout=30)
+        wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
         send_key(b"/")
         wait_new("/ ", "filter_input")
         send_text("api")
-        wait_new("Filter matches: resources", "filter_matches")
+        wait_new("Matches: resources", "filter_matches")
         send_key(b"\r")
         wait_new("n/N next/prev", "filter_confirmed")
         send_key(b"n")
@@ -313,14 +313,14 @@ try:
         send_key(b"\x1b")
         wait_screen(
             lambda current: "Plan | Filter" not in current
-            and "Terraform will perform" in current,
+            and "terraform_data.api" in current,
             "filter_cleared",
             "full review after Escape",
         )
         send_key(b"q")
         exit_code = wait_exit()
     elif scenario == "basic_workflow":
-        wait_parts(["Terraform will perform", "terraform_data.api"], "plan_text", timeout=30)
+        wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
         send_key(b"a")
         wait_new("Apply this reviewed plan?", "apply_confirmation")
         send_text("yes")
@@ -330,7 +330,7 @@ try:
         send_key(b"q")
         exit_code = wait_exit()
     elif scenario in ("apply_success", "apply_failure", "apply_interrupt"):
-        wait_parts(["Terraform will perform", "terraform_data.api"], "plan_text", timeout=30)
+        wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
         send_key(b"a")
         wait_new("Apply this reviewed plan?", "apply_confirmation")
         send_text("yes")
@@ -350,7 +350,7 @@ try:
             send_key(b"q")
             exit_code = wait_exit()
     elif scenario == "apply_resize":
-        wait_parts(["Terraform will perform", "terraform_data.api"], "plan_text", timeout=30)
+        wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
         send_key(b"a")
         wait_new("Apply this reviewed plan?", "apply_confirmation")
         send_key(b"y")
@@ -377,13 +377,13 @@ try:
         send_key(b"q")
         exit_code = wait_exit()
     elif scenario in ("apply_no", "apply_escape"):
-        wait_parts(["Terraform will perform", "terraform_data.api"], "plan_text", timeout=30)
+        wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
         send_key(b"a")
         wait_new("Apply this reviewed plan?", "apply_confirmation")
         send_text("no") if scenario == "apply_no" else send_key(b"\x1b")
         if scenario == "apply_no":
             send_key(b"\r")
-        wait_new("Terraform will perform", "plan_restored")
+        wait_new("terraform_data.api", "plan_restored")
         send_key(b"q")
         exit_code = wait_exit()
     elif scenario == "diagnostic_success":
@@ -393,7 +393,7 @@ try:
             (
                 "synthetic init warning",
                 "synthetic plan warning",
-                "Terraform will perform",
+                "Plan:",
                 "terraform_data.api",
             ),
         )
@@ -412,7 +412,7 @@ try:
     elif scenario == "narrow":
         wait_new("Terminal too small", "narrow")
         resize(100, 24)
-        wait_new("Terraform will perform", "resized")
+        wait_new("Plan:", "resized")
         send_key(b"q")
         exit_code = wait_exit()
     elif scenario == "panic":

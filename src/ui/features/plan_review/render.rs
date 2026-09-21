@@ -11,10 +11,13 @@ use ratatui::{
 use crate::app::{
     copy::CopyNotice,
     execution::DiagnosticSeverity,
-    review::{FilteredPlan, PlanReview},
+    review::{FilteredPlan, PlanLineKind, PlanReview},
     session::{ApplyConfirmationState, ReviewSessionState},
 };
-use crate::ui::primitives::{atoms::scrollbar, molecules::terminal_notice};
+use crate::ui::primitives::{
+    atoms::{scrollbar, separator},
+    molecules::terminal_notice,
+};
 use crate::ui::shell::{footer, header, layout as shell_layout};
 use crate::ui::theme;
 
@@ -28,8 +31,14 @@ const CONFIRMATION_NOTICE: &str = "Terminal too small. Resize or press Esc to go
 struct PreparedContent<'a> {
     lines: Vec<Line<'a>>,
     max_width: usize,
-    sources: Vec<Option<&'a str>>,
+    sources: Vec<Option<PlanSource<'a>>>,
     matches: Vec<PlanReviewMatch>,
+}
+
+#[derive(Clone, Copy)]
+struct PlanSource<'a> {
+    text: &'a str,
+    kind: PlanLineKind,
 }
 
 pub(crate) struct ApplyConfirmationLayout {
@@ -87,6 +96,7 @@ pub(crate) struct PlanReviewLayout {
     body: Rect,
     search: Option<Rect>,
     filter_details: Option<Rect>,
+    separator: Option<Rect>,
     vertical_scrollbar: bool,
     horizontal_scrollbar: bool,
     max_vertical: u16,
@@ -105,6 +115,10 @@ impl PlanReviewLayout {
 
     pub(crate) const fn filter_details(&self) -> Option<Rect> {
         self.filter_details
+    }
+
+    pub(crate) const fn separator(&self) -> Option<Rect> {
+        self.separator
     }
 
     pub(crate) const fn vertical_scrollbar(&self) -> bool {
@@ -129,7 +143,7 @@ impl PlanReviewLayout {
 }
 
 pub(crate) fn layout(area: Rect, searching: bool, state: &ReviewSessionState) -> PlanReviewLayout {
-    let content = prepare_content(state);
+    let content = prepare_content(state, filter_active(searching, state));
     layout_with_content(
         area,
         searching,
@@ -179,7 +193,20 @@ fn layout_with_content(
             filter_details_height,
         )
     });
-    let filter_height = u16::from(filter_visible).saturating_add(filter_details_height);
+    let separator = filter_visible.then(|| {
+        Rect::new(
+            inner.x,
+            inner
+                .y
+                .saturating_add(1)
+                .saturating_add(filter_details_height),
+            inner.width,
+            1,
+        )
+    });
+    let filter_height = u16::from(filter_visible)
+        .saturating_add(filter_details_height)
+        .saturating_add(u16::from(filter_visible));
     let available = Rect::new(
         inner.x,
         inner.y.saturating_add(filter_height),
@@ -204,6 +231,7 @@ fn layout_with_content(
         body,
         search,
         filter_details,
+        separator,
         vertical_scrollbar,
         horizontal_scrollbar,
         max_vertical,
@@ -344,7 +372,7 @@ fn confirmation_lines(state: &ApplyConfirmationState) -> Vec<Line<'static>> {
     ];
     if !state.review().search_query().is_empty() {
         lines.push(Line::from(Span::styled(
-            "Scope: full plan (filter does not limit apply).",
+            "Filter changes display only. Apply uses all changes.",
             theme::secondary_style(),
         )));
     }
@@ -393,7 +421,7 @@ pub(crate) fn render(
         return;
     }
 
-    let content = prepare_content(state);
+    let content = prepare_content(state, filter_active(view.searching(), state));
     let notice = state.copy_notice_at(now);
     let layout = layout_with_content(
         area,
@@ -502,10 +530,10 @@ fn render_footer(
     );
 }
 
-fn prepare_content(state: &ReviewSessionState) -> PreparedContent<'_> {
+fn prepare_content(state: &ReviewSessionState, filtered_view: bool) -> PreparedContent<'_> {
     let review = state.review();
     let filtered = review.filtered_document();
-    let (lines, sources, matches) = review_lines(review, &filtered);
+    let (lines, sources, matches) = review_lines(review, &filtered, filtered_view);
     let max_width = max_line_width(&lines);
     PreparedContent {
         lines,
@@ -542,12 +570,23 @@ fn render_filter_header(
             filter_details,
         );
     }
+    if let Some(separator_area) = layout.separator() {
+        frame.render_widget(
+            separator::render_labeled(separator_area.width, "Matching changes"),
+            separator_area,
+        );
+    }
 }
 
 fn review_lines<'a>(
     review: &'a PlanReview,
     filtered: &FilteredPlan<'a>,
-) -> (Vec<Line<'a>>, Vec<Option<&'a str>>, Vec<PlanReviewMatch>) {
+    filtered_view: bool,
+) -> (
+    Vec<Line<'a>>,
+    Vec<Option<PlanSource<'a>>>,
+    Vec<PlanReviewMatch>,
+) {
     let mut lines = diagnostic_lines(review);
     let mut sources = vec![None; lines.len()];
     let mut matches = Vec::new();
@@ -563,17 +602,21 @@ fn review_lines<'a>(
         lines.push(Line::default());
         sources.push(None);
     }
-    for &line in filtered.lines() {
-        if !review.search_query().is_empty() && line.starts_with("Plan:") {
-            lines.push(Line::from(Span::styled(
-                "Plan total (full plan):",
-                theme::secondary_style(),
-            )));
-            sources.push(None);
+    for (line_number, line) in filtered.lines_with_indices() {
+        let kind = review.document().line_kind(line_number);
+        if kind == PlanLineKind::Intro {
+            continue;
+        }
+        if filtered_view && kind == PlanLineKind::Summary {
+            continue;
+        }
+        if filtered_view && filtered.matching_outputs() == 0 && kind == PlanLineKind::OutputSection
+        {
+            continue;
         }
         let line_index = lines.len();
-        lines.push(plan_line(line, review.search_query(), None));
-        sources.push(Some(line));
+        lines.push(plan_line(line, review.search_query(), None, kind));
+        sources.push(Some(PlanSource { text: line, kind }));
         matches.extend(line_matches(line, review.search_query(), line_index));
     }
     (lines, sources, matches)
@@ -601,9 +644,14 @@ fn diagnostic_lines(review: &PlanReview) -> Vec<Line<'_>> {
     lines
 }
 
-fn plan_line<'a>(line: &'a str, query: &str, selected: Option<&PlanReviewMatch>) -> Line<'a> {
+fn plan_line<'a>(
+    line: &'a str,
+    query: &str,
+    selected: Option<&PlanReviewMatch>,
+    kind: PlanLineKind,
+) -> Line<'a> {
     if query.is_empty() {
-        return Line::from(Span::styled(line, theme::plan_line_style(line)));
+        return Line::from(Span::styled(line, plan_line_style(line, kind)));
     }
     let search_matches = line_matches(line, query, 0);
     let mut result = Line::default();
@@ -612,7 +660,7 @@ fn plan_line<'a>(line: &'a str, query: &str, selected: Option<&PlanReviewMatch>)
     while let Some(index) = rest.find(query) {
         let (before, matched_and_after) = rest.split_at(index);
         if !before.is_empty() {
-            result.push_span(Span::styled(before, theme::plan_line_style(line)));
+            result.push_span(Span::styled(before, plan_line_style(line, kind)));
         }
         let (match_text, after) = matched_and_after.split_at(query.len());
         let rendered_match = search_matches
@@ -630,9 +678,17 @@ fn plan_line<'a>(line: &'a str, query: &str, selected: Option<&PlanReviewMatch>)
         match_index += 1;
     }
     if !rest.is_empty() {
-        result.push_span(Span::styled(rest, theme::plan_line_style(line)));
+        result.push_span(Span::styled(rest, plan_line_style(line, kind)));
     }
     result
+}
+
+fn plan_line_style(line: &str, kind: PlanLineKind) -> Style {
+    if kind == PlanLineKind::Note {
+        theme::plan_note_style()
+    } else {
+        theme::plan_line_style(line)
+    }
 }
 
 fn flash_lines(lines: &[Line<'_>]) -> Vec<Line<'static>> {
@@ -657,9 +713,10 @@ fn content_lines_with_selection<'a>(
                 || line.clone(),
                 |source| {
                     plan_line(
-                        source,
+                        source.text,
                         query,
                         selected.filter(|selected| selected.line() == line_index),
+                        source.kind,
                     )
                 },
             )
@@ -736,14 +793,23 @@ const fn terminal_notice_message(searching: bool, filtered: bool) -> &'static st
 fn filter_details_lines(state: &ReviewSessionState, width: u16) -> Vec<Line<'static>> {
     let filtered = state.review().filtered_document();
     let matches = format!(
-        "Filter matches: resources {}/{} | outputs {}/{}",
+        "Matches: resources {}/{} | outputs {}/{}",
         filtered.matching_resources(),
         filtered.resource_count(),
         filtered.matching_outputs(),
         filtered.output_count(),
     );
     let mut lines = wrap_filter_line(&matches, width);
-    lines.extend(wrap_filter_line("Scope: full plan (apply / yank)", width));
+    lines.extend(wrap_filter_line("Filter changes display only", width));
+    lines.extend(wrap_filter_line(
+        &format!(
+            "Plan: {} to add, {} to change, {} to destroy.",
+            state.review().metadata().additions(),
+            state.review().metadata().changes(),
+            state.review().metadata().deletions(),
+        ),
+        width,
+    ));
     lines
 }
 
@@ -1332,7 +1398,7 @@ End of synthetic plan body."#;
             "q quit",
         );
         let text = buffer_text(&buffer);
-        assert!(text.contains("Terraform will perform the following actions:"));
+        assert!(!text.contains("Terraform will perform the following actions:"));
         assert!(layout.vertical_scrollbar());
         assert!(layout.horizontal_scrollbar());
         let body = layout.body();
@@ -1361,8 +1427,8 @@ End of synthetic plan body."#;
         );
         assert_text_color(
             &buffer,
-            "Terraform will perform the following actions:",
-            Color::Rgb(0xe9, 0xdb, 0xdb),
+            "# terraform_data.api will be updated in-place",
+            Color::Rgb(0xc0, 0xb8, 0xb8),
         );
         assert_text_color(&buffer, "- old_checksum", Color::Rgb(0xbf, 0x61, 0x6a));
         assert_text_color(&buffer, "+ new_checksum", Color::Rgb(0xa3, 0xbe, 0x8c));
@@ -1485,8 +1551,8 @@ End of synthetic plan body."#;
         );
         assert_text_prefix_uses_style(
             &confirmed_buffer,
-            "Filter matches: resources 4/4 | outputs 0/2",
-            "Filter matches: resources 4/4 | outputs 0/2",
+            "Matches: resources 4/4 | outputs 0/2",
+            "Matches: resources 4/4 | outputs 0/2",
             Color::Rgb(0xc0, 0xb8, 0xb8),
             Color::Reset,
             Modifier::empty(),
@@ -1562,7 +1628,7 @@ End of synthetic plan body."#;
         let matches = line_matches(&line, query, 0);
         assert_eq!(matches, [PlanReviewMatch::new(0, 22, 24)]);
 
-        let selected_line = plan_line(&line, query, matches.first());
+        let selected_line = plan_line(&line, query, matches.first(), PlanLineKind::Body);
         let mut buffer = Buffer::empty(Rect::new(0, 0, 30, 1));
         Paragraph::new(vec![selected_line]).render(*buffer.area(), &mut buffer);
         let cell = buffer
@@ -1656,8 +1722,9 @@ End of synthetic plan body."#;
         write_buffer_captures("ux02-filter-input", &input_buffer);
         assert!(input_text.contains("Plan | Filter"));
         assert!(input_text.contains("/ "));
-        assert!(input_text.contains("Filter matches: resources 4/4 | outputs 2/2"));
-        assert!(input_text.contains("Scope: full plan (apply / yank)"));
+        assert!(input_text.contains("Matches: resources 4/4 | outputs 2/2"));
+        assert!(input_text.contains("Filter changes display only"));
+        assert!(input_text.contains("Plan: 2 to add, 2 to change, 1 to destroy."));
 
         let mut confirmed = review();
         confirmed.set_search_query("worker".to_owned());
@@ -1674,8 +1741,8 @@ End of synthetic plan body."#;
         write_buffer_captures("ux02-filter-confirmed", &confirmed_buffer);
         assert!(confirmed_text.contains("Plan | Filter"));
         assert!(confirmed_text.contains("/worker"));
-        assert!(confirmed_text.contains("Filter matches: resources 1/4 | outputs 0/2"));
-        assert!(confirmed_text.contains("Scope: full plan (apply / yank)"));
+        assert!(confirmed_text.contains("Matches: resources 1/4 | outputs 0/2"));
+        assert!(confirmed_text.contains("Filter changes display only"));
         assert!(!confirmed_text.contains("terraform_data.api will be updated"));
 
         let cleared_buffer = render_to_buffer((120, 40), |frame| {
@@ -1689,7 +1756,7 @@ End of synthetic plan body."#;
         let cleared_text = buffer_text(&cleared_buffer);
         assert!(cleared_text.contains("┌Plan"));
         assert!(!cleared_text.contains("Plan | Filter"));
-        assert!(!cleared_text.contains("Filter matches:"));
+        assert!(!cleared_text.contains("Matches:"));
         assert!(!cleared_text.contains("Scope: full plan"));
     }
 
@@ -1712,7 +1779,7 @@ End of synthetic plan body."#;
         assert!(text.contains("No matching resources or outputs."));
         assert!(text.contains("Warning: Synthetic diagnostic"));
         assert!(text.contains("Common context stays visible"));
-        assert!(text.contains("Plan total (full plan):"));
+        assert!(!text.contains("Plan total (full plan):"));
         assert!(!text.contains("terraform_data.api will be created"));
         assert!(!text.contains("endpoint = (known after apply)"));
     }
@@ -1751,7 +1818,11 @@ End of synthetic plan body."#;
             .expect("filter details should be visible");
         assert!(details.height > 2);
         assert_eq!(details.y, search.y + search.height);
-        assert_eq!(layout.body().y, details.y + details.height);
+        let separator = layout
+            .separator()
+            .expect("filter separator should be visible");
+        assert_eq!(separator.y, details.y + details.height);
+        assert_eq!(layout.body().y, separator.y + separator.height);
         assert!(layout.body().height > 0);
 
         let mut view = PlanReviewViewState::default();
@@ -1769,8 +1840,8 @@ End of synthetic plan body."#;
         });
         let text = buffer_text(&buffer);
         write_buffer_captures("ux02-filter-narrow", &buffer);
-        assert!(text.contains("Filter matches:"));
-        assert!(text.contains("Scope: full plan"));
+        assert!(text.contains("Matches:"));
+        assert!(text.contains("Filter changes display only"));
 
         let tiny_buffer = render_to_buffer((24, 6), |frame| {
             render(
@@ -1942,8 +2013,9 @@ End of synthetic plan body."#;
         assert!(compact.contains("with-a-very-long-target-name-that-must-wrap"));
         assert!(text.contains("Workspace: staging"));
         assert!(text.contains("Plan: 0 to add, 1 to change, 0 to destroy."));
-        assert!(text.contains("Scope: full plan (filter does not limit"));
-        assert!(text.contains("apply)."));
+        assert!(text.contains("Filter changes display"));
+        assert!(text.contains("Apply uses"));
+        assert!(text.contains("all changes."));
         assert!(!text.contains("This plan includes resource deletion."));
         assert_eq!(layout.footer().y, layout.frame().bottom());
     }
@@ -2021,8 +2093,8 @@ End of synthetic plan body."#;
         });
         assert_text_prefix_uses_style(
             &filtered_buffer,
-            "Scope: full plan (filter does not limit apply).",
-            "Scope: full plan (filter does not limit apply).",
+            "Filter changes display only. Apply uses all changes.",
+            "Filter changes display only. Apply uses all changes.",
             Color::Rgb(0xc0, 0xb8, 0xb8),
             Color::Reset,
             Modifier::empty(),
@@ -2049,7 +2121,7 @@ End of synthetic plan body."#;
     }
 
     #[test]
-    fn production_search_uses_support_style_for_full_plan_total() {
+    fn production_filter_uses_support_style_for_fixed_plan_summary() {
         let mut plan = review();
         plan.set_search_query(SEARCH_TERM.to_owned());
         let state = review_state(plan);
@@ -2064,8 +2136,8 @@ End of synthetic plan body."#;
 
         assert_text_prefix_uses_style(
             &buffer,
-            "Plan total (full plan):",
-            "Plan total (full plan):",
+            "Plan: 2 to add, 2 to change, 1 to destroy.",
+            "Plan: 2 to add, 2 to change, 1 to destroy.",
             Color::Rgb(0xc0, 0xb8, 0xb8),
             Color::Reset,
             Modifier::empty(),
@@ -2121,6 +2193,13 @@ End of synthetic plan body."#;
         assert_area_unchanged(
             &before,
             &flash,
+            layout
+                .separator()
+                .expect("filter separator should be visible"),
+        );
+        assert_area_unchanged(
+            &before,
+            &flash,
             Rect::new(
                 layout.body().x + layout.body().width,
                 layout.body().y,
@@ -2149,13 +2228,6 @@ End of synthetic plan body."#;
         let scroll_layout = layout(area, false, &state);
         let mut view = PlanReviewViewState::default();
         view.apply(
-            PlanReviewInput::Down,
-            area,
-            scroll_layout.max_vertical(),
-            scroll_layout.max_horizontal(),
-            SEARCH_TERM,
-        );
-        view.apply(
             PlanReviewInput::Right,
             area,
             scroll_layout.max_vertical(),
@@ -2169,7 +2241,7 @@ End of synthetic plan body."#;
             scroll_layout.max_horizontal(),
             SEARCH_TERM,
         );
-        assert_eq!(view.scroll(), (1, 1));
+        assert_eq!(view.scroll(), (0, 1));
 
         let started_at = Instant::now();
         let before = render_to_buffer((area.width, area.height), |frame| {
@@ -2320,7 +2392,7 @@ End of synthetic plan body."#;
     }
 
     #[test]
-    fn search_labels_the_plan_total_as_unfiltered() {
+    fn filtered_body_omits_the_plan_summary() {
         let mut review = PlanReview::new(
             PathBuf::from("/project"),
             "default".to_owned(),
@@ -2331,16 +2403,16 @@ End of synthetic plan body."#;
         review.set_search_query("api".to_owned());
 
         let filtered = review.filtered_document();
-        let lines = review_lines(&review, &filtered).0;
+        let lines = review_lines(&review, &filtered, true).0;
         assert!(
             lines
                 .iter()
-                .any(|line| line.to_string() == "Plan total (full plan):")
+                .all(|line| line.to_string() != "Plan total (full plan):")
         );
         assert!(
             lines
                 .iter()
-                .any(|line| { line.to_string() == "Plan: 1 to add, 0 to change, 0 to destroy." })
+                .all(|line| { line.to_string() != "Plan: 1 to add, 0 to change, 0 to destroy." })
         );
     }
 

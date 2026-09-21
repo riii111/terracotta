@@ -7,14 +7,14 @@ expression: buffer_text(buffer)
 
  ┌Plan | Filter───────────────────────────────────────────────────────────────┐
  │/terraform_data                                                             │
- │Filter matches: resources 4/4 | outputs 0/2                                 │
- │Scope: full plan (apply / yank)                                             │
- │Terraform will perform the following actions:                              ▲│
- │                                                                           ┃│
- │  # terraform_data.api will be updated in-place                            ┃│
+ │Matches: resources 4/4 | outputs 0/2                                        │
+ │Filter changes display only                                                 │
+ │Plan: 2 to add, 2 to change, 1 to destroy.                                  │
+ │ Matching changes ──────────────────────────────────────────────────────────│
+ │  # terraform_data.api will be updated in-place                            ▲│
  │  ~ resource "terraform_data" "api" {                                      ┃│
  │      id       = "api-20260920"                                            ┃│
- │      ~ input  = "before" -> "after"                                       ││
+ │      ~ input  = "before" -> "after"                                       ┃│
  │      # (4 unchanged attributes hidden)                                    ││
  │    }                                                                      ││
  │                                                                           ││

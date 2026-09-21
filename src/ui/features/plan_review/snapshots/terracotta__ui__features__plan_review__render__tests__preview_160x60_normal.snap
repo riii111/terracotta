@@ -15,9 +15,7 @@ expression: buffer_text(buffer)
  Terracotta | main
 
  ┌Plan────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │Terraform will perform the following actions:                                                                                                              ▲│
- │                                                                                                                                                           ┃│
- │  # terraform_data.api will be updated in-place                                                                                                            ┃│
+ │  # terraform_data.api will be updated in-place                                                                                                            ▲│
  │  ~ resource "terraform_data" "api" {                                                                                                                      ┃│
  │      id       = "api-20260920"                                                                                                                            ┃│
  │      ~ input  = "before" -> "after"                                                                                                                       ┃│
@@ -43,12 +41,14 @@ expression: buffer_text(buffer)
  │    }                                                                                                                                                      ┃│
  │                                                                                                                                                           ┃│
  │Changes to Outputs:                                                                                                                                        ┃│
- │  + endpoint = (known after apply)                                                                                                                         ││
- │  ~ summary  = "old summary" -> "new summary with a deliberately long value for review"                                                                    ││
- │                                                                                                                                                           ││
+ │  + endpoint = (known after apply)                                                                                                                         ┃│
+ │  ~ summary  = "old summary" -> "new summary with a deliberately long value for review"                                                                    ┃│
+ │                                                                                                                                                           ┃│
  │Warning: Value for "pending" is not known until apply                                                                                                      ││
  │                                                                                                                                                           ││
  │Plan: 2 to add, 2 to change, 1 to destroy.                                                                                                                 ││
- │                                                                                                                                                           ▼│
+ │                                                                                                                                                           ││
+ │Synthetic review text continues below so the viewport and scrollbar remain meaningful.                                                                     ││
+ │The same long body is intentionally reused across every review state and terminal size.                                                                    ▼│
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  ↑/↓/←/→ scroll | / filter | y yank | a apply | q quit

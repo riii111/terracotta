@@ -1,6 +1,6 @@
 use std::{collections::HashMap, ops::Range};
 
-use crate::app::review::{PlanBlock, PlanBlockKind, PlanDocument};
+use crate::app::review::{PlanBlock, PlanBlockKind, PlanDocument, PlanLineKind};
 
 use super::PlanParseError;
 
@@ -11,18 +11,33 @@ pub(super) fn parse_document(
 ) -> Result<PlanDocument, PlanParseError> {
     String::from_utf8(bytes)
         .map(|text| {
-            let blocks = split_blocks(&text, resource_addresses, output_names);
-            PlanDocument::with_blocks(text, blocks)
+            let (blocks, line_kinds) =
+                split_blocks_with_line_kinds(&text, resource_addresses, output_names);
+            PlanDocument::with_blocks_and_line_kinds(text, blocks, line_kinds)
         })
         .map_err(|_| PlanParseError::InvalidUtf8)
 }
 
+#[cfg(test)]
 fn split_blocks(
     text: &str,
     resource_addresses: &[String],
     output_names: &[String],
 ) -> Vec<PlanBlock> {
+    split_blocks_with_line_kinds(text, resource_addresses, output_names).0
+}
+
+fn split_blocks_with_line_kinds(
+    text: &str,
+    resource_addresses: &[String],
+    output_names: &[String],
+) -> (Vec<PlanBlock>, Vec<PlanLineKind>) {
     let lines = text.split('\n').collect::<Vec<_>>();
+    let intro_end = leading_intro_end(&lines);
+    let mut line_kinds = vec![PlanLineKind::Body; lines.len()];
+    for kind in line_kinds.iter_mut().take(intro_end) {
+        *kind = PlanLineKind::Intro;
+    }
     let mut resource_indices = HashMap::with_capacity(resource_addresses.len());
     for (index, address) in resource_addresses.iter().enumerate() {
         resource_indices.entry(address.as_str()).or_insert(index);
@@ -41,6 +56,16 @@ fn split_blocks(
                 heredoc_terminator = None;
             }
             continue;
+        }
+        if line < intro_end {
+            continue;
+        }
+        if *text == "Changes to Outputs:" {
+            line_kinds[line] = PlanLineKind::OutputSection;
+        } else if text.starts_with("Plan:") {
+            line_kinds[line] = PlanLineKind::Summary;
+        } else if text.trim_start().starts_with('#') {
+            line_kinds[line] = PlanLineKind::Note;
         }
         if *text == "Changes to Outputs:" {
             in_output_section = true;
@@ -86,7 +111,35 @@ fn split_blocks(
     if blocks.is_empty() {
         blocks.push(PlanBlock::new(0..lines.len(), PlanBlockKind::Common));
     }
-    blocks
+    (blocks, line_kinds)
+}
+
+fn leading_intro_end(lines: &[&str]) -> usize {
+    let mut index = 0;
+    let mut recognized = false;
+    while let Some(line) = lines.get(index) {
+        if is_intro_line(line) {
+            recognized = true;
+            index += 1;
+        } else if recognized && line.trim().is_empty() {
+            index += 1;
+        } else {
+            break;
+        }
+    }
+    index
+}
+
+fn is_intro_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.starts_with("Terraform used the selected providers")
+        || trimmed.starts_with("Resource actions are indicated with the following symbols:")
+        || trimmed == "+ create"
+        || trimmed == "~ update in-place"
+        || trimmed == "-/+ destroy and then create replacement"
+        || trimmed == "- destroy"
+        || trimmed == "<= read (data resources)"
+        || trimmed == "Terraform will perform the following actions:"
 }
 
 fn push_block(blocks: &mut Vec<PlanBlock>, lines: Range<usize>, kind: PlanBlockKind) {
@@ -230,6 +283,27 @@ mod tests {
             parse_document(vec![0xff], &[], &[]),
             Err(PlanParseError::InvalidUtf8)
         );
+    }
+
+    #[test]
+    fn classifies_display_intro_notes_and_heredoc_values_without_changing_source() {
+        let source = "Terraform used the selected providers to generate the following execution plan. Resource actions are indicated with the following symbols:\n  + create\n\nTerraform will perform the following actions:\n\n  # terraform_data.api will be created\n  + resource \"terraform_data\" \"api\" {\n      value = <<EOF\n  # Terraform will perform the following actions:\n  # value remains a body value\nEOF\n    }\n\nChanges to Outputs:\n  + endpoint = (known after apply)\n\nPlan: 1 to add, 0 to change, 0 to destroy.\n";
+        let document = parse_document(
+            source.as_bytes().to_vec(),
+            &["terraform_data.api".to_owned()],
+            &["endpoint".to_owned()],
+        )
+        .expect("text should parse");
+
+        assert_eq!(document.text(), source);
+        assert_eq!(document.line_kind(0), PlanLineKind::Intro);
+        assert_eq!(document.line_kind(1), PlanLineKind::Intro);
+        assert_eq!(document.line_kind(3), PlanLineKind::Intro);
+        assert_eq!(document.line_kind(5), PlanLineKind::Note);
+        assert_eq!(document.line_kind(8), PlanLineKind::Body);
+        assert_eq!(document.line_kind(9), PlanLineKind::Body);
+        assert_eq!(document.line_kind(13), PlanLineKind::OutputSection);
+        assert_eq!(document.line_kind(16), PlanLineKind::Summary);
     }
 
     #[test]

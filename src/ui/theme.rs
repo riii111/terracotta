@@ -88,3 +88,7 @@ pub(crate) fn plan_line_style(line: &str) -> Style {
         _ => body_style(),
     }
 }
+
+pub(crate) fn plan_note_style() -> Style {
+    secondary_style()
+}

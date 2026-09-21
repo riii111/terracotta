@@ -6,15 +6,13 @@ expression: buffer_text(buffer)
  Terracotta | main
 
  ┌Plan────────────────────────────────────────────────────────────────────────┐
- │Terraform will perform the following actions:                              ▲│
- │                                                                           ┃│
- │  # terraform_data.api will be updated in-place                            ┃│
+ │  # terraform_data.api will be updated in-place                            ▲│
  │  ~ resource "terraform_data" "api" {                                      ┃│
  │      id       = "api-20260920"                                            ┃│
  │      ~ input  = "before" -> "after"                                       ┃│
  │      # (4 unchanged attributes hidden)                                    ┃│
- │    }                                                                      ││
- │                                                                           ││
+ │    }                                                                      ┃│
+ │                                                                           ┃│
  │  # terraform_data.worker must be replaced                                 ││
  │-/+ resource "terraform_data" "worker" {                                   ││
  │      ~ input = "worker-before" -> "worker-after" # forces replacement     ││
@@ -22,6 +20,8 @@ expression: buffer_text(buffer)
  │      + new_checksum = (known after apply)                                 ││
  │    }                                                                      ││
  │                                                                           ││
+ │  # terraform_data.old will be destroyed                                   ││
+ │  - resource "terraform_data" "old" {                                      ││
  │◀︎════════════════════════════════════════════════════════════──────────────▶︎│
  └────────────────────────────────────────────────────────────────────────────┘
  ↑/↓/←/→ scroll | / filter | y yank | a apply | q quit

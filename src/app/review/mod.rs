@@ -16,6 +16,15 @@ pub(crate) enum PlanBlockKind {
     Output,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlanLineKind {
+    Body,
+    Intro,
+    Note,
+    Summary,
+    OutputSection,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PlanBlock {
     lines: Range<usize>,
@@ -47,10 +56,12 @@ impl PlanBlock {
 pub(crate) struct PlanDocument {
     text: String,
     blocks: Vec<PlanBlock>,
+    line_kinds: Vec<PlanLineKind>,
 }
 
 pub(crate) struct FilteredPlan<'a> {
     lines: Vec<&'a str>,
+    line_indices: Vec<usize>,
     resource_count: usize,
     matching_resources: usize,
     output_count: usize,
@@ -59,8 +70,16 @@ pub(crate) struct FilteredPlan<'a> {
 
 impl<'a> FilteredPlan<'a> {
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn lines(&self) -> &[&'a str] {
         &self.lines
+    }
+
+    pub(crate) fn lines_with_indices(&self) -> impl Iterator<Item = (usize, &'a str)> + '_ {
+        self.line_indices
+            .iter()
+            .copied()
+            .zip(self.lines.iter().copied())
     }
 
     #[must_use]
@@ -86,8 +105,26 @@ impl<'a> FilteredPlan<'a> {
 
 impl PlanDocument {
     #[must_use]
-    pub(crate) const fn with_blocks(text: String, blocks: Vec<PlanBlock>) -> Self {
-        Self { text, blocks }
+    pub(crate) fn with_blocks(text: String, blocks: Vec<PlanBlock>) -> Self {
+        let line_kinds = classify_display_lines(&text);
+        Self {
+            text,
+            blocks,
+            line_kinds,
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn with_blocks_and_line_kinds(
+        text: String,
+        blocks: Vec<PlanBlock>,
+        line_kinds: Vec<PlanLineKind>,
+    ) -> Self {
+        Self {
+            text,
+            blocks,
+            line_kinds,
+        }
     }
 
     #[must_use]
@@ -99,6 +136,7 @@ impl PlanDocument {
     pub(crate) fn filter(&self, query: &str) -> FilteredPlan<'_> {
         let lines = self.text.split('\n').collect::<Vec<_>>();
         let mut filtered = Vec::new();
+        let mut line_indices = Vec::new();
         let mut resource_count = 0;
         let mut matching_resources = 0;
         let mut output_count = 0;
@@ -123,16 +161,129 @@ impl PlanDocument {
                 PlanBlockKind::Output => matching_outputs += 1,
                 PlanBlockKind::Common => {}
             }
-            filtered.extend(block.lines().clone().map(|line| lines[line]));
+            for line in block.lines().clone() {
+                filtered.push(lines[line]);
+                line_indices.push(line);
+            }
         }
         FilteredPlan {
             lines: filtered,
+            line_indices,
             resource_count,
             matching_resources,
             output_count,
             matching_outputs,
         }
     }
+
+    #[must_use]
+    pub(crate) fn line_kind(&self, line: usize) -> PlanLineKind {
+        self.line_kinds
+            .get(line)
+            .copied()
+            .unwrap_or(PlanLineKind::Body)
+    }
+}
+
+fn classify_display_lines(text: &str) -> Vec<PlanLineKind> {
+    let lines = text.split('\n').collect::<Vec<_>>();
+    let intro_end = leading_intro_end(&lines);
+    let mut kinds = vec![PlanLineKind::Body; lines.len()];
+    for kind in kinds.iter_mut().take(intro_end) {
+        *kind = PlanLineKind::Intro;
+    }
+
+    let mut heredoc_terminator: Option<String> = None;
+    for (line_index, line) in lines.iter().enumerate().skip(intro_end) {
+        if let Some(terminator) = &heredoc_terminator {
+            if heredoc_end(line, terminator) {
+                heredoc_terminator = None;
+            }
+            continue;
+        }
+        if line == &"Changes to Outputs:" {
+            kinds[line_index] = PlanLineKind::OutputSection;
+        } else if line.starts_with("Plan:") {
+            kinds[line_index] = PlanLineKind::Summary;
+        } else if is_note_line(line) {
+            kinds[line_index] = PlanLineKind::Note;
+        }
+        heredoc_terminator = heredoc_start(line);
+    }
+    kinds
+}
+
+fn leading_intro_end(lines: &[&str]) -> usize {
+    let mut index = 0;
+    let mut recognized = false;
+    while let Some(line) = lines.get(index) {
+        if is_intro_line(line) {
+            recognized = true;
+            index += 1;
+        } else if recognized && line.trim().is_empty() {
+            index += 1;
+        } else {
+            break;
+        }
+    }
+    index
+}
+
+fn is_intro_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.starts_with("Terraform used the selected providers")
+        || trimmed.starts_with("Resource actions are indicated with the following symbols:")
+        || trimmed == "+ create"
+        || trimmed == "~ update in-place"
+        || trimmed == "-/+ destroy and then create replacement"
+        || trimmed == "- destroy"
+        || trimmed == "<= read (data resources)"
+        || trimmed == "Terraform will perform the following actions:"
+}
+
+fn is_note_line(line: &str) -> bool {
+    line.trim_start().starts_with('#')
+}
+
+fn heredoc_start(line: &str) -> Option<String> {
+    let mut quoted = false;
+    let mut escaped = false;
+    let marker = line.char_indices().find_map(|(index, character)| {
+        if quoted {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                quoted = false;
+            }
+            return None;
+        }
+        if character == '"' {
+            quoted = true;
+            return None;
+        }
+        (character == '<'
+            && line[index..].starts_with("<<")
+            && line[..index].trim_end().ends_with('='))
+        .then_some(index)
+    })?;
+    let mut value = line[marker + 2..].trim_start();
+    value = value.strip_prefix('-').unwrap_or(value).trim_start();
+    let terminator = value.split_whitespace().next()?;
+    (!terminator.is_empty()
+        && terminator
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-')))
+    .then(|| terminator.to_owned())
+}
+
+fn heredoc_end(line: &str, terminator: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed == terminator
+        || trimmed
+            .strip_prefix(terminator)
+            .is_some_and(|suffix| suffix.trim_start().starts_with("->"))
 }
 
 impl Debug for PlanDocument {
