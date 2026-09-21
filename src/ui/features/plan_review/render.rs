@@ -385,7 +385,11 @@ pub(crate) fn render(
 ) {
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
-        terminal_notice::render_wrapped(frame, area, terminal_notice_message(view.searching()));
+        terminal_notice::render_wrapped(
+            frame,
+            area,
+            terminal_notice_message(view.searching(), filter_active(view.searching(), state)),
+        );
         return;
     }
 
@@ -399,7 +403,11 @@ pub(crate) fn render(
         notice.map(CopyNotice::message),
     );
     if layout.body().width == 0 || layout.body().height == 0 {
-        terminal_notice::render_wrapped(frame, area, terminal_notice_message(view.searching()));
+        terminal_notice::render_wrapped(
+            frame,
+            area,
+            terminal_notice_message(view.searching(), filter_active(view.searching(), state)),
+        );
         return;
     }
     header::render_review(frame, layout.shell.header(), state.review());
@@ -714,9 +722,11 @@ fn filter_active(searching: bool, state: &ReviewSessionState) -> bool {
     searching || !state.review().search_query().is_empty()
 }
 
-const fn terminal_notice_message(searching: bool) -> &'static str {
+const fn terminal_notice_message(searching: bool, filtered: bool) -> &'static str {
     if searching {
         "Terminal too small. Resize or press Esc to cancel filter."
+    } else if filtered {
+        "Terminal too small. Resize or press Esc to clear filter."
     } else {
         "Terminal too small. Resize or press q to quit."
     }
@@ -826,12 +836,10 @@ fn horizontal_offset(start: usize, end: usize, line_width: usize, width: u16) ->
     if width == 0 {
         return 0;
     }
-    let offset = if start < width {
-        0
-    } else if end > width {
-        end.saturating_sub(width)
-    } else {
+    let offset = if end.saturating_sub(start) >= width {
         start
+    } else {
+        end.saturating_sub(width)
     };
     u16::try_from(offset.min(line_width.saturating_sub(width))).unwrap_or(u16::MAX)
 }
@@ -1805,6 +1813,25 @@ End of synthetic plan body."#;
     }
 
     #[test]
+    fn production_confirmed_filter_resize_notice_keeps_escape_clear_available() {
+        let mut plan = review();
+        plan.set_search_query("worker".to_owned());
+        let state = review_state(plan);
+        let buffer = render_to_buffer((24, 6), |frame| {
+            render(
+                frame,
+                &state,
+                &PlanReviewViewState::default(),
+                Instant::now(),
+            );
+        });
+
+        let text = buffer_text(&buffer);
+        assert!(text.contains("press Esc"));
+        assert!(text.contains("clear filter"));
+    }
+
+    #[test]
     fn production_apply_confirmation_uses_body_input_and_accent_cursor() {
         let state = confirmation_state(review());
         let mut view = ApplyConfirmationViewState::default();
@@ -2253,6 +2280,23 @@ End of synthetic plan body."#;
         };
         assert_eq!(line.to_string(), "/abcdefgh ");
         assert_eq!(horizontal, 4);
+    }
+
+    #[test]
+    fn search_prompt_keeps_a_wide_cursor_inside_the_input_width() {
+        let mut view = PlanReviewViewState::default();
+        let body = Rect::new(0, 0, 10, 10);
+        view.apply(PlanReviewInput::SearchStart, body, 0, 0, "");
+        for character in "aaaaaaaaaaaaaaaaaaaa😀".chars() {
+            view.apply(PlanReviewInput::SearchChar(character), body, 0, 0, "");
+        }
+        view.apply(PlanReviewInput::SearchLeft, body, 0, 0, "");
+
+        let Some((line, horizontal)) = search_prompt(&view, 22) else {
+            panic!("search prompt should be visible");
+        };
+        assert_eq!(line.width(), 23);
+        assert_eq!(horizontal, 1);
     }
 
     #[test]
