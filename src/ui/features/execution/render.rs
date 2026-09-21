@@ -18,7 +18,8 @@ use super::ExecutionViewState;
 
 const MIN_HEIGHT: u16 = 9;
 const MIN_WIDTH: u16 = 32;
-const STATUS_HEIGHT: u16 = 4;
+const STATUS_HEIGHT: u16 = 3;
+const COMPACT_STATUS_HEIGHT: u16 = 4;
 struct PreparedContent<'a> {
     lines: Vec<Line<'a>>,
     max_width: usize,
@@ -420,7 +421,7 @@ fn status_height(
     if finished_apply(state) {
         status_line_count(status, width)
     } else if compact {
-        STATUS_HEIGHT
+        COMPACT_STATUS_HEIGHT
     } else if state.stage() == ExecutionStage::Applying && !state.is_cancelling() {
         u16::try_from(status.len()).unwrap_or(u16::MAX).max(1)
     } else {
