@@ -116,6 +116,9 @@ fn split_blocks_with_line_kinds(
 
 fn leading_intro_end(lines: &[&str]) -> usize {
     let mut index = 0;
+    while lines.get(index).is_some_and(|line| line.trim().is_empty()) {
+        index += 1;
+    }
     let mut recognized = false;
     while let Some(line) = lines.get(index) {
         if is_intro_line(line) {
@@ -134,6 +137,7 @@ fn is_intro_line(line: &str) -> bool {
     let trimmed = line.trim();
     trimmed.starts_with("Terraform used the selected providers")
         || trimmed.starts_with("Resource actions are indicated with the following symbols:")
+        || trimmed.starts_with("plan. Resource actions are indicated with the following symbols:")
         || trimmed == "+ create"
         || trimmed == "~ update in-place"
         || trimmed == "-/+ destroy and then create replacement"
@@ -287,7 +291,7 @@ mod tests {
 
     #[test]
     fn classifies_display_intro_notes_and_heredoc_values_without_changing_source() {
-        let source = "Terraform used the selected providers to generate the following execution plan. Resource actions are indicated with the following symbols:\n  + create\n\nTerraform will perform the following actions:\n\n  # terraform_data.api will be created\n  + resource \"terraform_data\" \"api\" {\n      value = <<EOF\n  # Terraform will perform the following actions:\n  # value remains a body value\nEOF\n    }\n\nChanges to Outputs:\n  + endpoint = (known after apply)\n\nPlan: 1 to add, 0 to change, 0 to destroy.\n";
+        let source = "\nTerraform used the selected providers to generate the following execution\nplan. Resource actions are indicated with the following symbols:\n  + create\n\nTerraform will perform the following actions:\n\n  # terraform_data.api will be created\n  + resource \"terraform_data\" \"api\" {\n      value = <<EOF\n  # Terraform will perform the following actions:\n  # value remains a body value\nEOF\n    }\n\nChanges to Outputs:\n  + endpoint = (known after apply)\n\nPlan: 1 to add, 0 to change, 0 to destroy.\n";
         let document = parse_document(
             source.as_bytes().to_vec(),
             &["terraform_data.api".to_owned()],
@@ -298,12 +302,13 @@ mod tests {
         assert_eq!(document.text(), source);
         assert_eq!(document.line_kind(0), PlanLineKind::Intro);
         assert_eq!(document.line_kind(1), PlanLineKind::Intro);
-        assert_eq!(document.line_kind(3), PlanLineKind::Intro);
-        assert_eq!(document.line_kind(5), PlanLineKind::Note);
-        assert_eq!(document.line_kind(8), PlanLineKind::Body);
+        assert_eq!(document.line_kind(2), PlanLineKind::Intro);
+        assert_eq!(document.line_kind(4), PlanLineKind::Intro);
+        assert_eq!(document.line_kind(7), PlanLineKind::Note);
         assert_eq!(document.line_kind(9), PlanLineKind::Body);
-        assert_eq!(document.line_kind(13), PlanLineKind::OutputSection);
-        assert_eq!(document.line_kind(16), PlanLineKind::Summary);
+        assert_eq!(document.line_kind(10), PlanLineKind::Body);
+        assert_eq!(document.line_kind(15), PlanLineKind::OutputSection);
+        assert_eq!(document.line_kind(18), PlanLineKind::Summary);
     }
 
     #[test]

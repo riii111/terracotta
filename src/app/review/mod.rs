@@ -215,6 +215,9 @@ fn classify_display_lines(text: &str) -> Vec<PlanLineKind> {
 
 fn leading_intro_end(lines: &[&str]) -> usize {
     let mut index = 0;
+    while lines.get(index).is_some_and(|line| line.trim().is_empty()) {
+        index += 1;
+    }
     let mut recognized = false;
     while let Some(line) = lines.get(index) {
         if is_intro_line(line) {
@@ -233,6 +236,7 @@ fn is_intro_line(line: &str) -> bool {
     let trimmed = line.trim();
     trimmed.starts_with("Terraform used the selected providers")
         || trimmed.starts_with("Resource actions are indicated with the following symbols:")
+        || trimmed.starts_with("plan. Resource actions are indicated with the following symbols:")
         || trimmed == "+ create"
         || trimmed == "~ update in-place"
         || trimmed == "-/+ destroy and then create replacement"
