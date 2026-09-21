@@ -181,24 +181,28 @@ fn layout_with_content(
         notice,
     );
     let filter_visible = filter_active(searching, state);
+    let footer_height_lines = sizing_footer_lines(
+        searching,
+        state,
+        content.matches.len(),
+        filter_visible,
+        panel_width,
+        notice,
+        &footer_lines,
+    );
     let inner_width = panel_width.saturating_sub(2);
-    let filter_details_height = if filter_visible {
-        u16::try_from(filter_details_lines(state, inner_width).len()).unwrap_or(u16::MAX)
-    } else {
-        0
-    };
-    let filter_height = u16::from(filter_visible)
-        .saturating_add(filter_details_height)
-        .saturating_add(u16::from(filter_visible));
+    let filter_details_height = filter_details_height(state, filter_visible, inner_width);
+    let fixed_filter_height = fixed_filter_height(filter_visible, filter_details_height);
     let body_height = shell_layout::required_body_height(
         base_content.lines.len(),
         base_content.max_width,
         inner_width,
     );
     let content_height = 2u16
-        .saturating_add(filter_height)
+        .saturating_add(fixed_filter_height)
         .saturating_add(body_height);
-    let requested_height = shell_layout::required_height(content_height, &footer_lines, &required);
+    let requested_height =
+        shell_layout::required_height(content_height, &footer_height_lines, &required);
     let panel = shell_layout::centered_area(area, requested_height);
     let shell = shell_layout::layout(panel, footer_lines, required, 1);
     let inner = shell.content_inner();
@@ -222,14 +226,11 @@ fn layout_with_content(
             1,
         )
     });
-    let filter_height = u16::from(filter_visible)
-        .saturating_add(filter_details_height)
-        .saturating_add(u16::from(filter_visible));
     let available = Rect::new(
         inner.x,
-        inner.y.saturating_add(filter_height),
+        inner.y.saturating_add(fixed_filter_height),
         inner.width,
-        inner.height.saturating_sub(filter_height),
+        inner.height.saturating_sub(fixed_filter_height),
     );
     let (vertical_scrollbar, horizontal_scrollbar) =
         scrollbar_reservations(content.lines.len(), content.max_width, available);
@@ -256,6 +257,44 @@ fn layout_with_content(
         max_horizontal,
         matches: content.matches.clone(),
     }
+}
+
+fn filter_details_height(state: &ReviewSessionState, filter_visible: bool, width: u16) -> u16 {
+    if filter_visible {
+        u16::try_from(filter_details_lines(state, width).len()).unwrap_or(u16::MAX)
+    } else {
+        0
+    }
+}
+
+fn fixed_filter_height(filter_visible: bool, details_height: u16) -> u16 {
+    u16::from(filter_visible)
+        .saturating_add(details_height)
+        .saturating_add(u16::from(filter_visible))
+}
+
+fn sizing_footer_lines(
+    searching: bool,
+    state: &ReviewSessionState,
+    match_count: usize,
+    filter_visible: bool,
+    width: u16,
+    notice: Option<&str>,
+    footer_lines: &[Line<'static>],
+) -> Vec<Line<'static>> {
+    if !filter_visible {
+        return footer_lines.to_owned();
+    }
+    footer::layout_with_notice(
+        footer_items(
+            searching,
+            state.review().metadata().applyable(),
+            match_count.max(2),
+            !state.review().search_query().is_empty(),
+        ),
+        width,
+        notice,
+    )
 }
 
 pub(crate) fn render_apply_confirmation(
@@ -1433,14 +1472,15 @@ End of synthetic plan body."#;
     fn filter_height_uses_the_unfiltered_plan_as_its_baseline() {
         let mut plan = filter_height_review();
         let state = review_state(plan.clone());
-        let normal = layout(Rect::new(0, 0, 120, 40), false, &state);
+        let area = Rect::new(0, 0, 80, 24);
+        let normal = layout(area, false, &state);
 
         plan.set_search_query("api".to_owned());
         let first_filter_state = review_state(plan.clone());
         plan.set_search_query("missing".to_owned());
         let second_filter_state = review_state(plan);
-        let first_filter = layout(Rect::new(0, 0, 120, 40), false, &first_filter_state);
-        let second_filter = layout(Rect::new(0, 0, 120, 40), false, &second_filter_state);
+        let first_filter = layout(area, false, &first_filter_state);
+        let second_filter = layout(area, false, &second_filter_state);
 
         assert_eq!(
             first_filter.shell.header().y,
