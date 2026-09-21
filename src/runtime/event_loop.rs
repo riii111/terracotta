@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{self, Event, KeyEvent};
 use ratatui::{DefaultTerminal, Terminal, backend::Backend, layout::Rect};
 
 use crate::{
@@ -17,7 +17,11 @@ use crate::{
         session::{self, Action, Effect, SessionOutcome, SessionState},
     },
     infra::{CancellationToken, ClipboardExecutor, terraform::SavedPlan},
-    ui::features::{execution, plan_review},
+    ui::{
+        QuitConfirmationInput,
+        features::{execution, plan_review},
+        quit_confirmation_key_to_input,
+    },
 };
 
 #[expect(
@@ -108,23 +112,18 @@ pub(crate) fn run_connected(
                     dirty = true;
                     let mut confirmed_quit = false;
                     let action = if quit_confirmation {
-                        match (key.code, key.modifiers) {
-                            (KeyCode::Enter, _) => {
+                        match quit_confirmation_key_to_input(key) {
+                            QuitConfirmationInput::Confirm => {
                                 quit_confirmation = false;
                                 confirmed_quit = true;
                                 Some(Action::Quit)
                             }
-                            (KeyCode::Esc, _) => {
+                            QuitConfirmationInput::Cancel => {
                                 quit_confirmation = false;
                                 None
                             }
-                            (KeyCode::Char('q'), KeyModifiers::NONE) => None,
-                            (KeyCode::Char('c'), modifiers)
-                                if modifiers.contains(KeyModifiers::CONTROL) =>
-                            {
-                                None
-                            }
-                            _ => {
+                            QuitConfirmationInput::Consume => None,
+                            QuitConfirmationInput::Forward(key) => {
                                 quit_confirmation = false;
                                 handle_key_event(
                                     terminal,
@@ -1434,6 +1433,36 @@ mod tests {
         let text = terminal_text(&terminal);
         assert!(text.contains("Apply this plan? Type yes or no."));
         assert!(text.contains("│ > y|"), "{text}");
+    }
+
+    #[test]
+    fn forwarded_quit_confirmation_key_reaches_the_current_screen_once() {
+        let state = confirmation_state();
+        let terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+        let mut execution_view = execution::ExecutionViewState::default();
+        let mut review_view = plan_review::PlanReviewViewState::default();
+        let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
+        let raw_key = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::SHIFT);
+
+        let QuitConfirmationInput::Forward(key) = quit_confirmation_key_to_input(raw_key) else {
+            panic!("the screen input should be forwarded");
+        };
+        assert_eq!(key, raw_key);
+
+        assert_eq!(
+            handle_key_event(
+                &terminal,
+                &state,
+                &mut execution_view,
+                &mut review_view,
+                &mut confirmation_view,
+                key,
+            )
+            .expect("forwarded screen input should be handled"),
+            None
+        );
+        assert_eq!(confirmation_view.input(), "y");
+        assert!(!confirmation_view.input().contains("yy"));
     }
 
     #[test]
