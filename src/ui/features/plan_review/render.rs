@@ -3,6 +3,7 @@ use std::time::Instant;
 use ratatui::{
     Frame,
     layout::Rect,
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
 };
@@ -17,7 +18,7 @@ use crate::ui::primitives::{atoms::scrollbar, molecules::terminal_notice};
 use crate::ui::shell::{footer, header, layout as shell_layout};
 use crate::ui::theme;
 
-use super::{ApplyConfirmationViewState, PlanReviewViewState};
+use super::{ApplyConfirmationViewState, PlanReviewMatch, PlanReviewViewState};
 
 const MIN_WIDTH: u16 = 24;
 const MIN_HEIGHT: u16 = 6;
@@ -27,6 +28,8 @@ const CONFIRMATION_NOTICE: &str = "Terminal too small. Resize or press Esc to go
 struct PreparedContent<'a> {
     lines: Vec<Line<'a>>,
     max_width: usize,
+    sources: Vec<Option<&'a str>>,
+    matches: Vec<PlanReviewMatch>,
 }
 
 pub(crate) struct ApplyConfirmationLayout {
@@ -88,6 +91,7 @@ pub(crate) struct PlanReviewLayout {
     horizontal_scrollbar: bool,
     max_vertical: u16,
     max_horizontal: u16,
+    matches: Vec<PlanReviewMatch>,
 }
 
 impl PlanReviewLayout {
@@ -118,6 +122,10 @@ impl PlanReviewLayout {
     pub(crate) const fn max_horizontal(&self) -> u16 {
         self.max_horizontal
     }
+
+    pub(crate) fn matches(&self) -> &[PlanReviewMatch] {
+        &self.matches
+    }
 }
 
 pub(crate) fn layout(area: Rect, searching: bool, state: &ReviewSessionState) -> PlanReviewLayout {
@@ -140,15 +148,17 @@ fn layout_with_content(
 ) -> PlanReviewLayout {
     let panel = shell_layout::centered_area(area);
     let footer_lines = footer::layout_with_notice(
-        footer_items(searching, state.review().metadata().applyable()),
+        footer_items(
+            searching,
+            state.review().metadata().applyable(),
+            content.matches.len(),
+            !state.review().search_query().is_empty(),
+        ),
         panel.width,
         notice,
     );
     let required = footer::layout_with_notice(
-        vec![
-            footer::hint(&["↑", "↓"], "scroll"),
-            footer::hint(&["q"], "quit"),
-        ],
+        required_footer_items(searching, !state.review().search_query().is_empty()),
         panel.width,
         notice,
     );
@@ -198,6 +208,7 @@ fn layout_with_content(
         horizontal_scrollbar,
         max_vertical,
         max_horizontal,
+        matches: content.matches.clone(),
     }
 }
 
@@ -410,9 +421,14 @@ pub(crate) fn render(
     let vertical = vertical.min(max_vertical);
     let horizontal = horizontal.min(max_horizontal);
     let lines = if state.copy_flash_active(now) {
-        flash_lines(content.lines)
+        flash_lines(&content.lines)
     } else {
-        content.lines
+        content_lines_with_selection(
+            &content,
+            state.review().search_query(),
+            view.selected()
+                .and_then(|selected| content.matches.get(selected)),
+        )
     };
     frame.render_widget(
         Paragraph::new(lines)
@@ -481,9 +497,14 @@ fn render_footer(
 fn prepare_content(state: &ReviewSessionState) -> PreparedContent<'_> {
     let review = state.review();
     let filtered = review.filtered_document();
-    let lines = review_lines(review, &filtered);
+    let (lines, sources, matches) = review_lines(review, &filtered);
     let max_width = max_line_width(&lines);
-    PreparedContent { lines, max_width }
+    PreparedContent {
+        lines,
+        max_width,
+        sources,
+        matches,
+    }
 }
 
 fn render_filter_header(
@@ -515,8 +536,13 @@ fn render_filter_header(
     }
 }
 
-fn review_lines<'a>(review: &'a PlanReview, filtered: &FilteredPlan<'a>) -> Vec<Line<'a>> {
+fn review_lines<'a>(
+    review: &'a PlanReview,
+    filtered: &FilteredPlan<'a>,
+) -> (Vec<Line<'a>>, Vec<Option<&'a str>>, Vec<PlanReviewMatch>) {
     let mut lines = diagnostic_lines(review);
+    let mut sources = vec![None; lines.len()];
+    let mut matches = Vec::new();
     if filtered.matching_resources() == 0
         && filtered.matching_outputs() == 0
         && !review.search_query().is_empty()
@@ -525,10 +551,24 @@ fn review_lines<'a>(review: &'a PlanReview, filtered: &FilteredPlan<'a>) -> Vec<
             "No matching resources or outputs.",
             theme::warning_style(),
         )));
+        sources.push(None);
         lines.push(Line::default());
+        sources.push(None);
     }
-    lines.extend(visible_plan_lines(review, filtered));
-    lines
+    for &line in filtered.lines() {
+        if !review.search_query().is_empty() && line.starts_with("Plan:") {
+            lines.push(Line::from(Span::styled(
+                "Plan total (full plan):",
+                theme::secondary_style(),
+            )));
+            sources.push(None);
+        }
+        let line_index = lines.len();
+        lines.push(plan_line(line, review.search_query(), None));
+        sources.push(Some(line));
+        matches.extend(line_matches(line, review.search_query(), line_index));
+    }
+    (lines, sources, matches)
 }
 
 fn diagnostic_lines(review: &PlanReview) -> Vec<Line<'_>> {
@@ -553,7 +593,7 @@ fn diagnostic_lines(review: &PlanReview) -> Vec<Line<'_>> {
     lines
 }
 
-fn plan_line<'a>(line: &'a str, query: &str) -> Line<'a> {
+fn plan_line<'a>(line: &'a str, query: &str, selected: Option<&PlanReviewMatch>) -> Line<'a> {
     if query.is_empty() {
         return Line::from(Span::styled(line, theme::plan_line_style(line)));
     }
@@ -565,7 +605,16 @@ fn plan_line<'a>(line: &'a str, query: &str) -> Line<'a> {
             result.push_span(Span::styled(before, theme::plan_line_style(line)));
         }
         let (matched, after) = matched_and_after.split_at(query.len());
-        result.push_span(Span::styled(matched, theme::search_match_style()));
+        let match_start = line.len().saturating_sub(rest.len()) + index;
+        let style = selected
+            .filter(|selected| {
+                selected.start()
+                    == u16::try_from(display_byte_column(line, match_start)).unwrap_or(u16::MAX)
+            })
+            .map_or_else(theme::search_match_style, |_| {
+                theme::selected_search_match_style()
+            });
+        result.push_span(Span::styled(matched, style));
         rest = after;
     }
     if !rest.is_empty() {
@@ -574,11 +623,63 @@ fn plan_line<'a>(line: &'a str, query: &str) -> Line<'a> {
     result
 }
 
-fn flash_lines(lines: Vec<Line<'_>>) -> Vec<Line<'static>> {
+fn flash_lines(lines: &[Line<'_>]) -> Vec<Line<'static>> {
     lines
-        .into_iter()
+        .iter()
         .map(|line| Line::from(Span::styled(line.to_string(), theme::copy_flash_style())))
         .collect()
+}
+
+fn content_lines_with_selection<'a>(
+    content: &'a PreparedContent<'a>,
+    query: &str,
+    selected: Option<&PlanReviewMatch>,
+) -> Vec<Line<'a>> {
+    content
+        .lines
+        .iter()
+        .zip(&content.sources)
+        .enumerate()
+        .map(|(line_index, (line, source))| {
+            source.map_or_else(
+                || line.clone(),
+                |source| {
+                    plan_line(
+                        source,
+                        query,
+                        selected.filter(|selected| selected.line() == line_index),
+                    )
+                },
+            )
+        })
+        .collect()
+}
+
+fn line_matches(line: &str, query: &str, line_index: usize) -> Vec<PlanReviewMatch> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let mut matches = Vec::new();
+    let mut offset = 0;
+    let mut rest = line;
+    while let Some(index) = rest.find(query) {
+        let start = offset + index;
+        let end = start + query.len();
+        let start_column = display_byte_column(line, start);
+        let end_column = display_byte_column(line, end);
+        matches.push(PlanReviewMatch::new(
+            line_index,
+            u16::try_from(start_column).unwrap_or(u16::MAX),
+            u16::try_from(end_column).unwrap_or(u16::MAX),
+        ));
+        offset = end;
+        rest = &line[offset..];
+    }
+    matches
+}
+
+fn display_byte_column(line: &str, byte_index: usize) -> usize {
+    Line::from(&line[..byte_index]).width()
 }
 
 fn limits(line_count: usize, line_width: usize, body: Rect) -> (u16, u16) {
@@ -603,21 +704,6 @@ fn scrollbar_reservations(line_count: usize, line_width: usize, area: Rect) -> (
         vertical = next_vertical;
         horizontal = next_horizontal;
     }
-}
-
-fn visible_plan_lines<'a>(review: &'a PlanReview, filtered: &FilteredPlan<'a>) -> Vec<Line<'a>> {
-    let query = review.search_query();
-    let mut lines = Vec::new();
-    for &line in filtered.lines() {
-        if !query.is_empty() && line.starts_with("Plan:") {
-            lines.push(Line::from(Span::styled(
-                "Plan total (full plan):",
-                theme::secondary_style(),
-            )));
-        }
-        lines.push(plan_line(line, query));
-    }
-    lines
 }
 
 fn max_line_width(lines: &[Line<'_>]) -> usize {
@@ -712,29 +798,72 @@ fn search_prompt(view: &PlanReviewViewState, width: u16) -> Option<(Line<'static
     let cursor = view.search_cursor()?;
     let before = query[..cursor].to_owned();
     let after = query[cursor..].to_owned();
+    let (cursor_grapheme, after_cursor) = next_grapheme(&after);
     let line = Line::from(vec![
         Span::styled("/", theme::accent_style()),
         Span::styled(before.clone(), theme::body_style()),
-        Span::styled("|", theme::accent_style()),
-        Span::styled(after, theme::body_style()),
+        Span::styled(cursor_grapheme.clone(), theme::search_cursor_style()),
+        Span::styled(after_cursor, theme::body_style()),
     ]);
-    let cursor = 1 + Line::from(before).width();
-    let horizontal = u16::try_from(
-        cursor
-            .saturating_sub(usize::from(width.saturating_sub(1)))
-            .min(line.width().saturating_sub(usize::from(width))),
-    )
-    .unwrap_or(u16::MAX);
+    let cursor_start = 1 + Line::from(before).width();
+    let cursor_end = cursor_start + Line::from(cursor_grapheme).width().max(1);
+    let horizontal = horizontal_offset(cursor_start, cursor_end, line.width(), width);
     Some((line, horizontal))
 }
 
-fn footer_items(searching: bool, applyable: bool) -> Vec<Line<'static>> {
+fn next_grapheme(text: &str) -> (String, String) {
+    let line = Line::from(text);
+    let mut graphemes = line.styled_graphemes(Style::default());
+    let Some(grapheme) = graphemes.next() else {
+        return (" ".to_owned(), String::new());
+    };
+    let cursor = grapheme.symbol.len();
+    (grapheme.symbol.to_owned(), text[cursor..].to_owned())
+}
+
+fn horizontal_offset(start: usize, end: usize, line_width: usize, width: u16) -> u16 {
+    let width = usize::from(width);
+    if width == 0 {
+        return 0;
+    }
+    let offset = if start < width {
+        0
+    } else if end > width {
+        end.saturating_sub(width)
+    } else {
+        start
+    };
+    u16::try_from(offset.min(line_width.saturating_sub(width))).unwrap_or(u16::MAX)
+}
+
+fn footer_items(
+    searching: bool,
+    applyable: bool,
+    match_count: usize,
+    filtered: bool,
+) -> Vec<Line<'static>> {
     if searching {
         vec![
             footer::hint(&["Enter"], "confirm"),
             footer::hint(&["Esc"], "cancel"),
-            footer::hint(&["Ctrl-A", "Ctrl-E"], "move"),
         ]
+    } else if filtered {
+        let mut items = vec![
+            footer::hint(&["Esc"], "clear"),
+            footer::hint(&["q"], "quit"),
+        ];
+        if match_count >= 2 {
+            items.push(footer::hint(&["n/N"], "next/prev"));
+        }
+        items.extend([
+            footer::hint(&["↑", "↓", "←", "→"], "scroll"),
+            footer::hint(&["/"], "filter"),
+            footer::hint(&["y"], "yank"),
+        ]);
+        if applyable {
+            items.push(footer::hint(&["a"], "apply"));
+        }
+        items
     } else {
         let mut items = vec![
             footer::hint(&["↑", "↓", "←", "→"], "scroll"),
@@ -746,6 +875,25 @@ fn footer_items(searching: bool, applyable: bool) -> Vec<Line<'static>> {
         }
         items.push(footer::hint(&["q"], "quit"));
         items
+    }
+}
+
+fn required_footer_items(searching: bool, filtered: bool) -> Vec<Line<'static>> {
+    if searching {
+        vec![
+            footer::hint(&["Enter"], "confirm"),
+            footer::hint(&["Esc"], "cancel"),
+        ]
+    } else if filtered {
+        vec![
+            footer::hint(&["Esc"], "clear"),
+            footer::hint(&["q"], "quit"),
+        ]
+    } else {
+        vec![
+            footer::hint(&["↑", "↓"], "scroll"),
+            footer::hint(&["q"], "quit"),
+        ]
     }
 }
 
@@ -1073,6 +1221,39 @@ End of synthetic plan body."#;
         panic!("text should be visible: {text}");
     }
 
+    fn search_match_style_counts(buffer: &Buffer, query: &str) -> (usize, usize) {
+        let mut normal = 0;
+        let mut selected = 0;
+        let query_width = query.chars().count();
+        let area = buffer.area();
+        for y in area.y..area.bottom() {
+            let symbols = (area.x..area.right())
+                .map(|x| buffer.cell((x, y)).expect("match cell").symbol())
+                .collect::<Vec<_>>();
+            for start in 0..symbols.len().saturating_sub(query_width.saturating_sub(1)) {
+                if !symbols[start..]
+                    .iter()
+                    .copied()
+                    .collect::<String>()
+                    .starts_with(query)
+                {
+                    continue;
+                }
+                let cell = buffer
+                    .cell((area.x + u16::try_from(start).expect("match offset"), y))
+                    .expect("match cell");
+                if cell.bg == Color::Rgb(0xf4, 0x9e, 0x4c) {
+                    normal += 1;
+                }
+                if cell.bg == Color::Rgb(0xff, 0xd0, 0x8a) {
+                    assert_eq!(cell.modifier, Modifier::BOLD | Modifier::UNDERLINED);
+                    selected += 1;
+                }
+            }
+        }
+        (normal, selected)
+    }
+
     #[test]
     fn renders_plan_review_normal_at_all_supported_sizes() {
         for &(width, height) in &SIZES {
@@ -1239,10 +1420,10 @@ End of synthetic plan body."#;
             render(frame, &state, &view, Instant::now());
         });
 
-        assert!(buffer_text(&buffer).contains("/terraform_data|"));
+        assert!(buffer_text(&buffer).contains("/terraform_data "));
         assert_text_segment_uses_style(
             &buffer,
-            "/terraform_data|",
+            "/terraform_data ",
             0,
             1,
             Color::Rgb(0xf4, 0x9e, 0x4c),
@@ -1251,7 +1432,7 @@ End of synthetic plan body."#;
         );
         assert_text_segment_uses_style(
             &buffer,
-            "/terraform_data|",
+            "/terraform_data ",
             1,
             SEARCH_TERM.chars().count(),
             Color::Rgb(0xe9, 0xdb, 0xdb),
@@ -1260,11 +1441,11 @@ End of synthetic plan body."#;
         );
         assert_text_segment_uses_style(
             &buffer,
-            "/terraform_data|",
+            "/terraform_data ",
             1 + SEARCH_TERM.chars().count(),
             1,
+            Color::Rgb(0x11, 0x14, 0x19),
             Color::Rgb(0xf4, 0x9e, 0x4c),
-            Color::Reset,
             Modifier::empty(),
         );
         assert_text_prefix_uses_style(
@@ -1306,6 +1487,131 @@ End of synthetic plan body."#;
     }
 
     #[test]
+    fn production_search_cursor_styles_full_width_and_zwj_graphemes_without_inserting_a_bar() {
+        let state = review_state(review());
+        let mut view = PlanReviewViewState::default();
+        let body = Rect::new(0, 0, 120, 40);
+        view.apply(PlanReviewInput::SearchStart, body, 0, 0, "");
+        for character in "全e\u{301}👩\u{200d}💻".chars() {
+            view.apply(PlanReviewInput::SearchChar(character), body, 0, 0, "");
+        }
+        view.apply(PlanReviewInput::SearchLeft, body, 0, 0, "");
+
+        let buffer = render_to_buffer((120, 40), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        write_buffer_captures("ux06-filter-grapheme-cursor", &buffer);
+        let text = buffer_text(&buffer);
+        assert!(text.contains("/全"));
+        assert!(text.contains("e\u{301}"));
+        assert!(text.contains("👩\u{200d}💻"));
+        let search_row = (buffer.area().y..buffer.area().bottom())
+            .map(|y| {
+                (buffer.area().x..buffer.area().right())
+                    .map(|x| buffer.cell((x, y)).expect("search row cell").symbol())
+                    .collect::<String>()
+            })
+            .find(|row| row.contains("/全"))
+            .expect("search row should be visible");
+        assert!(!search_row.contains('|'));
+
+        let mut found = false;
+        for y in buffer.area().y..buffer.area().bottom() {
+            for x in buffer.area().x..buffer.area().right() {
+                let cell = buffer.cell((x, y)).expect("grapheme cursor cell");
+                if cell.symbol() == "👩\u{200d}💻" {
+                    assert_eq!(cell.fg, Color::Rgb(0x11, 0x14, 0x19));
+                    assert_eq!(cell.bg, Color::Rgb(0xf4, 0x9e, 0x4c));
+                    found = true;
+                }
+            }
+        }
+        assert!(found, "ZWJ grapheme should be rendered as the cursor");
+
+        view.apply(PlanReviewInput::SearchEnd, body, 0, 0, "");
+        let end_buffer = render_to_buffer((120, 40), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        assert!(
+            (end_buffer.area().y..end_buffer.area().bottom()).any(|y| {
+                (end_buffer.area().x..end_buffer.area().right()).any(|x| {
+                    let cell = end_buffer.cell((x, y)).expect("end cursor cell");
+                    cell.symbol() == " "
+                        && cell.fg == Color::Rgb(0x11, 0x14, 0x19)
+                        && cell.bg == Color::Rgb(0xf4, 0x9e, 0x4c)
+                })
+            }),
+            "end cursor should style a blank cell",
+        );
+    }
+
+    #[test]
+    fn production_filter_selects_one_match_and_moves_with_footer_priority() {
+        let mut plan = review();
+        plan.set_search_query(SEARCH_TERM.to_owned());
+        let state = review_state(plan);
+        let area = Rect::new(0, 0, 80, 24);
+        let layout = layout(area, false, &state);
+        assert!(layout.matches().len() >= 2);
+        let mut view = PlanReviewViewState::default();
+        view.apply_with_matches(
+            PlanReviewInput::SearchStart,
+            layout.body(),
+            layout.max_vertical(),
+            layout.max_horizontal(),
+            SEARCH_TERM,
+            layout.matches(),
+        );
+        view.apply_with_matches(
+            PlanReviewInput::SearchConfirm,
+            layout.body(),
+            layout.max_vertical(),
+            layout.max_horizontal(),
+            SEARCH_TERM,
+            layout.matches(),
+        );
+        assert_eq!(view.selected(), Some(0));
+        let first = render_to_buffer((area.width, area.height), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        let (normal, selected) = search_match_style_counts(&first, SEARCH_TERM);
+        assert_eq!(selected, 1, "normal={normal}");
+        assert_eq!(normal + selected, 4);
+        let footer = buffer_text(&first);
+        assert!(footer.contains("Esc clear"));
+        assert!(footer.contains("q quit"));
+        assert!(footer.contains("n/N next/prev"));
+
+        view.apply_with_matches(
+            PlanReviewInput::SearchNext,
+            layout.body(),
+            layout.max_vertical(),
+            layout.max_horizontal(),
+            SEARCH_TERM,
+            layout.matches(),
+        );
+        assert_eq!(view.selected(), Some(1));
+        let second = render_to_buffer((area.width, area.height), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        assert_eq!(search_match_style_counts(&second, SEARCH_TERM).1, 1);
+
+        assert_eq!(
+            view.apply_with_matches(
+                PlanReviewInput::SearchCancel,
+                layout.body(),
+                layout.max_vertical(),
+                layout.max_horizontal(),
+                SEARCH_TERM,
+                layout.matches(),
+            ),
+            Some(String::new())
+        );
+        assert_eq!(view.selected(), None);
+        assert_eq!(view.scroll(), (0, 0));
+    }
+
+    #[test]
     fn production_filter_states_show_fixed_scope_and_kind_counts() {
         let mut input_view = PlanReviewViewState::default();
         input_view.apply(
@@ -1321,7 +1627,7 @@ End of synthetic plan body."#;
         let input_text = buffer_text(&input_buffer);
         write_buffer_captures("ux02-filter-input", &input_buffer);
         assert!(input_text.contains("Plan | Filter"));
-        assert!(input_text.contains("/|"));
+        assert!(input_text.contains("/ "));
         assert!(input_text.contains("Filter matches: resources 4/4 | outputs 2/2"));
         assert!(input_text.contains("Scope: full plan (apply / yank)"));
 
@@ -1945,7 +2251,7 @@ End of synthetic plan body."#;
         let Some((line, horizontal)) = search_prompt(&view, 6) else {
             panic!("search prompt should be visible");
         };
-        assert_eq!(line.to_string(), "/abcdefgh|");
+        assert_eq!(line.to_string(), "/abcdefgh ");
         assert_eq!(horizontal, 4);
     }
 
@@ -1961,11 +2267,16 @@ End of synthetic plan body."#;
         review.set_search_query("api".to_owned());
 
         let filtered = review.filtered_document();
-        let lines = visible_plan_lines(&review, &filtered);
-        assert_eq!(lines[0].to_string(), "Plan total (full plan):");
-        assert_eq!(
-            lines[1].to_string(),
-            "Plan: 1 to add, 0 to change, 0 to destroy."
+        let lines = review_lines(&review, &filtered).0;
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.to_string() == "Plan total (full plan):")
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| { line.to_string() == "Plan: 1 to add, 0 to change, 0 to destroy." })
         );
     }
 

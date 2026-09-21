@@ -6,7 +6,7 @@ expression: buffer_text(buffer)
  Terracotta | main
 
  ┌Plan | Filter───────────────────────────────────────────────────────────────┐
- │/terraform_data|                                                            │
+ │/terraform_data                                                             │
  │Filter matches: resources 4/4 | outputs 0/2                                 │
  │Scope: full plan (apply / yank)                                             │
  │Terraform will perform the following actions:                              ▲│
@@ -24,4 +24,4 @@ expression: buffer_text(buffer)
  │      - old_checksum = "sha256:0123456789abcdef0123456789abcdef0123456789ab││
  │◀︎════════════════════════════════════════════════════════════──────────────▶︎│
  └────────────────────────────────────────────────────────────────────────────┘
- Enter confirm | Esc cancel | Ctrl-A/Ctrl-E move
+ Enter confirm | Esc cancel

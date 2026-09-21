@@ -286,6 +286,20 @@ Plan: 0 to add, 1 to change, 0 to destroy.
     }
 
     #[test]
+    fn pty_filter_navigation_restores_the_full_review_and_terminal() {
+        let fixture = Fixture::new();
+        let result = fixture.run("filter_navigation", 100, 24);
+
+        assert_eq!(result.exit_code, 0);
+        result.assert_restored();
+        result.observed("filter_input");
+        result.observed("filter_matches");
+        result.observed("filter_confirmed");
+        result.observed("filter_cleared");
+        fixture.assert_saved_plan_removed();
+    }
+
+    #[test]
     fn pty_apply_success_uses_the_saved_plan_once_and_cleans_it_after_quit() {
         let fixture = Fixture::new();
         let result = fixture.run("apply_success", 100, 24);
