@@ -172,7 +172,11 @@ fn layout_with_content(
         notice,
     );
     let required = footer::layout_with_notice(
-        required_footer_items(searching, !state.review().search_query().is_empty()),
+        required_footer_items(
+            searching,
+            content.matches.len(),
+            !state.review().search_query().is_empty(),
+        ),
         panel.width,
         notice,
     );
@@ -923,20 +927,13 @@ fn footer_items(
             footer::hint(&["Esc"], "cancel"),
         ]
     } else if filtered {
-        let mut items = vec![
-            footer::hint(&["Esc"], "clear"),
-            footer::hint(&["q"], "quit"),
-        ];
+        let mut items = vec![footer::hint(&["Esc"], "clear")];
+        items.extend([
+            footer::hint(&["/"], "edit"),
+            footer::hint(&["↑", "↓", "←", "→"], "scroll"),
+        ]);
         if match_count >= 2 {
             items.push(footer::hint(&["n/N"], "next/prev"));
-        }
-        items.extend([
-            footer::hint(&["↑", "↓", "←", "→"], "scroll"),
-            footer::hint(&["/"], "filter"),
-            footer::hint(&["y"], "yank"),
-        ]);
-        if applyable {
-            items.push(footer::hint(&["a"], "apply"));
         }
         items
     } else {
@@ -953,17 +950,26 @@ fn footer_items(
     }
 }
 
-fn required_footer_items(searching: bool, filtered: bool) -> Vec<Line<'static>> {
+fn required_footer_items(
+    searching: bool,
+    match_count: usize,
+    filtered: bool,
+) -> Vec<Line<'static>> {
     if searching {
         vec![
             footer::hint(&["Enter"], "confirm"),
             footer::hint(&["Esc"], "cancel"),
         ]
     } else if filtered {
-        vec![
-            footer::hint(&["Esc"], "clear"),
-            footer::hint(&["q"], "quit"),
-        ]
+        let mut items = vec![footer::hint(&["Esc"], "clear")];
+        items.extend([
+            footer::hint(&["/"], "edit"),
+            footer::hint(&["↑", "↓", "←", "→"], "scroll"),
+        ]);
+        if match_count >= 2 {
+            items.push(footer::hint(&["n/N"], "next/prev"));
+        }
+        items
     } else {
         vec![
             footer::hint(&["↑", "↓"], "scroll"),
@@ -1673,8 +1679,12 @@ End of synthetic plan body."#;
         assert_eq!(normal + selected, 4);
         let footer = buffer_text(&first);
         assert!(footer.contains("Esc clear"));
-        assert!(footer.contains("q quit"));
         assert!(footer.contains("n/N next/prev"));
+        assert!(footer.contains("↑/↓/←/→ scroll"));
+        assert!(footer.contains("/ edit"));
+        assert!(!footer.contains("a apply"));
+        assert!(!footer.contains("y yank"));
+        assert!(!footer.contains("q quit"));
 
         view.apply_with_matches(
             PlanReviewInput::SearchNext,
@@ -1703,6 +1713,95 @@ End of synthetic plan body."#;
         );
         assert_eq!(view.selected(), None);
         assert_eq!(view.scroll(), (0, 0));
+    }
+
+    #[test]
+    fn confirmed_filter_footer_only_offers_match_navigation_when_needed() {
+        struct Case {
+            name: &'static str,
+            query: &'static str,
+            expected_matches: usize,
+        }
+
+        for case in [
+            Case {
+                name: "zero_matches",
+                query: "not-present",
+                expected_matches: 0,
+            },
+            Case {
+                name: "one_match",
+                query: "endpoint",
+                expected_matches: 1,
+            },
+            Case {
+                name: "multiple_matches",
+                query: SEARCH_TERM,
+                expected_matches: 8,
+            },
+        ] {
+            let mut plan = if case.expected_matches == 0 {
+                zero_match_review()
+            } else {
+                review()
+            };
+            plan.set_search_query(case.query.to_owned());
+            let state = review_state(plan);
+            let layout = layout(Rect::new(0, 0, 120, 40), false, &state);
+            assert_eq!(
+                layout.matches().len(),
+                case.expected_matches,
+                "case: {}",
+                case.name
+            );
+            let buffer = render_to_buffer((120, 40), |frame| {
+                render(
+                    frame,
+                    &state,
+                    &PlanReviewViewState::default(),
+                    Instant::now(),
+                );
+            });
+            let text = buffer_text(&buffer);
+            assert!(text.contains("Esc clear"), "case: {}", case.name);
+            assert!(text.contains("↑/↓/←/→ scroll"), "case: {}", case.name);
+            assert!(text.contains("/ edit"), "case: {}", case.name);
+            assert_eq!(
+                text.contains("n/N next/prev"),
+                case.expected_matches >= 2,
+                "case: {}",
+                case.name
+            );
+            assert!(!text.contains("y yank"), "case: {}", case.name);
+            assert!(!text.contains("a apply"), "case: {}", case.name);
+            assert!(!text.contains("q quit"), "case: {}", case.name);
+        }
+    }
+
+    #[test]
+    fn confirmed_filter_narrow_footer_keeps_required_actions_before_match_navigation() {
+        for (query, plan) in [
+            ("not-present", zero_match_review()),
+            ("endpoint", review()),
+            (SEARCH_TERM, review()),
+        ] {
+            let mut plan = plan;
+            plan.set_search_query(query.to_owned());
+            let state = review_state(plan);
+            let buffer = render_to_buffer((24, 24), |frame| {
+                render(
+                    frame,
+                    &state,
+                    &PlanReviewViewState::default(),
+                    Instant::now(),
+                );
+            });
+            let text = buffer_text(&buffer);
+            assert!(text.contains("Esc clear"), "query: {query}");
+            assert!(text.contains("↑/↓/←/→ scroll"), "query: {query}");
+            assert!(text.contains("/ edit"), "query: {query}");
+            assert!(!text.contains("n/N next/prev"), "query: {query}");
+        }
     }
 
     #[test]
@@ -1880,7 +1979,8 @@ End of synthetic plan body."#;
         assert_eq!(
             key_to_input(
                 KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
-                view.searching()
+                view.searching(),
+                false,
             ),
             Some(PlanReviewInput::SearchCancel)
         );
@@ -1888,6 +1988,7 @@ End of synthetic plan body."#;
         let input = key_to_input(
             KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
             view.searching(),
+            false,
         )
         .expect("Esc should cancel the filter");
         assert_eq!(
@@ -1977,14 +2078,13 @@ End of synthetic plan body."#;
 
     #[test]
     fn production_confirmation_wraps_target_and_preserves_scope_and_workspace() {
-        let mut plan = confirmation_review(
+        let plan = confirmation_review(
             "/repo/environments/production/東京/with-a-very-long-target-name-that-must-wrap",
             "staging",
             0,
             1,
             0,
         );
-        plan.set_search_query("worker".to_owned());
         let state = confirmation_state(plan);
         let area = Rect::new(0, 0, 48, 30);
         let layout = apply_confirmation_layout(area, &state);
@@ -2013,9 +2113,6 @@ End of synthetic plan body."#;
         assert!(compact.contains("with-a-very-long-target-name-that-must-wrap"));
         assert!(text.contains("Workspace: staging"));
         assert!(text.contains("Plan: 0 to add, 1 to change, 0 to destroy."));
-        assert!(text.contains("Filter changes display"));
-        assert!(text.contains("Apply uses"));
-        assert!(text.contains("all changes."));
         assert!(!text.contains("This plan includes resource deletion."));
         assert_eq!(layout.footer().y, layout.frame().bottom());
     }
@@ -2079,25 +2176,6 @@ End of synthetic plan body."#;
             Color::Rgb(0xeb, 0xcb, 0x8b),
             Color::Reset,
             Modifier::BOLD,
-        );
-
-        let mut filtered = confirmation_review("/repo", "staging", 0, 1, 0);
-        filtered.set_search_query("worker".to_owned());
-        let filtered_state = confirmation_state(filtered);
-        let filtered_buffer = render_to_buffer((120, 40), |frame| {
-            render_apply_confirmation(
-                frame,
-                &filtered_state,
-                &ApplyConfirmationViewState::default(),
-            );
-        });
-        assert_text_prefix_uses_style(
-            &filtered_buffer,
-            "Filter changes display only. Apply uses all changes.",
-            "Filter changes display only. Apply uses all changes.",
-            Color::Rgb(0xc0, 0xb8, 0xb8),
-            Color::Reset,
-            Modifier::empty(),
         );
     }
 

@@ -289,7 +289,7 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
             let SessionState::Review(review) = state else {
                 return None;
             };
-            if review.review.metadata().applyable() {
+            if review.review.search_query().is_empty() && review.review.metadata().applyable() {
                 let review = review.review.clone();
                 *state =
                     SessionState::ApplyConfirmation(Box::new(ApplyConfirmationState::new(review)));
@@ -358,7 +358,9 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
             SessionState::Execution(execution) | SessionState::Apply(execution) => {
                 execution.copy_effect(target)
             }
-            SessionState::Review(review) if target == CopyTarget::Plan => {
+            SessionState::Review(review)
+                if target == CopyTarget::Plan && review.review.search_query().is_empty() =>
+            {
                 Some(copy::plan_effect(&review.review))
             }
             SessionState::Review(_) | SessionState::ApplyConfirmation(_) => None,
@@ -392,10 +394,10 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
                     ),
                 )))
             }
-            SessionState::Execution(_) => None,
-            SessionState::Review(review) => Some(Effect::Finish(SessionOutcome::Reviewed(
-                review.review.metadata().clone(),
-            ))),
+            SessionState::Review(review) if review.review.search_query().is_empty() => Some(
+                Effect::Finish(SessionOutcome::Reviewed(review.review.metadata().clone())),
+            ),
+            SessionState::Execution(_) | SessionState::Review(_) => None,
             SessionState::ApplyConfirmation(confirmation) => Some(Effect::Finish(
                 SessionOutcome::Reviewed(confirmation.review.metadata().clone()),
             )),
@@ -492,24 +494,19 @@ mod tests {
     }
 
     #[test]
-    fn filtered_review_copy_still_contains_the_full_document() {
+    fn filtered_review_rejects_copy_and_quit_actions() {
         let now = Instant::now();
         let mut filtered = review();
         filtered.set_search_query("not-present".to_owned());
-        let full_text = filtered.document().text().to_owned();
         let mut state = SessionState::new(ExecutionState::with_context(
             now,
             ExecutionContext::loading("/project"),
         ));
         update(&mut state, Action::ReviewCompleted(filtered), now);
 
-        let Some(Effect::WriteClipboard(effect)) =
-            update(&mut state, Action::Copy(CopyTarget::Plan), now)
-        else {
-            panic!("plan copy should be available");
-        };
-
-        assert_eq!(effect.text(), full_text);
+        assert!(update(&mut state, Action::Copy(CopyTarget::Plan), now).is_none());
+        assert!(update(&mut state, Action::Quit, now).is_none());
+        assert!(state.review().is_some());
     }
 
     #[test]
@@ -641,7 +638,7 @@ mod tests {
     }
 
     #[test]
-    fn filtered_review_keeps_full_plan_metadata_for_apply_confirmation() {
+    fn filtered_review_rejects_apply_confirmation() {
         let now = Instant::now();
         let mut filtered = applyable_review();
         filtered.set_search_query("not-present".to_owned());
@@ -650,17 +647,8 @@ mod tests {
             ExecutionContext::loading("/project"),
         ));
         update(&mut state, Action::ReviewCompleted(filtered), now);
-        update(&mut state, Action::OpenApplyConfirmation, now);
-
-        let confirmation = state
-            .apply_confirmation()
-            .expect("confirmation should be available");
-        assert_eq!(confirmation.review().search_query(), "not-present");
-        assert_eq!(confirmation.review().metadata().changes(), 1);
-        assert!(matches!(
-            update(&mut state, Action::ConfirmApply, now),
-            Some(Effect::StartApply)
-        ));
+        assert!(update(&mut state, Action::OpenApplyConfirmation, now).is_none());
+        assert!(state.review().is_some());
     }
 
     #[test]
