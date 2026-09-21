@@ -942,8 +942,6 @@ fn filter_footer_status(query: &str, match_count: usize, width: u16) -> Option<S
             1 => "1 match".to_owned(),
             count => format!("{count} matches"),
         })
-    } else if width >= 40 {
-        Some(format!("{match_count} hits"))
     } else {
         None
     }
@@ -2195,7 +2193,7 @@ End of synthetic plan body."#;
         plan.set_search_query("worker".to_owned());
         let state = review_state(plan);
 
-        for (width, expected) in [(24, None), (48, Some("4 hits")), (80, Some("4 matches"))] {
+        for (width, expected) in [(24, None), (48, None), (80, Some("4 matches"))] {
             let buffer = render_to_buffer((width, 24), |frame| {
                 render(
                     frame,
@@ -2209,6 +2207,7 @@ End of synthetic plan body."#;
                 assert!(text.contains(expected), "width: {width}");
             } else {
                 assert!(!text.contains(" matches"), "width: {width}");
+                assert!(!text.contains(" hits"), "width: {width}");
             }
             assert!(text.contains("Esc clear"), "width: {width}");
         }
