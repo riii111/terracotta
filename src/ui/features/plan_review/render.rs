@@ -1151,7 +1151,7 @@ End of synthetic plan body."#;
         PlanReview::new(
             PathBuf::from("/repo/environments/production/main"),
             "default".to_owned(),
-            PlanDocument::with_blocks(
+            PlanDocument::with_blocks_and_line_kinds(
                 PLAN_TEXT.to_owned(),
                 vec![
                     PlanBlock::new(0..2, PlanBlockKind::Common),
@@ -1166,6 +1166,51 @@ End of synthetic plan body."#;
                     PlanBlock::new(28..29, PlanBlockKind::Output),
                     PlanBlock::new(29..30, PlanBlockKind::Output),
                     PlanBlock::new(30..43, PlanBlockKind::Common),
+                ],
+                vec![
+                    PlanLineKind::Intro,
+                    PlanLineKind::Intro,
+                    PlanLineKind::Note,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Note,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Note,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Note,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Note,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::OutputSection,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
                 ],
             ),
             PlanMetadata::new(
@@ -1205,7 +1250,11 @@ End of synthetic plan body."#;
         PlanReview::new(
             PathBuf::from("/repo/environments/production/main"),
             "default".to_owned(),
-            plan_document("Plan: 1 to add, 0 to change, 0 to destroy.\n".to_owned()),
+            PlanDocument::with_blocks_and_line_kinds(
+                "Plan: 1 to add, 0 to change, 0 to destroy.\n".to_owned(),
+                vec![PlanBlock::new(0..2, PlanBlockKind::Common)],
+                vec![PlanLineKind::Summary, PlanLineKind::Body],
+            ),
             PlanMetadata::new(
                 vec!["terraform_data.api".to_owned()],
                 Vec::new(),
@@ -1237,7 +1286,7 @@ End of synthetic plan body."#;
         PlanReview::new(
             PathBuf::from("/repo/environments/production/main"),
             "default".to_owned(),
-            PlanDocument::with_blocks(
+            PlanDocument::with_blocks_and_line_kinds(
                 "Warning: synthetic diagnostic\nCommon context stays visible\n  # terraform_data.api will be created\n  + resource \"terraform_data\" \"api\" {\n  + endpoint = (known after apply)\nPlan: 1 to add, 0 to change, 0 to destroy.\n"
                     .to_owned(),
                 vec![
@@ -1245,6 +1294,15 @@ End of synthetic plan body."#;
                     PlanBlock::new(2..4, PlanBlockKind::Resource),
                     PlanBlock::new(4..5, PlanBlockKind::Output),
                     PlanBlock::new(5..7, PlanBlockKind::Common),
+                ],
+                vec![
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Note,
+                    PlanLineKind::Body,
+                    PlanLineKind::Body,
+                    PlanLineKind::Summary,
+                    PlanLineKind::Body,
                 ],
             ),
             PlanMetadata::new(
@@ -2830,7 +2888,11 @@ End of synthetic plan body."#;
         let mut review = PlanReview::new(
             PathBuf::from("/project"),
             "default".to_owned(),
-            plan_document("Plan: 1 to add, 0 to change, 0 to destroy.\n".to_owned()),
+            PlanDocument::with_blocks_and_line_kinds(
+                "Plan: 1 to add, 0 to change, 0 to destroy.\n".to_owned(),
+                vec![PlanBlock::new(0..2, PlanBlockKind::Common)],
+                vec![PlanLineKind::Summary, PlanLineKind::Body],
+            ),
             PlanMetadata::new(Vec::new(), Vec::new(), 1, 0, 0, true),
             Vec::new(),
         );
@@ -2855,7 +2917,15 @@ End of synthetic plan body."#;
         let review = PlanReview::new(
             PathBuf::from("/project"),
             "default".to_owned(),
-            plan_document("body\nPlan: 1 to add, 0 to change, 0 to destroy.\n".to_owned()),
+            PlanDocument::with_blocks_and_line_kinds(
+                "body\nPlan: 1 to add, 0 to change, 0 to destroy.\n".to_owned(),
+                vec![PlanBlock::new(0..3, PlanBlockKind::Common)],
+                vec![
+                    PlanLineKind::Body,
+                    PlanLineKind::Summary,
+                    PlanLineKind::Body,
+                ],
+            ),
             PlanMetadata::new(Vec::new(), Vec::new(), 1, 0, 0, true),
             Vec::new(),
         );

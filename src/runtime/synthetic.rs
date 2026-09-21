@@ -14,7 +14,7 @@ use crate::{
             ApplyStatus, EventStream, ExecutionAction, ExecutionContext, ExecutionEvent,
             ExecutionEventKind, ExecutionLogLine, ExecutionPhase, ExecutionState,
         },
-        review::{PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata, PlanReview},
+        review::{PlanBlock, PlanBlockKind, PlanDocument, PlanLineKind, PlanMetadata, PlanReview},
         session::{Action, Effect, ReviewSessionState, SessionState},
     },
     ui::features::{execution, plan_review},
@@ -171,7 +171,7 @@ fn synthetic_review() -> ReviewSessionState {
     ReviewSessionState::new(PlanReview::new(
         PathBuf::from("infra/prod"),
         "default".to_owned(),
-        PlanDocument::with_blocks(
+        PlanDocument::with_blocks_and_line_kinds(
             "Terraform will perform the following actions:\n\n  # terraform_data.example will be updated in-place\n  ~ resource \"terraform_data.example\" {\n      ~ input = \"before\" -> \"after\"\n      note = \"searchable synthetic value\"\n    }\n\nPlan: 0 to add, 1 to change, 0 to destroy.\n"
                 .to_owned(),
             vec![
@@ -181,6 +181,18 @@ fn synthetic_review() -> ReviewSessionState {
                     PlanBlockKind::Resource,
                 ),
                 PlanBlock::new(7..10, PlanBlockKind::Common),
+            ],
+            vec![
+                PlanLineKind::Intro,
+                PlanLineKind::Intro,
+                PlanLineKind::Note,
+                PlanLineKind::Body,
+                PlanLineKind::Body,
+                PlanLineKind::Body,
+                PlanLineKind::Body,
+                PlanLineKind::Body,
+                PlanLineKind::Summary,
+                PlanLineKind::Body,
             ],
         ),
         PlanMetadata::new(
