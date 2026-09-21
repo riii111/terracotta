@@ -268,17 +268,26 @@ fn synthetic_execution_key(
     view: &mut execution::ExecutionViewState,
     key: KeyEvent,
 ) -> io::Result<Option<Action>> {
-    match execution::execution_key_to_input(key, state.stage()) {
+    match execution::execution_key_to_input(key, state.stage(), view.logs_open()) {
         Some(execution::ExecutionInput::Quit) => Ok(Some(Action::Quit)),
+        Some(execution::ExecutionInput::OpenLogs) => {
+            view.open_logs();
+            Ok(None)
+        }
+        Some(execution::ExecutionInput::CloseLogs) => {
+            view.close_logs();
+            Ok(None)
+        }
         Some(execution::ExecutionInput::End) => {
             view.end();
             Ok(None)
         }
         Some(execution::ExecutionInput::Scroll(scroll)) => {
             let size = terminal.size()?;
-            let layout = execution::execution_layout(
+            let layout = execution::execution_layout_with_view(
                 ratatui::layout::Rect::new(0, 0, size.width, size.height),
                 state,
+                *view,
             );
             let (current_vertical, _) =
                 execution::execution_scroll_position_with_view(state, *view, &layout);

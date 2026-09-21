@@ -1,0 +1,28 @@
+---
+source: src/ui/features/execution/render.rs
+expression: buffer_text(buffer)
+---
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ Terracotta | repo                                                                                workspace: loading...
+
+ ┌Applying────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+ │| Applying...                                                                                                       │
+ │                                                                                                                    │
+ │Elapsed 0.0s                                                                                                        │
+ └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ Ctrl-C cancel | v logs

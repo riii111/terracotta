@@ -25,6 +25,7 @@ enum VerticalScroll {
 pub(crate) struct ExecutionViewState {
     vertical: VerticalScroll,
     horizontal: u16,
+    logs_open: bool,
 }
 
 impl Default for ExecutionViewState {
@@ -32,6 +33,7 @@ impl Default for ExecutionViewState {
         Self {
             vertical: VerticalScroll::Initial,
             horizontal: 0,
+            logs_open: false,
         }
     }
 }
@@ -80,6 +82,21 @@ impl ExecutionViewState {
         self.vertical = VerticalScroll::FollowLatest;
     }
 
+    pub(crate) const fn open_logs(&mut self) {
+        self.logs_open = true;
+        self.vertical = VerticalScroll::FollowLatest;
+        self.horizontal = 0;
+    }
+
+    pub(crate) const fn close_logs(&mut self) {
+        self.logs_open = false;
+    }
+
+    #[must_use]
+    pub(crate) const fn logs_open(self) -> bool {
+        self.logs_open
+    }
+
     #[must_use]
     pub(crate) const fn follows_latest(self) -> bool {
         !matches!(self.vertical, VerticalScroll::Manual(_))
@@ -114,7 +131,7 @@ impl ExecutionViewState {
 
 pub(crate) use input::{ExecutionInput, execution_key_to_input};
 pub(crate) use render::{
-    execution_horizontal_scroll_position_with_view, execution_layout,
+    execution_horizontal_scroll_position_with_view, execution_layout_with_view,
     execution_scroll_position_with_view, render_execution_with_quit_confirmation,
 };
 

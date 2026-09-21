@@ -1,0 +1,27 @@
+---
+source: src/ui/features/execution/render.rs
+expression: buffer_text(buffer)
+---
+
+ Terracotta | repo                                        workspace: loading...
+
+ ┌Applying────────────────────────────────────────────────────────────────────┐
+ │| Applying...                                                               │
+ │Elapsed 0.0s                                                                │
+ │xxxxxxxxxxxxxxxx                                                            │
+ │xxxxxxxxxxxxxxxx                                                            │
+ │xxxxxxxxxxxxxxxx                                                            │
+ │xxxxxxxxxxxxxxxx                                                            │
+ │xxxxxxxxxxxxxxxx                                                            │
+ │xxxxxxxxxxxxxxxx                                                            │
+ │                                                                            │
+ │                                                                            │
+ │                                                                            │
+ │                                                                            │
+ │                                                                            │
+ │                                                                            │
+ │                                                                            │
+ │                                                                            │
+ │────────────────────────────────────────────────────────────────────────────│
+ └────────────────────────────────────────────────────────────────────────────┘
+ Ctrl-C cancel | Esc close | ↑/↓/PgUp/PgDn scroll | End follow latest

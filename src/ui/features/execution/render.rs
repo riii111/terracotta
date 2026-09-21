@@ -24,16 +24,6 @@ struct PreparedContent<'a> {
     max_width: usize,
 }
 
-#[cfg(test)]
-pub(crate) fn render_execution_with_view(
-    frame: &mut Frame<'_>,
-    state: &ExecutionState,
-    view: ExecutionViewState,
-    now: Instant,
-) {
-    render_execution_with_quit_confirmation(frame, state, view, now, false);
-}
-
 pub(crate) fn render_execution_with_quit_confirmation(
     frame: &mut Frame<'_>,
     state: &ExecutionState,
@@ -48,6 +38,7 @@ pub(crate) fn render_execution_with_quit_confirmation(
     let layout = execution_layout_with_content(
         area,
         state,
+        view,
         &content,
         &status,
         notice.map(CopyNotice::message),
@@ -55,8 +46,7 @@ pub(crate) fn render_execution_with_quit_confirmation(
     );
     if area.width < MIN_WIDTH
         || area.height < MIN_HEIGHT
-        || layout.body().width == 0
-        || layout.body().height == 0
+        || (!compact_apply(state, view) && (layout.body().width == 0 || layout.body().height == 0))
     {
         let finished_apply = matches!(
             state.stage(),
@@ -83,6 +73,23 @@ pub(crate) fn render_execution_with_quit_confirmation(
     };
     let content_area = shell_layout::render_content_block(frame, layout.shell.content(), title);
     debug_assert_eq!(content_area, layout.shell.content_inner());
+    if compact_apply(state, view) {
+        render_compact_execution(frame, &layout, status, notice);
+        return;
+    }
+    render_log_view(frame, &layout, state, view, now, content, notice);
+}
+
+fn render_log_view(
+    frame: &mut Frame<'_>,
+    layout: &ExecutionLayout,
+    state: &ExecutionState,
+    view: ExecutionViewState,
+    now: Instant,
+    content: PreparedContent<'_>,
+    notice: Option<CopyNotice>,
+) {
+    let status = status_lines(state, view, now);
     frame.render_widget(
         status_paragraph(status, finished_apply(state)),
         layout.status(),
@@ -167,6 +174,21 @@ fn render_footer(
     );
 }
 
+fn render_compact_execution(
+    frame: &mut Frame<'_>,
+    layout: &ExecutionLayout,
+    status: Vec<Line<'static>>,
+    notice: Option<CopyNotice>,
+) {
+    frame.render_widget(status_paragraph(status, true), layout.status());
+    render_footer(
+        frame,
+        layout.shell.footer(),
+        layout.shell.footer_lines(),
+        notice,
+    );
+}
+
 pub(crate) struct ExecutionLayout {
     shell: shell_layout::ShellLayout,
     status: Rect,
@@ -213,20 +235,26 @@ impl ExecutionLayout {
     }
 }
 
-pub(crate) fn execution_layout(area: Rect, state: &ExecutionState) -> ExecutionLayout {
-    execution_layout_with_quit_confirmation(area, state, false)
-}
-
-pub(crate) fn execution_layout_with_quit_confirmation(
+pub(crate) fn execution_layout_with_view(
     area: Rect,
     state: &ExecutionState,
+    view: ExecutionViewState,
+) -> ExecutionLayout {
+    execution_layout_with_quit_confirmation_and_view(area, state, view, false)
+}
+
+fn execution_layout_with_quit_confirmation_and_view(
+    area: Rect,
+    state: &ExecutionState,
+    view: ExecutionViewState,
     quit_confirmation: bool,
 ) -> ExecutionLayout {
     let content = prepare_content(state);
-    let status = status_lines(state, ExecutionViewState::default(), Instant::now());
+    let status = status_lines(state, view, Instant::now());
     execution_layout_with_content(
         area,
         state,
+        view,
         &content,
         &status,
         state.copy_notice().map(CopyNotice::message),
@@ -237,33 +265,25 @@ pub(crate) fn execution_layout_with_quit_confirmation(
 fn execution_layout_with_content(
     area: Rect,
     state: &ExecutionState,
+    view: ExecutionViewState,
     content: &PreparedContent<'_>,
     status: &[Line<'static>],
     notice: Option<&str>,
     quit_confirmation: bool,
 ) -> ExecutionLayout {
     let panel_width = shell_layout::centered_width(area);
-    let normal_footer_lines = footer_lines(state, panel_width, notice);
+    let compact = compact_apply(state, view);
+    let normal_footer_lines = footer_lines(state, view, panel_width, notice);
     let normal_required_footer_lines = required_footer_lines(state, panel_width, notice);
-    let status_height = status_height(state, status, panel_width.saturating_sub(2));
-    let requested_height = if result_screen(state) {
-        let body_height = shell_layout::required_body_height(
-            content.lines.len(),
-            content.max_width,
-            panel_width.saturating_sub(2),
-        );
-        let content_height = status_height
-            .saturating_add(1)
-            .saturating_add(body_height)
-            .saturating_add(2);
-        shell_layout::required_height(
-            content_height,
-            &normal_footer_lines,
-            &normal_required_footer_lines,
-        )
-    } else {
-        shell_layout::max_centered_height(area)
-    };
+    let status_height = status_height(state, status, panel_width.saturating_sub(2), compact);
+    let requested_height = execution_requested_height(
+        area,
+        state,
+        content,
+        status_height,
+        compact,
+        (&normal_footer_lines, &normal_required_footer_lines),
+    );
     let shell_area = shell_layout::centered_area(area, requested_height);
     let footer_lines = if quit_confirmation {
         footer::pad_lines(
@@ -282,6 +302,20 @@ fn execution_layout_with_content(
         normal_required_footer_lines
     };
     let shell = shell_layout::layout(shell_area, footer_lines, required_footer_lines, 1);
+    if compact {
+        let status = shell.content_inner();
+        return ExecutionLayout {
+            shell,
+            status,
+            log_area: Rect::default(),
+            separator: Rect::default(),
+            body: Rect::default(),
+            vertical_scrollbar: false,
+            horizontal_scrollbar: false,
+            max_vertical: 0,
+            max_horizontal: 0,
+        };
+    }
     let constraints = if finished_apply(state) {
         [
             Constraint::Length(status_height),
@@ -332,9 +366,46 @@ fn execution_layout_with_content(
     }
 }
 
-fn status_height(state: &ExecutionState, status: &[Line<'static>], width: u16) -> u16 {
+fn execution_requested_height(
+    area: Rect,
+    state: &ExecutionState,
+    content: &PreparedContent<'_>,
+    status_height: u16,
+    compact: bool,
+    footer_lines: (&[Line<'static>], &[Line<'static>]),
+) -> u16 {
+    if compact {
+        return shell_layout::required_height(
+            status_height.saturating_add(2),
+            footer_lines.0,
+            footer_lines.1,
+        );
+    }
+    if result_screen(state) {
+        let body_height = shell_layout::required_body_height(
+            content.lines.len(),
+            content.max_width,
+            shell_layout::centered_width(area).saturating_sub(2),
+        );
+        let content_height = status_height
+            .saturating_add(1)
+            .saturating_add(body_height)
+            .saturating_add(2);
+        return shell_layout::required_height(content_height, footer_lines.0, footer_lines.1);
+    }
+    shell_layout::max_centered_height(area)
+}
+
+fn status_height(
+    state: &ExecutionState,
+    status: &[Line<'static>],
+    width: u16,
+    compact: bool,
+) -> u16 {
     if finished_apply(state) {
         status_line_count(status, width)
+    } else if compact {
+        STATUS_HEIGHT
     } else if state.stage() == ExecutionStage::Applying && !state.is_cancelling() {
         u16::try_from(status.len()).unwrap_or(u16::MAX).max(1)
     } else {
@@ -394,6 +465,25 @@ fn status_lines(
     view: ExecutionViewState,
     now: Instant,
 ) -> Vec<Line<'static>> {
+    if compact_apply(state, view) {
+        let elapsed = Line::from(format!("Elapsed {}", format_elapsed(state.elapsed_at(now))));
+        if state.is_cancelling() {
+            return vec![
+                Line::from(vec![
+                    Span::styled("Stopping...", theme::body_style()),
+                    Span::styled(" Changes may already be applied.", theme::warning_style()),
+                ]),
+                Line::default(),
+                elapsed,
+            ];
+        }
+        return vec![
+            running_status_line("Applying...", state, now),
+            Line::default(),
+            elapsed,
+        ];
+    }
+
     if !state.is_cancelling() && finished_apply(state) {
         return completed_apply_status_lines(state, now);
     }
@@ -527,8 +617,18 @@ fn status_line_count(status: &[Line<'static>], width: u16) -> u16 {
         .max(1)
 }
 
-fn footer_lines(state: &ExecutionState, width: u16, notice: Option<&str>) -> Vec<Line<'static>> {
-    let items = if state.stage() == ExecutionStage::Failed || finished_apply(state) {
+fn footer_lines(
+    state: &ExecutionState,
+    view: ExecutionViewState,
+    width: u16,
+    notice: Option<&str>,
+) -> Vec<Line<'static>> {
+    let items = if compact_apply(state, view) {
+        vec![
+            footer::hint(&["Ctrl-C"], "cancel"),
+            footer::hint(&["v"], "logs"),
+        ]
+    } else if state.stage() == ExecutionStage::Failed || finished_apply(state) {
         vec![
             footer::hint(&["q", "Ctrl-C"], "quit"),
             footer::hint(&["↑", "↓", "PgUp", "PgDn"], "scroll"),
@@ -540,6 +640,13 @@ fn footer_lines(state: &ExecutionState, width: u16, notice: Option<&str>) -> Vec
                     "copy diagnostic"
                 },
             ),
+        ]
+    } else if state.stage() == ExecutionStage::Applying && view.logs_open() {
+        vec![
+            footer::hint(&["Ctrl-C"], "cancel"),
+            footer::hint(&["Esc"], "close"),
+            footer::hint(&["↑", "↓", "PgUp", "PgDn"], "scroll"),
+            footer::hint(&["End"], "follow latest"),
         ]
     } else {
         vec![
@@ -562,6 +669,10 @@ fn required_footer_lines(
         footer::hint(&["Ctrl-C"], "cancel")
     };
     footer::layout_with_notice(vec![item], width, notice)
+}
+
+fn compact_apply(state: &ExecutionState, view: ExecutionViewState) -> bool {
+    state.stage() == ExecutionStage::Applying && !view.logs_open()
 }
 
 fn scroll_limits(line_count: usize, line_width: usize, body: Rect) -> (u16, u16) {
@@ -634,7 +745,8 @@ mod tests {
     use super::*;
     use crate::app::copy::{CopyResult, CopyTarget};
     use crate::app::execution::{
-        ApplyStatus, ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionLogLine,
+        ApplyStatus, ExecutionAction, ExecutionContext, ExecutionEvent, ExecutionEventKind,
+        ExecutionLogLine,
     };
     use crate::app::session::{self, Action, SessionState};
     use crate::ui::test_support::{
@@ -686,6 +798,32 @@ mod tests {
         ("Outputs: endpoint = synthetic", EventStream::Stdout),
         ("Apply log remains in receive order.", EventStream::Stdout),
     ];
+
+    fn render_execution_with_view(
+        frame: &mut Frame<'_>,
+        state: &ExecutionState,
+        view: ExecutionViewState,
+        now: Instant,
+    ) {
+        super::render_execution_with_quit_confirmation(frame, state, view, now, false);
+    }
+
+    fn execution_layout(area: Rect, state: &ExecutionState) -> ExecutionLayout {
+        execution_layout_with_view(area, state, ExecutionViewState::default())
+    }
+
+    fn execution_layout_with_quit_confirmation(
+        area: Rect,
+        state: &ExecutionState,
+        quit_confirmation: bool,
+    ) -> ExecutionLayout {
+        super::execution_layout_with_quit_confirmation_and_view(
+            area,
+            state,
+            ExecutionViewState::default(),
+            quit_confirmation,
+        )
+    }
 
     fn apply_state(status: ApplyStatus) -> (ExecutionState, Instant) {
         let started_at = Instant::now();
@@ -821,6 +959,36 @@ mod tests {
     }
 
     #[test]
+    fn renders_apply_progress_stopping_and_log_view_vrt_at_all_supported_sizes() {
+        for &(width, height) in &SIZES {
+            let (state, now) = applying_state_with_content(6, 16);
+            let compact = render_to_buffer((width, height), |frame| {
+                render_execution_with_view(frame, &state, ExecutionViewState::default(), now);
+            });
+            snapshot(&format!("ux12r_{width}x{height}_apply-progress"), &compact);
+
+            let mut stopping_state = state.clone();
+            stopping_state.apply(ExecutionAction::RequestCancellation);
+            let stopping = render_to_buffer((width, height), |frame| {
+                render_execution_with_view(
+                    frame,
+                    &stopping_state,
+                    ExecutionViewState::default(),
+                    now,
+                );
+            });
+            snapshot(&format!("ux12r_{width}x{height}_apply-stopping"), &stopping);
+
+            let mut view = ExecutionViewState::default();
+            view.open_logs();
+            let logs = render_to_buffer((width, height), |frame| {
+                render_execution_with_view(frame, &state, view, now);
+            });
+            snapshot(&format!("ux12r_{width}x{height}_apply-logs"), &logs);
+        }
+    }
+
+    #[test]
     fn renders_apply_quit_confirmation_at_all_supported_sizes() {
         for &(width, height) in &SIZES {
             let (state, now) = apply_state(ApplyStatus::Succeeded);
@@ -876,30 +1044,138 @@ mod tests {
         let normal = execution_layout(area, &state);
         let waiting = execution_layout_with_quit_confirmation(area, &state, true);
 
-        assert!(footer_lines(&state, shell_layout::centered_width(area), None).len() >= 2);
+        assert!(
+            footer_lines(
+                &state,
+                ExecutionViewState::default(),
+                shell_layout::centered_width(area),
+                None,
+            )
+            .len()
+                >= 2
+        );
         assert_eq!(waiting.body(), normal.body());
         assert_eq!(waiting.max_vertical(), normal.max_vertical());
         assert_eq!(waiting.max_horizontal(), normal.max_horizontal());
     }
 
     #[test]
-    fn running_execution_uses_the_full_height_cap_as_logs_grow() {
+    fn running_apply_keeps_the_compact_frame_fixed_as_logs_and_state_change() {
         for &(width, height) in &SIZES {
+            let (empty_state, _) = applying_state_with_content(0, 0);
             let (short_state, _) = applying_state_with_content(1, 1);
             let (long_state, _) = applying_state_with_content(40, 1);
-            let short_layout = execution_layout(Rect::new(0, 0, width, height), &short_state);
-            let long_layout = execution_layout(Rect::new(0, 0, width, height), &long_state);
-            let max_height = shell_layout::max_centered_height(Rect::new(0, 0, width, height));
+            let mut stopping_state = short_state.clone();
+            stopping_state.apply(ExecutionAction::RequestCancellation);
+            let area = Rect::new(0, 0, width, height);
+            let empty_layout = execution_layout(area, &empty_state);
+            let short_layout = execution_layout(area, &short_state);
+            let long_layout = execution_layout(area, &long_state);
+            let stopping_layout = execution_layout(area, &stopping_state);
 
+            assert_eq!(empty_layout.shell.content(), short_layout.shell.content());
+            assert_eq!(short_layout.shell.content(), long_layout.shell.content());
+            assert_eq!(
+                short_layout.shell.content(),
+                stopping_layout.shell.content()
+            );
+            assert_eq!(empty_layout.shell.footer(), short_layout.shell.footer());
+            assert_eq!(short_layout.shell.footer(), long_layout.shell.footer());
+            assert_eq!(short_layout.shell.footer(), stopping_layout.shell.footer());
+            assert_eq!(short_layout.status(), long_layout.status());
+            assert_eq!(short_layout.status(), stopping_layout.status());
             assert_eq!(
                 short_layout.shell.footer().bottom() - short_layout.shell.header().y,
-                max_height
+                8
             );
-            assert_eq!(
-                long_layout.shell.footer().bottom() - long_layout.shell.header().y,
-                max_height
-            );
+
+            let long_buffer = render_to_buffer((width, height), |frame| {
+                render_execution_with_view(
+                    frame,
+                    &long_state,
+                    ExecutionViewState::default(),
+                    Instant::now(),
+                );
+            });
+            let long_text = buffer_text(&long_buffer);
+            assert!(long_text.contains("Applying..."));
+            assert!(long_text.contains("v logs"));
+            assert!(!long_text.contains("log line"));
+            assert!(!long_text.contains("Waiting for Terraform output..."));
+
+            let stopping_buffer = render_to_buffer((width, height), |frame| {
+                render_execution_with_view(
+                    frame,
+                    &stopping_state,
+                    ExecutionViewState::default(),
+                    Instant::now(),
+                );
+            });
+            let stopping_text = buffer_text(&stopping_buffer);
+            assert!(stopping_text.contains("Stopping..."));
+            assert!(stopping_text.contains("Changes may already be applied."));
         }
+    }
+
+    #[test]
+    fn reopening_apply_logs_starts_at_the_newest_line() {
+        let started_at = Instant::now();
+        let mut state = ExecutionState::applying(started_at, ExecutionContext::loading("/repo"));
+        for text in ["first", "second", "tail"] {
+            state.record(ExecutionEvent {
+                received_at: started_at,
+                kind: ExecutionEventKind::Log(ExecutionLogLine {
+                    stream: EventStream::Stdout,
+                    text: text.to_owned(),
+                }),
+            });
+        }
+
+        let mut view = ExecutionViewState::default();
+        view.open_logs();
+        view.apply_scroll(super::super::ExecutionScroll::Top, 0, 2, 1);
+        view.close_logs();
+        view.open_logs();
+
+        assert!(view.logs_open());
+        assert!(view.follows_latest());
+        let layout = execution_layout_with_view(Rect::new(0, 0, 80, 24), &state, view);
+        assert_eq!(
+            view.vertical_offset(0, layout.max_vertical()),
+            layout.max_vertical()
+        );
+    }
+
+    #[test]
+    fn cancelling_apply_keeps_the_warning_and_cancel_action_in_both_views() {
+        let started_at = Instant::now();
+        let mut state = ExecutionState::applying(started_at, ExecutionContext::loading("/repo"));
+        state.record(ExecutionEvent {
+            received_at: started_at,
+            kind: ExecutionEventKind::Log(ExecutionLogLine {
+                stream: EventStream::Stdout,
+                text: "Applying saved plan...".to_owned(),
+            }),
+        });
+        state.apply(ExecutionAction::RequestCancellation);
+
+        let compact = render_to_buffer((80, 24), |frame| {
+            render_execution_with_view(frame, &state, ExecutionViewState::default(), started_at);
+        });
+        let mut logs_view = ExecutionViewState::default();
+        logs_view.open_logs();
+        let logs = render_to_buffer((80, 24), |frame| {
+            render_execution_with_view(frame, &state, logs_view, started_at);
+        });
+
+        for buffer in [&compact, &logs] {
+            let text = buffer_text(buffer);
+            assert!(text.contains("Stopping..."));
+            assert!(text.contains("Changes may already be applied."));
+            assert!(text.contains("Ctrl-C cancel"));
+        }
+        assert!(buffer_text(&compact).contains("v logs"));
+        assert!(buffer_text(&logs).contains("Esc close"));
     }
 
     #[test]
@@ -1041,7 +1317,9 @@ mod tests {
 
         let area = Rect::new(0, 0, 80, 24);
         let (base_state, _) = applying_state_with_content(1, 1);
-        let available = execution_layout(area, &base_state).log_area();
+        let mut logs_view = ExecutionViewState::default();
+        logs_view.open_logs();
+        let available = execution_layout_with_view(area, &base_state, logs_view).log_area();
 
         let (vertical_state, vertical_now) = applying_state_with_content(
             available.height.saturating_add(1),
@@ -1357,7 +1635,7 @@ mod tests {
             ExecutionViewState::default(),
             started_at + Duration::from_millis(100),
         );
-        assert_eq!(status.len(), 2);
+        assert_eq!(status.len(), 3);
         assert_eq!(status[0].to_string(), "/ Applying...");
         assert!(
             status
@@ -1385,11 +1663,13 @@ mod tests {
             }),
         });
         let mut session = SessionState::new(state);
+        let mut view = ExecutionViewState::default();
+        view.open_logs();
         let before = render_to_buffer((80, 24), |frame| {
             render_execution_with_view(
                 frame,
                 session.execution().expect("execution should be visible"),
-                ExecutionViewState::default(),
+                view,
                 started_at,
             );
         });
@@ -1403,18 +1683,13 @@ mod tests {
         );
         let state = session.execution().expect("execution should be visible");
         let flash = render_to_buffer((80, 24), |frame| {
-            render_execution_with_view(frame, state, ExecutionViewState::default(), started_at);
+            render_execution_with_view(frame, state, view, started_at);
         });
         let after = render_to_buffer((80, 24), |frame| {
-            render_execution_with_view(
-                frame,
-                state,
-                ExecutionViewState::default(),
-                started_at + Duration::from_millis(201),
-            );
+            render_execution_with_view(frame, state, view, started_at + Duration::from_millis(201));
         });
 
-        let body = execution_layout(Rect::new(0, 0, 80, 24), state).body();
+        let body = execution_layout_with_view(Rect::new(0, 0, 80, 24), state, view).body();
         let flash_cell = find_text_cell(&flash, body, "terraform apply review.tfplan");
         assert_eq!(flash_cell.fg, Color::Rgb(0x11, 0x14, 0x19));
         assert_eq!(flash_cell.bg, Color::Rgb(0xf4, 0x9e, 0x4c));
@@ -1543,8 +1818,9 @@ mod tests {
         vertical: u16,
         horizontal: u16,
     ) -> (ExecutionLayout, Buffer) {
-        let layout = execution_layout(area, state);
         let mut view = ExecutionViewState::default();
+        view.open_logs();
+        let layout = execution_layout_with_view(area, state, view);
         let mut current_vertical = 0;
         view.apply_scroll(
             super::super::ExecutionScroll::Top,
