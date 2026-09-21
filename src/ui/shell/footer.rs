@@ -42,6 +42,11 @@ pub(crate) fn quit_confirmation_lines(width: u16, notice: Option<&str>) -> Vec<L
     layout_with_notice(vec![line], width, notice)
 }
 
+pub(crate) fn pad_lines(mut lines: Vec<Line<'static>>, height: usize) -> Vec<Line<'static>> {
+    lines.resize(height.max(1), Line::default());
+    lines
+}
+
 fn quit_confirmation_line() -> Line<'static> {
     Line::from(vec![
         Span::styled("Quit Terracotta? ", theme::footer_text_style()),

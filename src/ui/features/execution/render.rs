@@ -243,16 +243,8 @@ fn execution_layout_with_content(
     quit_confirmation: bool,
 ) -> ExecutionLayout {
     let panel_width = shell_layout::centered_width(area);
-    let footer_lines = if quit_confirmation {
-        footer::quit_confirmation_lines(panel_width, notice)
-    } else {
-        footer_lines(state, panel_width, notice)
-    };
-    let required_footer_lines = if quit_confirmation {
-        footer::quit_confirmation_lines(panel_width, notice)
-    } else {
-        required_footer_lines(state, panel_width, notice)
-    };
+    let normal_footer_lines = footer_lines(state, panel_width, notice);
+    let normal_required_footer_lines = required_footer_lines(state, panel_width, notice);
     let status_height = status_height(state, status, panel_width.saturating_sub(2));
     let requested_height = if result_screen(state) {
         let body_height = shell_layout::required_body_height(
@@ -264,11 +256,31 @@ fn execution_layout_with_content(
             .saturating_add(1)
             .saturating_add(body_height)
             .saturating_add(2);
-        shell_layout::required_height(content_height, &footer_lines, &required_footer_lines)
+        shell_layout::required_height(
+            content_height,
+            &normal_footer_lines,
+            &normal_required_footer_lines,
+        )
     } else {
         shell_layout::max_centered_height(area)
     };
     let shell_area = shell_layout::centered_area(area, requested_height);
+    let footer_lines = if quit_confirmation {
+        footer::pad_lines(
+            footer::quit_confirmation_lines(panel_width, notice),
+            normal_footer_lines.len(),
+        )
+    } else {
+        normal_footer_lines
+    };
+    let required_footer_lines = if quit_confirmation {
+        footer::pad_lines(
+            footer::quit_confirmation_lines(panel_width, notice),
+            normal_required_footer_lines.len(),
+        )
+    } else {
+        normal_required_footer_lines
+    };
     let shell = shell_layout::layout(shell_area, footer_lines, required_footer_lines, 1);
     let constraints = if finished_apply(state) {
         [
@@ -855,6 +867,18 @@ mod tests {
             );
         });
         assert!(buffer_text(&narrow).contains("Quit? Enter exit / Esc cancel"));
+    }
+
+    #[test]
+    fn quit_confirmation_preserves_the_execution_body_and_scroll_limits() {
+        let (state, _) = apply_state(ApplyStatus::Succeeded);
+        let area = Rect::new(0, 0, 80, 24);
+        let normal = execution_layout(area, &state);
+        let waiting = execution_layout_with_quit_confirmation(area, &state, true);
+
+        assert_eq!(waiting.body(), normal.body());
+        assert_eq!(waiting.max_vertical(), normal.max_vertical());
+        assert_eq!(waiting.max_horizontal(), normal.max_horizontal());
     }
 
     #[test]

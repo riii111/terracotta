@@ -181,33 +181,25 @@ fn layout_with_content(
     quit_confirmation: bool,
 ) -> PlanReviewLayout {
     let panel_width = shell_layout::centered_width(area);
-    let footer_lines = if quit_confirmation {
-        footer::quit_confirmation_lines(panel_width, notice)
-    } else {
-        footer::layout_with_notice(
-            footer_items(
-                searching,
-                state.review().metadata().applyable(),
-                content.matches.len(),
-                !state.review().search_query().is_empty(),
-            ),
-            panel_width,
-            notice,
-        )
-    };
-    let required = if quit_confirmation {
-        footer::quit_confirmation_lines(panel_width, notice)
-    } else {
-        footer::layout_with_notice(
-            required_footer_items(
-                searching,
-                content.matches.len(),
-                !state.review().search_query().is_empty(),
-            ),
-            panel_width,
-            notice,
-        )
-    };
+    let normal_footer_lines = footer::layout_with_notice(
+        footer_items(
+            searching,
+            state.review().metadata().applyable(),
+            content.matches.len(),
+            !state.review().search_query().is_empty(),
+        ),
+        panel_width,
+        notice,
+    );
+    let normal_required = footer::layout_with_notice(
+        required_footer_items(
+            searching,
+            content.matches.len(),
+            !state.review().search_query().is_empty(),
+        ),
+        panel_width,
+        notice,
+    );
     let filter_visible = filter_active(searching, state);
     let footer_height_lines = sizing_footer_lines(
         searching,
@@ -216,8 +208,7 @@ fn layout_with_content(
         filter_visible,
         panel_width,
         notice,
-        &footer_lines,
-        quit_confirmation,
+        &normal_footer_lines,
     );
     let inner_width = panel_width.saturating_sub(2);
     let filter_details_height = filter_details_height(state, filter_visible, inner_width);
@@ -231,8 +222,24 @@ fn layout_with_content(
         .saturating_add(fixed_filter_height)
         .saturating_add(body_height);
     let requested_height =
-        shell_layout::required_height(content_height, &footer_height_lines, &required);
+        shell_layout::required_height(content_height, &footer_height_lines, &normal_required);
     let panel = shell_layout::centered_area(area, requested_height);
+    let footer_lines = if quit_confirmation {
+        footer::pad_lines(
+            footer::quit_confirmation_lines(panel_width, notice),
+            normal_footer_lines.len(),
+        )
+    } else {
+        normal_footer_lines
+    };
+    let required = if quit_confirmation {
+        footer::pad_lines(
+            footer::quit_confirmation_lines(panel_width, notice),
+            normal_required.len(),
+        )
+    } else {
+        normal_required
+    };
     let shell = shell_layout::layout(panel, footer_lines, required, 1);
     let inner = shell.content_inner();
     let search = filter_visible.then(|| Rect::new(inner.x, inner.y, inner.width, 1));
@@ -314,11 +321,7 @@ fn sizing_footer_lines(
     width: u16,
     notice: Option<&str>,
     footer_lines: &[Line<'static>],
-    quit_confirmation: bool,
 ) -> Vec<Line<'static>> {
-    if quit_confirmation {
-        return footer::quit_confirmation_lines(width, notice);
-    }
     if !filter_visible {
         return footer_lines.to_owned();
     }
@@ -1524,6 +1527,18 @@ End of synthetic plan body."#;
             );
         });
         assert!(buffer_text(&narrow).contains("Quit? Enter exit / Esc cancel"));
+    }
+
+    #[test]
+    fn quit_confirmation_preserves_the_plan_body_and_scroll_limits() {
+        let state = review_state(review());
+        let area = Rect::new(0, 0, 80, 24);
+        let normal = layout(area, false, &state);
+        let waiting = layout_with_quit_confirmation(area, false, &state, true);
+
+        assert_eq!(waiting.body(), normal.body());
+        assert_eq!(waiting.max_vertical(), normal.max_vertical());
+        assert_eq!(waiting.max_horizontal(), normal.max_horizontal());
     }
 
     #[test]
