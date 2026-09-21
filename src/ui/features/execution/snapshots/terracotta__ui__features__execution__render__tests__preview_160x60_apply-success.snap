@@ -12,6 +12,15 @@ expression: buffer_text(buffer)
 
 
 
+
+
+
+
+
+
+
+
+
  Terracotta | main
 
  ┌Apply result────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -31,24 +40,5 @@ expression: buffer_text(buffer)
  │Apply finished successfully.                                                                                                                                │
  │Outputs: endpoint = synthetic                                                                                                                               │
  │Apply log remains in receive order.                                                                                                                         │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  q/Ctrl-C quit | ↑/↓/PgUp/PgDn scroll | y yank result

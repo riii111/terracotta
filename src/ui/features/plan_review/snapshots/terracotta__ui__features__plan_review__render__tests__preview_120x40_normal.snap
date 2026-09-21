@@ -3,6 +3,9 @@ source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
 
+
+
+
  Terracotta | main
 
  ┌Plan────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -23,21 +26,15 @@ expression: buffer_text(buffer)
  │  # terraform_data.old will be destroyed                                                                           ┃│
  │  - resource "terraform_data" "old" {                                                                              ┃│
  │      id = "old-20260920"                                                                                          ┃│
- │    }                                                                                                              ┃│
- │                                                                                                                   ┃│
- │  # terraform_data.new will be created                                                                             ┃│
- │  + resource "terraform_data" "new" {                                                                              ┃│
- │      input = "new-value"                                                                                          ┃│
- │      note  = "A deliberately long synthetic value keeps horizontal scrolling visible"                             ┃│
- │    }                                                                                                              ┃│
- │                                                                                                                   ┃│
- │Changes to Outputs:                                                                                                ┃│
- │  + endpoint = (known after apply)                                                                                 ││
- │  ~ summary  = "old summary" -> "new summary with a deliberately long value for review"                            ││
+ │    }                                                                                                              ││
  │                                                                                                                   ││
- │Warning: Value for "pending" is not known until apply                                                              ││
+ │  # terraform_data.new will be created                                                                             ││
+ │  + resource "terraform_data" "new" {                                                                              ││
+ │      input = "new-value"                                                                                          ││
+ │      note  = "A deliberately long synthetic value keeps horizontal scrolling visible"                             ││
+ │    }                                                                                                              ││
  │                                                                                                                   ││
- │Plan: 2 to add, 2 to change, 1 to destroy.                                                                         ││
- │                                                                                                                   ▼│
+ │Changes to Outputs:                                                                                                ││
+ │  + endpoint = (known after apply)                                                                                 ▼│
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  ↑/↓/←/→ scroll | / filter | y yank | a apply | q quit

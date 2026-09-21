@@ -6,7 +6,6 @@ use ratatui::widgets::{Block, Borders};
 use crate::ui::theme;
 
 const HEADER_HEIGHT: u16 = 2;
-pub(crate) const MAX_HEIGHT: u16 = 40;
 
 pub(crate) struct ShellLayout {
     header: Rect,
@@ -82,15 +81,55 @@ pub(crate) fn layout(
     }
 }
 
-pub(crate) fn centered_area(area: Rect) -> Rect {
-    let width = area.width.saturating_sub(2);
-    let height = area.height.saturating_sub(2).min(MAX_HEIGHT);
+pub(crate) const fn centered_width(area: Rect) -> u16 {
+    area.width.saturating_sub(2)
+}
+
+pub(crate) fn max_centered_height(area: Rect) -> u16 {
+    let eighty_percent = u16::try_from(u32::from(area.height) * 4 / 5).unwrap_or(u16::MAX);
+    area.height.saturating_sub(2).min(eighty_percent.max(22))
+}
+
+pub(crate) fn centered_area(area: Rect, requested_height: u16) -> Rect {
+    let width = centered_width(area);
+    let height = requested_height.min(max_centered_height(area));
     Rect::new(
         area.x + area.width.saturating_sub(width) / 2,
         area.y + area.height.saturating_sub(height) / 2,
         width,
         height,
     )
+}
+
+pub(crate) fn max_centered_area(area: Rect) -> Rect {
+    centered_area(area, max_centered_height(area))
+}
+
+pub(crate) fn required_height(
+    content_height: u16,
+    footer_lines: &[Line<'static>],
+    required_footer_lines: &[Line<'static>],
+) -> u16 {
+    let footer_height = u16::try_from(footer_lines.len())
+        .unwrap_or(u16::MAX)
+        .max(1)
+        .max(
+            u16::try_from(required_footer_lines.len())
+                .unwrap_or(u16::MAX)
+                .max(1),
+        );
+    HEADER_HEIGHT
+        .saturating_add(content_height)
+        .saturating_add(footer_height)
+}
+
+pub(crate) fn required_body_height(
+    line_count: usize,
+    max_line_width: usize,
+    body_width: u16,
+) -> u16 {
+    let line_height = u16::try_from(line_count).unwrap_or(u16::MAX).max(1);
+    line_height.saturating_add(u16::from(max_line_width > usize::from(body_width)))
 }
 
 pub(crate) fn render_content_block(
@@ -151,14 +190,21 @@ mod tests {
     }
 
     #[test]
-    fn expands_the_centered_area_to_the_terminal_width_but_keeps_the_height_cap() {
+    fn caps_centered_height_at_four_fifths_with_two_rows_of_margin() {
+        assert_eq!(max_centered_height(Rect::new(0, 0, 80, 24)), 22);
+        assert_eq!(max_centered_height(Rect::new(0, 0, 120, 40)), 32);
+        assert_eq!(max_centered_height(Rect::new(0, 0, 160, 60)), 48);
+    }
+
+    #[test]
+    fn centers_requested_height_within_the_terminal_width_and_height_cap() {
         assert_eq!(
-            centered_area(Rect::new(0, 0, 160, 60)),
-            Rect::new(1, 10, 158, 40)
+            centered_area(Rect::new(0, 0, 160, 60), 12),
+            Rect::new(1, 24, 158, 12)
         );
         assert_eq!(
-            centered_area(Rect::new(0, 0, 120, 40)),
-            Rect::new(1, 1, 118, 38)
+            max_centered_area(Rect::new(0, 0, 160, 60)),
+            Rect::new(1, 6, 158, 48)
         );
     }
 }

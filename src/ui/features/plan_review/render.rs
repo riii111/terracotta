@@ -143,12 +143,15 @@ impl PlanReviewLayout {
 }
 
 pub(crate) fn layout(area: Rect, searching: bool, state: &ReviewSessionState) -> PlanReviewLayout {
-    let content = prepare_content(state, filter_active(searching, state));
+    let filtered_view = filter_active(searching, state);
+    let base_content = prepare_content(state, false);
+    let content = prepare_content(state, filtered_view);
     layout_with_content(
         area,
         searching,
         state,
         &content,
+        &base_content,
         state.copy_notice().map(CopyNotice::message),
     )
 }
@@ -158,9 +161,10 @@ fn layout_with_content(
     searching: bool,
     state: &ReviewSessionState,
     content: &PreparedContent<'_>,
+    base_content: &PreparedContent<'_>,
     notice: Option<&str>,
 ) -> PlanReviewLayout {
-    let panel = shell_layout::centered_area(area);
+    let panel_width = shell_layout::centered_width(area);
     let footer_lines = footer::layout_with_notice(
         footer_items(
             searching,
@@ -168,23 +172,37 @@ fn layout_with_content(
             content.matches.len(),
             !state.review().search_query().is_empty(),
         ),
-        panel.width,
+        panel_width,
         notice,
     );
     let required = footer::layout_with_notice(
         required_footer_items(searching, !state.review().search_query().is_empty()),
-        panel.width,
+        panel_width,
         notice,
     );
-    let shell = shell_layout::layout(panel, footer_lines, required, 1);
-    let inner = shell.content_inner();
     let filter_visible = filter_active(searching, state);
-    let search = filter_visible.then(|| Rect::new(inner.x, inner.y, inner.width, 1));
+    let inner_width = panel_width.saturating_sub(2);
     let filter_details_height = if filter_visible {
-        u16::try_from(filter_details_lines(state, inner.width).len()).unwrap_or(u16::MAX)
+        u16::try_from(filter_details_lines(state, inner_width).len()).unwrap_or(u16::MAX)
     } else {
         0
     };
+    let filter_height = u16::from(filter_visible)
+        .saturating_add(filter_details_height)
+        .saturating_add(u16::from(filter_visible));
+    let body_height = shell_layout::required_body_height(
+        base_content.lines.len(),
+        base_content.max_width,
+        inner_width,
+    );
+    let content_height = 2u16
+        .saturating_add(filter_height)
+        .saturating_add(body_height);
+    let requested_height = shell_layout::required_height(content_height, &footer_lines, &required);
+    let panel = shell_layout::centered_area(area, requested_height);
+    let shell = shell_layout::layout(panel, footer_lines, required, 1);
+    let inner = shell.content_inner();
+    let search = filter_visible.then(|| Rect::new(inner.x, inner.y, inner.width, 1));
     let filter_details = filter_visible.then(|| {
         Rect::new(
             inner.x,
@@ -284,7 +302,7 @@ pub(crate) fn apply_confirmation_layout(
     area: Rect,
     state: &ApplyConfirmationState,
 ) -> ApplyConfirmationLayout {
-    let panel = shell_layout::centered_area(area);
+    let panel = shell_layout::max_centered_area(area);
     let header_height = panel.height.min(CONFIRMATION_HEADER_HEIGHT);
     let header = Rect::new(panel.x, panel.y, panel.width, header_height);
     let available = Rect::new(
@@ -421,13 +439,16 @@ pub(crate) fn render(
         return;
     }
 
-    let content = prepare_content(state, filter_active(view.searching(), state));
+    let filtered_view = filter_active(view.searching(), state);
+    let base_content = prepare_content(state, false);
+    let content = prepare_content(state, filtered_view);
     let notice = state.copy_notice_at(now);
     let layout = layout_with_content(
         area,
         view.searching(),
         state,
         &content,
+        &base_content,
         notice.map(CopyNotice::message),
     );
     if layout.body().width == 0 || layout.body().height == 0 {
@@ -1341,6 +1362,91 @@ End of synthetic plan body."#;
 
             snapshot(&format!("preview_{width}x{height}_normal"), &buffer);
         }
+    }
+
+    #[test]
+    fn renders_normal_plan_height_variants_at_small_and_large_sizes() {
+        struct HeightCase {
+            name: &'static str,
+            line_count: u16,
+        }
+
+        for height_case in [
+            HeightCase {
+                name: "short",
+                line_count: 3,
+            },
+            HeightCase {
+                name: "medium",
+                line_count: 25,
+            },
+            HeightCase {
+                name: "long",
+                line_count: 60,
+            },
+        ] {
+            for &(width, height) in &[(80, 24), (160, 60)] {
+                let state = review_state(review_with_content(height_case.line_count, 48));
+                let area = Rect::new(0, 0, width, height);
+                let layout = layout(area, false, &state);
+                let buffer = render_to_buffer((width, height), |frame| {
+                    render(
+                        frame,
+                        &state,
+                        &PlanReviewViewState::default(),
+                        Instant::now(),
+                    );
+                });
+
+                let panel_height = layout.shell.footer().bottom() - layout.shell.header().y;
+                let top_margin = layout.shell.header().y;
+                let bottom_margin = height.saturating_sub(layout.shell.footer().bottom());
+                assert_eq!(
+                    top_margin,
+                    (height - panel_height) / 2,
+                    "case: {} {width}x{height}",
+                    height_case.name
+                );
+                assert!(
+                    top_margin.abs_diff(bottom_margin) <= 1,
+                    "case: {} {width}x{height}",
+                    height_case.name
+                );
+                match (height_case.name, width) {
+                    ("short", _) | ("medium", 160) => assert!(!layout.vertical_scrollbar()),
+                    ("medium", 80) | ("long", _) => assert!(layout.vertical_scrollbar()),
+                    _ => unreachable!(),
+                }
+                snapshot(
+                    &format!("preview_{width}x{height}_normal-{}", height_case.name),
+                    &buffer,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn filter_height_uses_the_unfiltered_plan_as_its_baseline() {
+        let mut plan = review_with_content(3, 48);
+        let state = review_state(plan.clone());
+        let normal = layout(Rect::new(0, 0, 120, 40), false, &state);
+
+        plan.set_search_query("x".to_owned());
+        let first_filter_state = review_state(plan.clone());
+        plan.set_search_query("xxxxxxxxxxxxxxxxxxxxxxxx".to_owned());
+        let second_filter_state = review_state(plan);
+        let first_filter = layout(Rect::new(0, 0, 120, 40), false, &first_filter_state);
+        let second_filter = layout(Rect::new(0, 0, 120, 40), false, &second_filter_state);
+
+        assert_eq!(
+            first_filter.shell.header().y,
+            second_filter.shell.header().y
+        );
+        assert_eq!(
+            first_filter.shell.footer().bottom(),
+            second_filter.shell.footer().bottom()
+        );
+        assert!(first_filter.shell.footer().bottom() > normal.shell.footer().bottom());
     }
 
     #[test]

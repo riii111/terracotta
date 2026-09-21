@@ -12,6 +12,16 @@ expression: buffer_text(buffer)
 
 
 
+
+
+
+
+
+
+
+
+
+
  Terracotta | main
 
  ┌Apply result────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -29,26 +39,5 @@ expression: buffer_text(buffer)
  │terraform_data.new: Creation complete after 1s [id=new-20260920]                                                                                            │
  │A deliberately long synthetic apply line keeps horizontal scrolling visible in the production renderer                                                      │
  │AccessDenied: synthetic provider rejected the request                                                                                                       │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
- │                                                                                                                                                            │
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  q/Ctrl-C quit | ↑/↓/PgUp/PgDn scroll | y yank result
