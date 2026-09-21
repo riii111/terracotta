@@ -131,6 +131,10 @@ impl AnalysisIssue {
     }
 
     #[must_use]
+    #[expect(
+        dead_code,
+        reason = "dormant Git attribution retains this source-side accessor"
+    )]
     pub(crate) const fn side(&self) -> Option<SourceSide> {
         self.side
     }
@@ -247,6 +251,10 @@ pub(crate) struct ResourceAttribution {
 
 impl ResourceAttribution {
     #[must_use]
+    #[expect(
+        dead_code,
+        reason = "dormant Git attribution retains the resource address accessor"
+    )]
     pub(crate) fn address(&self) -> &str {
         &self.address
     }

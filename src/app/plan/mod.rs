@@ -4,11 +4,7 @@ use std::fmt::{Debug, Formatter};
 mod attribute_diff;
 mod path;
 
-pub(crate) use attribute_diff::{
-    AttributeChangeKind, AttributeDiff, AttributeDiffs, AttributePathSegment, AttributeValue,
-    diff_resource_attributes,
-};
-pub(crate) use path::{format_attribute_path, format_replace_path};
+pub(crate) use attribute_diff::AttributePathSegment;
 
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum PlanValue {

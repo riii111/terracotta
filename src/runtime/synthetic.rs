@@ -20,7 +20,7 @@ use crate::{
     ui::features::{execution, plan_review},
 };
 
-#[allow(
+#[expect(
     clippy::too_many_lines,
     reason = "the synthetic runtime mirrors the connected event loop in one development entry point"
 )]

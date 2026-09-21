@@ -53,6 +53,10 @@ impl AttributeValue {
     }
 
     #[must_use]
+    #[expect(
+        dead_code,
+        reason = "dormant attribute reveal behavior remains available for future plan review"
+    )]
     pub(crate) const fn is_revealable(&self) -> bool {
         self.sensitive
             && self.unknown_marker.is_none()
@@ -68,6 +72,10 @@ impl AttributeValue {
     }
 
     #[must_use]
+    #[expect(
+        dead_code,
+        reason = "dormant attribute reveal behavior remains available for future plan review"
+    )]
     pub(crate) fn revealed_display(&self) -> Option<String> {
         if !self.is_revealable() {
             return None;

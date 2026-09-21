@@ -223,7 +223,7 @@ impl SessionState {
     }
 }
 
-#[allow(
+#[expect(
     clippy::too_many_lines,
     reason = "the session reducer keeps all user-visible state transitions together"
 )]

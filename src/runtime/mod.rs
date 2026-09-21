@@ -1,8 +1,3 @@
-#![allow(
-    clippy::redundant_pub_crate,
-    reason = "runtime exposes only crate-internal entry points"
-)]
-
 use std::{
     io::{self, IsTerminal, Write},
     panic::{self, AssertUnwindSafe},
@@ -34,10 +29,6 @@ use crate::test_support;
 const EXECUTION_FAILURE: u8 = 1;
 const INTERRUPTED: u8 = 130;
 
-#[allow(
-    clippy::redundant_pub_crate,
-    reason = "the library facade is the only public runtime entry point"
-)]
 pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
     if compare_ref.is_some() {
         report_error("--compare-ref is unavailable while Git comparison is paused");

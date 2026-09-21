@@ -30,12 +30,15 @@ rstest = "0.26"
 
 [lints.rust]
 redundant_imports = "deny"
+unfulfilled_lint_expectations = "deny"
 unreachable_pub = "deny"
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
+# Keep crate-private visibility explicit across private layer modules.
+redundant_pub_crate = "allow"
 absolute_paths = "warn"
 dbg_macro = "deny"
 exit = "deny"
@@ -45,6 +48,7 @@ todo = "deny"
 print_stdout = "deny"
 print_stderr = "deny"
 allow_attributes_without_reason = "deny"
+allow_attributes = "deny"
 
 [profile.release]
 lto = "thin"

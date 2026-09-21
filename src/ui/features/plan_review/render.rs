@@ -162,8 +162,7 @@ pub(crate) fn layout_with_quit_confirmation(
     )
 }
 
-#[allow(
-    clippy::too_many_arguments,
+#[expect(
     clippy::too_many_lines,
     reason = "the plan layout keeps all width, height, footer, and scroll calculations together"
 )]
@@ -494,7 +493,7 @@ pub(crate) fn render(
     render_with_quit_confirmation(frame, state, view, now, false);
 }
 
-#[allow(
+#[expect(
     clippy::too_many_lines,
     reason = "the plan renderer keeps the feature layout and content projection in one path"
 )]
