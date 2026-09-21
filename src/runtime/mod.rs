@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     io::{self, IsTerminal, Write},
     panic::{self, AssertUnwindSafe},
     path::Path,
@@ -213,30 +214,53 @@ fn finalize_ui_result(
     apply_join: &thread::Result<()>,
     plan_join: &thread::Result<()>,
 ) -> io::Result<SessionOutcome> {
-    if let Err(error) = &ui_result
-        && !is_worker_panic_error(error)
-    {
+    let ui_worker_panic = ui_result.as_ref().err().and_then(worker_panic_kind);
+    if ui_result.is_err() && ui_worker_panic.is_none() {
         return ui_result;
     }
     if apply_join.is_err() {
-        return Err(worker_panic_error("apply"));
+        return Err(worker_panic_error(WorkerKind::Apply));
+    }
+    if ui_worker_panic.is_some() {
+        return ui_result;
     }
     if plan_join.is_err() {
-        return Err(worker_panic_error("plan"));
+        return Err(worker_panic_error(WorkerKind::Plan));
     }
     ui_result
 }
 
-fn is_worker_panic_error(error: &io::Error) -> bool {
-    matches!(
-        error.to_string().as_str(),
-        "apply worker panicked" | "plan worker panicked"
-    )
+fn worker_panic_kind(error: &io::Error) -> Option<WorkerKind> {
+    error
+        .get_ref()
+        .and_then(|source| source.downcast_ref::<WorkerPanic>())
+        .map(|panic| panic.0)
 }
 
-fn worker_panic_error(worker: &str) -> io::Error {
-    io::Error::other(format!("{worker} worker panicked"))
+fn worker_panic_error(worker: WorkerKind) -> io::Error {
+    io::Error::other(WorkerPanic(worker))
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkerKind {
+    Plan,
+    Apply,
+}
+
+#[derive(Debug)]
+struct WorkerPanic(WorkerKind);
+
+impl fmt::Display for WorkerPanic {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let worker = match self.0 {
+            WorkerKind::Plan => "plan",
+            WorkerKind::Apply => "apply",
+        };
+        write!(formatter, "{worker} worker panicked")
+    }
+}
+
+impl std::error::Error for WorkerPanic {}
 
 fn spawn_plan_worker(
     root: &Path,
@@ -386,6 +410,16 @@ mod tests {
     }
 
     #[test]
+    fn ui_error_with_worker_panic_text_is_not_reclassified() {
+        let ui_error = io::Error::other("apply worker panicked");
+        let error = finalize_ui_result(Err(ui_error), &panic_join(), &panic_join())
+            .expect_err("the original UI error should be returned");
+
+        assert_eq!(error.to_string(), "apply worker panicked");
+        assert!(worker_panic_kind(&error).is_none());
+    }
+
+    #[test]
     fn apply_panic_takes_precedence_over_plan_panic_after_successful_ui() {
         let error = finalize_ui_result(
             Ok(SessionOutcome::Interrupted(ExecutionStage::Initializing)),
@@ -401,10 +435,41 @@ mod tests {
     fn apply_join_panic_takes_precedence_over_an_earlier_plan_panic() {
         let apply_join = panic_join();
         let plan_join = Ok(());
-        let error = finalize_ui_result(Err(worker_panic_error("plan")), &apply_join, &plan_join)
-            .expect_err("a worker panic should fail the runtime");
+        let error = finalize_ui_result(
+            Err(worker_panic_error(WorkerKind::Plan)),
+            &apply_join,
+            &plan_join,
+        )
+        .expect_err("a worker panic should fail the runtime");
 
         assert_eq!(error.to_string(), "apply worker panicked");
+    }
+
+    #[test]
+    fn apply_ui_panic_takes_precedence_over_a_later_plan_join_panic() {
+        let apply_join = Ok(());
+        let plan_join = panic_join();
+        let error = finalize_ui_result(
+            Err(worker_panic_error(WorkerKind::Apply)),
+            &apply_join,
+            &plan_join,
+        )
+        .expect_err("the earlier apply panic should remain primary");
+
+        assert_eq!(error.to_string(), "apply worker panicked");
+        assert_eq!(worker_panic_kind(&error), Some(WorkerKind::Apply));
+    }
+
+    #[test]
+    fn plan_join_panic_is_reported_after_a_successful_ui() {
+        let error = finalize_ui_result(
+            Ok(SessionOutcome::Interrupted(ExecutionStage::Initializing)),
+            &Ok(()),
+            &panic_join(),
+        )
+        .expect_err("a plan worker panic should fail the runtime");
+
+        assert_eq!(error.to_string(), "plan worker panicked");
     }
 
     #[test]
