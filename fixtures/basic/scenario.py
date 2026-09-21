@@ -117,6 +117,10 @@ def demo():
 
 
 def install_demo_terraform_wrapper(directory, environment):
+    # Rust's Windows command lookup does not reliably select a .cmd shim.
+    if os.name == "nt":
+        return
+
     terraform = shutil.which("terraform")
     if terraform is None:
         raise RuntimeError("Required executable not found: terraform")
@@ -124,20 +128,15 @@ def install_demo_terraform_wrapper(directory, environment):
 
     wrapper_directory = directory / ".terraform" / "terracotta-demo-bin"
     wrapper_directory.mkdir(parents=True)
-    wrapper = wrapper_directory / ("terraform-wrapper.py" if os.name == "nt" else "terraform")
-    shebang = "" if os.name == "nt" else "#!/usr/bin/env python3\n"
+    wrapper = wrapper_directory / "terraform"
     wrapper.write_text(
-        shebang +
+        "#!/usr/bin/env python3\n"
         "import os\nimport sys\nimport time\n"
         "if len(sys.argv) > 1 and sys.argv[1] == 'apply':\n"
         "    time.sleep(5)\n"
         f"os.execv({terraform!r}, [{terraform!r}, *sys.argv[1:]])\n"
     )
-    if os.name == "nt":
-        launcher = wrapper_directory / "terraform.cmd"
-        launcher.write_text(f'@echo off\r\n"{sys.executable}" "{wrapper}" %*\r\n')
-    else:
-        wrapper.chmod(0o700)
+    wrapper.chmod(0o700)
     environment["PATH"] = str(wrapper_directory) + os.pathsep + environment.get("PATH", os.defpath)
 
 
