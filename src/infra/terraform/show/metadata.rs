@@ -4,9 +4,6 @@ use crate::app::execution::{ExecutionTargetSpec, SensitiveValue};
 use crate::app::plan::{Plan, PlanResource};
 use crate::app::review::PlanMetadata;
 
-#[cfg(test)]
-use super::PlanParseError;
-
 pub(super) fn metadata_from_document(
     root: &Map<String, Value>,
     plan: &Plan,
@@ -62,6 +59,7 @@ pub(super) fn metadata_from_document(
     )
     .with_resource_changes(resource_changes, plan.summary.replaces)
     .with_apply_targets(apply_targets)
+    .with_nonstandard_changes(plan.unsupported_changes.len())
     .with_sensitive_values(sensitive_values)
 }
 
@@ -160,28 +158,28 @@ fn collect_scalar_values(value: &Value, values: &mut Vec<SensitiveValue>) {
 }
 
 #[cfg(test)]
-fn parse_metadata(
-    input: &[u8],
-    detailed_exit_has_changes: bool,
-) -> Result<PlanMetadata, PlanParseError> {
-    let document =
-        serde_json::from_slice::<Value>(input).map_err(|_| PlanParseError::InvalidJson)?;
-    let root = document
-        .as_object()
-        .ok_or(PlanParseError::RootMustBeObject)?;
-    let plan = super::json::parse_plan_document(&document)?;
-    Ok(metadata_from_document(
-        root,
-        &plan,
-        detailed_exit_has_changes,
-    ))
-}
-
-#[cfg(test)]
 mod tests {
     use serde_json::json;
 
+    use super::super::{PlanParseError, json};
     use super::*;
+
+    fn parse_metadata(
+        input: &[u8],
+        detailed_exit_has_changes: bool,
+    ) -> Result<PlanMetadata, PlanParseError> {
+        let document =
+            serde_json::from_slice::<Value>(input).map_err(|_| PlanParseError::InvalidJson)?;
+        let root = document
+            .as_object()
+            .ok_or(PlanParseError::RootMustBeObject)?;
+        let plan = json::parse_plan_document(&document)?;
+        Ok(metadata_from_document(
+            root,
+            &plan,
+            detailed_exit_has_changes,
+        ))
+    }
 
     #[test]
     fn extracts_boundaries_counts_and_output_only_applyability_without_values() {
@@ -257,6 +255,40 @@ mod tests {
                 .any(|output| output == "endpoint")
         );
         assert!(metadata.applyable());
+        assert!(metadata.has_changes());
+    }
+
+    #[test]
+    fn nonstandard_only_resource_changes_remain_changes_without_four_category_counts() {
+        for resource in [
+            json!({
+                "address": "terraform_data.imported",
+                "change": {"actions": ["create"], "importing": {"id": "example"}}
+            }),
+            json!({
+                "address": "terraform_data.moved",
+                "previous_address": "terraform_data.previous",
+                "change": {"actions": ["no-op"]}
+            }),
+            json!({
+                "address": "terraform_data.read",
+                "change": {"actions": ["read"]}
+            }),
+        ] {
+            let document = json!({
+                "format_version": "1.0",
+                "applyable": true,
+                "resource_changes": [resource]
+            });
+            let metadata = parse_metadata(document.to_string().as_bytes(), true)
+                .expect("metadata should parse");
+
+            assert!(metadata.has_changes());
+            assert_eq!(metadata.additions(), 0);
+            assert_eq!(metadata.changes(), 0);
+            assert_eq!(metadata.replacements(), 0);
+            assert_eq!(metadata.deletions(), 0);
+        }
     }
 
     #[test]

@@ -124,12 +124,44 @@ fn parse_attributes(
             let attribute = value
                 .as_object()
                 .ok_or(PlanParseError::InvalidField("schema attribute"))?;
-            let kind = attribute
-                .get("type")
-                .ok_or(PlanParseError::MissingField("schema attribute type"))?;
-            parse_type(kind).map(|kind| (name.clone(), kind))
+            parse_attribute_type(attribute).map(|kind| (name.clone(), kind))
         })
         .collect()
+}
+
+fn parse_attribute_type(attribute: &Map<String, Value>) -> Result<AttributeType, PlanParseError> {
+    if let Some(kind) = attribute.get("type") {
+        return parse_type(kind);
+    }
+    if let Some(nested_type) = attribute.get("nested_type") {
+        return parse_nested_type(nested_type);
+    }
+    Err(PlanParseError::MissingField("schema attribute type"))
+}
+
+fn parse_nested_type(value: &Value) -> Result<AttributeType, PlanParseError> {
+    let nested_type = value
+        .as_object()
+        .ok_or(PlanParseError::InvalidField("schema nested type"))?;
+    let attributes = parse_attributes(nested_type.get("attributes"))?;
+    let object = AttributeType::Object(attributes);
+    match nested_type
+        .get("nesting_mode")
+        .ok_or(PlanParseError::MissingField(
+            "schema nested type nesting_mode",
+        ))?
+        .as_str()
+        .ok_or(PlanParseError::InvalidField(
+            "schema nested type nesting_mode",
+        ))? {
+        "single" => Ok(object),
+        "list" => Ok(AttributeType::List(Box::new(object))),
+        "set" => Ok(AttributeType::Set(Box::new(object))),
+        "map" => Ok(AttributeType::Map(Box::new(object))),
+        _ => Err(PlanParseError::InvalidField(
+            "schema nested type nesting_mode",
+        )),
+    }
 }
 
 fn parse_block_types(
@@ -240,7 +272,13 @@ mod tests {
                             "block": {
                                 "attributes": {
                                     "labels": {"type": ["map", "string"]},
-                                    "nested": {"type": ["object", {"name": "string"}]}
+                                    "nested": {"type": ["object", {"name": "string"}]},
+                                    "framework_nested": {
+                                        "nested_type": {
+                                            "nesting_mode": "list",
+                                            "attributes": {"name": {"type": "string"}}
+                                        }
+                                    }
                                 },
                                 "block_types": {
                                     "settings": {"nesting_mode": "list", "block": {"attributes": {}}}
@@ -264,6 +302,7 @@ mod tests {
             .expect("resource should be retained");
         assert!(resource.attributes["labels"].is_simple_map());
         assert!(!resource.attributes["nested"].is_simple_map());
+        assert!(!resource.attributes["framework_nested"].is_simple_map());
         assert!(matches!(
             resource.block_types["settings"],
             AttributeType::Object(_)

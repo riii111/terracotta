@@ -220,6 +220,7 @@ pub(crate) struct PlanMetadata {
     changes: usize,
     replacements: usize,
     deletions: usize,
+    nonstandard_changes: usize,
     applyable: bool,
     apply_targets: Vec<ExecutionTargetSpec>,
     sensitive_values: Vec<SensitiveValue>,
@@ -236,6 +237,7 @@ impl Debug for PlanMetadata {
             .field("changes", &self.changes)
             .field("replacements", &self.replacements)
             .field("deletions", &self.deletions)
+            .field("nonstandard_changes", &self.nonstandard_changes)
             .field("applyable", &self.applyable)
             .field("apply_targets", &self.apply_targets)
             .field("sensitive_values", &"<redacted>")
@@ -261,6 +263,7 @@ impl PlanMetadata {
             changes,
             replacements: 0,
             deletions,
+            nonstandard_changes: 0,
             applyable,
             apply_targets: Vec::new(),
             sensitive_values: Vec::new(),
@@ -287,6 +290,12 @@ impl PlanMetadata {
     #[must_use]
     pub(crate) fn with_sensitive_values(mut self, sensitive_values: Vec<SensitiveValue>) -> Self {
         self.sensitive_values = sensitive_values;
+        self
+    }
+
+    #[must_use]
+    pub(crate) const fn with_nonstandard_changes(mut self, count: usize) -> Self {
+        self.nonstandard_changes = count;
         self
     }
 
@@ -326,6 +335,7 @@ impl PlanMetadata {
             || self.changes > 0
             || self.replacements > 0
             || self.deletions > 0
+            || self.nonstandard_changes > 0
             || !self.output_names.is_empty()
     }
 
