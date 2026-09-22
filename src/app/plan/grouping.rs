@@ -519,6 +519,19 @@ mod tests {
     }
 
     #[test]
+    fn groups_equivalent_large_trailing_zero_and_exponent_number_forms() {
+        let changes = vec![
+            numeric_change("aws_instance.web[0]", "100000000000e1", "100000000001e1"),
+            numeric_change("aws_instance.web[1]", "1e12", "1000000000010"),
+        ];
+
+        let grouping = group_resource_changes(&changes, None);
+
+        assert_eq!(grouping.repeated, 2);
+        assert_eq!(grouping.groups.len(), 1);
+    }
+
+    #[test]
     fn reports_repeated_members_from_the_unfiltered_plan_and_keeps_every_member_once() {
         let mut changes = (0..200)
             .map(|index| {
@@ -569,5 +582,18 @@ mod tests {
         assert_eq!(grouping.repeated, 0);
         assert_eq!(grouping.groups.len(), 2);
         assert!(grouping.groups.iter().all(|group| group.members.len() == 1));
+    }
+
+    fn numeric_change(address: &str, before: &str, after: &str) -> ResourceChange {
+        let mut change = change(address, json!({}), json!({}));
+        change.before = Some(PlanValue::Object(BTreeMap::from([(
+            "size".to_owned(),
+            PlanValue::Number(before.to_owned()),
+        )])));
+        change.after = Some(PlanValue::Object(BTreeMap::from([(
+            "size".to_owned(),
+            PlanValue::Number(after.to_owned()),
+        )])));
+        change
     }
 }

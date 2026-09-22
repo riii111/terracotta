@@ -680,17 +680,18 @@ fn add_decimal_digits(left: &str, right: &str) -> String {
     let mut left = left.bytes().rev();
     let mut right = right.bytes().rev();
     loop {
-        let Some(left_digit) = left.next() else {
-            if carry == 0 {
-                result.reverse();
-                return String::from_utf8(result).expect("decimal digits are valid UTF-8");
+        let left_digit = left.next();
+        let right_digit = right.next();
+        if left_digit.is_none() && right_digit.is_none() {
+            if carry != 0 {
+                result.push(b'1');
             }
-            result.push(b'1');
             result.reverse();
             return String::from_utf8(result).expect("decimal digits are valid UTF-8");
-        };
-        let right_digit = right.next().unwrap_or(b'0');
-        let sum = left_digit - b'0' + right_digit - b'0' + carry;
+        }
+        let sum = left_digit.map_or(0, |digit| digit - b'0')
+            + right_digit.map_or(0, |digit| digit - b'0')
+            + carry;
         result.push(b'0' + sum % 10);
         carry = sum / 10;
     }
