@@ -195,6 +195,7 @@ impl ExecutionProgress {
             ExecutionEventKind::Resource(resource) => {
                 if (resource.kind == ResourceEventKind::ApplyErrored
                     || resource.kind == ResourceEventKind::ProvisionErrored)
+                    && resource.message.is_some()
                     && let Some(target) = self.target_index(&resource.address)
                 {
                     self.mark_target_error_line(target);
@@ -357,6 +358,13 @@ impl ExecutionProgress {
         self.targets
             .iter()
             .position(|target| target.status == ExecutionTargetStatus::Failed)
+    }
+
+    #[must_use]
+    pub(crate) fn first_bound_failed_index(&self) -> Option<usize> {
+        self.targets.iter().position(|target| {
+            target.status == ExecutionTargetStatus::Failed && target.first_error_line.is_some()
+        })
     }
 
     fn count_status(&self, status: ExecutionTargetStatus) -> usize {
@@ -893,6 +901,7 @@ mod tests {
             progress.targets()[0].status(),
             ExecutionTargetStatus::Failed
         );
+        assert_eq!(progress.first_bound_failed_index(), Some(0));
         assert_eq!(progress.targets()[0].log_ids(), &[0]);
         assert_eq!(progress.targets()[0].first_error_line(), Some(0));
         assert_eq!(

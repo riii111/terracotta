@@ -923,14 +923,14 @@ fn target_line(
     let elapsed = target
         .elapsed_at(now)
         .map_or_else(|| "--".to_owned(), format_elapsed);
-    let address = truncate_middle(target.address(), TARGET_ADDRESS_WIDTH);
+    let address = padded_target_address(target.address());
     let text = if show_previous {
         let previous = target
             .previous()
             .map_or_else(|| "--".to_owned(), format_elapsed);
-        format!("{marker}{address:<24}  {status:<10} {action:<10} {elapsed:>7}  {previous:>7}")
+        format!("{marker}{address}  {status:<10} {action:<10} {elapsed:>7}  {previous:>7}")
     } else {
-        format!("{marker}{address:<24}  {status:<10} {action:<10} {elapsed:>7}")
+        format!("{marker}{address}  {status:<10} {action:<10} {elapsed:>7}")
     };
     let style = if selected == Some(index) {
         theme::accent_style().add_modifier(ratatui::style::Modifier::BOLD)
@@ -945,6 +945,12 @@ fn target_line(
         }
     };
     Line::from(Span::styled(text, style))
+}
+
+fn padded_target_address(address: &str) -> String {
+    let address = truncate_middle(address, TARGET_ADDRESS_WIDTH);
+    let padding = TARGET_ADDRESS_WIDTH.saturating_sub(Line::from(address.as_str()).width());
+    format!("{address}{}", " ".repeat(padding))
 }
 
 const fn target_status_label(status: ExecutionTargetStatus) -> &'static str {

@@ -614,10 +614,10 @@ pub(super) fn update_session(
         if let Some(apply) = state.apply() {
             execution_view.select_result_target(
                 &apply.progress().display_target_indices(true),
-                apply.progress().first_failed_index(),
+                apply.progress().first_bound_failed_index(),
                 apply
                     .progress()
-                    .first_failed_index()
+                    .first_bound_failed_index()
                     .and_then(|index| apply.progress().targets().get(index))
                     .and_then(ExecutionTargetState::first_error_line),
                 apply.stage() == ExecutionStage::ApplySucceeded,

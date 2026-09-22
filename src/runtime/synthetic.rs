@@ -545,10 +545,10 @@ pub(super) fn run_synthetic_execution() -> io::Result<()> {
                 );
                 view.select_result_target(
                     &state.progress().display_target_indices(true),
-                    state.progress().first_failed_index(),
+                    state.progress().first_bound_failed_index(),
                     state
                         .progress()
-                        .first_failed_index()
+                        .first_bound_failed_index()
                         .and_then(|index| state.progress().targets().get(index))
                         .and_then(ExecutionTargetState::first_error_line),
                     true,
@@ -570,10 +570,10 @@ pub(super) fn run_synthetic_execution() -> io::Result<()> {
                         state.finish_apply(ApplyStatus::Interrupted, None, None, Instant::now());
                         view.select_result_target(
                             &state.progress().display_target_indices(true),
-                            state.progress().first_failed_index(),
+                            state.progress().first_bound_failed_index(),
                             state
                                 .progress()
-                                .first_failed_index()
+                                .first_bound_failed_index()
                                 .and_then(|index| state.progress().targets().get(index))
                                 .and_then(ExecutionTargetState::first_error_line),
                             false,
