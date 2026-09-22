@@ -292,34 +292,66 @@ fn compare_values(left: &Value, right: &Value) -> ValueComparison {
 }
 
 fn compare_sets(left: &[Value], right: &[Value]) -> ValueComparison {
-    let mut compatible_right = vec![false; right.len()];
-    let mut same_unknown_right = vec![false; right.len()];
-    let mut different = false;
-    let mut uncertain = false;
+    let mut compatible = Vec::with_capacity(left.len());
+    let mut same_unknown = Vec::with_capacity(left.len());
     for left_value in left {
-        let mut compatible_left = false;
-        let mut same_unknown_left = false;
+        let mut compatible_candidates = Vec::new();
+        let mut same_unknown_candidates = Vec::new();
         for (index, right_value) in right.iter().enumerate() {
             let comparison = compare_values(left_value, right_value);
-            compatible_left |= !comparison.different;
-            compatible_right[index] |= !comparison.different;
-            same_unknown_left |= !comparison.uncertain;
-            same_unknown_right[index] |= !comparison.uncertain;
+            if !comparison.different {
+                compatible_candidates.push(index);
+            }
+            if !comparison.uncertain {
+                same_unknown_candidates.push(index);
+            }
         }
-        different |= !compatible_left;
-        uncertain |= !same_unknown_left && left_value.has_unknown();
+        compatible.push(compatible_candidates);
+        same_unknown.push(same_unknown_candidates);
     }
-    different |= compatible_right.contains(&false);
-    uncertain |= right
-        .iter()
-        .zip(same_unknown_right)
-        .any(|(value, matched)| !matched && value.has_unknown());
-    // Unknown elements may converge to one member, so cardinality and sorted
-    // positions cannot prove a difference while every element has a candidate.
+    let different = !has_complete_set_matching(&compatible, right.len());
+    let has_unknown = left.iter().chain(right).any(Value::has_unknown);
     ValueComparison {
         different,
-        uncertain: uncertain || !different,
+        uncertain: !different
+            || (has_unknown && !has_complete_set_matching(&same_unknown, right.len())),
     }
+}
+
+fn has_complete_set_matching(candidates: &[Vec<usize>], right_count: usize) -> bool {
+    if candidates.len() != right_count {
+        return false;
+    }
+    let mut assignments = vec![None; right_count];
+    (0..candidates.len()).all(|left| {
+        assign_set_member(
+            left,
+            candidates,
+            &mut assignments,
+            &mut vec![false; right_count],
+        )
+    })
+}
+
+fn assign_set_member(
+    left: usize,
+    candidates: &[Vec<usize>],
+    assignments: &mut [Option<usize>],
+    visited: &mut [bool],
+) -> bool {
+    for &right in &candidates[left] {
+        if visited[right] {
+            continue;
+        }
+        visited[right] = true;
+        if assignments[right]
+            .is_none_or(|previous| assign_set_member(previous, candidates, assignments, visited))
+        {
+            assignments[right] = Some(left);
+            return true;
+        }
+    }
+    false
 }
 
 impl Value {

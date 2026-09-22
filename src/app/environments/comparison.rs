@@ -975,4 +975,38 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn partially_unknown_sets_require_a_complete_assignment_of_candidates() {
+        let kind = AttributeType::Set(Box::new(AttributeType::Object(BTreeMap::from([
+            ("group".to_owned(), AttributeType::Number),
+            ("name".to_owned(), AttributeType::String),
+        ]))));
+        let cases = [
+            (
+                "insufficient candidates for distinct known members",
+                json!({"items": [{"group": 1, "name": "b"}, {"group": 1, "name": "c"}, {"group": 2}]}),
+                json!({"items": [{}, {}, {"name": true}]}),
+                json!({"items": [{"group": 1}, {"group": 2, "name": "d"}, {"group": 2, "name": "e"}]}),
+                json!({"items": [{"name": true}, {}, {}]}),
+                DifferenceReason::Value,
+            ),
+            (
+                "reassigning an earlier candidate completes the matching",
+                json!({"items": [{"group": 1}, {"group": 1, "name": "x"}, {"group": 2, "name": "y"}]}),
+                json!({"items": [{"name": true}, {}, {}]}),
+                json!({"items": [{"group": 1, "name": "x"}, {"group": 1, "name": "y"}, {"group": 2}]}),
+                json!({"items": [{}, {}, {"name": true}]}),
+                DifferenceReason::Unknown,
+            ),
+        ];
+        for (name, left, left_unknown, right, right_unknown, expected) in cases {
+            let left = unknown(update(json!({"items": []}), left), left_unknown);
+            let right = unknown(update(json!({"items": []}), right), right_unknown);
+
+            let comparison = compared(vec![Some(left), Some(right)], Some(&schemas(kind.clone())));
+
+            assert_eq!(comparison.rows[0].difference, Some(expected), "{name}");
+        }
+    }
 }
