@@ -41,9 +41,15 @@ mod pty_tests {
   "applyable": true,
   "resource_changes": [{
     "address": "terraform_data.api",
-    "change": {"actions": ["update"], "after": {"secret": "must-not-be-logged"}}
+    "change": {
+      "actions": ["update"],
+      "before": {"secret": "old-secret"},
+      "before_sensitive": {"secret": true},
+      "after": {"secret": "must-not-be-logged"},
+      "after_sensitive": {"secret": true}
+    }
   }],
-  "output_changes": {"endpoint": {"after": "must-not-be-logged"}}
+  "output_changes": {"endpoint": {"change": {"after": "must-not-be-logged", "after_sensitive": true}}}
 }"#;
 
     const PLAN_TEXT: &str = r#"Terraform will perform the following actions:
@@ -435,10 +441,10 @@ Plan: 0 to add, 1 to change, 0 to destroy.
         let arguments = fixture.invocation_arguments();
         assert_eq!(arguments.len(), 7);
         assert!(arguments[5].starts_with("workspace show"));
-        assert!(arguments[6].starts_with("apply -input=false "));
+        assert!(arguments[6].starts_with("apply -json -input=false "));
         assert_eq!(
             arguments[0].split("-out=").nth(1),
-            arguments[6].split("-input=false ").nth(1)
+            arguments[6].split("-json -input=false ").nth(1)
         );
         fixture.assert_saved_plan_removed();
     }

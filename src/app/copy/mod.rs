@@ -2,9 +2,12 @@ use std::fmt::{Debug, Formatter};
 use std::time::Duration;
 
 use super::{
-    execution::{Diagnostic, ExecutionStage, ExecutionState},
+    execution::{Diagnostic, ExecutionStage, ExecutionState, SensitiveValue},
     review::PlanReview,
 };
+
+const REDACTION_TEXT: &str = "(sensitive value)";
+const PROTECTED_REDACTION: &str = "\u{0}terracotta-redacted\u{0}";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CopyTarget {
@@ -78,7 +81,7 @@ impl Debug for CopyEffect {
 
 #[must_use]
 pub(crate) fn plan_effect(review: &PlanReview) -> CopyEffect {
-    let mut text = diagnostic_text(review.diagnostics());
+    let mut text = diagnostic_text(review.diagnostics(), review.metadata().sensitive_values());
     if !text.is_empty() && !review.document().text().is_empty() {
         text.push('\n');
     }
@@ -87,11 +90,18 @@ pub(crate) fn plan_effect(review: &PlanReview) -> CopyEffect {
 }
 
 #[must_use]
-pub(crate) fn diagnostic_effect(diagnostics: &[Diagnostic], fallback: Option<&str>) -> CopyEffect {
+pub(crate) fn diagnostic_effect(
+    diagnostics: &[Diagnostic],
+    fallback: Option<&str>,
+    sensitive_values: &[SensitiveValue],
+) -> CopyEffect {
     let text = if diagnostics.is_empty() {
-        fallback.unwrap_or("Diagnostic unavailable.").to_owned()
+        sanitize_text(
+            fallback.unwrap_or("Diagnostic unavailable."),
+            sensitive_values,
+        )
     } else {
-        diagnostic_text(diagnostics)
+        diagnostic_text(diagnostics, sensitive_values)
     };
     CopyEffect::new(CopyTarget::Diagnostic, text)
 }
@@ -118,21 +128,109 @@ pub(crate) fn execution_effect(state: &ExecutionState) -> CopyEffect {
                 .iter()
                 .any(|line| line.text.lines().any(|text| text == summary))
         {
-            sections.push(summary.to_owned());
+            sections.push(sanitize_text(summary, state.progress().sensitive_values()));
         }
         sections.extend(log.iter().map(|line| line.text.clone()));
     }
     CopyEffect::new(CopyTarget::Execution, sections.join("\n"))
 }
 
-fn diagnostic_text(diagnostics: &[Diagnostic]) -> String {
+pub(crate) fn sanitize_text(text: &str, sensitive_values: &[SensitiveValue]) -> String {
+    let mut values = sensitive_values
+        .iter()
+        .filter(|value| match value {
+            SensitiveValue::Text(value) | SensitiveValue::Number(value) => !value.is_empty(),
+            SensitiveValue::Bool(_) => true,
+        })
+        .collect::<Vec<_>>();
+    values.sort_by_key(|value| std::cmp::Reverse(sensitive_value_text(value).len()));
+    values.dedup();
+
+    let sanitized = values.into_iter().fold(
+        text.replace(REDACTION_TEXT, PROTECTED_REDACTION),
+        |text, value| match value {
+            SensitiveValue::Text(value) if value.len() < 4 && !value.is_empty() => {
+                transform_unmasked(&text, |text| redact_lines_containing(text, value))
+            }
+            SensitiveValue::Text(value) => {
+                transform_unmasked(&text, |text| text.replace(value, PROTECTED_REDACTION))
+            }
+            SensitiveValue::Number(value) => {
+                transform_unmasked(&text, |text| replace_scalar_tokens(text, value, true))
+            }
+            SensitiveValue::Bool(value) => transform_unmasked(&text, |text| {
+                replace_scalar_tokens(text, if *value { "true" } else { "false" }, false)
+            }),
+        },
+    );
+    sanitized.replace(PROTECTED_REDACTION, REDACTION_TEXT)
+}
+
+fn transform_unmasked(text: &str, transform: impl Fn(&str) -> String) -> String {
+    text.split(PROTECTED_REDACTION)
+        .map(transform)
+        .collect::<Vec<_>>()
+        .join(PROTECTED_REDACTION)
+}
+
+fn redact_lines_containing(text: &str, value: &str) -> String {
+    text.split_inclusive('\n')
+        .map(|line| {
+            if line.contains(value) {
+                if line.ends_with('\n') {
+                    format!("{PROTECTED_REDACTION}\n")
+                } else {
+                    PROTECTED_REDACTION.to_owned()
+                }
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect()
+}
+
+fn sensitive_value_text(value: &SensitiveValue) -> &str {
+    match value {
+        SensitiveValue::Text(value) | SensitiveValue::Number(value) => value,
+        SensitiveValue::Bool(value) if *value => "true",
+        SensitiveValue::Bool(_) => "false",
+    }
+}
+
+fn replace_scalar_tokens(text: &str, value: &str, numeric: bool) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut cursor = 0;
+    for (start, _) in text.match_indices(value) {
+        let end = start + value.len();
+        let before = text[..start].chars().next_back();
+        let after = text[end..].chars().next();
+        let is_boundary = |character: Option<char>| {
+            !character.is_some_and(|character| {
+                character.is_ascii_alphanumeric()
+                    || character == '_'
+                    || (numeric && matches!(character, '.' | '-'))
+            })
+        };
+        if !is_boundary(before) || !is_boundary(after) {
+            continue;
+        }
+        result.push_str(&text[cursor..start]);
+        result.push_str(PROTECTED_REDACTION);
+        cursor = end;
+    }
+    result.push_str(&text[cursor..]);
+    result
+}
+
+fn diagnostic_text(diagnostics: &[Diagnostic], sensitive_values: &[SensitiveValue]) -> String {
     diagnostics
         .iter()
         .map(|diagnostic| {
-            diagnostic.detail.as_ref().map_or_else(
+            let text = diagnostic.detail.as_ref().map_or_else(
                 || diagnostic.summary.clone(),
                 |detail| format!("{}\n{detail}", diagnostic.summary),
-            )
+            );
+            sanitize_text(&text, sensitive_values)
         })
         .collect::<Vec<_>>()
         .join("\n\n")
@@ -165,6 +263,7 @@ mod tests {
                 severity: DiagnosticSeverity::Warning,
                 summary: "Provider warning".to_owned(),
                 detail: None,
+                address: None,
                 position: None,
                 source: DiagnosticSource::Terraform,
             }],
@@ -222,6 +321,7 @@ mod tests {
                 severity: DiagnosticSeverity::Warning,
                 summary: "Provider warning".to_owned(),
                 detail: Some("warning detail".to_owned()),
+                address: None,
                 position: None,
                 source: DiagnosticSource::Terraform,
             }],
@@ -252,5 +352,38 @@ mod tests {
             .expect("apply result copy should be available");
         assert!(effect.text().contains("Applying saved plan..."));
         assert_eq!(effect.text().matches(summary).count(), 1);
+    }
+
+    #[test]
+    fn scalar_sensitive_values_are_replaced_only_at_token_boundaries() {
+        let text = "true feature=true id=1 total=10 version1";
+        let sensitive = [
+            SensitiveValue::Bool(true),
+            SensitiveValue::Number("1".to_owned()),
+        ];
+
+        assert_eq!(
+            sanitize_text(text, &sensitive),
+            "(sensitive value) feature=(sensitive value) id=(sensitive value) total=10 version1"
+        );
+    }
+
+    #[test]
+    fn short_text_sensitive_values_redact_the_whole_affected_line() {
+        let sensitive = [SensitiveValue::Text("abc".to_owned())];
+
+        assert_eq!(
+            sanitize_text("terraform_data.api\nrequest xabcx failed\nsafe", &sensitive),
+            "terraform_data.api\n(sensitive value)\nsafe"
+        );
+    }
+
+    #[test]
+    fn sanitizing_already_redacted_text_is_idempotent() {
+        let sensitive = [SensitiveValue::Text("value".to_owned())];
+        let text = sanitize_text("value", &sensitive);
+
+        assert_eq!(text, "(sensitive value)");
+        assert_eq!(sanitize_text(&text, &sensitive), text);
     }
 }

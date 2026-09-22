@@ -10,9 +10,14 @@ pub(crate) use context::{ExecutionContext, ExecutionContextValue, VariableSource
 pub(crate) use event::{
     Diagnostic, DiagnosticPoint, DiagnosticPosition, DiagnosticSeverity, DiagnosticSource,
     EventStream, ExecutionEvent, ExecutionEventKind, ExecutionLogLine, ExecutionPhase,
-    ExecutionSummary, ProcessExitStatus, ProcessTermination, ResourceEvent, ResourceEventKind,
+    ExecutionSummary, ExecutionTargetSpec, ProcessExitStatus, ProcessTermination, ResourceAction,
+    ResourceEvent, ResourceEventKind, SensitiveValue,
 };
-pub(crate) use progress::ExecutionProgress;
+#[expect(
+    unused_imports,
+    reason = "execution target types are consumed by the SBI03-03 execution UI"
+)]
+pub(crate) use progress::{ExecutionProgress, ExecutionTargetState, ExecutionTargetStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ExecutionStage {
@@ -107,19 +112,39 @@ impl ExecutionState {
     }
 
     #[must_use]
-    pub(crate) fn applying(started_at: Instant, context: ExecutionContext) -> Self {
-        Self::at_stage(started_at, context, ExecutionStage::Applying)
+    pub(crate) fn applying_with_targets(
+        started_at: Instant,
+        context: ExecutionContext,
+        targets: Vec<ExecutionTargetSpec>,
+        sensitive_values: Vec<SensitiveValue>,
+    ) -> Self {
+        Self::at_stage_with_progress(
+            started_at,
+            context,
+            ExecutionStage::Applying,
+            ExecutionProgress::new(targets, sensitive_values),
+        )
     }
 
     #[must_use]
     fn at_stage(started_at: Instant, context: ExecutionContext, stage: ExecutionStage) -> Self {
+        Self::at_stage_with_progress(started_at, context, stage, ExecutionProgress::default())
+    }
+
+    #[must_use]
+    const fn at_stage_with_progress(
+        started_at: Instant,
+        context: ExecutionContext,
+        stage: ExecutionStage,
+        progress: ExecutionProgress,
+    ) -> Self {
         Self {
             stage,
             active_phase: stage,
             context,
             started_at,
             finished_at: None,
-            progress: ExecutionProgress::default(),
+            progress,
             cancellation_requested: false,
             failure_message: None,
             copy_notice: None,
@@ -174,6 +199,7 @@ impl ExecutionState {
                 severity: DiagnosticSeverity::Error,
                 summary: message,
                 detail: None,
+                address: None,
                 position: None,
                 source: DiagnosticSource::Terraform,
             }),
@@ -205,11 +231,23 @@ impl ExecutionState {
                     severity: DiagnosticSeverity::Error,
                     summary: message,
                     detail: None,
+                    address: None,
                     position: None,
                     source: DiagnosticSource::Terraform,
                 }),
             });
         }
+        let downgraded_success = status == ApplyStatus::Succeeded
+            && self
+                .progress
+                .targets()
+                .iter()
+                .any(|target| target.status() != ExecutionTargetStatus::Completed);
+        let status = if downgraded_success {
+            ApplyStatus::Failed
+        } else {
+            status
+        };
         self.finished_at.get_or_insert(received_at);
         self.stage = match status {
             ApplyStatus::Succeeded => ExecutionStage::ApplySucceeded,
@@ -227,10 +265,16 @@ impl ExecutionState {
                 },
                 interrupted: status == ApplyStatus::Interrupted,
             });
+        self.progress.finish(termination);
         self.result = Some(ExecutionResult {
             phase: ExecutionStage::Applying,
             termination,
-            summary_line,
+            summary_line: if downgraded_success {
+                None
+            } else {
+                summary_line
+                    .map(|summary| copy::sanitize_text(&summary, self.progress.sensitive_values()))
+            },
             first_error_line: self.progress.first_error_line(),
         });
     }
@@ -241,6 +285,7 @@ impl ExecutionState {
             copy::CopyTarget::Diagnostic => Some(copy::diagnostic_effect(
                 self.progress.diagnostics(),
                 self.failure_message.as_deref(),
+                self.progress.sensitive_values(),
             )),
             copy::CopyTarget::Execution if self.result().is_some() => {
                 Some(copy::execution_effect(self))
@@ -357,16 +402,69 @@ impl ExecutionState {
 
 #[cfg(test)]
 mod tests {
+    use crate::app::plan::PlanAction;
+
     use super::*;
 
     impl ExecutionState {
         pub(crate) fn new(started_at: Instant) -> Self {
             Self::with_context(started_at, ExecutionContext::loading("loading..."))
         }
+
+        pub(crate) fn applying(started_at: Instant, context: ExecutionContext) -> Self {
+            Self::applying_with_targets(started_at, context, Vec::new(), Vec::new())
+        }
     }
 
     fn event(received_at: Instant, kind: ExecutionEventKind) -> ExecutionEvent {
         ExecutionEvent { received_at, kind }
+    }
+
+    #[test]
+    fn apply_result_summary_is_sanitized_before_rendering() {
+        let started_at = Instant::now();
+        let mut state = ExecutionState::applying_with_targets(
+            started_at,
+            ExecutionContext::loading("loading..."),
+            Vec::new(),
+            vec![SensitiveValue::Text("secret-value".to_owned())],
+        );
+
+        state.finish_apply(
+            ApplyStatus::Succeeded,
+            Some("Apply complete: secret-value".to_owned()),
+            None,
+            started_at,
+        );
+
+        assert_eq!(
+            state.result().and_then(ExecutionResult::summary_line),
+            Some("Apply complete: (sensitive value)")
+        );
+    }
+
+    #[test]
+    fn successful_process_with_incomplete_targets_is_not_reported_as_success() {
+        let started_at = Instant::now();
+        let mut state = ExecutionState::applying_with_targets(
+            started_at,
+            ExecutionContext::loading("loading..."),
+            vec![ExecutionTargetSpec {
+                address: "terraform_data.api".to_owned(),
+                actions: vec![PlanAction::Update],
+            }],
+            Vec::new(),
+        );
+
+        state.finish_apply(
+            ApplyStatus::Succeeded,
+            Some("Apply complete.".to_owned()),
+            None,
+            started_at,
+        );
+
+        assert_eq!(state.stage(), ExecutionStage::ApplyFailed);
+        assert_eq!(state.result().and_then(ExecutionResult::summary_line), None);
     }
 
     #[test]
@@ -530,6 +628,7 @@ mod tests {
                 severity: DiagnosticSeverity::Warning,
                 summary: "Provider warning".to_owned(),
                 detail: Some("Warning detail".to_owned()),
+                address: None,
                 position: None,
                 source: DiagnosticSource::Terraform,
             }),
@@ -540,6 +639,7 @@ mod tests {
                 severity: DiagnosticSeverity::Error,
                 summary: "Invalid configuration".to_owned(),
                 detail: None,
+                address: None,
                 position: None,
                 source: DiagnosticSource::Terraform,
             }),
@@ -601,6 +701,7 @@ mod tests {
                 severity: DiagnosticSeverity::Error,
                 summary: "Late error".to_owned(),
                 detail: None,
+                address: None,
                 position: None,
                 source: DiagnosticSource::Terraform,
             }),
