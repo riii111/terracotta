@@ -10,11 +10,6 @@ pub(crate) enum ExecutionLocation {
     HcpCandidate,
 }
 
-#[cfg(test)]
-fn execution_location(root: &Path, data_dir: Option<&OsStr>) -> io::Result<ExecutionLocation> {
-    execution_location_for_tool(root, Tool::Terraform, data_dir)
-}
-
 pub(crate) fn execution_location_for_tool(
     root: &Path,
     tool: Tool,
@@ -192,6 +187,10 @@ mod tests {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.0).expect("clean fixture");
         }
+    }
+
+    fn execution_location(root: &Path, data_dir: Option<&OsStr>) -> io::Result<ExecutionLocation> {
+        super::execution_location_for_tool(root, Tool::Terraform, data_dir)
     }
 
     #[rstest]

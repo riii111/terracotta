@@ -98,7 +98,10 @@ fn run_managed_invocation(
         match terraform::saved_plan_for_plan(display_root, plan_arguments) {
             Ok(result) => result,
             Err(error) => {
-                report_error(&format!("failed to prepare the Terraform plan: {error}"));
+                report_error(&format!(
+                    "failed to prepare the {} plan: {error}",
+                    tool.display_name()
+                ));
                 return ExitCode::from(EXECUTION_FAILURE);
             }
         };
@@ -111,7 +114,10 @@ fn run_managed_invocation(
     ) {
         Ok(result) => result,
         Err(error) => {
-            report_error(&format!("failed to run terraform plan: {error}"));
+            report_error(&format!(
+                "failed to run {} plan: {error}",
+                tool.display_name()
+            ));
             return ExitCode::from(EXECUTION_FAILURE);
         }
     };
@@ -163,7 +169,8 @@ fn run_saved_plan_review(
         Ok(root) => root,
         Err(error) => {
             report_error(&format!(
-                "failed to resolve the Terraform execution directory before review: {error}"
+                "failed to resolve the {} execution directory before review: {error}",
+                tool.display_name()
             ));
             let _ = plan_run.saved_plan.cleanup();
             return ExitCode::from(EXECUTION_FAILURE);
@@ -177,7 +184,10 @@ fn run_saved_plan_review(
         .ok()
         .and_then(|slot| slot.as_ref().map(|plan| plan.path().to_owned()))
     else {
-        report_error("the reviewed Terraform plan is unavailable");
+        report_error(&format!(
+            "the reviewed {} plan is unavailable",
+            tool.display_name()
+        ));
         return ExitCode::from(EXECUTION_FAILURE);
     };
     let worker = match spawn_review_worker(
@@ -287,7 +297,8 @@ fn run_saved_plan_review(
     };
     if let Err(error) = cleanup_result {
         report_error(&format!(
-            "failed to remove the temporary Terraform plan: {error}"
+            "failed to remove the temporary {} plan: {error}",
+            tool.display_name()
         ));
         ExitCode::from(EXECUTION_FAILURE)
     } else {

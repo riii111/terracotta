@@ -655,7 +655,11 @@ fn verify_apply_context(
     apply: &ExecutionState,
     effects: &RuntimeEffects<'_, impl ClipboardWriter>,
 ) -> Result<(), String> {
-    verify_apply_directory(apply.context().cwd_path(), effects.display_root)?;
+    verify_apply_directory(
+        apply.context().cwd_path(),
+        effects.display_root,
+        effects.tool,
+    )?;
     let workspace = terraform::read_workspace_with_arguments(
         effects.tool,
         effects.root,
@@ -663,27 +667,42 @@ fn verify_apply_context(
         effects.cancellation,
         &terraform::SystemProcessRunner,
     )
-    .map_err(|error| format!("Could not re-confirm the Terraform workspace: {error}"))?;
+    .map_err(|error| {
+        format!(
+            "Could not re-confirm the {} workspace: {error}",
+            effects.tool.display_name()
+        )
+    })?;
     let expected = match apply.context().workspace() {
         ExecutionContextValue::Known(workspace) => workspace,
         ExecutionContextValue::Loading => {
-            return Err("The Terraform workspace is not available for apply.".to_owned());
+            return Err(format!(
+                "The {} workspace is not available for apply.",
+                effects.tool.display_name()
+            ));
         }
     };
     if workspace != *expected {
         return Err(format!(
-            "The Terraform workspace changed from {expected} to {workspace}. Re-run plan and review it again before applying."
+            "The {} workspace changed from {expected} to {workspace}. Re-run plan and review it again before applying.",
+            effects.tool.display_name()
         ));
     }
     Ok(())
 }
 
-fn verify_apply_directory(expected: &Path, current: &Path) -> Result<(), String> {
+fn verify_apply_directory(expected: &Path, current: &Path, tool: Tool) -> Result<(), String> {
     let expected_root = fs::canonicalize(expected).map_err(|error| {
-        format!("Could not re-confirm the reviewed Terraform directory: {error}")
+        format!(
+            "Could not re-confirm the reviewed {} directory: {error}",
+            tool.display_name()
+        )
     })?;
     let current_root = fs::canonicalize(current).map_err(|error| {
-        format!("Could not resolve the current Terraform execution directory: {error}")
+        format!(
+            "Could not resolve the current {} execution directory: {error}",
+            tool.display_name()
+        )
     })?;
     if current_root != expected_root {
         return Err(
@@ -768,7 +787,7 @@ mod tests {
         fs::remove_file(&link).expect("initial directory link should be removed");
         symlink(&second, &link).expect("retargeted directory link should be created");
 
-        let error = verify_apply_directory(&expected, &link)
+        let error = verify_apply_directory(&expected, &link, Tool::Terraform)
             .expect_err("apply should reject a changed symlink target");
         assert!(error.contains("execution directory changed"));
         fs::remove_dir_all(root).expect("test directories should be removed");

@@ -111,15 +111,6 @@ impl Invocation {
     }
 }
 
-#[cfg(test)]
-fn parse(
-    arguments: &[OsString],
-    root: &Path,
-    lookup: impl Fn(&str) -> Option<OsString>,
-) -> Option<Invocation> {
-    parse_for_tool(Tool::Terraform, arguments, root, lookup)
-}
-
 fn parse_for_tool(
     tool: Tool,
     arguments: &[OsString],
@@ -447,6 +438,14 @@ fn split_arguments(value: &str) -> Option<Vec<String>> {
 mod tests {
     use super::*;
     use rstest::rstest;
+
+    fn parse(
+        arguments: &[OsString],
+        root: &Path,
+        lookup: impl Fn(&str) -> Option<OsString>,
+    ) -> Option<Invocation> {
+        parse_for_tool(Tool::Terraform, arguments, root, lookup)
+    }
 
     fn invocation(args: &[&str], environment: &[(&str, &str)]) -> Option<Invocation> {
         parse(

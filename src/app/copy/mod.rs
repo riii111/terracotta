@@ -119,7 +119,7 @@ pub(crate) fn execution_effect(state: &ExecutionState) -> CopyEffect {
             sections.push("Apply failed.".to_owned());
             sections.push("Changes may already be applied.".to_owned());
         }
-        _ => sections.push("Terraform failed.".to_owned()),
+        _ => sections.push(format!("{} failed.", state.context().tool_name())),
     }
     if let Some(result) = state.result() {
         let log = state.progress().log();

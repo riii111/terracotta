@@ -132,14 +132,16 @@ fn leading_intro_end(lines: &[&str]) -> usize {
 fn is_intro_line(line: &str) -> bool {
     let trimmed = line.trim();
     trimmed.starts_with("Terraform used the selected providers")
+        || trimmed.starts_with("OpenTofu used the selected providers")
         || trimmed.starts_with("Resource actions are indicated with the following symbols:")
         || trimmed.starts_with("plan. Resource actions are indicated with the following symbols:")
-        || trimmed == "+ create"
-        || trimmed == "~ update in-place"
-        || trimmed == "-/+ destroy and then create replacement"
-        || trimmed == "- destroy"
-        || trimmed == "<= read (data resources)"
+        || trimmed.starts_with("+ create")
+        || trimmed.starts_with("~ update in-place")
+        || trimmed.starts_with("-/+ destroy and then create replacement")
+        || trimmed.starts_with("- destroy")
+        || trimmed.starts_with("<= read (data resources)")
         || trimmed == "Terraform will perform the following actions:"
+        || trimmed == "OpenTofu will perform the following actions:"
 }
 
 fn is_terraform_summary(line: &str) -> bool {
@@ -353,6 +355,33 @@ mod tests {
         assert_eq!(document.line_kind(10), PlanLineKind::Body);
         assert_eq!(document.line_kind(15), PlanLineKind::OutputSection);
         assert_eq!(document.line_kind(18), PlanLineKind::Summary);
+    }
+
+    #[test]
+    fn classifies_opentofu_intro_and_current_planned_legend_as_intro() {
+        let source = "OpenTofu used the selected providers to generate the following execution\n"
+            .to_owned()
+            + "plan. Resource actions are indicated with the following symbols:\n"
+            + "  + create\n"
+            + "  ~ update in-place (current -> planned)\n"
+            + "  - destroy\n"
+            + "-/+ destroy and then create replacement\n\n"
+            + "OpenTofu will perform the following actions:\n\n"
+            + "  # terraform_data.api will be created\n"
+            + "  + resource \"terraform_data\" \"api\" {}\n\n"
+            + "Plan: 1 to add, 0 to change, 0 to destroy.\n";
+        let document = parse_document(
+            source.as_bytes().to_vec(),
+            &["terraform_data.api".to_owned()],
+            &[],
+        )
+        .expect("OpenTofu text should parse");
+
+        for line in 0..9 {
+            assert_eq!(document.line_kind(line), PlanLineKind::Intro);
+        }
+        assert_eq!(document.line_kind(9), PlanLineKind::Note);
+        assert_eq!(document.line_kind(12), PlanLineKind::Summary);
     }
 
     #[test]
