@@ -118,6 +118,11 @@ impl ExecutionContext {
         self
     }
 
+    pub(crate) const fn with_tool(mut self, tool: Tool) -> Self {
+        self.tool = tool;
+        self
+    }
+
     pub(crate) fn with_tool_version(mut self, tool: Tool, version: impl Into<String>) -> Self {
         self.tool = tool;
         self.tool_version = ExecutionContextValue::Known(version.into());
@@ -245,8 +250,11 @@ mod tests {
 
     #[test]
     fn opentofu_context_keeps_the_selected_tool_for_the_header() {
-        let context =
-            ExecutionContext::loading("/repo/infra").with_tool_version(Tool::OpenTofu, "1.10.0");
+        let loading = ExecutionContext::loading("/repo/infra").with_tool(Tool::OpenTofu);
+        assert_eq!(loading.tool_name(), "tofu");
+        assert_eq!(loading.tool_version(), &ExecutionContextValue::Loading);
+
+        let context = loading.with_tool_version(Tool::OpenTofu, "1.10.0");
 
         assert_eq!(context.tool_name(), "tofu");
         assert_eq!(
