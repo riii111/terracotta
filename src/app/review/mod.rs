@@ -277,6 +277,14 @@ impl PlanMetadata {
             .filter(|resource| resource.is_replacement())
             .map(|resource| resource.address.as_str())
     }
+
+    #[must_use]
+    pub(crate) fn has_destructive_changes(&self) -> bool {
+        self.deletions > 0
+            || self.replacements > 0
+            || self.destructive_addresses().next().is_some()
+            || self.replacement_addresses().next().is_some()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -361,9 +369,8 @@ impl PlanReview {
 
     #[must_use]
     pub(crate) fn confirmation_input(&self) -> String {
-        let named = self.metadata.deletions() > 0
-            || self.metadata.replacements() > 0
-            || self.context.is_production() == Some(true);
+        let named =
+            self.metadata.has_destructive_changes() || self.context.is_production() == Some(true);
         if named {
             match self.context.display_name() {
                 ExecutionContextValue::Known(name) => name.clone(),

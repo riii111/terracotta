@@ -353,7 +353,7 @@ fn parse_resource_mode(resource: &Map<String, Value>) -> Result<ResourceMode, Pl
     }
 }
 
-fn parse_actions(
+pub(super) fn parse_actions(
     object: &Map<String, Value>,
     field: &'static str,
 ) -> Result<Vec<PlanAction>, PlanParseError> {

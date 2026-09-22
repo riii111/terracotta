@@ -27,7 +27,7 @@ expression: buffer_text(buffer)
  │      + new_checksum = (known after apply)                                                                                                                  │
  │    }                                 ┌──────────────────────────────────────────────────────────────────────────────┐                                      │
  │                                      │                                                                              │                                      │
- │  # terraform_data.old will be destroy│dApply this reviewed plan?                                                    │                                      │
+ │  # terraform_data.old will be destroy│ Apply this reviewed plan?                                                    │                                      │
  │  - resource "terraform_data" "old" { │                                                                              │                                      │
  │      id = "old-20260920"             │ Target: main [PROD]                                                          │                                      │
  │    }                                 │ Workspace: default                                                           │                                      │
@@ -35,7 +35,7 @@ expression: buffer_text(buffer)
  │  # terraform_data.new will be created│ Tool: terraform loading...                                                   │                                      │
  │  + resource "terraform_data" "new" { │ Plan: +2 add  ~2 update  0 replace  -1 destroy                               │                                      │
  │      input = "new-value"             │                                                                              │                                      │
- │      note  = "A deliberately long syn│hType main to apply (exact match).ling visible"                               │                                      │
+ │      note  = "A deliberately long syn│ Type main to apply (exact match).                                            │                                      │
  │    }                                 │ > |                                                                          │                                      │
  │                                      │                                                                              │                                      │
  │Changes to Outputs:                   └──────────────────────────────────────────────────────────────────────────────┘                                      │

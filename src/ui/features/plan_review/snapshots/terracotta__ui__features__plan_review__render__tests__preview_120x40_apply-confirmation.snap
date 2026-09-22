@@ -18,16 +18,16 @@ expression: buffer_text(buffer)
  │      # (4 unchang┌──────────────────────────────────────────────────────────────────────────────┐                 ┃│
  │    }             │                                                                              │                 ┃│
  │                  │ Apply this reviewed plan?                                                    │                 ┃│
- │  # terraform_data│worker must be replaced                                                       │                 ┃│
- │-/+ resource "terr│fTarget: main [PROD]{                                                         │                 ┃│
- │      ~ input = "w│rWorkspace: defaultrker-after" # forces replacement                           │                 ┃│
- │      - old_checks│mDirectory: /repo/environments/production/main23456789abcdef"                 │                 ┃│
- │      + new_checks│mTool: terraform loading...                                                   │                 ┃│
+ │  # terraform_data│                                                                              │                 ┃│
+ │-/+ resource "terr│ Target: main [PROD]                                                          │                 ┃│
+ │      ~ input = "w│ Workspace: default                                                           │                 ┃│
+ │      - old_checks│ Directory: /repo/environments/production/main                                │                 ┃│
+ │      + new_checks│ Tool: terraform loading...                                                   │                 ┃│
  │    }             │ Plan: +2 add  ~2 update  0 replace  -1 destroy                               │                 ┃│
  │                  │                                                                              │                 ┃│
- │  # terraform_data│oType main to apply (exact match).                                            │                 ┃│
- │  - resource "terr│f> |_data" "old" {                                                            │                 ││
- │      id = "old-20│60920"                                                                        │                 ││
+ │  # terraform_data│ Type main to apply (exact match).                                            │                 ┃│
+ │  - resource "terr│ > |                                                                          │                 ││
+ │      id = "old-20│                                                                              │                 ││
  │    }             └──────────────────────────────────────────────────────────────────────────────┘                 ││
  │                  Enter confirm | Esc back                                                                         ││
  │  # terraform_data.new will be created                                                                             ││

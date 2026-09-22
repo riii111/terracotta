@@ -1,6 +1,6 @@
 use serde_json::{Map, Value};
 
-use crate::app::plan::PlanResource;
+use crate::app::plan::{PlanAction, PlanResource};
 use crate::app::review::PlanMetadata;
 
 use super::PlanParseError;
@@ -20,24 +20,33 @@ pub(super) fn parse_metadata(
 
     let resources = optional_array(root, "resource_changes")?;
     let mut resource_addresses = Vec::with_capacity(resources.len());
+    let mut resource_changes = Vec::with_capacity(resources.len());
+    let mut additions = 0;
+    let mut changes = 0;
+    let mut replacements = 0;
+    let mut deletions = 0;
     for resource in resources {
         let resource = resource
             .as_object()
             .ok_or(PlanParseError::InvalidField("resource change"))?;
-        resource_addresses.push(required_string(resource, "address")?.to_owned());
-        let _ = required_object(resource, "change")?;
+        let address = required_string(resource, "address")?.to_owned();
+        let change = required_object(resource, "change")?;
+        let actions = super::json::parse_actions(change, "resource change actions")?;
+        let plan_resource = PlanResource { address, actions };
+        match plan_resource.actions.as_slice() {
+            [PlanAction::Create] => additions += 1,
+            [PlanAction::Update] => changes += 1,
+            [PlanAction::Delete] => deletions += 1,
+            [PlanAction::Create, PlanAction::Delete] | [PlanAction::Delete, PlanAction::Create] => {
+                replacements += 1;
+            }
+            _ => {}
+        }
+        resource_addresses.push(plan_resource.address.clone());
+        resource_changes.push(plan_resource);
     }
 
-    let plan = super::json::parse_plan_json_bytes(input)?;
-    let summary = plan.summary;
-    let resource_changes = plan
-        .changes
-        .into_iter()
-        .map(|change| PlanResource {
-            address: change.address,
-            actions: change.actions,
-        })
-        .collect();
+    super::json::parse_plan_json_bytes(input)?;
 
     let output_names = root
         .get("output_changes")
@@ -54,12 +63,12 @@ pub(super) fn parse_metadata(
     Ok(PlanMetadata::new(
         resource_addresses,
         output_names,
-        summary.creates,
-        summary.updates,
-        summary.deletes,
+        additions,
+        changes,
+        deletions,
         applyable,
     )
-    .with_resource_changes(resource_changes, summary.replaces))
+    .with_resource_changes(resource_changes, replacements))
 }
 
 fn parse_format_version(root: &Map<String, Value>) -> Result<(), PlanParseError> {
@@ -199,9 +208,10 @@ mod tests {
             "format_version": "1.0",
             "applyable": true,
             "resource_changes": [
-                {"address": "terraform_data.create_first", "change": {"actions": ["create", "delete"]}},
+                {"address": "terraform_data.create_first", "previous_address": "terraform_data.old", "change": {"actions": ["create", "delete"]}},
                 {"address": "terraform_data.delete_first", "change": {"actions": ["delete", "create"]}},
-                {"address": "terraform_data.destroy", "change": {"actions": ["delete"]}}
+                {"address": "terraform_data.destroy", "change": {"actions": ["delete"]}},
+                {"address": "terraform_data.moved_destroy", "previous_address": "terraform_data.previous", "change": {"actions": ["delete"]}}
             ]
         });
 
@@ -209,14 +219,14 @@ mod tests {
             parse_metadata(document.to_string().as_bytes(), true).expect("metadata should parse");
 
         assert_eq!(metadata.replacements(), 2);
-        assert_eq!(metadata.deletions(), 1);
+        assert_eq!(metadata.deletions(), 2);
         assert_eq!(
             metadata.replacement_addresses().collect::<Vec<_>>(),
             ["terraform_data.create_first", "terraform_data.delete_first"]
         );
         assert_eq!(
             metadata.destructive_addresses().collect::<Vec<_>>(),
-            ["terraform_data.destroy"]
+            ["terraform_data.destroy", "terraform_data.moved_destroy"]
         );
     }
 }

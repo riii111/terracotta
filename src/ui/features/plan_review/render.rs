@@ -5,7 +5,7 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
 use crate::app::{
@@ -60,7 +60,12 @@ pub(crate) struct ApplyConfirmationLayout {
     footer: Rect,
     inner: Rect,
     input: Rect,
-    lines: Vec<Line<'static>>,
+    prefix: Rect,
+    scroll: Rect,
+    suffix: Rect,
+    prefix_lines: Vec<Line<'static>>,
+    scroll_lines: Vec<Line<'static>>,
+    suffix_lines: Vec<Line<'static>>,
     footer_lines: Vec<Line<'static>>,
     max_vertical: u16,
     renderable: bool,
@@ -91,8 +96,28 @@ impl ApplyConfirmationLayout {
         self.input
     }
 
-    pub(crate) fn lines(&self) -> &[Line<'static>] {
-        &self.lines
+    pub(crate) const fn prefix(&self) -> Rect {
+        self.prefix
+    }
+
+    pub(crate) const fn scroll(&self) -> Rect {
+        self.scroll
+    }
+
+    pub(crate) const fn suffix(&self) -> Rect {
+        self.suffix
+    }
+
+    pub(crate) fn prefix_lines(&self) -> &[Line<'static>] {
+        &self.prefix_lines
+    }
+
+    pub(crate) fn scroll_lines(&self) -> &[Line<'static>] {
+        &self.scroll_lines
+    }
+
+    pub(crate) fn suffix_lines(&self) -> &[Line<'static>] {
+        &self.suffix_lines
     }
 
     pub(crate) fn footer_lines(&self) -> &[Line<'static>] {
@@ -359,6 +384,7 @@ pub(crate) fn render_apply_confirmation(
         return;
     }
 
+    frame.render_widget(Clear, layout.frame());
     let block_inner =
         shell_layout::render_content_block_line(frame, layout.frame(), Line::default());
     let inner = padded_confirmation_inner(block_inner);
@@ -369,12 +395,33 @@ pub(crate) fn render_apply_confirmation(
         inner.width,
         inner.height.saturating_sub(1),
     );
+    debug_assert_eq!(
+        info_area,
+        Rect::new(
+            layout.prefix().x,
+            layout.prefix().y,
+            layout.prefix().width,
+            layout.prefix().height + layout.scroll().height + layout.suffix().height
+        )
+    );
     frame.render_widget(
-        Paragraph::new(layout.lines().to_owned())
+        Paragraph::new(layout.prefix_lines().to_owned())
+            .style(theme::body_style())
+            .wrap(Wrap { trim: false }),
+        layout.prefix(),
+    );
+    frame.render_widget(
+        Paragraph::new(layout.scroll_lines().to_owned())
             .style(theme::body_style())
             .wrap(Wrap { trim: false })
             .scroll((view.scroll().min(layout.max_vertical()), 0)),
-        info_area,
+        layout.scroll(),
+    );
+    frame.render_widget(
+        Paragraph::new(layout.suffix_lines().to_owned())
+            .style(theme::body_style())
+            .wrap(Wrap { trim: false }),
+        layout.suffix(),
     );
     frame.render_widget(
         Paragraph::new(confirmation_input_line(view))
@@ -388,6 +435,10 @@ pub(crate) fn render_apply_confirmation(
     clear_dim(frame, layout.footer());
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "the confirmation layout keeps content and safety constraints together"
+)]
 pub(crate) fn apply_confirmation_layout(
     area: Rect,
     state: &ApplyConfirmationState,
@@ -415,6 +466,10 @@ pub(crate) fn apply_confirmation_layout(
     let inner_width = frame_width.saturating_sub(4);
     let lines = confirmation_lines(state);
     let body = Paragraph::new(lines.clone()).wrap(Wrap { trim: false });
+    let prefix_lines = lines[..7].to_vec();
+    let suffix_start = lines.len().saturating_sub(2);
+    let scroll_lines = lines[7..suffix_start].to_vec();
+    let suffix_lines = lines[suffix_start..].to_vec();
     let body_height = body.line_count(inner_width).saturating_add(1);
     let natural_frame_height = u16::try_from(body_height)
         .unwrap_or(u16::MAX)
@@ -422,11 +477,8 @@ pub(crate) fn apply_confirmation_layout(
     let max_frame_height = available.height.saturating_sub(1);
     let frame_height = natural_frame_height.min(max_frame_height);
     let group_height = frame_height.saturating_add(1);
-    let renderable = inner_width > 0
-        && footer_fits
-        && group_height <= available.height
-        && frame_width >= 5
-        && frame_height >= 10;
+    let renderable =
+        inner_width > 0 && footer_fits && group_height <= available.height && frame_width >= 5;
     let frame_x = panel.x + panel.width.saturating_sub(frame_width) / 2;
     let group_y = available.y + available.height.saturating_sub(group_height) / 2;
     let frame = Rect::new(frame_x, group_y, frame_width, frame_height);
@@ -439,9 +491,47 @@ pub(crate) fn apply_confirmation_layout(
         u16::from(inner.height > 0),
     );
     let info_height = inner.height.saturating_sub(1);
+    let prefix_height = u16::try_from(
+        Paragraph::new(prefix_lines.clone())
+            .wrap(Wrap { trim: false })
+            .line_count(inner_width),
+    )
+    .unwrap_or(u16::MAX);
+    let suffix_height = u16::try_from(
+        Paragraph::new(suffix_lines.clone())
+            .wrap(Wrap { trim: false })
+            .line_count(inner_width),
+    )
+    .unwrap_or(u16::MAX);
+    let fixed_height = prefix_height.saturating_add(suffix_height);
+    let scroll_height = info_height.saturating_sub(fixed_height);
+    let prefix = Rect::new(
+        inner.x,
+        inner.y,
+        inner.width,
+        prefix_height.min(info_height),
+    );
+    let suffix_y = inner.y + info_height.saturating_sub(suffix_height);
+    let suffix = Rect::new(
+        inner.x,
+        suffix_y,
+        inner.width,
+        suffix_height.min(info_height),
+    );
+    let scroll = Rect::new(
+        inner.x,
+        inner.y.saturating_add(prefix.height),
+        inner.width,
+        scroll_height,
+    );
+    let renderable = renderable
+        && usize::from(info_height) >= usize::from(fixed_height)
+        && (scroll_lines.is_empty() || scroll_height > 0);
     let max_vertical = u16::try_from(
-        body.line_count(inner_width)
-            .saturating_sub(usize::from(info_height)),
+        Paragraph::new(scroll_lines.clone())
+            .wrap(Wrap { trim: false })
+            .line_count(inner_width)
+            .saturating_sub(usize::from(scroll_height)),
     )
     .unwrap_or(u16::MAX);
     ApplyConfirmationLayout {
@@ -451,7 +541,12 @@ pub(crate) fn apply_confirmation_layout(
         footer,
         inner,
         input,
-        lines,
+        prefix,
+        scroll,
+        suffix,
+        prefix_lines,
+        scroll_lines,
+        suffix_lines,
         footer_lines,
         max_vertical,
         renderable,
