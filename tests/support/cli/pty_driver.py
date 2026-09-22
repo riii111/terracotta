@@ -208,6 +208,13 @@ def wait_new(marker, name, timeout=20):
     wait_screen(lambda current: marker in current, name, marker, timeout)
 
 
+def observe_current_or_wait(marker, name, timeout=20):
+    if marker in screen.text():
+        observed.append(name)
+        return
+    wait_new(marker, name, timeout)
+
+
 def wait_parts(markers, name, timeout=20):
     wait_screen(lambda current: all(marker in current for marker in markers), name, markers, timeout)
 
@@ -313,11 +320,11 @@ def kill_child():
 try:
     if scenario in ("full_text", "user_output", "cli_args", "detailed"):
         wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
-        wait_new("3/", "plan_position")
+        observe_current_or_wait("3/", "plan_position")
         exit_code = quit_with_enter()
     elif scenario == "filter_navigation":
         wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
-        wait_new("3/", "plan_position")
+        observe_current_or_wait("3/", "plan_position")
         send_key(b"/")
         wait_new("/ ", "filter_input")
         send_text("api")
