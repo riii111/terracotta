@@ -112,12 +112,6 @@ impl ExecutionState {
     }
 
     #[must_use]
-    #[cfg(test)]
-    pub(crate) fn applying(started_at: Instant, context: ExecutionContext) -> Self {
-        Self::at_stage(started_at, context, ExecutionStage::Applying)
-    }
-
-    #[must_use]
     pub(crate) fn applying_with_targets(
         started_at: Instant,
         context: ExecutionContext,
@@ -397,6 +391,10 @@ mod tests {
     impl ExecutionState {
         pub(crate) fn new(started_at: Instant) -> Self {
             Self::with_context(started_at, ExecutionContext::loading("loading..."))
+        }
+
+        pub(crate) fn applying(started_at: Instant, context: ExecutionContext) -> Self {
+            Self::applying_with_targets(started_at, context, Vec::new(), Vec::new())
         }
     }
 
