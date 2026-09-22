@@ -13,7 +13,8 @@ use crate::app::plan::PlanAction;
 
 use super::event::{
     Diagnostic, EventStream, ExecutionEvent, ExecutionEventKind, ExecutionLogLine,
-    ExecutionTargetSpec, ProcessTermination, ResourceEvent, ResourceEventKind, SensitiveValue,
+    ExecutionTargetSpec, ProcessTermination, ResourceAction, ResourceEvent, ResourceEventKind,
+    SensitiveValue,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -274,10 +275,12 @@ impl ExecutionProgress {
             | ResourceEventKind::ProvisionProgress => {
                 if self.targets[target].status == ExecutionTargetStatus::Pending
                     && resource.action.as_ref().is_some_and(|action| {
-                        self.targets[target]
-                            .actions()
-                            .iter()
-                            .any(|expected| expected == action)
+                        (is_replacement_action(action)
+                            && is_replacement_target(self.targets[target].actions()))
+                            || self.targets[target]
+                                .actions()
+                                .iter()
+                                .any(|expected| action_matches(action, expected))
                     })
                 {
                     self.targets[target].status = ExecutionTargetStatus::Running;
@@ -291,7 +294,16 @@ impl ExecutionProgress {
                 let Some(action) = resource.action.as_ref() else {
                     return;
                 };
-                if target_state.spec.actions.get(target_state.completed_stages) != Some(action) {
+                if is_replacement_action(action) && is_replacement_target(target_state.actions()) {
+                    target_state.completed_stages = target_state.spec.actions.len();
+                    target_state.status = ExecutionTargetStatus::Completed;
+                    return;
+                }
+                let Some(expected) = target_state.spec.actions.get(target_state.completed_stages)
+                else {
+                    return;
+                };
+                if !action_matches(action, expected) {
                     return;
                 }
                 target_state.status = ExecutionTargetStatus::Running;
@@ -325,6 +337,30 @@ impl ExecutionProgress {
             .iter()
             .position(|target| target.address() == address)
     }
+}
+
+const fn is_replacement_action(action: &ResourceAction) -> bool {
+    matches!(action, ResourceAction::Replace)
+}
+
+fn is_replacement_target(actions: &[PlanAction]) -> bool {
+    actions.len() == 2
+        && actions
+            .iter()
+            .any(|action| matches!(action, PlanAction::Create))
+        && actions
+            .iter()
+            .any(|action| matches!(action, PlanAction::Delete))
+}
+
+const fn action_matches(action: &ResourceAction, expected: &PlanAction) -> bool {
+    matches!(
+        (action, expected),
+        (ResourceAction::Create, PlanAction::Create)
+            | (ResourceAction::Read, PlanAction::Read)
+            | (ResourceAction::Update, PlanAction::Update)
+            | (ResourceAction::Delete, PlanAction::Delete)
+    )
 }
 
 fn rendered_line_count(log: &[ExecutionLogLine]) -> usize {
@@ -444,7 +480,7 @@ mod tests {
             kind: ExecutionEventKind::Resource(ResourceEvent {
                 address: "terraform_data.api".to_owned(),
                 kind: ResourceEventKind::ApplyStart,
-                action: Some(PlanAction::Delete),
+                action: Some(ResourceAction::Delete),
                 message: Some("terraform_data.api: Destroying...".to_owned()),
             }),
         });
@@ -453,7 +489,7 @@ mod tests {
             kind: ExecutionEventKind::Resource(ResourceEvent {
                 address: "terraform_data.api".to_owned(),
                 kind: ResourceEventKind::ApplyComplete,
-                action: Some(PlanAction::Delete),
+                action: Some(ResourceAction::Delete),
                 message: None,
             }),
         });
@@ -469,7 +505,7 @@ mod tests {
             kind: ExecutionEventKind::Resource(ResourceEvent {
                 address: "terraform_data.api".to_owned(),
                 kind: ResourceEventKind::ApplyComplete,
-                action: Some(PlanAction::Create),
+                action: Some(ResourceAction::Create),
                 message: Some("terraform_data.api: Creation complete".to_owned()),
             }),
         });
@@ -550,7 +586,11 @@ mod tests {
         );
         let received_at = Instant::now();
 
-        for action in [PlanAction::Create, PlanAction::Delete, PlanAction::Delete] {
+        for action in [
+            ResourceAction::Create,
+            ResourceAction::Delete,
+            ResourceAction::Delete,
+        ] {
             progress.record(ExecutionEvent {
                 received_at,
                 kind: ExecutionEventKind::Resource(ResourceEvent {
@@ -572,7 +612,7 @@ mod tests {
             kind: ExecutionEventKind::Resource(ResourceEvent {
                 address: "terraform_data.api".to_owned(),
                 kind: ResourceEventKind::ApplyComplete,
-                action: Some(PlanAction::Create),
+                action: Some(ResourceAction::Create),
                 message: None,
             }),
         });
@@ -582,6 +622,43 @@ mod tests {
             progress.targets()[0].status(),
             ExecutionTargetStatus::Completed
         );
+    }
+
+    #[test]
+    fn replace_event_completes_replacements_in_either_plan_order() {
+        for actions in [
+            vec![PlanAction::Delete, PlanAction::Create],
+            vec![PlanAction::Create, PlanAction::Delete],
+        ] {
+            let mut progress = ExecutionProgress::new(
+                vec![ExecutionTargetSpec {
+                    address: "terraform_data.api".to_owned(),
+                    actions,
+                }],
+                Vec::new(),
+            );
+            let received_at = Instant::now();
+            for kind in [
+                ResourceEventKind::ApplyStart,
+                ResourceEventKind::ApplyComplete,
+            ] {
+                progress.record(ExecutionEvent {
+                    received_at,
+                    kind: ExecutionEventKind::Resource(ResourceEvent {
+                        address: "terraform_data.api".to_owned(),
+                        kind,
+                        action: Some(ResourceAction::Replace),
+                        message: None,
+                    }),
+                });
+            }
+
+            assert_eq!(
+                progress.targets()[0].status(),
+                ExecutionTargetStatus::Completed
+            );
+            assert_eq!(progress.targets()[0].completed_stages(), 2);
+        }
     }
 
     #[test]
@@ -605,7 +682,7 @@ mod tests {
             kind: ExecutionEventKind::Resource(ResourceEvent {
                 address: "terraform_data.running".to_owned(),
                 kind: ResourceEventKind::ApplyStart,
-                action: Some(PlanAction::Update),
+                action: Some(ResourceAction::Update),
                 message: None,
             }),
         });

@@ -127,9 +127,13 @@ fn sensitive_values(root: &Map<String, Value>, resources: &[Value]) -> Vec<Sensi
             {
                 collect_scalar_values(value, &mut values);
             }
-            if let (Some(value), Some(mask)) = (change.get("after"), change.get("after_sensitive"))
+            for (value_field, mask_field) in
+                [("before", "before_sensitive"), ("after", "after_sensitive")]
             {
-                collect_masked_values(value, mask, &mut values);
+                if let (Some(value), Some(mask)) = (change.get(value_field), change.get(mask_field))
+                {
+                    collect_masked_values(value, mask, &mut values);
+                }
             }
         }
     }
@@ -392,6 +396,8 @@ mod tests {
             "output_changes": {
                 "endpoint": {"change": {
                     "actions": ["update"],
+                    "before": "previous-output-secret",
+                    "before_sensitive": true,
                     "after": "output-secret",
                     "after_sensitive": true
                 }}
@@ -408,12 +414,14 @@ mod tests {
             [
                 SensitiveValue::Text("new-secret".to_owned()),
                 SensitiveValue::Text("old-secret".to_owned()),
-                SensitiveValue::Text("output-secret".to_owned())
+                SensitiveValue::Text("output-secret".to_owned()),
+                SensitiveValue::Text("previous-output-secret".to_owned()),
             ]
         );
         let debug = format!("{metadata:?}");
         assert!(!debug.contains("old-secret"));
         assert!(!debug.contains("new-secret"));
         assert!(!debug.contains("output-secret"));
+        assert!(!debug.contains("previous-output-secret"));
     }
 }

@@ -10,8 +10,8 @@ pub(crate) use context::{ExecutionContext, ExecutionContextValue, VariableSource
 pub(crate) use event::{
     Diagnostic, DiagnosticPoint, DiagnosticPosition, DiagnosticSeverity, DiagnosticSource,
     EventStream, ExecutionEvent, ExecutionEventKind, ExecutionLogLine, ExecutionPhase,
-    ExecutionSummary, ExecutionTargetSpec, ProcessExitStatus, ProcessTermination, ResourceEvent,
-    ResourceEventKind, SensitiveValue,
+    ExecutionSummary, ExecutionTargetSpec, ProcessExitStatus, ProcessTermination, ResourceAction,
+    ResourceEvent, ResourceEventKind, SensitiveValue,
 };
 #[expect(
     unused_imports,
@@ -237,13 +237,13 @@ impl ExecutionState {
                 }),
             });
         }
-        let status = if status == ApplyStatus::Succeeded
+        let downgraded_success = status == ApplyStatus::Succeeded
             && self
                 .progress
                 .targets()
                 .iter()
-                .any(|target| target.status() != ExecutionTargetStatus::Completed)
-        {
+                .any(|target| target.status() != ExecutionTargetStatus::Completed);
+        let status = if downgraded_success {
             ApplyStatus::Failed
         } else {
             status
@@ -269,8 +269,12 @@ impl ExecutionState {
         self.result = Some(ExecutionResult {
             phase: ExecutionStage::Applying,
             termination,
-            summary_line: summary_line
-                .map(|summary| copy::sanitize_text(&summary, self.progress.sensitive_values())),
+            summary_line: if downgraded_success {
+                None
+            } else {
+                summary_line
+                    .map(|summary| copy::sanitize_text(&summary, self.progress.sensitive_values()))
+            },
             first_error_line: self.progress.first_error_line(),
         });
     }
@@ -460,6 +464,7 @@ mod tests {
         );
 
         assert_eq!(state.stage(), ExecutionStage::ApplyFailed);
+        assert_eq!(state.result().and_then(ExecutionResult::summary_line), None);
     }
 
     #[test]

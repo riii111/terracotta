@@ -31,11 +31,21 @@ pub(crate) enum ResourceEventKind {
     PlannedChange,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ResourceAction {
+    Create,
+    Read,
+    Update,
+    Delete,
+    Replace,
+    Unknown(String),
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct ResourceEvent {
     pub(crate) address: String,
     pub(crate) kind: ResourceEventKind,
-    pub(crate) action: Option<PlanAction>,
+    pub(crate) action: Option<ResourceAction>,
     pub(crate) message: Option<String>,
 }
 

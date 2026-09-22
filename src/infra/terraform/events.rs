@@ -4,10 +4,9 @@ use serde_json::{Map, Value};
 
 use crate::app::execution::{
     Diagnostic, DiagnosticPoint, DiagnosticPosition, DiagnosticSeverity, DiagnosticSource,
-    EventStream, ExecutionEvent, ExecutionEventKind, ExecutionSummary, ResourceEvent,
-    ResourceEventKind,
+    EventStream, ExecutionEvent, ExecutionEventKind, ExecutionSummary, ResourceAction,
+    ResourceEvent, ResourceEventKind,
 };
-use crate::app::plan::PlanAction;
 
 #[derive(Default)]
 pub(crate) struct TerraformEventParser {
@@ -186,26 +185,26 @@ fn resource_address(object: &Map<String, Value>) -> Option<String> {
         .and_then(|value| resource_address_from_value(value, 0))
 }
 
-fn resource_action(object: &Map<String, Value>) -> Option<PlanAction> {
+fn resource_action(object: &Map<String, Value>) -> Option<ResourceAction> {
     ["hook", "change", "resource"]
         .iter()
         .find_map(|field| object.get(*field))
         .and_then(|value| resource_action_from_value(value, 0))
 }
 
-fn resource_action_from_value(value: &Value, depth: usize) -> Option<PlanAction> {
+fn resource_action_from_value(value: &Value, depth: usize) -> Option<ResourceAction> {
     if depth > 2 {
         return None;
     }
     let object = value.as_object()?;
     if let Some(action) = object.get("action").and_then(Value::as_str) {
         return Some(match action {
-            "create" => PlanAction::Create,
-            "read" => PlanAction::Read,
-            "update" => PlanAction::Update,
-            "delete" => PlanAction::Delete,
-            "no-op" => PlanAction::NoOp,
-            _ => PlanAction::Unknown(action.to_owned()),
+            "create" => ResourceAction::Create,
+            "read" => ResourceAction::Read,
+            "update" => ResourceAction::Update,
+            "delete" => ResourceAction::Delete,
+            "replace" => ResourceAction::Replace,
+            _ => ResourceAction::Unknown(action.to_owned()),
         });
     }
     ["resource", "hook", "change"]
@@ -396,7 +395,7 @@ mod tests {
         assert!(matches!(
             &events[0].kind,
             ExecutionEventKind::Resource(ResourceEvent {
-                action: Some(PlanAction::Update),
+                action: Some(ResourceAction::Update),
                 kind: ResourceEventKind::ApplyComplete,
                 ..
             })

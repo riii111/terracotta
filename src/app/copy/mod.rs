@@ -146,12 +146,23 @@ pub(crate) fn sanitize_text(text: &str, sensitive_values: &[SensitiveValue]) -> 
     values
         .into_iter()
         .fold(text.to_owned(), |text, value| match value {
+            SensitiveValue::Text(value) if is_short_token(value) => {
+                replace_scalar_tokens(&text, value, false)
+            }
             SensitiveValue::Text(value) => text.replace(value, "(sensitive value)"),
             SensitiveValue::Number(value) => replace_scalar_tokens(&text, value, true),
             SensitiveValue::Bool(value) => {
                 replace_scalar_tokens(&text, if *value { "true" } else { "false" }, false)
             }
         })
+}
+
+fn is_short_token(value: &str) -> bool {
+    value.len() < 4
+        && !value.is_empty()
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
 fn sensitive_value_text(value: &SensitiveValue) -> &str {
@@ -330,6 +341,16 @@ mod tests {
         assert_eq!(
             sanitize_text(text, &sensitive),
             "(sensitive value) feature=(sensitive value) id=(sensitive value) total=10 version1"
+        );
+    }
+
+    #[test]
+    fn short_text_sensitive_values_do_not_mask_inside_other_words() {
+        let sensitive = [SensitiveValue::Text("a".to_owned())];
+
+        assert_eq!(
+            sanitize_text("terraform_data.api token=a", &sensitive),
+            "terraform_data.api token=(sensitive value)"
         );
     }
 }
