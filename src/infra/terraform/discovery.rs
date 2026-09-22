@@ -228,6 +228,11 @@ mod tests {
     #[case::backend_label("main.tf", "terraform {\n backend {}\n}")]
     #[case::backend_body("main.tf.json", r#"{"terraform":{"backend":{"s3":true}}}"#)]
     #[case::cloud_body("main.tf.json", r#"{"terraform":{"cloud":true}}"#)]
+    #[case::json_missing_backend_label("main.tf.json", r#"{"terraform":{"backend":{}}}"#)]
+    #[case::json_duplicate_backends(
+        "main.tf.json",
+        r#"{"terraform":{"backend":{"local":[{},{}]}}}"#
+    )]
     fn broken_candidates_are_errors_without_running_commands(
         #[case] name: &str,
         #[case] source: &str,
