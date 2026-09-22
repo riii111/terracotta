@@ -441,6 +441,42 @@ Plan: 0 to add, 1 to change, 0 to destroy.
     }
 
     #[test]
+    #[ignore = "requires Terraform CLI"]
+    fn pty_empty_directory_reports_missing_configuration_without_starting_apply() {
+        let fixture = Fixture::new();
+        assert!(
+            fs::read_dir(&fixture.root)
+                .expect("fixture root should be readable")
+                .next()
+                .is_none()
+        );
+
+        let output = Command::new("python3")
+            .arg("-c")
+            .arg(PTY_DRIVER)
+            .arg(env!("CARGO_BIN_EXE_terracotta"))
+            .arg(&fixture.root)
+            .args(["100", "24", "missing_configuration", "plan"])
+            .env("TF_IN_AUTOMATION", "1")
+            .env("TF_CLI_CONFIG_FILE", "/dev/null")
+            .env("CHECKPOINT_DISABLE", "1")
+            .output()
+            .expect("PTY driver should start");
+        assert!(
+            output.status.success(),
+            "PTY driver failed: {}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let result = PtyResult::parse(&String::from_utf8_lossy(&output.stdout));
+
+        assert_eq!(result.exit_code, 1);
+        result.assert_restored();
+        result.observed("missing_configuration");
+        result.observed("apply_unavailable");
+    }
+
+    #[test]
     fn pty_ctrl_c_reaps_terraform_cleans_the_plan_and_returns_130() {
         let fixture = Fixture::new();
         let result = fixture.run("interrupt", 100, 24);

@@ -455,6 +455,20 @@ try:
         marker = "synthetic init failure" if scenario == "init_failure" else "synthetic plan failure"
         wait_parts(["Terraform failed", marker], "failed")
         exit_code = quit_with_enter()
+    elif scenario == "missing_configuration":
+        wait_parts(["Terraform failed", "No configuration files"], "missing_configuration", timeout=30)
+        send_key(b"a")
+        deadline = time.time() + 1
+        while time.time() < deadline:
+            read_available()
+            current = screen.text()
+            if "Apply this reviewed plan?" in current or "Applying..." in current:
+                raise RuntimeError("apply became available after plan failure")
+            if child_status() is not None:
+                raise RuntimeError("child exited after the apply key")
+            time.sleep(0.05)
+        observed.append("apply_unavailable")
+        exit_code = quit_with_enter()
     elif scenario == "interrupt":
         wait_file(os.environ["TERRACOTTA_FAKE_PID_PATH"], "terraform_started")
         send_key(b"\x03")

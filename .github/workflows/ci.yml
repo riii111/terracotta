@@ -56,11 +56,17 @@ jobs:
       - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375
         with:
           tool: nextest,cargo-insta
+      - uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85 # v4.0.0
+        with:
+          terraform_version: 1.16.0
+          terraform_wrapper: false
       - run: cargo fetch --locked
       - name: Test and check snapshots
         env:
           NEXTEST_PROFILE: ci
         run: cargo insta test --test-runner nextest --disable-nextest-doctest --unreferenced=reject --all-targets --all-features
+      - name: Empty directory with Terraform
+        run: cargo test --locked --all-features --test cli pty_empty_directory_reports_missing_configuration_without_starting_apply -- --ignored
       - name: Build release binary
         run: cargo build --locked --release
       - run: cargo run --locked --release -- --version
