@@ -373,7 +373,11 @@ pub(crate) fn resolve_executable() -> io::Result<std::path::PathBuf> {
         if !is_executable(&candidate) {
             continue;
         }
-        let candidate = candidate.canonicalize()?;
+        let candidate = if candidate.is_absolute() {
+            candidate
+        } else {
+            std::env::current_dir()?.join(candidate)
+        };
         if same_executable(&candidate, &current)? {
             return Err(io::Error::other("terraform resolves to Terracotta itself"));
         }
@@ -452,13 +456,20 @@ pub(crate) fn delegate(
     }
     #[cfg(windows)]
     {
-        use std::os::windows::process::ExitCodeExt;
         let mut process = SystemRunningProcess::new(command.spawn()?);
         let status = process.child.wait()?;
-        Ok(std::process::ExitCode::from_raw(
-            status.code().unwrap_or(1).cast_unsigned(),
-        ))
+        drop(process);
+        exit_delegated_process(status)
     }
+}
+
+#[cfg(windows)]
+#[expect(
+    clippy::exit,
+    reason = "stable ExitCode only accepts u8; Windows delegation must preserve all 32 exit-status bits after reaping the child"
+)]
+fn exit_delegated_process(status: ExitStatus) -> ! {
+    std::process::exit(status.code().unwrap_or(1));
 }
 
 pub(super) fn run_command(

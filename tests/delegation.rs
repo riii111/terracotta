@@ -247,3 +247,26 @@ fn tty_delegation_does_not_initialize_terminal_or_generate_plan(
     );
     assert!(!fixture.directory.join(".terraform").exists());
 }
+
+#[test]
+fn path_symlink_preserves_the_terraform_name_for_dispatcher_shims() {
+    let fixture = Fixture::new();
+    let dispatcher = fixture.bin.join("dispatcher");
+    fs::write(
+        &dispatcher,
+        "#!/bin/sh\nprintf '%s' \"${0##*/}\"\nexit 37\n",
+    )
+    .unwrap();
+    fs::set_permissions(&dispatcher, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::remove_file(fixture.bin.join("terraform")).unwrap();
+    symlink(&dispatcher, fixture.bin.join("terraform")).unwrap();
+
+    let output = fixture
+        .command()
+        .args(["terraform", "-version"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(37));
+    assert_eq!(output.stdout, b"terraform");
+}

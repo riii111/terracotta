@@ -82,6 +82,9 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo build --locked --release
       - run: cargo run --locked --release -- --version
+      - name: Check Windows delegation
+        if: runner.os == 'Windows'
+        run: cargo test --locked --release --test delegation_windows
 
   audit:
     name: Dependency audit
