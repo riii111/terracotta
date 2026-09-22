@@ -6,6 +6,7 @@ use std::{
 
 use crate::app::{
     execution::Tool,
+    plan::Plan,
     review::{PlanDocument, PlanMetadata},
 };
 use crate::infra::CancellationToken;
@@ -19,7 +20,6 @@ mod json;
 mod metadata;
 mod text;
 
-use metadata::parse_metadata;
 use text::parse_document;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,7 +62,7 @@ pub(super) fn read_review_with_arguments(
     plan_changed: bool,
     cancellation: &CancellationToken,
     runner: &dyn ProcessRunner,
-) -> Result<(PlanDocument, PlanMetadata), TerraformExecutionError> {
+) -> Result<(PlanDocument, PlanMetadata, Plan), TerraformExecutionError> {
     let text = run_show(
         tool,
         root,
@@ -81,7 +81,7 @@ pub(super) fn read_review_with_arguments(
         cancellation,
         runner,
     )?;
-    let metadata = parse_metadata(&json.output.stdout, plan_changed)
+    let (plan, metadata) = json::parse_plan_json_with_metadata(&json.output.stdout, plan_changed)
         .map_err(|error| invalid_plan(tool, error))?;
     let document = parse_document(
         text.output.stdout,
@@ -89,7 +89,7 @@ pub(super) fn read_review_with_arguments(
         metadata.output_names(),
     )
     .map_err(|error| invalid_plan(tool, error))?;
-    Ok((document, metadata))
+    Ok((document, metadata, plan))
 }
 
 fn run_show(

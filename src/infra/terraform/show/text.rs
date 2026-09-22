@@ -72,22 +72,26 @@ fn split_blocks_with_line_kinds(
         }
         if in_output_section {
             if output_header(text, &output_indices).is_some() {
-                candidates.push((line, PlanBlockKind::Output));
+                candidates.push((line, PlanBlockKind::Output, None));
             }
-        } else if resource_header(text, &resource_indices).is_some() {
-            candidates.push((line, PlanBlockKind::Resource));
+        } else if let Some(index) = resource_header(text, &resource_indices) {
+            candidates.push((
+                line,
+                PlanBlockKind::Resource,
+                Some(resource_addresses[index].clone()),
+            ));
         }
         heredoc_terminator = heredoc_start(text);
     }
 
     let mut blocks = Vec::new();
     let mut cursor = 0;
-    for (index, (start, kind)) in candidates.iter().enumerate() {
+    for (index, (start, kind, address)) in candidates.iter().enumerate() {
         if *start < cursor {
             continue;
         }
         if cursor < *start {
-            push_block(&mut blocks, cursor..*start, PlanBlockKind::Common);
+            push_block(&mut blocks, cursor..*start, PlanBlockKind::Common, None);
         }
         let end = block_end(
             lines.len(),
@@ -97,12 +101,17 @@ fn split_blocks_with_line_kinds(
             &section_boundaries,
         );
         if *start < end {
-            push_block(&mut blocks, *start..end, *kind);
+            push_block(&mut blocks, *start..end, *kind, address.clone());
             cursor = end;
         }
     }
     if cursor < lines.len() {
-        push_block(&mut blocks, cursor..lines.len(), PlanBlockKind::Common);
+        push_block(
+            &mut blocks,
+            cursor..lines.len(),
+            PlanBlockKind::Common,
+            None,
+        );
     }
     if blocks.is_empty() {
         blocks.push(PlanBlock::new(0..lines.len(), PlanBlockKind::Common));
@@ -184,7 +193,12 @@ fn is_note_line(line: &str) -> bool {
     line.trim_start().starts_with('#')
 }
 
-fn push_block(blocks: &mut Vec<PlanBlock>, lines: Range<usize>, kind: PlanBlockKind) {
+fn push_block(
+    blocks: &mut Vec<PlanBlock>,
+    lines: Range<usize>,
+    kind: PlanBlockKind,
+    address: Option<String>,
+) {
     if lines.is_empty() {
         return;
     }
@@ -194,25 +208,29 @@ fn push_block(blocks: &mut Vec<PlanBlock>, lines: Range<usize>, kind: PlanBlockK
         }
         return;
     }
-    blocks.push(PlanBlock::new(lines, kind));
+    blocks.push(PlanBlock::with_addresses(
+        lines,
+        kind,
+        address.into_iter().collect(),
+    ));
 }
 
 fn block_end(
     line_count: usize,
     start: usize,
     kind: PlanBlockKind,
-    next_candidate: Option<&(usize, PlanBlockKind)>,
+    next_candidate: Option<&(usize, PlanBlockKind, Option<String>)>,
     section_boundaries: &[usize],
 ) -> usize {
     let next_same_kind = next_candidate
-        .filter(|(_, candidate_kind)| {
+        .filter(|(_, candidate_kind, _)| {
             matches!(
                 (kind, candidate_kind),
                 (PlanBlockKind::Resource, PlanBlockKind::Resource)
                     | (PlanBlockKind::Output, PlanBlockKind::Output)
             )
         })
-        .map(|(line, _)| *line);
+        .map(|(line, _, _)| *line);
     let section_boundary = if matches!(kind, PlanBlockKind::Resource | PlanBlockKind::Output) {
         section_boundaries
             .get(section_boundaries.partition_point(|line| *line <= start))
@@ -325,6 +343,23 @@ mod tests {
 
         assert_eq!(document.text(), source);
         assert!(!format!("{document:?}").contains("password"));
+    }
+
+    #[test]
+    fn indexes_each_resource_address_when_the_raw_block_is_parsed() {
+        let source = "preamble\n  # terraform_data.api will be created\n  + resource \"terraform_data\" \"api\" {}\n";
+        let document = parse_document(
+            source.as_bytes().to_vec(),
+            &["terraform_data.api".to_owned()],
+            &[],
+        )
+        .expect("text should parse");
+
+        let block = document
+            .block_for_address("terraform_data.api")
+            .expect("resource block should be indexed");
+        assert_eq!(block.lines(), &(1..4));
+        assert_eq!(block.addresses(), ["terraform_data.api"]);
     }
 
     #[test]

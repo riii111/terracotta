@@ -806,6 +806,9 @@ mod tests {
     fn change(fixture: ChangeFixture) -> ResourceChange {
         ResourceChange {
             address: "aws_instance.example".to_owned(),
+            provider: None,
+            resource_type: None,
+            resource_name: None,
             mode: ResourceMode::Managed,
             actions: vec![PlanAction::Update],
             kind: ResourceChangeKind::Update,
@@ -816,6 +819,8 @@ mod tests {
             after_unknown: Some(plan_value(fixture.after_unknown)),
             replace_paths: Some(vec![vec![ReplacePathSegment::Attribute("name".to_owned())]]),
             action_reason: Some("replace_because_cannot_update".to_owned()),
+            previous_address: None,
+            importing: None,
         }
     }
 

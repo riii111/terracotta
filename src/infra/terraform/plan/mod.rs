@@ -20,6 +20,7 @@ use super::{
     command::{
         ProcessRunner, ProcessStatus, TerraformCommand, TerraformExecutionError, run_passthrough,
     },
+    read_provider_schema_with_arguments,
     show::read_review_with_arguments,
     workspace::read_workspace_with_arguments,
 };
@@ -189,12 +190,19 @@ pub(crate) fn read_saved_plan_review(
         received_at: std::time::Instant::now(),
         kind: ExecutionEventKind::Workspace(workspace.clone()),
     });
-    let (document, metadata) = read_review_with_arguments(
+    let (document, metadata, plan) = read_review_with_arguments(
         tool,
         launch_root,
         global_arguments,
         plan_path,
         plan_changed,
+        cancellation,
+        runner,
+    )?;
+    let provider_schemas = read_provider_schema_with_arguments(
+        tool,
+        launch_root,
+        global_arguments,
         cancellation,
         runner,
     )?;
@@ -208,6 +216,8 @@ pub(crate) fn read_saved_plan_review(
         metadata,
         Vec::new(),
     )
+    .with_plan(plan)
+    .with_provider_schemas(provider_schemas)
     .with_context(context)
     .with_apply_allowed(apply_entry)
     .with_apply_entry(apply_entry);

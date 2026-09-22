@@ -385,6 +385,12 @@ fn relevant_side(kind: ResourceChangeKind, side: SourceSide) -> bool {
         ResourceChangeKind::Create => side == SourceSide::After,
         ResourceChangeKind::Delete => side == SourceSide::Before,
         ResourceChangeKind::Update | ResourceChangeKind::Replace => true,
+        ResourceChangeKind::NoOp
+        | ResourceChangeKind::Read
+        | ResourceChangeKind::Move
+        | ResourceChangeKind::Import
+        | ResourceChangeKind::Unknown
+        | ResourceChangeKind::Unsupported => false,
     }
 }
 
@@ -433,10 +439,19 @@ mod tests {
                 super::super::plan::PlanAction::Create,
             ],
             ResourceChangeKind::Delete => vec![super::super::plan::PlanAction::Delete],
+            ResourceChangeKind::NoOp
+            | ResourceChangeKind::Read
+            | ResourceChangeKind::Move
+            | ResourceChangeKind::Import
+            | ResourceChangeKind::Unknown
+            | ResourceChangeKind::Unsupported => Vec::new(),
         };
 
         ResourceChange {
             address: address.to_owned(),
+            provider: None,
+            resource_type: None,
+            resource_name: None,
             mode: ResourceMode::Managed,
             actions,
             kind,
@@ -447,6 +462,8 @@ mod tests {
             after_unknown: None,
             replace_paths: None,
             action_reason: None,
+            previous_address: None,
+            importing: None,
         }
     }
 

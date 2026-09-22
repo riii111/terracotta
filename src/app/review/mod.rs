@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fmt::{Debug, Formatter},
     ops::Range,
     path::{Path, PathBuf},
@@ -10,7 +11,7 @@ use super::{
         ApplyStatus, Diagnostic, ExecutionContext, ExecutionContextValue, ExecutionEvent,
         ExecutionTargetSpec, SensitiveValue,
     },
-    plan::{PlanAction, PlanResource},
+    plan::{Plan, PlanResource, ProviderSchemas, ResourceChangeKind},
 };
 
 #[cfg(test)]
@@ -36,12 +37,30 @@ pub(crate) enum PlanLineKind {
 pub(crate) struct PlanBlock {
     lines: Range<usize>,
     kind: PlanBlockKind,
+    addresses: Vec<String>,
 }
 
 impl PlanBlock {
     #[must_use]
     pub(crate) const fn new(lines: Range<usize>, kind: PlanBlockKind) -> Self {
-        Self { lines, kind }
+        Self {
+            lines,
+            kind,
+            addresses: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn with_addresses(
+        lines: Range<usize>,
+        kind: PlanBlockKind,
+        addresses: Vec<String>,
+    ) -> Self {
+        Self {
+            lines,
+            kind,
+            addresses,
+        }
     }
 
     #[must_use]
@@ -57,6 +76,11 @@ impl PlanBlock {
     pub(crate) const fn is_common(&self) -> bool {
         matches!(self.kind, PlanBlockKind::Common)
     }
+
+    #[must_use]
+    pub(crate) fn addresses(&self) -> &[String] {
+        &self.addresses
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -64,6 +88,7 @@ pub(crate) struct PlanDocument {
     text: String,
     blocks: Vec<PlanBlock>,
     line_kinds: Vec<PlanLineKind>,
+    address_blocks: BTreeMap<String, usize>,
 }
 
 struct FilteredLine<'a> {
@@ -95,15 +120,22 @@ impl<'a> FilteredPlan<'a> {
 
 impl PlanDocument {
     #[must_use]
-    pub(crate) const fn with_blocks_and_line_kinds(
+    pub(crate) fn with_blocks_and_line_kinds(
         text: String,
         blocks: Vec<PlanBlock>,
         line_kinds: Vec<PlanLineKind>,
     ) -> Self {
+        let mut address_blocks = BTreeMap::new();
+        for (index, block) in blocks.iter().enumerate() {
+            for address in block.addresses() {
+                address_blocks.entry(address.clone()).or_insert(index);
+            }
+        }
         Self {
             text,
             blocks,
             line_kinds,
+            address_blocks,
         }
     }
 
@@ -153,6 +185,20 @@ impl PlanDocument {
             .get(line)
             .copied()
             .unwrap_or(PlanLineKind::Body)
+    }
+
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "address index is consumed by the Overview review flow"
+        )
+    )]
+    pub(crate) fn block_for_address(&self, address: &str) -> Option<&PlanBlock> {
+        self.address_blocks
+            .get(address)
+            .and_then(|index| self.blocks.get(*index))
     }
 }
 
@@ -301,9 +347,7 @@ impl PlanMetadata {
     pub(crate) fn destructive_addresses(&self) -> impl Iterator<Item = &str> {
         self.resource_changes
             .iter()
-            .filter(|resource| {
-                resource.has_action(&PlanAction::Delete) && !resource.is_replacement()
-            })
+            .filter(|resource| resource.kind == ResourceChangeKind::Delete)
             .map(|resource| resource.address.as_str())
     }
 
@@ -330,6 +374,8 @@ pub(crate) struct PlanReview {
     context: ExecutionContext,
     document: PlanDocument,
     metadata: PlanMetadata,
+    plan: Plan,
+    provider_schemas: Option<ProviderSchemas>,
     diagnostics: Vec<Diagnostic>,
     search_query: String,
     apply_allowed: bool,
@@ -354,6 +400,8 @@ impl PlanReview {
             context,
             document,
             metadata,
+            plan: Plan::empty(),
+            provider_schemas: None,
             diagnostics,
             search_query: String::new(),
             apply_allowed: true,
@@ -420,6 +468,18 @@ impl PlanReview {
     }
 
     #[must_use]
+    pub(crate) fn with_plan(mut self, plan: Plan) -> Self {
+        self.plan = plan;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn with_provider_schemas(mut self, schemas: Option<ProviderSchemas>) -> Self {
+        self.provider_schemas = schemas;
+        self
+    }
+
+    #[must_use]
     pub(crate) fn confirmation_input(&self) -> String {
         let named =
             self.metadata.has_destructive_changes() || self.context.is_production() == Some(true);
@@ -441,6 +501,24 @@ impl PlanReview {
     #[must_use]
     pub(crate) const fn metadata(&self) -> &PlanMetadata {
         &self.metadata
+    }
+
+    #[must_use]
+    #[expect(
+        dead_code,
+        reason = "the structured plan is consumed by the Overview SBI"
+    )]
+    pub(crate) const fn plan(&self) -> &Plan {
+        &self.plan
+    }
+
+    #[must_use]
+    #[expect(
+        dead_code,
+        reason = "provider schemas are consumed by the grouping SBI"
+    )]
+    pub(crate) const fn provider_schemas(&self) -> Option<&ProviderSchemas> {
+        self.provider_schemas.as_ref()
     }
 
     #[must_use]
