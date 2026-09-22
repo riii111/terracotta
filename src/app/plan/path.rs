@@ -2,6 +2,126 @@ use std::fmt::Write;
 
 use super::{ReplacePathSegment, attribute_diff::AttributePathSegment};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NormalizedResourceAddress {
+    normalized: String,
+    display: String,
+}
+
+impl NormalizedResourceAddress {
+    #[must_use]
+    pub(crate) fn normalized(&self) -> &str {
+        &self.normalized
+    }
+
+    #[must_use]
+    pub(crate) fn display(&self) -> &str {
+        &self.display
+    }
+}
+
+#[must_use]
+pub(crate) fn normalize_resource_address(address: &str) -> Option<NormalizedResourceAddress> {
+    let components = parse_address_components(address)?;
+    let mut normalized = String::new();
+    let mut display = String::new();
+
+    for component in components {
+        match component {
+            AddressComponent::Name(name) => {
+                if !normalized.is_empty() {
+                    normalized.push('.');
+                    display.push('.');
+                }
+                normalized.push_str(&name);
+                display.push_str(&name);
+            }
+            AddressComponent::InstanceKey => display.push_str("[*]"),
+        }
+    }
+
+    Some(NormalizedResourceAddress {
+        normalized,
+        display,
+    })
+}
+
+enum AddressComponent {
+    Name(String),
+    InstanceKey,
+}
+
+fn parse_address_components(address: &str) -> Option<Vec<AddressComponent>> {
+    let bytes = address.as_bytes();
+    let mut position = 0;
+    let mut components = Vec::new();
+
+    while position < bytes.len() {
+        let name_start = position;
+        while position < bytes.len() && !matches!(bytes[position], b'.' | b'[') {
+            position += 1;
+        }
+        if position == name_start {
+            return None;
+        }
+        components.push(AddressComponent::Name(
+            address.get(name_start..position)?.to_owned(),
+        ));
+
+        while bytes.get(position) == Some(&b'[') {
+            position = parse_instance_key(bytes, position)?;
+            components.push(AddressComponent::InstanceKey);
+        }
+
+        match bytes.get(position) {
+            None => return Some(components),
+            Some(b'.') => {
+                position += 1;
+                if position == bytes.len() {
+                    return None;
+                }
+            }
+            Some(_) => return None,
+        }
+    }
+
+    None
+}
+
+fn parse_instance_key(bytes: &[u8], mut position: usize) -> Option<usize> {
+    position += 1;
+    match bytes.get(position) {
+        Some(b'"') => {
+            position += 1;
+            let mut escaped = false;
+            while let Some(byte) = bytes.get(position) {
+                if escaped {
+                    escaped = false;
+                    position += 1;
+                    continue;
+                }
+                match byte {
+                    b'\\' => escaped = true,
+                    b'"' => {
+                        position += 1;
+                        return (bytes.get(position) == Some(&b']')).then_some(position + 1);
+                    }
+                    _ => {}
+                }
+                position += 1;
+            }
+            None
+        }
+        Some(byte) if byte.is_ascii_digit() => {
+            while bytes.get(position).is_some_and(u8::is_ascii_digit) {
+                position += 1;
+            }
+            (bytes.get(position) == Some(&b']')).then_some(position + 1)
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn format_attribute_path(path: &[AttributePathSegment]) -> String {
     if path.is_empty() {
         return "<resource>".to_owned();
@@ -64,6 +184,58 @@ fn is_simple_path_key(key: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct AddressCase {
+        name: &'static str,
+        input: &'static str,
+        normalized: &'static str,
+        display: &'static str,
+    }
+
+    #[test]
+    fn removes_all_module_and_resource_instance_keys_without_regex_replacement() {
+        let cases = [
+            AddressCase {
+                name: "resource_count",
+                input: "aws_instance.web[0]",
+                normalized: "aws_instance.web",
+                display: "aws_instance.web[*]",
+            },
+            AddressCase {
+                name: "resource_for_each",
+                input: r#"aws_instance.web["blue.green"]"#,
+                normalized: "aws_instance.web",
+                display: "aws_instance.web[*]",
+            },
+            AddressCase {
+                name: "nested_modules_with_mixed_keys",
+                input: r#"module.network["prod[0]"].module.zone[3].aws_instance.web["a.b"]"#,
+                normalized: "module.network.module.zone.aws_instance.web",
+                display: "module.network[*].module.zone[*].aws_instance.web[*]",
+            },
+        ];
+
+        for case in cases {
+            let address = normalize_resource_address(case.input).expect("address should parse");
+            assert_eq!(address.normalized(), case.normalized, "case: {}", case.name);
+            assert_eq!(address.display(), case.display, "case: {}", case.name);
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_instance_keys_instead_of_grouping_them() {
+        for address in [
+            "aws_instance.web[]",
+            "aws_instance.web[true]",
+            "aws_instance.web[\"unterminated]",
+            "aws_instance.web[0].",
+        ] {
+            assert!(
+                normalize_resource_address(address).is_none(),
+                "address: {address}"
+            );
+        }
+    }
 
     struct AttributePathCase {
         name: &'static str,
