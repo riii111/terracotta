@@ -18,12 +18,12 @@ use crate::{
     app::{
         execution::{
             ApplyStatus, ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionPhase,
-            ExecutionStage, ExecutionState, Tool, VariableSources,
+            ExecutionStage, ExecutionState, HistoryKey, Tool, VariableSources,
         },
         review::{PlanMetadata, PlanReviewMessage},
         session::SessionOutcome,
     },
-    infra::{CancellationToken, ClipboardExecutor, terraform},
+    infra::{CancellationToken, ClipboardExecutor, history::HistoryStore, terraform},
 };
 
 #[cfg(feature = "test-support")]
@@ -178,6 +178,7 @@ fn run_saved_plan_review(
     };
     let cancellation = CancellationToken::new();
     let (sender, receiver) = mpsc::channel();
+    let history = HistoryStore::platform();
     let saved_plan_slot = Arc::new(Mutex::new(Some(plan_run.saved_plan)));
     let Some(plan_path) = saved_plan_slot
         .lock()
@@ -203,6 +204,7 @@ fn run_saved_plan_review(
             .with_launch_root(launch_root)
             .with_variable_sources(variable_sources.clone()),
         &cancellation,
+        history.as_ref(),
         sender.clone(),
     ) {
         Ok(worker) => worker,
@@ -236,6 +238,7 @@ fn run_saved_plan_review(
         cancellation: &cancellation,
         clipboard: &mut clipboard,
         apply_worker: &mut apply_worker,
+        history: history.as_ref(),
     };
     let ui_result = run_interactive(context, &receiver, &mut worker, effects);
     if ui_result.is_err() {
@@ -467,6 +470,7 @@ fn spawn_review_worker(
     apply_entry: bool,
     initial_context: ExecutionContext,
     cancellation: &CancellationToken,
+    history: Option<&HistoryStore>,
     sender: mpsc::Sender<PlanReviewMessage>,
 ) -> io::Result<JoinHandle<()>> {
     let worker_cancellation = cancellation.clone();
@@ -475,6 +479,7 @@ fn spawn_review_worker(
     let worker_global_arguments = global_arguments.to_vec();
     let worker_plan_path = plan_path.to_owned();
     let worker_initial_context = initial_context;
+    let worker_history = history.cloned();
     thread::Builder::new()
         .name("terracotta-plan".to_owned())
         .spawn(move || {
@@ -502,6 +507,20 @@ fn spawn_review_worker(
                 &mut phase_sink,
             ) {
                 Ok(review) => {
+                    let review = if let Some(history) = worker_history.as_ref() {
+                        let previous_durations = review
+                            .metadata()
+                            .apply_targets()
+                            .iter()
+                            .map(|target| {
+                                HistoryKey::for_target(review.context(), target)
+                                    .and_then(|key| history.load(&key))
+                            })
+                            .collect();
+                        review.with_previous_durations(previous_durations)
+                    } else {
+                        review
+                    };
                     if !worker_cancellation.is_cancelled() {
                         let _ = sender.send(PlanReviewMessage::Completed(review));
                     }

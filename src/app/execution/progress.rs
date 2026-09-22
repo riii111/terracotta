@@ -7,7 +7,7 @@
 )]
 
 use std::fmt::{Debug, Formatter};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::app::plan::PlanAction;
 
@@ -16,6 +16,7 @@ use super::event::{
     ExecutionTargetSpec, ProcessTermination, ResourceAction, ResourceEvent, ResourceEventKind,
     SensitiveValue,
 };
+use super::{ExecutionContext, HistoryKey, SuccessfulTarget};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ExecutionTargetStatus {
@@ -33,6 +34,9 @@ pub(crate) struct ExecutionTargetState {
     status: ExecutionTargetStatus,
     completed_stages: usize,
     log_ids: Vec<usize>,
+    started_at: Option<Instant>,
+    duration: Option<Duration>,
+    previous: Option<Duration>,
 }
 
 impl Debug for ExecutionTargetState {
@@ -43,6 +47,9 @@ impl Debug for ExecutionTargetState {
             .field("status", &self.status)
             .field("completed_stages", &self.completed_stages)
             .field("log_ids", &self.log_ids)
+            .field("started_at", &self.started_at)
+            .field("duration", &self.duration)
+            .field("previous", &self.previous)
             .finish()
     }
 }
@@ -71,6 +78,16 @@ impl ExecutionTargetState {
     #[must_use]
     pub(crate) fn log_ids(&self) -> &[usize] {
         &self.log_ids
+    }
+
+    #[must_use]
+    pub(crate) const fn duration(&self) -> Option<Duration> {
+        self.duration
+    }
+
+    #[must_use]
+    pub(crate) const fn previous(&self) -> Option<Duration> {
+        self.previous
     }
 }
 
@@ -112,16 +129,29 @@ impl ExecutionProgress {
         targets: Vec<ExecutionTargetSpec>,
         sensitive_values: Vec<SensitiveValue>,
     ) -> Self {
+        Self::with_previous(targets, sensitive_values, &[])
+    }
+
+    #[must_use]
+    pub(crate) fn with_previous(
+        targets: Vec<ExecutionTargetSpec>,
+        sensitive_values: Vec<SensitiveValue>,
+        previous_durations: &[Option<Duration>],
+    ) -> Self {
         Self {
             diagnostics: Vec::new(),
             log: Vec::new(),
             targets: targets
                 .into_iter()
-                .map(|spec| ExecutionTargetState {
+                .enumerate()
+                .map(|(index, spec)| ExecutionTargetState {
                     spec,
                     status: ExecutionTargetStatus::Pending,
                     completed_stages: 0,
                     log_ids: Vec::new(),
+                    started_at: None,
+                    duration: None,
+                    previous: previous_durations.get(index).copied().flatten(),
                 })
                 .collect(),
             sensitive_values,
@@ -154,7 +184,7 @@ impl ExecutionProgress {
                         self.target_index(&resource.address),
                     );
                 }
-                self.record_resource(&resource);
+                self.record_resource(received_at, &resource);
             }
             ExecutionEventKind::Diagnostic(diagnostic) => {
                 if diagnostic.severity == super::event::DiagnosticSeverity::Error
@@ -253,6 +283,19 @@ impl ExecutionProgress {
         self.termination
     }
 
+    #[must_use]
+    pub(crate) fn successful_history(&self, context: &ExecutionContext) -> Vec<SuccessfulTarget> {
+        self.targets
+            .iter()
+            .filter(|target| target.status == ExecutionTargetStatus::Completed)
+            .filter_map(|target| {
+                let duration = target.duration?;
+                let key = HistoryKey::for_target(context, &target.spec)?;
+                Some(SuccessfulTarget { key, duration })
+            })
+            .collect()
+    }
+
     fn append_log(&mut self, stream: EventStream, text: &str, target: Option<usize>) {
         let log_id = self.log.len();
         self.log.push(ExecutionLogLine {
@@ -264,10 +307,23 @@ impl ExecutionProgress {
         }
     }
 
-    fn record_resource(&mut self, resource: &ResourceEvent) {
+    fn record_resource(&mut self, received_at: Instant, resource: &ResourceEvent) {
         let Some(target) = self.target_index(&resource.address) else {
             return;
         };
+        if resource.kind == ResourceEventKind::ApplyStart
+            && self.targets[target].started_at.is_none()
+            && resource.action.as_ref().is_some_and(|action| {
+                (is_replacement_action(action)
+                    && is_replacement_target(self.targets[target].actions()))
+                    || self.targets[target]
+                        .actions()
+                        .iter()
+                        .any(|expected| action_matches(action, expected))
+            })
+        {
+            self.targets[target].started_at = Some(received_at);
+        }
         match resource.kind {
             ResourceEventKind::ApplyStart
             | ResourceEventKind::ApplyProgress
@@ -311,6 +367,9 @@ impl ExecutionProgress {
                     .min(target_state.spec.actions.len());
                 if target_state.completed_stages == target_state.spec.actions.len() {
                     target_state.status = ExecutionTargetStatus::Completed;
+                    target_state.duration = target_state
+                        .started_at
+                        .map(|started_at| received_at.saturating_duration_since(started_at));
                 }
             }
             ResourceEventKind::ApplyErrored | ResourceEventKind::ProvisionErrored => {
@@ -514,6 +573,186 @@ mod tests {
         );
         assert_eq!(progress.targets()[0].completed_stages(), 2);
         assert_eq!(progress.targets()[0].log_ids(), &[0, 1]);
+    }
+
+    #[test]
+    fn duration_spans_replacement_stages_from_the_first_start_to_the_final_complete() {
+        let target = ExecutionTargetSpec {
+            address: "terraform_data.api".to_owned(),
+            actions: vec![PlanAction::Delete, PlanAction::Create],
+        };
+        let previous = [Some(Duration::from_secs(9))];
+        let mut progress = ExecutionProgress::with_previous(vec![target], Vec::new(), &previous);
+        let started_at = Instant::now();
+
+        for (offset, kind, action) in [
+            (1, ResourceEventKind::ApplyStart, ResourceAction::Delete),
+            (3, ResourceEventKind::ApplyComplete, ResourceAction::Delete),
+            (4, ResourceEventKind::ApplyStart, ResourceAction::Create),
+            (8, ResourceEventKind::ApplyComplete, ResourceAction::Create),
+        ] {
+            progress.record(ExecutionEvent {
+                received_at: started_at + Duration::from_secs(offset),
+                kind: ExecutionEventKind::Resource(ResourceEvent {
+                    address: "terraform_data.api".to_owned(),
+                    kind,
+                    action: Some(action),
+                    message: None,
+                }),
+            });
+        }
+
+        assert_eq!(
+            progress.targets()[0].status(),
+            ExecutionTargetStatus::Completed
+        );
+        assert_eq!(
+            progress.targets()[0].duration(),
+            Some(Duration::from_secs(7))
+        );
+        assert_eq!(
+            progress.targets()[0].previous(),
+            Some(Duration::from_secs(9))
+        );
+    }
+
+    #[test]
+    fn completed_target_without_an_apply_start_is_not_persisted() {
+        let mut progress = ExecutionProgress::new(
+            vec![ExecutionTargetSpec {
+                address: "terraform_data.api".to_owned(),
+                actions: vec![PlanAction::Update],
+            }],
+            Vec::new(),
+        );
+        let received_at = Instant::now();
+        progress.record(ExecutionEvent {
+            received_at,
+            kind: ExecutionEventKind::Resource(ResourceEvent {
+                address: "terraform_data.api".to_owned(),
+                kind: ResourceEventKind::ApplyComplete,
+                action: Some(ResourceAction::Update),
+                message: None,
+            }),
+        });
+
+        assert_eq!(
+            progress.targets()[0].status(),
+            ExecutionTargetStatus::Completed
+        );
+        assert_eq!(progress.targets()[0].duration(), None);
+        assert!(
+            progress
+                .successful_history(&ExecutionContext::loading("/repo").with_workspace("default"))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn partial_replacement_is_not_persisted() {
+        let mut progress = ExecutionProgress::new(
+            vec![ExecutionTargetSpec {
+                address: "terraform_data.api".to_owned(),
+                actions: vec![PlanAction::Delete, PlanAction::Create],
+            }],
+            Vec::new(),
+        );
+        let received_at = Instant::now();
+        progress.record(ExecutionEvent {
+            received_at,
+            kind: ExecutionEventKind::Resource(ResourceEvent {
+                address: "terraform_data.api".to_owned(),
+                kind: ResourceEventKind::ApplyStart,
+                action: Some(ResourceAction::Delete),
+                message: None,
+            }),
+        });
+        progress.record(ExecutionEvent {
+            received_at: received_at + Duration::from_secs(1),
+            kind: ExecutionEventKind::Resource(ResourceEvent {
+                address: "terraform_data.api".to_owned(),
+                kind: ResourceEventKind::ApplyComplete,
+                action: Some(ResourceAction::Delete),
+                message: None,
+            }),
+        });
+        progress.finish(ProcessTermination {
+            status: ProcessExitStatus::Exited(1),
+            interrupted: false,
+        });
+
+        assert_eq!(
+            progress.targets()[0].status(),
+            ExecutionTargetStatus::Incomplete
+        );
+        assert!(
+            progress
+                .successful_history(&ExecutionContext::loading("/repo").with_workspace("default"))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn failed_and_skipped_targets_are_not_persisted() {
+        let context = ExecutionContext::loading("/repo").with_workspace("default");
+        let mut failed = ExecutionProgress::new(
+            vec![ExecutionTargetSpec {
+                address: "terraform_data.failed".to_owned(),
+                actions: vec![PlanAction::Update],
+            }],
+            Vec::new(),
+        );
+        let started_at = Instant::now();
+        failed.record(ExecutionEvent {
+            received_at: started_at,
+            kind: ExecutionEventKind::Resource(ResourceEvent {
+                address: "terraform_data.failed".to_owned(),
+                kind: ResourceEventKind::ApplyStart,
+                action: Some(ResourceAction::Update),
+                message: None,
+            }),
+        });
+        failed.record(ExecutionEvent {
+            received_at: started_at + Duration::from_secs(1),
+            kind: ExecutionEventKind::Resource(ResourceEvent {
+                address: "terraform_data.failed".to_owned(),
+                kind: ResourceEventKind::ApplyComplete,
+                action: Some(ResourceAction::Update),
+                message: None,
+            }),
+        });
+        failed.record(ExecutionEvent {
+            received_at: started_at + Duration::from_secs(2),
+            kind: ExecutionEventKind::Diagnostic(Diagnostic {
+                severity: DiagnosticSeverity::Error,
+                summary: "apply failed".to_owned(),
+                detail: None,
+                address: Some("terraform_data.failed".to_owned()),
+                position: None,
+                source: DiagnosticSource::Terraform,
+            }),
+        });
+
+        let mut skipped = ExecutionProgress::new(
+            vec![ExecutionTargetSpec {
+                address: "terraform_data.skipped".to_owned(),
+                actions: vec![PlanAction::Create],
+            }],
+            Vec::new(),
+        );
+        skipped.finish(ProcessTermination {
+            status: ProcessExitStatus::Exited(1),
+            interrupted: false,
+        });
+
+        assert_eq!(failed.targets()[0].status(), ExecutionTargetStatus::Failed);
+        assert_eq!(failed.targets()[0].duration(), Some(Duration::from_secs(1)));
+        assert!(failed.successful_history(&context).is_empty());
+        assert_eq!(
+            skipped.targets()[0].status(),
+            ExecutionTargetStatus::Skipped
+        );
+        assert!(skipped.successful_history(&context).is_empty());
     }
 
     #[test]

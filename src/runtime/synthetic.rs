@@ -92,7 +92,7 @@ pub(super) fn run_synthetic() -> io::Result<()> {
                     );
                 }
                 Some(Effect::Finish(_)) => return Ok(()),
-                Some(Effect::CancelExecution) | None => {}
+                Some(Effect::PersistHistory(_) | Effect::CancelExecution) | None => {}
             }
         }
     })

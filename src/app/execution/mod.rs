@@ -4,6 +4,7 @@ use super::copy;
 
 mod context;
 mod event;
+pub(crate) mod history;
 mod progress;
 
 pub(crate) use context::{ExecutionContext, ExecutionContextValue, Tool, VariableSources};
@@ -13,6 +14,7 @@ pub(crate) use event::{
     ExecutionSummary, ExecutionTargetSpec, ProcessExitStatus, ProcessTermination, ResourceAction,
     ResourceEvent, ResourceEventKind, SensitiveValue,
 };
+pub(crate) use history::{HistoryKey, SuccessfulTarget};
 #[expect(
     unused_imports,
     reason = "execution target types are consumed by the SBI03-03 execution UI"
@@ -112,17 +114,35 @@ impl ExecutionState {
     }
 
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the original constructor remains the empty-previous baseline for execution fixtures"
+        )
+    )]
     pub(crate) fn applying_with_targets(
         started_at: Instant,
         context: ExecutionContext,
         targets: Vec<ExecutionTargetSpec>,
         sensitive_values: Vec<SensitiveValue>,
     ) -> Self {
+        Self::applying_with_previous(started_at, context, targets, sensitive_values, &[])
+    }
+
+    #[must_use]
+    pub(crate) fn applying_with_previous(
+        started_at: Instant,
+        context: ExecutionContext,
+        targets: Vec<ExecutionTargetSpec>,
+        sensitive_values: Vec<SensitiveValue>,
+        previous_durations: &[Option<Duration>],
+    ) -> Self {
         Self::at_stage_with_progress(
             started_at,
             context,
             ExecutionStage::Applying,
-            ExecutionProgress::new(targets, sensitive_values),
+            ExecutionProgress::with_previous(targets, sensitive_values, previous_durations),
         )
     }
 
@@ -358,6 +378,11 @@ impl ExecutionState {
     }
 
     #[must_use]
+    pub(crate) fn successful_history(&self) -> Vec<SuccessfulTarget> {
+        self.progress.successful_history(&self.context)
+    }
+
+    #[must_use]
     pub(crate) fn elapsed_at(&self, now: Instant) -> Duration {
         self.finished_at
             .unwrap_or(now)
@@ -465,6 +490,64 @@ mod tests {
 
         assert_eq!(state.stage(), ExecutionStage::ApplyFailed);
         assert_eq!(state.result().and_then(ExecutionResult::summary_line), None);
+    }
+
+    #[test]
+    fn failed_apply_keeps_completed_targets_available_for_history() {
+        let started_at = Instant::now();
+        let mut state = ExecutionState::applying_with_targets(
+            started_at,
+            ExecutionContext::loading("/repo").with_workspace("default"),
+            vec![
+                ExecutionTargetSpec {
+                    address: "terraform_data.completed".to_owned(),
+                    actions: vec![PlanAction::Update],
+                },
+                ExecutionTargetSpec {
+                    address: "terraform_data.failed".to_owned(),
+                    actions: vec![PlanAction::Update],
+                },
+            ],
+            Vec::new(),
+        );
+        state.record(event(
+            started_at + Duration::from_secs(1),
+            ExecutionEventKind::Resource(ResourceEvent {
+                address: "terraform_data.completed".to_owned(),
+                kind: ResourceEventKind::ApplyStart,
+                action: Some(ResourceAction::Update),
+                message: None,
+            }),
+        ));
+        state.record(event(
+            started_at + Duration::from_secs(5),
+            ExecutionEventKind::Resource(ResourceEvent {
+                address: "terraform_data.completed".to_owned(),
+                kind: ResourceEventKind::ApplyComplete,
+                action: Some(ResourceAction::Update),
+                message: None,
+            }),
+        ));
+        state.record(event(
+            started_at + Duration::from_secs(6),
+            ExecutionEventKind::Resource(ResourceEvent {
+                address: "terraform_data.failed".to_owned(),
+                kind: ResourceEventKind::ApplyErrored,
+                action: Some(ResourceAction::Update),
+                message: None,
+            }),
+        ));
+        state.finish_apply(
+            ApplyStatus::Failed,
+            None,
+            None,
+            started_at + Duration::from_secs(7),
+        );
+
+        let history = state.successful_history();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].duration, Duration::from_secs(4));
+        assert_eq!(state.stage(), ExecutionStage::ApplyFailed);
     }
 
     #[test]

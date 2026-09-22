@@ -589,6 +589,14 @@ fn apply_effect<C: ClipboardWriter>(
             effects.cancellation.cancel();
             None
         }
+        Some(Effect::PersistHistory(successes)) => {
+            if let Some(history) = effects.history
+                && let Err(error) = history.record(&successes)
+            {
+                super::report_error(&format!("failed to save apply history: {error}"));
+            }
+            None
+        }
         Some(Effect::StartApply) => {
             let apply = state.apply()?;
             if let Err(message) = verify_apply_context(apply, effects) {
@@ -734,6 +742,7 @@ pub(super) struct RuntimeEffects<'a, C: ClipboardWriter = ClipboardExecutor> {
     pub(super) cancellation: &'a CancellationToken,
     pub(super) clipboard: &'a mut C,
     pub(super) apply_worker: &'a mut super::WorkerGuard,
+    pub(super) history: Option<&'a super::HistoryStore>,
 }
 
 #[cfg(test)]
@@ -757,11 +766,14 @@ mod tests {
     use crate::app::{
         execution::{
             ApplyStatus, EventStream, ExecutionAction, ExecutionContext, ExecutionEvent,
-            ExecutionEventKind, ExecutionLogLine,
+            ExecutionEventKind, ExecutionLogLine, ExecutionTargetSpec, HistoryKey,
+            SuccessfulTarget,
         },
+        plan::PlanAction,
         review::{PlanMetadata, PlanReview, test_support::plan_document},
         session::{ApplyConfirmationState, ReviewSessionState},
     };
+    use crate::infra::history::HistoryStore;
     use crate::runtime::{WorkerGuard, finalize_ui_result};
 
     #[cfg(unix)]
@@ -1343,7 +1355,56 @@ mod tests {
             cancellation,
             clipboard,
             apply_worker,
+            history: None,
         }
+    }
+
+    #[test]
+    fn history_write_failure_does_not_produce_a_session_outcome() {
+        let root = env::temp_dir().join(format!(
+            "terracotta-runtime-history-failure-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("test clock should be after the epoch")
+                .as_nanos()
+        ));
+        fs::write(&root, b"not a directory").expect("blocking file should be written");
+        let history = HistoryStore::new(root.clone());
+        let context = ExecutionContext::loading("/project").with_workspace("default");
+        let target = ExecutionTargetSpec {
+            address: "terraform_data.api".to_owned(),
+            actions: vec![PlanAction::Update],
+        };
+        let key = HistoryKey::for_target(&context, &target).expect("workspace is known");
+        let (sender, _messages) = mpsc::channel();
+        let saved_plan_slot = Arc::new(Mutex::new(None));
+        let cancellation = CancellationToken::new();
+        let mut clipboard = TestClipboard;
+        let mut apply_worker = worker_guard(None);
+        let mut effects = test_effects(
+            &sender,
+            &saved_plan_slot,
+            &cancellation,
+            &mut clipboard,
+            &mut apply_worker,
+        );
+        effects.history = Some(&history);
+        let mut state = SessionState::new(ExecutionState::new(Instant::now()));
+        let mut execution_view = execution::ExecutionViewState::default();
+
+        let outcome = apply_effect(
+            &mut state,
+            Some(Effect::PersistHistory(vec![SuccessfulTarget {
+                key,
+                duration: Duration::from_secs(1),
+            }])),
+            &mut execution_view,
+            &mut effects,
+        );
+
+        assert!(outcome.is_none());
+        fs::remove_file(root).expect("blocking file should be removed");
     }
 
     #[test]
@@ -2403,6 +2464,7 @@ mod tests {
             cancellation: &cancellation,
             clipboard: &mut clipboard,
             apply_worker: &mut apply_worker,
+            history: None,
         };
         assert!(
             dispatch(
