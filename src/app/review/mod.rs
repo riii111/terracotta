@@ -4,7 +4,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::execution::{ApplyStatus, Diagnostic, ExecutionEvent};
+use super::{
+    execution::{ApplyStatus, Diagnostic, ExecutionContext, ExecutionContextValue, ExecutionEvent},
+    plan::{PlanAction, PlanResource},
+};
 
 #[cfg(test)]
 pub(crate) mod git;
@@ -172,9 +175,11 @@ impl Debug for PlanDocument {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PlanMetadata {
     resource_addresses: Vec<String>,
+    resource_changes: Vec<PlanResource>,
     output_names: Vec<String>,
     additions: usize,
     changes: usize,
+    replacements: usize,
     deletions: usize,
     applyable: bool,
 }
@@ -191,12 +196,25 @@ impl PlanMetadata {
     ) -> Self {
         Self {
             resource_addresses,
+            resource_changes: Vec::new(),
             output_names,
             additions,
             changes,
+            replacements: 0,
             deletions,
             applyable,
         }
+    }
+
+    #[must_use]
+    pub(crate) fn with_resource_changes(
+        mut self,
+        resource_changes: Vec<PlanResource>,
+        replacements: usize,
+    ) -> Self {
+        self.resource_changes = resource_changes;
+        self.replacements = replacements;
+        self
     }
 
     #[must_use]
@@ -220,6 +238,11 @@ impl PlanMetadata {
     }
 
     #[must_use]
+    pub(crate) const fn replacements(&self) -> usize {
+        self.replacements
+    }
+
+    #[must_use]
     pub(crate) const fn deletions(&self) -> usize {
         self.deletions
     }
@@ -228,6 +251,7 @@ impl PlanMetadata {
     pub(crate) const fn has_changes(&self) -> bool {
         self.additions > 0
             || self.changes > 0
+            || self.replacements > 0
             || self.deletions > 0
             || !self.output_names.is_empty()
     }
@@ -236,12 +260,37 @@ impl PlanMetadata {
     pub(crate) const fn applyable(&self) -> bool {
         self.applyable
     }
+
+    pub(crate) fn destructive_addresses(&self) -> impl Iterator<Item = &str> {
+        self.resource_changes
+            .iter()
+            .filter(|resource| {
+                resource.has_action(&PlanAction::Delete) && !resource.is_replacement()
+            })
+            .map(|resource| resource.address.as_str())
+    }
+
+    pub(crate) fn replacement_addresses(&self) -> impl Iterator<Item = &str> {
+        self.resource_changes
+            .iter()
+            .filter(|resource| resource.is_replacement())
+            .map(|resource| resource.address.as_str())
+    }
+
+    #[must_use]
+    pub(crate) fn has_destructive_changes(&self) -> bool {
+        self.deletions > 0
+            || self.replacements > 0
+            || self.destructive_addresses().next().is_some()
+            || self.replacement_addresses().next().is_some()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PlanReview {
     root: PathBuf,
     workspace: String,
+    context: ExecutionContext,
     document: PlanDocument,
     metadata: PlanMetadata,
     diagnostics: Vec<Diagnostic>,
@@ -252,16 +301,19 @@ pub(crate) struct PlanReview {
 
 impl PlanReview {
     #[must_use]
-    pub(crate) const fn new(
+    pub(crate) fn new(
         root: PathBuf,
         workspace: String,
         document: PlanDocument,
         metadata: PlanMetadata,
         diagnostics: Vec<Diagnostic>,
     ) -> Self {
+        let context =
+            ExecutionContext::loading(root.display().to_string()).with_workspace(workspace.clone());
         Self {
             root,
             workspace,
+            context,
             document,
             metadata,
             diagnostics,
@@ -304,6 +356,31 @@ impl PlanReview {
     }
 
     #[must_use]
+    pub(crate) const fn context(&self) -> &ExecutionContext {
+        &self.context
+    }
+
+    #[must_use]
+    pub(crate) fn with_context(mut self, context: ExecutionContext) -> Self {
+        self.context = context;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn confirmation_input(&self) -> String {
+        let named =
+            self.metadata.has_destructive_changes() || self.context.is_production() == Some(true);
+        if named {
+            match self.context.display_name() {
+                ExecutionContextValue::Known(name) => name.clone(),
+                ExecutionContextValue::Loading => String::new(),
+            }
+        } else {
+            "yes".to_owned()
+        }
+    }
+
+    #[must_use]
     pub(crate) const fn document(&self) -> &PlanDocument {
         &self.document
     }
@@ -329,6 +406,10 @@ impl PlanReview {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "review completion carries the complete plan for the UI"
+)]
 pub(crate) enum PlanReviewMessage {
     Event(ExecutionEvent),
     Completed(PlanReview),

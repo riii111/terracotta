@@ -3,15 +3,15 @@ use std::time::Instant;
 use ratatui::{
     Frame,
     layout::Rect,
-    style::Style,
+    style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
 use crate::app::{
     copy::CopyNotice,
-    execution::DiagnosticSeverity,
-    review::{FilteredPlan, PlanLineKind, PlanReview},
+    execution::{DiagnosticSeverity, ExecutionContext, ExecutionContextValue},
+    review::{FilteredPlan, PlanLineKind, PlanMetadata, PlanReview},
     session::{ApplyConfirmationState, ReviewSessionState},
 };
 use crate::ui::primitives::{
@@ -60,8 +60,14 @@ pub(crate) struct ApplyConfirmationLayout {
     footer: Rect,
     inner: Rect,
     input: Rect,
-    lines: Vec<Line<'static>>,
+    prefix: Rect,
+    scroll: Rect,
+    suffix: Rect,
+    prefix_lines: Vec<Line<'static>>,
+    scroll_lines: Vec<Line<'static>>,
+    suffix_lines: Vec<Line<'static>>,
     footer_lines: Vec<Line<'static>>,
+    max_vertical: u16,
     renderable: bool,
 }
 
@@ -90,12 +96,36 @@ impl ApplyConfirmationLayout {
         self.input
     }
 
-    pub(crate) fn lines(&self) -> &[Line<'static>] {
-        &self.lines
+    pub(crate) const fn prefix(&self) -> Rect {
+        self.prefix
+    }
+
+    pub(crate) const fn scroll(&self) -> Rect {
+        self.scroll
+    }
+
+    pub(crate) const fn suffix(&self) -> Rect {
+        self.suffix
+    }
+
+    pub(crate) fn prefix_lines(&self) -> &[Line<'static>] {
+        &self.prefix_lines
+    }
+
+    pub(crate) fn scroll_lines(&self) -> &[Line<'static>] {
+        &self.scroll_lines
+    }
+
+    pub(crate) fn suffix_lines(&self) -> &[Line<'static>] {
+        &self.suffix_lines
     }
 
     pub(crate) fn footer_lines(&self) -> &[Line<'static>] {
         &self.footer_lines
+    }
+
+    pub(crate) const fn max_vertical(&self) -> u16 {
+        self.max_vertical
     }
 
     pub(crate) const fn renderable(&self) -> bool {
@@ -336,6 +366,15 @@ pub(crate) fn render_apply_confirmation(
     view: &ApplyConfirmationViewState,
 ) {
     let area = frame.area();
+    let background = ReviewSessionState::new(state.review().clone());
+    render_with_quit_confirmation(
+        frame,
+        &background,
+        &PlanReviewViewState::default(),
+        Instant::now(),
+        false,
+    );
+    dim_background(frame);
     let layout = apply_confirmation_layout(area, state);
     if layout.header().height > 0 {
         header::render_review(frame, layout.header(), state.review());
@@ -345,6 +384,7 @@ pub(crate) fn render_apply_confirmation(
         return;
     }
 
+    frame.render_widget(Clear, layout.frame());
     let block_inner =
         shell_layout::render_content_block_line(frame, layout.frame(), Line::default());
     let inner = padded_confirmation_inner(block_inner);
@@ -355,11 +395,33 @@ pub(crate) fn render_apply_confirmation(
         inner.width,
         inner.height.saturating_sub(1),
     );
+    debug_assert_eq!(
+        info_area,
+        Rect::new(
+            layout.prefix().x,
+            layout.prefix().y,
+            layout.prefix().width,
+            layout.prefix().height + layout.scroll().height + layout.suffix().height
+        )
+    );
     frame.render_widget(
-        Paragraph::new(layout.lines().to_owned())
+        Paragraph::new(layout.prefix_lines().to_owned())
             .style(theme::body_style())
             .wrap(Wrap { trim: false }),
-        info_area,
+        layout.prefix(),
+    );
+    frame.render_widget(
+        Paragraph::new(layout.scroll_lines().to_owned())
+            .style(theme::body_style())
+            .wrap(Wrap { trim: false })
+            .scroll((view.scroll().min(layout.max_vertical()), 0)),
+        layout.scroll(),
+    );
+    frame.render_widget(
+        Paragraph::new(layout.suffix_lines().to_owned())
+            .style(theme::body_style())
+            .wrap(Wrap { trim: false }),
+        layout.suffix(),
     );
     frame.render_widget(
         Paragraph::new(confirmation_input_line(view))
@@ -368,8 +430,15 @@ pub(crate) fn render_apply_confirmation(
         layout.input(),
     );
     footer::render(frame, layout.footer(), layout.footer_lines(), None);
+    clear_dim(frame, layout.header());
+    clear_dim(frame, layout.frame());
+    clear_dim(frame, layout.footer());
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "the confirmation layout keeps content and safety constraints together"
+)]
 pub(crate) fn apply_confirmation_layout(
     area: Rect,
     state: &ApplyConfirmationState,
@@ -397,10 +466,16 @@ pub(crate) fn apply_confirmation_layout(
     let inner_width = frame_width.saturating_sub(4);
     let lines = confirmation_lines(state);
     let body = Paragraph::new(lines.clone()).wrap(Wrap { trim: false });
+    let prefix_lines = lines[..7].to_vec();
+    let suffix_start = lines.len().saturating_sub(2);
+    let scroll_lines = lines[7..suffix_start].to_vec();
+    let suffix_lines = lines[suffix_start..].to_vec();
     let body_height = body.line_count(inner_width).saturating_add(1);
-    let frame_height = u16::try_from(body_height)
+    let natural_frame_height = u16::try_from(body_height)
         .unwrap_or(u16::MAX)
         .saturating_add(4);
+    let max_frame_height = available.height.saturating_sub(1);
+    let frame_height = natural_frame_height.min(max_frame_height);
     let group_height = frame_height.saturating_add(1);
     let renderable =
         inner_width > 0 && footer_fits && group_height <= available.height && frame_width >= 5;
@@ -415,6 +490,50 @@ pub(crate) fn apply_confirmation_layout(
         inner.width,
         u16::from(inner.height > 0),
     );
+    let info_height = inner.height.saturating_sub(1);
+    let prefix_height = u16::try_from(
+        Paragraph::new(prefix_lines.clone())
+            .wrap(Wrap { trim: false })
+            .line_count(inner_width),
+    )
+    .unwrap_or(u16::MAX);
+    let suffix_height = u16::try_from(
+        Paragraph::new(suffix_lines.clone())
+            .wrap(Wrap { trim: false })
+            .line_count(inner_width),
+    )
+    .unwrap_or(u16::MAX);
+    let fixed_height = prefix_height.saturating_add(suffix_height);
+    let scroll_height = info_height.saturating_sub(fixed_height);
+    let prefix = Rect::new(
+        inner.x,
+        inner.y,
+        inner.width,
+        prefix_height.min(info_height),
+    );
+    let suffix_y = inner.y + info_height.saturating_sub(suffix_height);
+    let suffix = Rect::new(
+        inner.x,
+        suffix_y,
+        inner.width,
+        suffix_height.min(info_height),
+    );
+    let scroll = Rect::new(
+        inner.x,
+        inner.y.saturating_add(prefix.height),
+        inner.width,
+        scroll_height,
+    );
+    let renderable = renderable
+        && usize::from(info_height) >= usize::from(fixed_height)
+        && (scroll_lines.is_empty() || scroll_height > 0);
+    let max_vertical = u16::try_from(
+        Paragraph::new(scroll_lines.clone())
+            .wrap(Wrap { trim: false })
+            .line_count(inner_width)
+            .saturating_sub(usize::from(scroll_height)),
+    )
+    .unwrap_or(u16::MAX);
     ApplyConfirmationLayout {
         header,
         notice: available,
@@ -422,8 +541,14 @@ pub(crate) fn apply_confirmation_layout(
         footer,
         inner,
         input,
-        lines,
+        prefix,
+        scroll,
+        suffix,
+        prefix_lines,
+        scroll_lines,
+        suffix_lines,
         footer_lines,
+        max_vertical,
         renderable,
     }
 }
@@ -439,43 +564,162 @@ const fn padded_confirmation_inner(inner: Rect) -> Rect {
 
 fn confirmation_lines(state: &ApplyConfirmationState) -> Vec<Line<'static>> {
     let metadata = state.review().metadata();
+    let context = state.review().context();
+    let target = match context.display_name() {
+        ExecutionContextValue::Known(name) => {
+            let suffix = context.is_production().is_some_and(|production| production);
+            if suffix {
+                format!("{name} [PROD]")
+            } else {
+                name.clone()
+            }
+        }
+        ExecutionContextValue::Loading => "loading...".to_owned(),
+    };
     let mut lines = vec![
         Line::from("Apply this reviewed plan?"),
         Line::default(),
         Line::from(vec![
             Span::styled("Target: ", theme::secondary_style()),
-            Span::styled(
-                state.review().root().display().to_string(),
-                theme::body_style(),
-            ),
+            Span::styled(target, theme::body_style()),
         ]),
         Line::from(vec![
             Span::styled("Workspace: ", theme::secondary_style()),
             Span::styled(state.review().workspace().to_owned(), theme::body_style()),
         ]),
+        Line::from(vec![
+            Span::styled("Directory: ", theme::secondary_style()),
+            Span::styled(
+                relative_directory(context.cwd_path(), context.launch_root_path()),
+                theme::body_style(),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Tool: ", theme::secondary_style()),
+            Span::styled(tool_version(context), theme::body_style()),
+        ]),
         Line::from(format!(
-            "Plan: {} to add, {} to change, {} to destroy.",
+            "Plan: +{} add  ~{} update  {} replace  -{} destroy",
             metadata.additions(),
             metadata.changes(),
-            metadata.deletions()
+            metadata.replacements(),
+            metadata.deletions(),
         )),
     ];
+    append_variable_sources(&mut lines, context);
+    append_destructive_resources(&mut lines, metadata);
     if !state.review().search_query().is_empty() {
         lines.push(Line::from(Span::styled(
             "Filter changes display only. Apply uses all changes.",
             theme::secondary_style(),
         )));
     }
-    if metadata.deletions() > 0 {
-        lines.push(Line::default());
-        lines.push(Line::from(Span::styled(
-            "This plan includes resource deletion.",
-            theme::warning_style(),
-        )));
-        lines.push(Line::default());
-    }
-    lines.push(Line::from("Apply this plan? Type yes or no."));
+    lines.push(Line::default());
+    lines.push(Line::from(format!(
+        "Type {} to apply (exact match).",
+        state.review().confirmation_input()
+    )));
     lines
+}
+
+fn append_variable_sources(lines: &mut Vec<Line<'static>>, context: &ExecutionContext) {
+    let sources = context.variable_sources();
+    if sources.automatic_files().is_empty()
+        && sources.explicit_files().is_empty()
+        && !sources.has_var_argument()
+        && sources.environment_variables().is_empty()
+    {
+        return;
+    }
+    lines.push(Line::default());
+    lines.push(Line::from(Span::styled(
+        "Variable sources:",
+        theme::secondary_style(),
+    )));
+    for path in sources.automatic_files() {
+        lines.push(Line::from(format!("  auto: {}", source_name(path))));
+    }
+    for path in sources.explicit_files() {
+        lines.push(Line::from(format!("  -var-file: {}", source_name(path))));
+    }
+    if sources.has_var_argument() {
+        lines.push(Line::from("  -var: provided"));
+    }
+    if !sources.environment_variables().is_empty() {
+        lines.push(Line::from(format!(
+            "  TF_VAR_*: {} provided",
+            sources.environment_variables().len()
+        )));
+    }
+}
+
+fn append_destructive_resources(lines: &mut Vec<Line<'static>>, metadata: &PlanMetadata) {
+    let destroy = metadata.destructive_addresses().collect::<Vec<_>>();
+    let replace = metadata.replacement_addresses().collect::<Vec<_>>();
+    if destroy.is_empty() && replace.is_empty() {
+        return;
+    }
+    lines.push(Line::default());
+    for (label, addresses, style) in [
+        ("Destroy", destroy, theme::error_style()),
+        ("Replace", replace, theme::warning_style()),
+    ] {
+        if addresses.is_empty() {
+            continue;
+        }
+        lines.push(Line::from(Span::styled(format!("{label}:"), style)));
+        lines.extend(
+            addresses
+                .into_iter()
+                .map(|address| Line::from(Span::styled(format!("  {address}"), style))),
+        );
+    }
+}
+
+fn source_name(path: &std::path::Path) -> String {
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
+}
+
+fn relative_directory(path: &std::path::Path, launch_root: Option<&std::path::Path>) -> String {
+    launch_root
+        .and_then(|root| path.strip_prefix(root).ok())
+        .map_or_else(
+            || path.display().to_string(),
+            |relative| {
+                if relative.as_os_str().is_empty() {
+                    ".".to_owned()
+                } else {
+                    format!("./{}", relative.display())
+                }
+            },
+        )
+}
+
+fn tool_version(context: &ExecutionContext) -> String {
+    let version = match context.tool_version() {
+        ExecutionContextValue::Known(version) => version.as_str(),
+        ExecutionContextValue::Loading => "loading...",
+    };
+    format!("{} {version}", context.tool_name())
+}
+
+fn dim_background(frame: &mut Frame<'_>) {
+    for cell in &mut frame.buffer_mut().content {
+        cell.set_style(cell.style().add_modifier(Modifier::DIM));
+    }
+}
+
+fn clear_dim(frame: &mut Frame<'_>, area: Rect) {
+    for y in area.y..area.bottom() {
+        for x in area.x..area.right() {
+            if let Some(cell) = frame.buffer_mut().cell_mut((x, y)) {
+                cell.modifier.remove(Modifier::DIM);
+            }
+        }
+    }
 }
 
 fn confirmation_input_line(view: &ApplyConfirmationViewState) -> Line<'static> {
@@ -899,9 +1143,10 @@ const fn terminal_notice_message(
 fn plan_status_line(state: &ReviewSessionState) -> Line<'static> {
     Line::from(Span::styled(
         format!(
-            "Plan: {} to add, {} to change, {} to destroy.",
+            "Plan: +{} add  ~{} update  {} replace  -{} destroy",
             state.review().metadata().additions(),
             state.review().metadata().changes(),
+            state.review().metadata().replacements(),
             state.review().metadata().deletions(),
         ),
         theme::body_style(),
@@ -1076,7 +1321,7 @@ const fn severity_label(severity: DiagnosticSeverity) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::{
@@ -2735,6 +2980,22 @@ End of synthetic plan body."#;
     mod confirmation {
         use super::*;
 
+        #[test]
+        fn relative_directory_uses_the_launch_root_and_shows_dot_for_the_root() {
+            assert_eq!(
+                relative_directory(Path::new("/repo"), Some(Path::new("/repo"))),
+                "."
+            );
+            assert_eq!(
+                relative_directory(Path::new("/repo/infra"), Some(Path::new("/repo"))),
+                "./infra"
+            );
+            assert_eq!(
+                relative_directory(Path::new("/other"), Some(Path::new("/repo"))),
+                "/other"
+            );
+        }
+
         fn confirmation_review(
             root: &str,
             workspace: &str,
@@ -2756,7 +3017,7 @@ End of synthetic plan body."#;
             let state = confirmation_state(review());
             let mut view = ApplyConfirmationViewState::default();
             for character in "yes".chars() {
-                view.apply(ApplyConfirmationInput::Character(character));
+                view.apply(ApplyConfirmationInput::Character(character), "yes");
             }
             let buffer = render_to_buffer((120, 40), |frame| {
                 render_apply_confirmation(frame, &state, &view);
@@ -2835,12 +3096,12 @@ End of synthetic plan body."#;
                 .filter(|character| !character.is_whitespace() && *character != '│')
                 .collect::<String>();
             assert!(text.contains("Target:"));
+            assert!(text.contains("Target: staging"));
+            assert!(compact.contains("Directory:"));
             assert!(compact.contains("/repo"));
             assert!(compact.contains("environments/production"));
             assert!(compact.contains("東京"));
-            assert!(compact.contains("with-a-very-long-target-name-that-must-wrap"));
             assert!(text.contains("Workspace: staging"));
-            assert!(text.contains("Plan: 0 to add, 1 to change, 0 to destroy."));
             assert!(!text.contains("This plan includes resource deletion."));
             assert_eq!(layout.footer().y, layout.frame().bottom());
         }
@@ -2872,7 +3133,7 @@ End of synthetic plan body."#;
             });
             assert_text_segment_uses_style(
                 &buffer,
-                "Target: /repo/environments/production/main",
+                "Target: main [PROD]",
                 0,
                 "Target: ".chars().count(),
                 Color::Rgb(0xc0, 0xb8, 0xb8),
@@ -2881,9 +3142,9 @@ End of synthetic plan body."#;
             );
             assert_text_segment_uses_style(
                 &buffer,
-                "Target: /repo/environments/production/main",
+                "Target: main [PROD]",
                 "Target: ".chars().count(),
-                "/repo/environments/production/main".chars().count(),
+                "main [PROD]".chars().count(),
                 Color::Rgb(0xe9, 0xdb, 0xdb),
                 Color::Reset,
                 Modifier::empty(),
@@ -2897,14 +3158,6 @@ End of synthetic plan body."#;
                 Color::Reset,
                 Modifier::empty(),
             );
-            assert_text_prefix_uses_style(
-                &buffer,
-                "This plan includes resource deletion.",
-                "This plan includes resource deletion.",
-                Color::Rgb(0xeb, 0xcb, 0x8b),
-                Color::Reset,
-                Modifier::BOLD,
-            );
         }
 
         #[test]
@@ -2915,7 +3168,7 @@ End of synthetic plan body."#;
                 .repeat(3)
                 .chars()
             {
-                view.apply(ApplyConfirmationInput::Character(character));
+                view.apply(ApplyConfirmationInput::Character(character), "yes");
             }
             let layout = apply_confirmation_layout(Rect::new(0, 0, 80, 24), &state);
             assert!(confirmation_input_scroll(&view, layout.input().width) > 0);
@@ -3270,7 +3523,7 @@ End of synthetic plan body."#;
             assert!(
                 position("Warning: Deprecated configuration") < position("warning detail line 1")
             );
-            assert!(position("Plan: 1 to add") < position("Error: Invalid configuration"));
+            assert!(position("Plan: +1 add") < position("Error: Invalid configuration"));
             assert_text_prefix_uses_style(
                 &buffer,
                 "Error: Invalid configuration",

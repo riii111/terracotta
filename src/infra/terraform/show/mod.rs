@@ -12,7 +12,6 @@ use super::command::{
     TerraformExecutionErrorKind, interrupted_error, non_zero_error, run_command_with_events,
 };
 
-#[cfg(test)]
 mod json;
 mod metadata;
 mod text;

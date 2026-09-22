@@ -1,3 +1,11 @@
+#![cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "detailed plan parsing remains for dormant Git attribution tests"
+    )
+)]
+
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 
@@ -246,7 +254,10 @@ fn parse_output_changes(
         let output = output
             .as_object()
             .ok_or(PlanParseError::InvalidField("output change"))?;
-        let actions = parse_actions(output, "output change actions")?;
+        let actions = match output.get("actions") {
+            None | Some(Value::Null) => Vec::new(),
+            Some(_) => parse_actions(output, "output change actions")?,
+        };
 
         if !matches!(classify_actions(&actions), ActionClassification::NoOp) {
             unsupported_changes.push(UnsupportedChange {
@@ -337,14 +348,20 @@ fn parse_action_invocation_metadata(
 }
 
 fn parse_resource_mode(resource: &Map<String, Value>) -> Result<ResourceMode, PlanParseError> {
-    match required_string(resource, "mode")? {
-        "managed" => Ok(ResourceMode::Managed),
-        "data" => Ok(ResourceMode::Data),
-        _ => Err(PlanParseError::InvalidField("resource mode")),
+    match resource.get("mode") {
+        None => Ok(ResourceMode::Managed),
+        Some(value) => match value
+            .as_str()
+            .ok_or(PlanParseError::InvalidField("resource mode"))?
+        {
+            "managed" => Ok(ResourceMode::Managed),
+            "data" => Ok(ResourceMode::Data),
+            _ => Err(PlanParseError::InvalidField("resource mode")),
+        },
     }
 }
 
-fn parse_actions(
+pub(super) fn parse_actions(
     object: &Map<String, Value>,
     field: &'static str,
 ) -> Result<Vec<PlanAction>, PlanParseError> {

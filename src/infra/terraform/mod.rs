@@ -8,6 +8,7 @@ mod line_buffer;
 pub(crate) mod hcl;
 mod plan;
 mod show;
+mod version;
 mod workspace;
 
 pub(crate) use apply::run_apply_with_arguments;
