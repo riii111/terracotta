@@ -8,15 +8,19 @@ mod providers;
 // HCL parsing is dormant with Git attribution and remains covered by unit tests.
 #[cfg(test)]
 pub(crate) mod hcl;
+pub(crate) mod init;
 mod plan;
 mod show;
 mod version;
 mod workspace;
 
 pub(crate) use apply::run_apply_with_arguments;
-pub(crate) use command::{ProcessStatus, SystemProcessRunner, delegate, resolve_executable};
+pub(crate) use command::{
+    ProcessStatus, SystemProcessRunner, TerraformExecutionError, delegate, resolve_executable,
+};
 pub(crate) use plan::{
-    PlanRun, SavedPlan, read_saved_plan_review, run_passthrough_plan, saved_plan_for_plan,
+    PlanRun, SavedPlan, read_saved_plan_review, run_environment_plan, run_passthrough_plan,
+    saved_plan_for_plan,
 };
 pub(crate) use providers::schema::read_provider_schema_with_arguments;
 pub(crate) use workspace::read_workspace_with_arguments;

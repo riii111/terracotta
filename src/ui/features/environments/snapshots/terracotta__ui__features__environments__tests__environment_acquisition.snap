@@ -1,0 +1,28 @@
+---
+source: src/ui/features/environments/tests.rs
+expression: text
+---
+Environment plans   Ready: 1/5
+  Ready      a-ready
+> Error      b-error
+  Running    c-running
+  Pending    d-pending
+  Excluded: HCP execution e-hcp
+
+
+
+
+
+
+
+
+
+
+
+
+Missing required variable
+Pass a variable before retrying.
+
+
+
+↑↓ select   Enter plan   r retry Error   q quit

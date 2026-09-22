@@ -7,6 +7,49 @@ printf 'TF_CLI_ARGS=%s\n' "${TF_CLI_ARGS-}" >> "$TERRACOTTA_FAKE_ENV_LOG"
 printf 'TF_CLI_ARGS_plan=%s\n' "${TF_CLI_ARGS_plan-}" >> "$TERRACOTTA_FAKE_ENV_LOG"
 printf 'TF_CLI_ARGS_apply=%s\n' "${TF_CLI_ARGS_apply-}" >> "$TERRACOTTA_FAKE_ENV_LOG"
 
+case "${TERRACOTTA_FAKE_MODE:-}" in
+  env_*)
+    name=$(basename "$PWD")
+    case "$1" in
+      workspace)
+        printf '%s\n' "${TF_WORKSPACE:-default}"
+        exit 0
+        ;;
+      init)
+        if [ -f fail-init ]; then printf 'synthetic init failure\n' >&2; exit 1; fi
+        mkdir -p .terraform
+        printf '%s' '{"backend":{"type":"local"}}' > .terraform/terraform.tfstate
+        : > initialized
+        ;;
+      plan)
+        for argument in "$@"; do
+          case "$argument" in -out=*) printf '%s\n' "${argument#-out=}" >> "$TERRACOTTA_FAKE_PLAN_PATH.all" ;; esac
+        done
+        if [ -f warning-plan ]; then
+          printf '%s\n' '{"type":"diagnostic","diagnostic":{"severity":"warning","summary":"synthetic plan warning","detail":"Review this provider warning"}}'
+        fi
+        if [ -f interrupt-plan ]; then exit 130; fi
+        if [ -f require-init ]; then
+          printf '%s\n' '{"type":"diagnostic","diagnostic":{"severity":"error","summary":"Backend initialization required","detail":"Run init"}}'
+          if [ ! -f always-reinit ]; then rm require-init; fi
+          exit 1
+        fi
+        if [ -f fail-plan ]; then
+          printf '%s\n' '{"type":"diagnostic","diagnostic":{"severity":"error","summary":"Missing required variable","detail":"Pass a variable to retry this environment"}}'
+          rm fail-plan
+          exit 1
+        fi
+        if [ -f slow-plan ]; then
+          for argument in "$@"; do
+            case "$argument" in -out=*) printf '%s\n' "${argument#-out=}" > "$TERRACOTTA_FAKE_PLAN_PATH" ;; esac
+          done
+          exec python3 -c 'import os,signal,sys,time; signal.signal(signal.SIGINT, lambda *_: (open(os.environ["TERRACOTTA_FAKE_SIGNAL_LOG"], "a").write("plan_present=" + str(os.path.isfile(open(os.environ["TERRACOTTA_FAKE_PLAN_PATH"]).read().strip())) + "\n"), time.sleep(0.1), sys.exit(130))); open(os.environ["TERRACOTTA_FAKE_PID_PATH"], "w").write(str(os.getpid())); exec("while not os.path.isfile(\"release-plan\"):\n time.sleep(0.1)"); sys.exit(2)'
+        fi
+        ;;
+    esac
+    ;;
+esac
+
 case "$1" in
   version)
     printf '%s\n' '{"terraform_version":"1.9.0"}'
@@ -88,7 +131,9 @@ case "$1" in
     exit 0
     ;;
   show)
+    case "${TERRACOTTA_FAKE_MODE:-}" in env_*) printf "%s|%s\n" "$PWD" "$*" >> "$TERRACOTTA_FAKE_PLAN_PATH.shows" ;; esac
     if [ "$2" = -json ]; then
+      if [ -f invalid-show ]; then printf '%s\n' '{"format_version":"99.0"}'; exit 0; fi
       if [ "${TERRACOTTA_FAKE_MODE:-success}" = no_changes ]; then
         printf '%s\n' '{"format_version":"1.0","applyable":false}'
       else
