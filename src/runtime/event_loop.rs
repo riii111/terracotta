@@ -16,12 +16,12 @@ use crate::{
             ExecutionContextValue, ExecutionStage, ExecutionState, ExecutionTargetState, Tool,
         },
         review::PlanReviewMessage,
-        session::{self, Action, Effect, SessionOutcome, SessionState},
+        session::{self, Action, Effect, ReviewSessionState, SessionOutcome, SessionState},
     },
     infra::{CancellationToken, ClipboardExecutor, terraform, terraform::SavedPlan},
     ui::{
         QuitConfirmationInput,
-        features::{execution, plan_review},
+        features::{execution, overview, plan_review},
         quit_confirmation_key_to_input,
     },
 };
@@ -108,6 +108,21 @@ pub(crate) fn run_connected(
                             layout.max_horizontal(),
                             layout.matches(),
                         );
+                    }
+                    if let Some(overview_state) = state.overview() {
+                        let layout = overview::layout(
+                            Rect::new(0, 0, width, height),
+                            overview_state,
+                            review_view.overview(),
+                        );
+                        let content = overview::OverviewContent::from_review(
+                            overview_state.review(),
+                            review_view.overview().filter(),
+                            review_view.overview().expanded(),
+                        );
+                        review_view
+                            .overview_mut()
+                            .reconcile(layout.max_vertical(), content.rows.len());
                     }
                 }
                 Event::Key(key) if key.is_press() => {
@@ -234,6 +249,11 @@ fn should_draw(state: &SessionState, dirty: bool, now: Instant) -> bool {
                 || review.copy_flash_pending()
                 || review.copy_notice_pending()
         })
+        || state.overview().is_some_and(|overview| {
+            overview.copy_flash_active(now)
+                || overview.copy_flash_pending()
+                || overview.copy_notice_pending()
+        })
         || state.apply().is_some_and(|apply| {
             apply.copy_flash_active(now)
                 || apply.copy_flash_pending()
@@ -291,6 +311,14 @@ fn clear_expired_copy_feedback(state: &mut SessionState, now: Instant) {
                 review.clear_copy_flash();
             }
         }
+        SessionState::Overview(overview) => {
+            if overview.copy_notice_pending() && overview.copy_notice_at(now).is_none() {
+                overview.clear_copy_notice();
+            }
+            if overview.copy_flash_pending() && !overview.copy_flash_active(now) {
+                overview.clear_copy_flash();
+            }
+        }
         SessionState::Apply(apply) => {
             if apply.copy_notice_pending() && apply.copy_notice_at(now).is_none() {
                 apply.clear_copy_notice();
@@ -303,6 +331,10 @@ fn clear_expired_copy_feedback(state: &mut SessionState, now: Instant) {
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "the key dispatcher keeps the existing review and apply paths together"
+)]
 fn handle_key_event<B: Backend>(
     terminal: &Terminal<B>,
     state: &SessionState,
@@ -351,6 +383,10 @@ fn handle_key_event<B: Backend>(
         return handle_execution_key_event(terminal, apply, execution_view, key);
     }
 
+    if let Some(overview_state) = state.overview() {
+        return handle_overview_key_event(terminal, overview_state, review_view, key);
+    }
+
     let Some(review) = state.review() else {
         return Ok(None);
     };
@@ -376,6 +412,22 @@ fn handle_key_event<B: Backend>(
             Some(plan_review::PlanReviewInput::Quit) => Some(Action::Quit),
             Some(plan_review::PlanReviewInput::Apply) => Some(Action::OpenApplyConfirmation),
             Some(plan_review::PlanReviewInput::Copy) => Some(Action::Copy(CopyTarget::Plan)),
+            Some(plan_review::PlanReviewInput::OpenOverview) => {
+                let content = overview::OverviewContent::from_review(
+                    review.review(),
+                    review_view.overview().filter(),
+                    review_view.overview().expanded(),
+                );
+                review_view
+                    .overview_mut()
+                    .reconcile(u16::MAX, content.rows.len());
+                Some(Action::OpenOverview)
+            }
+            Some(plan_review::PlanReviewInput::SearchCancel)
+                if !review_view.searching() && review.is_from_overview() =>
+            {
+                Some(Action::ReturnToOverview)
+            }
             Some(input) => {
                 let size = terminal.size()?;
                 let body = plan_review::layout(
@@ -397,6 +449,80 @@ fn handle_key_event<B: Backend>(
             None => None,
         },
     )
+}
+
+fn handle_overview_key_event<B: Backend>(
+    terminal: &Terminal<B>,
+    overview_state: &session::OverviewSessionState,
+    review_view: &mut plan_review::PlanReviewViewState,
+    key: KeyEvent,
+) -> Result<Option<Action>, B::Error> {
+    if review_view.overview().overlay().is_some() {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('?') => review_view.overview_mut().close_overlay(),
+            KeyCode::Up | KeyCode::Char('k') => review_view.overview_mut().scroll_overlay(-1),
+            KeyCode::Down | KeyCode::Char('j') => review_view.overview_mut().scroll_overlay(1),
+            KeyCode::PageUp => review_view.overview_mut().scroll_overlay(-8),
+            KeyCode::PageDown => review_view.overview_mut().scroll_overlay(8),
+            KeyCode::Home => review_view.overview_mut().overlay_top(),
+            KeyCode::End => review_view.overview_mut().overlay_bottom(),
+            _ => {}
+        }
+        return Ok(None);
+    }
+    let size = terminal.size()?;
+    let layout = overview::layout(
+        Rect::new(0, 0, size.width, size.height),
+        overview_state,
+        review_view.overview(),
+    );
+    let content = overview::OverviewContent::from_review(
+        overview_state.review(),
+        review_view.overview().filter(),
+        review_view.overview().expanded(),
+    );
+    let input = overview::key_to_input(
+        key,
+        review_view.overview().searching(),
+        !review_view.overview().filter().is_empty(),
+    );
+    let Some(input) = input else {
+        return Ok(None);
+    };
+    let command =
+        review_view
+            .overview_mut()
+            .apply(input, layout.body(), layout.max_vertical(), &content);
+    if let Some(overview::OverviewCommand::Open(address)) = command.as_ref() {
+        jump_to_overview_address(terminal, review_view, overview_state, address.as_deref())?;
+    }
+    Ok(command.map(|command| match command {
+        overview::OverviewCommand::Open(address) => Action::OpenReviewFromOverview { address },
+        overview::OverviewCommand::ViewPlan | overview::OverviewCommand::Back => {
+            review_view.jump_to_line(0, u16::MAX);
+            Action::OpenReviewFromOverview { address: None }
+        }
+        overview::OverviewCommand::Copy => Action::Copy(CopyTarget::Plan),
+        overview::OverviewCommand::Quit => Action::Quit,
+    }))
+}
+
+fn jump_to_overview_address<B: Backend>(
+    terminal: &Terminal<B>,
+    review_view: &mut plan_review::PlanReviewViewState,
+    overview: &session::OverviewSessionState,
+    address: Option<&str>,
+) -> Result<(), B::Error> {
+    let line = address
+        .and_then(|address| overview.review().document().block_for_address(address))
+        .map_or(0, |block| block.lines().start);
+    let mut review = overview.review().clone();
+    review.set_search_query(String::new());
+    let temporary = ReviewSessionState::new_from_overview(review);
+    let size = terminal.size()?;
+    let layout = plan_review::layout(Rect::new(0, 0, size.width, size.height), false, &temporary);
+    review_view.jump_to_line(line, layout.max_vertical());
+    Ok(())
 }
 
 fn handle_execution_key_event<B: Backend>(
@@ -534,6 +660,11 @@ fn draw_with_quit_confirmation<B: Backend>(
                     now,
                     quit_confirmation,
                 );
+            })?;
+        }
+        SessionState::Overview(overview_state) => {
+            terminal.draw(|frame| {
+                overview::render(frame, overview_state, review_view.overview(), now);
             })?;
         }
         SessionState::ApplyConfirmation(confirmation) => {
@@ -831,7 +962,7 @@ mod tests {
         },
         plan::PlanAction,
         review::{PlanMetadata, PlanReview, test_support::plan_document},
-        session::{ApplyConfirmationState, ReviewSessionState},
+        session::ApplyConfirmationState,
     };
     use crate::infra::history::HistoryStore;
     use crate::runtime::{WorkerGuard, finalize_ui_result};

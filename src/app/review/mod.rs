@@ -188,13 +188,6 @@ impl PlanDocument {
     }
 
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "address index is consumed by the Overview review flow"
-        )
-    )]
     pub(crate) fn block_for_address(&self, address: &str) -> Option<&PlanBlock> {
         self.address_blocks
             .get(address)
@@ -327,6 +320,11 @@ impl PlanMetadata {
     #[must_use]
     pub(crate) const fn deletions(&self) -> usize {
         self.deletions
+    }
+
+    #[must_use]
+    pub(crate) const fn nonstandard_changes(&self) -> usize {
+        self.nonstandard_changes
     }
 
     #[must_use]
@@ -514,19 +512,11 @@ impl PlanReview {
     }
 
     #[must_use]
-    #[expect(
-        dead_code,
-        reason = "the structured plan is consumed by the Overview SBI"
-    )]
     pub(crate) const fn plan(&self) -> &Plan {
         &self.plan
     }
 
     #[must_use]
-    #[expect(
-        dead_code,
-        reason = "provider schemas are consumed by the grouping SBI"
-    )]
     pub(crate) const fn provider_schemas(&self) -> Option<&ProviderSchemas> {
         self.provider_schemas.as_ref()
     }

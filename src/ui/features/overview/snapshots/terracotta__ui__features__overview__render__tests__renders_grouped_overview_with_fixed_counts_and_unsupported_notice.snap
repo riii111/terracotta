@@ -1,0 +1,28 @@
+---
+source: src/ui/features/overview/render.rs
+expression: buffer_text(&buffer)
+---
+infra  ws:default  terraform loading...  /repo/infra
+Overview  +0 add  ~2 update  0 replace  -0 destroy  Repeated: 2
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Change Address
+Other changes: 1 output/import/move or unsupported change(s). Press v for the full plan.
+  ~ x2   [+] terraform_data.server[*]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/ filter | Enter open raw | Space expand | v full plan | ? help | q quit

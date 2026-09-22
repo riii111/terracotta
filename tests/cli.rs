@@ -63,6 +63,40 @@ mod pty_tests {
 Plan: 0 to add, 1 to change, 0 to destroy.
 "#;
 
+    const OVERVIEW_PLAN_JSON: &str = r#"{
+  "format_version": "1.0",
+  "applyable": true,
+  "resource_changes": [
+    {"address":"terraform_data.api","change":{"actions":["update"],"before":{"input":"old"},"after":{"input":"new"}}},
+    {"address":"terraform_data.server[\"one\"]","change":{"actions":["update"],"before":{"input":"old"},"after":{"input":"new"}}},
+    {"address":"terraform_data.server[\"two\"]","change":{"actions":["update"],"before":{"input":"old"},"after":{"input":"new"}}}
+  ],
+  "output_changes": {"endpoint": {"change": {"actions":["update"],"after":"new"}}}
+}"#;
+
+    const OVERVIEW_PLAN_TEXT: &str = r#"Terraform will perform the following actions:
+
+  # terraform_data.api will be updated in-place
+  ~ resource "terraform_data" "api" {
+      ~ input = "old" -> "new"
+    }
+
+  # terraform_data.server["one"] will be updated in-place
+  ~ resource "terraform_data" "server" {
+      ~ input = "old" -> "new"
+    }
+
+  # terraform_data.server["two"] will be updated in-place
+  ~ resource "terraform_data" "server" {
+      ~ input = "old" -> "new"
+    }
+
+Changes to Outputs:
+  ~ endpoint = "old" -> "new"
+
+Plan: 0 to add, 3 to change, 0 to destroy.
+"#;
+
     const FAKE_TERRAFORM: &str = include_str!("support/cli/fake_terraform.sh");
     const PTY_DRIVER: &str = include_str!("support/cli/pty_driver.py");
 
@@ -130,6 +164,13 @@ Plan: 0 to add, 1 to change, 0 to destroy.
 
         fn run(&self, scenario: &str, columns: u16, rows: u16) -> PtyResult {
             self.run_with_command(scenario, columns, rows, "plan")
+        }
+
+        fn use_overview_plan(&self) {
+            fs::write(&self.show_json, OVERVIEW_PLAN_JSON)
+                .expect("overview show JSON should be written");
+            fs::write(&self.show_text, OVERVIEW_PLAN_TEXT)
+                .expect("overview show text should be written");
         }
 
         fn run_with_command(
@@ -449,6 +490,23 @@ Plan: 0 to add, 1 to change, 0 to destroy.
     }
 
     #[test]
+    fn pty_overview_groups_filters_and_returns_to_the_raw_plan() {
+        let fixture = Fixture::new();
+        fixture.use_overview_plan();
+        let result = fixture.run("overview_navigation", 120, 30);
+
+        assert_eq!(result.exit_code, 0);
+        result.assert_restored();
+        result.observed("overview_opened");
+        result.observed("overview_expanded");
+        result.observed("overview_raw_block");
+        result.observed("overview_restored");
+        result.observed("overview_filtered");
+        result.observed("overview_full_plan");
+        fixture.assert_saved_plan_removed();
+    }
+
+    #[test]
     fn pty_quit_requires_enter_and_keeps_other_result_actions_available() {
         let fixture = Fixture::new();
         let result = fixture.run("quit_confirmation", 100, 24);
@@ -646,6 +704,38 @@ Plan: 0 to add, 1 to change, 0 to destroy.
         result.observed("apply_result");
     }
 
+    #[test]
+    #[ignore = "requires Terraform CLI and the interactive demo"]
+    fn basic_scenario_demo_opens_the_tui_after_noninteractive_setup() {
+        let output = Command::new("python3")
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .args([
+                "tests/support/cli/pty_driver.py",
+                "python3",
+                env!("CARGO_MANIFEST_DIR"),
+                "120",
+                "30",
+                "demo",
+                "fixtures/basic/scenario.py",
+                "demo",
+            ])
+            .env("RUSTC_WRAPPER", "")
+            .env_remove("TF_IN_AUTOMATION")
+            .env_remove("CI")
+            .output()
+            .expect("basic scenario demo PTY should start");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let result = PtyResult::parse(&String::from_utf8_lossy(&output.stdout));
+        assert_eq!(result.exit_code, 0);
+        result.assert_restored();
+        result.observed("demo_tui");
+        result.observed("demo_plan");
+    }
+
     struct BasicScenario {
         directory: PathBuf,
     }
@@ -677,7 +767,7 @@ Plan: 0 to add, 1 to change, 0 to destroy.
                 .arg("tests/support/cli/pty_driver.py")
                 .arg(env!("CARGO_BIN_EXE_terracotta"))
                 .arg(&self.directory)
-                .args(["100", "24", "basic_workflow", "plan"])
+                .args(["100", "24", "basic_workflow", "apply"])
                 .env_remove("TF_IN_AUTOMATION")
                 .env_remove("CI")
                 .env_remove("TF_CLI_ARGS")
