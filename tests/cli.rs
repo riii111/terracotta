@@ -287,10 +287,11 @@ Plan: 0 to add, 1 to change, 0 to destroy.
         result.observed("plan_text");
         let arguments = fixture.invocation_arguments();
         assert!(arguments[0].starts_with("plan -detailed-exitcode -out="));
-        assert_eq!(arguments[1], "workspace show");
-        assert!(arguments[2].starts_with("show -no-color "));
-        assert!(arguments[3].starts_with("show -json "));
-        assert_eq!(arguments.len(), 4);
+        assert_eq!(arguments[1], "version -json");
+        assert_eq!(arguments[2], "workspace show");
+        assert!(arguments[3].starts_with("show -no-color "));
+        assert!(arguments[4].starts_with("show -json "));
+        assert_eq!(arguments.len(), 5);
         fixture.assert_saved_plan_removed();
     }
 
@@ -351,8 +352,8 @@ Plan: 0 to add, 1 to change, 0 to destroy.
         let arguments = fixture.invocation_arguments();
         assert!(arguments[0].contains("-var name=value"));
         assert!(arguments[0].contains("-parallelism 4"));
-        assert!(arguments[5].contains("-parallelism 4"));
-        assert!(!arguments[5].contains("-var"));
+        assert!(arguments[6].contains("-parallelism 4"));
+        assert!(!arguments[6].contains("-var"));
         fixture.assert_saved_plan_removed();
     }
 
@@ -432,12 +433,12 @@ Plan: 0 to add, 1 to change, 0 to destroy.
         result.observed("apply_started");
         result.observed("apply_success");
         let arguments = fixture.invocation_arguments();
-        assert_eq!(arguments.len(), 6);
-        assert!(arguments[4].starts_with("workspace show"));
-        assert!(arguments[5].starts_with("apply -input=false "));
+        assert_eq!(arguments.len(), 7);
+        assert!(arguments[5].starts_with("workspace show"));
+        assert!(arguments[6].starts_with("apply -input=false "));
         assert_eq!(
             arguments[0].split("-out=").nth(1),
-            arguments[5].split("-input=false ").nth(1)
+            arguments[6].split("-input=false ").nth(1)
         );
         fixture.assert_saved_plan_removed();
     }

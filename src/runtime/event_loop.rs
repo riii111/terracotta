@@ -328,7 +328,8 @@ fn handle_key_event<B: Backend>(
             Some(_) if layout.renderable() => input,
             _ => None,
         };
-        return Ok(input.and_then(|input| confirmation_view.apply(input)));
+        let expected = confirmation.review().confirmation_input();
+        return Ok(input.and_then(|input| confirmation_view.apply(input, &expected)));
     }
 
     if let Some(apply) = state.apply() {
@@ -1520,7 +1521,7 @@ mod tests {
 
         assert!(!dirty);
         let text = terminal_text(&terminal);
-        assert!(text.contains("Apply this plan? Type yes or no."));
+        assert!(text.contains("Type yes to apply (exact match)."));
         assert!(text.contains("│ > y|"), "{text}");
     }
 
@@ -1687,27 +1688,16 @@ mod tests {
         .expect("apply key should be handled")
         .expect("apply key should open confirmation");
         update_session(&mut state, open, &mut execution_view, now);
-        for character in "no".chars() {
-            handle_key_event(
-                &terminal,
-                &state,
-                &mut execution_view,
-                &mut review_view,
-                &mut confirmation_view,
-                KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
-            )
-            .expect("confirmation character should be handled");
-        }
         let cancel = handle_key_event(
             &terminal,
             &state,
             &mut execution_view,
             &mut review_view,
             &mut confirmation_view,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
         )
-        .expect("no confirmation should be handled")
-        .expect("no should cancel");
+        .expect("escape confirmation should be handled")
+        .expect("escape should cancel");
         update_session(&mut state, cancel, &mut execution_view, now);
 
         let review = state.review().expect("cancel should restore review");

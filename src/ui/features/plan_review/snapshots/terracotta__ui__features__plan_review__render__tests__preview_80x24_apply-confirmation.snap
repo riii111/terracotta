@@ -5,20 +5,23 @@ expression: buffer_text(buffer)
 
  Terracotta | main
 
-
-
+ ┌Plan────────────────────────────────────────────────────────────────────────┐
+ │Plan: +2 add  ~2 update  0 replace  -1 destroy                              │
  ┌────────────────────────────────────────────────────────────────────────────┐
- │                                                                            │
- │ Apply this reviewed plan?                                                  │
- │                                                                            │
- │ Target: /repo/environments/production/main                                 │
- │ Workspace: default                                                         │
- │ Plan: 2 to add, 2 to change, 1 to destroy.                                 │
- │                                                                            │
- │ This plan includes resource deletion.                                      │
- │                                                                            │
- │ Apply this plan? Type yes or no.                                           │
- │ > |                                                                        │
- │                                                                            │
+ │  # terraform_data.api will be updated in-place                            ▲│
+ │ Apply this reviewed plan?ta" "api" {                                      ┃│
+ │      id       = "api-20260920"                                            ┃│
+ │ Target: main [PROD]fore" -> "after"                                       ┃│
+ │ Workspace: defaultd attributes hidden)                                    ┃│
+ │ Directory: /repo/environments/production/main                             ││
+ │ Tool: terraform loading...                                                ││
+ │ Plan: +2 add  ~2 update  0 replace  -1 destroy                            ││
+ │-/+ resource "terraform_data" "worker" {                                   ││
+ │ Type main to apply (exact match). "worker-after" # forces replacement     ││
+ │ > |  - old_checksum = "sha256:0123456789abcdef0123456789abcdef0123456789ab││
+ │      + new_checksum = (known after apply)                                 ││
  └────────────────────────────────────────────────────────────────────────────┘
- Enter confirm | Esc back
+ Enter confirm | Esc back                                                    ││
+ │◀︎════════════════════════════════════════════════════════════──────────────▶︎│
+ └────────────────────────────────────────────────────────────────────────────┘
+ ↑/↓/←/→ scroll | / filter | y copy plan | a apply | q quit

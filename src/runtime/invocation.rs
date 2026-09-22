@@ -1,11 +1,13 @@
 use std::{
     env,
     ffi::{OsStr, OsString},
+    fs,
     io::{self, IsTerminal},
     path::{Path, PathBuf},
     process::ExitCode,
 };
 
+use crate::app::execution::VariableSources;
 use crate::infra::terraform::{
     self,
     configuration::{self, ExecutionLocation},
@@ -61,7 +63,12 @@ fn execute(arguments: &[OsString]) -> io::Result<ExitCode> {
     ) {
         return terraform::delegate(&executable, arguments);
     }
-    Ok(super::run_invocation(&executable, &invocation))
+    let variable_sources = invocation.variable_sources()?;
+    Ok(super::run_invocation(
+        &executable,
+        &invocation,
+        variable_sources,
+    ))
 }
 
 fn review_invocation(arguments: &[OsString], root: &Path) -> Option<Invocation> {
@@ -282,6 +289,83 @@ impl Invocation {
     pub(crate) const fn is_apply(&self) -> bool {
         matches!(self.subcommand, Subcommand::Apply)
     }
+
+    fn variable_sources(&self) -> io::Result<VariableSources> {
+        variable_sources(&self.directory, &self.effective_arguments)
+    }
+}
+
+pub(crate) fn variable_sources(
+    directory: &Path,
+    arguments: &[OsString],
+) -> io::Result<VariableSources> {
+    let mut automatic_files = fs::read_dir(directory)?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|path| {
+            let name = path.file_name().and_then(OsStr::to_str).unwrap_or_default();
+            name == "terraform.tfvars"
+                || name == "terraform.tfvars.json"
+                || name.ends_with(".auto.tfvars")
+                || name.ends_with(".auto.tfvars.json")
+        })
+        .collect::<Vec<_>>();
+    automatic_files.sort();
+
+    let mut explicit_files = Vec::new();
+    let mut has_var_argument = false;
+    let mut index = 0;
+    while index < arguments.len() {
+        let argument = &arguments[index];
+        let Some(option) = option_name(argument) else {
+            index += 1;
+            continue;
+        };
+        let raw_argument = argument.to_string_lossy();
+        let inline_value = raw_argument
+            .split_once('=')
+            .and_then(|(name, value)| (name.trim_start_matches('-') == option).then_some(value));
+        let name = option.as_str();
+        match name {
+            "var" => has_var_argument = true,
+            "var-file" => {
+                let value = inline_value.map(str::to_owned).or_else(|| {
+                    arguments
+                        .get(index + 1)
+                        .map(|value| value.to_string_lossy().into_owned())
+                });
+                if let Some(value) = value {
+                    let path = Path::new(&value);
+                    explicit_files.push(if path.is_absolute() {
+                        path.to_owned()
+                    } else {
+                        directory.join(path)
+                    });
+                }
+                if inline_value.is_none() {
+                    index += 1;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+
+    let mut environment_variables = env::vars_os()
+        .filter_map(|(name, _)| {
+            let name = name.to_string_lossy();
+            name.starts_with("TF_VAR_").then(|| name.into_owned())
+        })
+        .collect::<Vec<_>>();
+    environment_variables.sort();
+
+    Ok(VariableSources::new(
+        automatic_files,
+        explicit_files,
+        has_var_argument,
+        environment_variables,
+    ))
 }
 
 fn option_name(argument: &OsStr) -> Option<String> {
@@ -506,6 +590,55 @@ mod tests {
             ]
             .map(OsString::from)
         );
+    }
+
+    #[test]
+    fn variable_sources_keep_only_file_names_and_argument_presence() {
+        let directory = env::temp_dir().join(format!(
+            "terracotta-variable-sources-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).expect("variable source fixture should be created");
+        fs::write(
+            directory.join("terraform.tfvars"),
+            "secret = \"must not be shown\"",
+        )
+        .expect("automatic variable file should be created");
+        fs::write(
+            directory.join("ignored.txt"),
+            "secret = \"must not be shown\"",
+        )
+        .expect("ignored variable file should be created");
+
+        let sources = variable_sources(
+            &directory,
+            &[
+                OsString::from("-var-file=explicit.tfvars"),
+                OsString::from("-var-file"),
+                OsString::from("nested.tfvars"),
+                OsString::from("-var"),
+                OsString::from("name=secret"),
+            ],
+        )
+        .expect("variable sources should be collected");
+
+        assert_eq!(
+            sources.automatic_files(),
+            &[directory.join("terraform.tfvars")]
+        );
+        assert_eq!(
+            sources.explicit_files(),
+            &[
+                directory.join("explicit.tfvars"),
+                directory.join("nested.tfvars")
+            ]
+        );
+        assert!(sources.has_var_argument());
+        let debug = format!("{sources:?}");
+        assert!(!debug.contains("must not be shown"));
+        assert!(!debug.contains("name=secret"));
+
+        fs::remove_dir_all(directory).expect("variable source fixture should be removed");
     }
 
     #[rstest]

@@ -3,12 +3,12 @@ use std::time::{Duration, Instant};
 
 use super::{
     copy::{self, CopyEffect, CopyNotice, CopyResult, CopyTarget},
-    execution::{
-        ApplyStatus, ExecutionAction, ExecutionContext, ExecutionEvent, ExecutionStage,
-        ExecutionState,
-    },
+    execution::{ApplyStatus, ExecutionAction, ExecutionEvent, ExecutionStage, ExecutionState},
     review::{PlanMetadata, PlanReview, PlanReviewMessage},
 };
+
+#[cfg(test)]
+use super::execution::ExecutionContext;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SessionOutcome {
@@ -111,6 +111,10 @@ impl ApplyConfirmationState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "review completion carries the complete plan into the session"
+)]
 pub(crate) enum Action {
     Execution(ExecutionAction),
     WorkerEvent(ExecutionEvent),
@@ -122,7 +126,7 @@ pub(crate) enum Action {
     },
     ReviewSearchChanged(String),
     OpenApplyConfirmation,
-    ConfirmApply,
+    ConfirmApply(String),
     CancelApply,
     ApplyCompleted {
         status: ApplyStatus,
@@ -304,14 +308,17 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
             }
             None
         }
-        Action::ConfirmApply => {
+        Action::ConfirmApply(input) => {
             let SessionState::ApplyConfirmation(confirmation) = state else {
                 return None;
             };
-            let context =
-                ExecutionContext::loading(confirmation.review.root().display().to_string())
-                    .with_workspace(confirmation.review.workspace().to_owned());
-            *state = SessionState::Apply(Box::new(ExecutionState::applying(now, context)));
+            if input != confirmation.review.confirmation_input() {
+                return None;
+            }
+            *state = SessionState::Apply(Box::new(ExecutionState::applying(
+                now,
+                confirmation.review.context().clone(),
+            )));
             Some(Effect::StartApply)
         }
         Action::CancelApply => {
@@ -624,10 +631,10 @@ mod tests {
         update(&mut state, Action::OpenApplyConfirmation, now);
 
         assert!(matches!(
-            update(&mut state, Action::ConfirmApply, now),
+            update(&mut state, Action::ConfirmApply("yes".to_owned()), now),
             Some(Effect::StartApply)
         ));
-        assert!(update(&mut state, Action::ConfirmApply, now).is_none());
+        assert!(update(&mut state, Action::ConfirmApply("yes".to_owned()), now).is_none());
         update(
             &mut state,
             Action::ApplyCompleted {
@@ -647,6 +654,31 @@ mod tests {
                 status: ApplyStatus::Succeeded,
                 ..
             }))
+        ));
+    }
+
+    #[test]
+    fn apply_confirmation_uses_the_named_target_for_destructive_changes() {
+        let now = Instant::now();
+        let review = PlanReview::new(
+            PathBuf::from("/repo/prod"),
+            "default".to_owned(),
+            plan_document("Terraform will perform actions.\n".to_owned()),
+            PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 1, true),
+            Vec::new(),
+        );
+        let mut state = SessionState::new(ExecutionState::with_context(
+            now,
+            ExecutionContext::loading("/repo/prod"),
+        ));
+        update(&mut state, Action::ReviewCompleted(review), now);
+        update(&mut state, Action::OpenApplyConfirmation, now);
+
+        assert!(update(&mut state, Action::ConfirmApply("yes".to_owned()), now).is_none());
+        assert!(state.apply_confirmation().is_some());
+        assert!(matches!(
+            update(&mut state, Action::ConfirmApply("prod".to_owned()), now),
+            Some(Effect::StartApply)
         ));
     }
 

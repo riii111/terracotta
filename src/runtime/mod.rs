@@ -18,7 +18,7 @@ use crate::{
     app::{
         execution::{
             ApplyStatus, ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionPhase,
-            ExecutionStage, ExecutionState,
+            ExecutionStage, ExecutionState, VariableSources,
         },
         review::{PlanMetadata, PlanReviewMessage},
         session::SessionOutcome,
@@ -54,10 +54,15 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
         &[],
         false,
         false,
+        invocation::variable_sources(root, &[]).unwrap_or_default(),
     )
 }
 
-pub(crate) fn run_invocation(executable: &Path, invocation: &invocation::Invocation) -> ExitCode {
+pub(crate) fn run_invocation(
+    executable: &Path,
+    invocation: &invocation::Invocation,
+    variable_sources: VariableSources,
+) -> ExitCode {
     run_managed_invocation(
         executable,
         invocation.launch_root(),
@@ -67,6 +72,7 @@ pub(crate) fn run_invocation(executable: &Path, invocation: &invocation::Invocat
         &invocation.apply_arguments(),
         invocation.is_apply(),
         invocation.detailed_exitcode(),
+        variable_sources,
     )
 }
 
@@ -83,6 +89,7 @@ fn run_managed_invocation(
     apply_arguments: &[OsString],
     apply_entry: bool,
     detailed_exitcode: bool,
+    variable_sources: VariableSources,
 ) -> ExitCode {
     let (saved_plan, plan_arguments) =
         match terraform::saved_plan_for_plan(display_root, plan_arguments) {
@@ -124,12 +131,17 @@ fn run_managed_invocation(
         apply_entry,
         plan_run,
         detailed_exitcode,
+        variable_sources,
     )
 }
 
 #[expect(
     clippy::too_many_lines,
     reason = "the review lifecycle owns worker joins, outcome mapping, and cleanup"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the runtime passes each execution boundary to the review worker"
 )]
 fn run_saved_plan_review(
     launch_root: &Path,
@@ -139,6 +151,7 @@ fn run_saved_plan_review(
     apply_entry: bool,
     plan_run: terraform::PlanRun,
     detailed_exitcode: bool,
+    variable_sources: VariableSources,
 ) -> ExitCode {
     let changed = plan_run.changed;
     let review_root = match fs::canonicalize(display_root) {
@@ -169,6 +182,8 @@ fn run_saved_plan_review(
         &plan_path,
         changed,
         apply_entry,
+        ExecutionContext::loading(review_root.display().to_string())
+            .with_variable_sources(variable_sources.clone()),
         &cancellation,
         sender.clone(),
     ) {
@@ -188,7 +203,8 @@ fn run_saved_plan_review(
         handle: None,
     };
     let mut clipboard = ClipboardExecutor::new();
-    let context = ExecutionContext::loading(review_root.display().to_string());
+    let context = ExecutionContext::loading(review_root.display().to_string())
+        .with_variable_sources(variable_sources);
     let effects = event_loop::RuntimeEffects {
         root: launch_root,
         display_root,
@@ -318,9 +334,10 @@ fn report_reviewed(metadata: &PlanMetadata) {
     if metadata.has_changes() {
         let _ = writeln!(
             io::stdout(),
-            "Plan: {} to add, {} to change, {} to destroy.\nApply was not run.",
+            "Plan: {} to add, {} to change, {} to replace, {} to destroy.\nApply was not run.",
             metadata.additions(),
             metadata.changes(),
+            metadata.replacements(),
             metadata.deletions()
         );
     } else {
@@ -425,6 +442,7 @@ fn spawn_review_worker(
     plan_path: &Path,
     plan_changed: bool,
     apply_entry: bool,
+    initial_context: ExecutionContext,
     cancellation: &CancellationToken,
     sender: mpsc::Sender<PlanReviewMessage>,
 ) -> io::Result<JoinHandle<()>> {
@@ -433,6 +451,7 @@ fn spawn_review_worker(
     let worker_launch_root = launch_root.to_owned();
     let worker_global_arguments = global_arguments.to_vec();
     let worker_plan_path = plan_path.to_owned();
+    let worker_initial_context = initial_context;
     thread::Builder::new()
         .name("terracotta-plan".to_owned())
         .spawn(move || {
@@ -452,6 +471,7 @@ fn spawn_review_worker(
                 &worker_plan_path,
                 plan_changed,
                 apply_entry,
+                worker_initial_context,
                 &worker_cancellation,
                 &terraform::SystemProcessRunner,
                 &mut event_sink,

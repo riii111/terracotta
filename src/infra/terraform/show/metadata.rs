@@ -1,5 +1,6 @@
 use serde_json::{Map, Value};
 
+use crate::app::plan::PlanResource;
 use crate::app::review::PlanMetadata;
 
 use super::PlanParseError;
@@ -19,29 +20,24 @@ pub(super) fn parse_metadata(
 
     let resources = optional_array(root, "resource_changes")?;
     let mut resource_addresses = Vec::with_capacity(resources.len());
-    let mut additions = 0;
-    let mut changes = 0;
-    let mut deletions = 0;
     for resource in resources {
         let resource = resource
             .as_object()
             .ok_or(PlanParseError::InvalidField("resource change"))?;
         resource_addresses.push(required_string(resource, "address")?.to_owned());
-        let change = required_object(resource, "change")?;
-        let actions = optional_array(change, "actions")?;
-        let has_create = actions
-            .iter()
-            .any(|action| action.as_str() == Some("create"));
-        let has_update = actions
-            .iter()
-            .any(|action| action.as_str() == Some("update"));
-        let has_delete = actions
-            .iter()
-            .any(|action| action.as_str() == Some("delete"));
-        additions += usize::from(has_create);
-        changes += usize::from(has_update);
-        deletions += usize::from(has_delete);
+        let _ = required_object(resource, "change")?;
     }
+
+    let plan = super::json::parse_plan_json_bytes(input)?;
+    let summary = plan.summary;
+    let resource_changes = plan
+        .changes
+        .into_iter()
+        .map(|change| PlanResource {
+            address: change.address,
+            actions: change.actions,
+        })
+        .collect();
 
     let output_names = root
         .get("output_changes")
@@ -58,11 +54,12 @@ pub(super) fn parse_metadata(
     Ok(PlanMetadata::new(
         resource_addresses,
         output_names,
-        additions,
-        changes,
-        deletions,
+        summary.creates,
+        summary.updates,
+        summary.deletes,
         applyable,
-    ))
+    )
+    .with_resource_changes(resource_changes, summary.replaces))
 }
 
 fn parse_format_version(root: &Map<String, Value>) -> Result<(), PlanParseError> {
@@ -134,9 +131,10 @@ mod tests {
         let metadata =
             parse_metadata(document.to_string().as_bytes(), true).expect("metadata should parse");
 
-        assert_eq!(metadata.additions(), 1);
+        assert_eq!(metadata.additions(), 0);
         assert_eq!(metadata.changes(), 1);
-        assert_eq!(metadata.deletions(), 1);
+        assert_eq!(metadata.replacements(), 1);
+        assert_eq!(metadata.deletions(), 0);
         assert_eq!(metadata.resource_addresses().len(), 2);
         assert!(
             metadata
@@ -145,6 +143,10 @@ mod tests {
                 .any(|output| output == "endpoint")
         );
         assert!(metadata.applyable());
+        assert_eq!(
+            metadata.replacement_addresses().collect::<Vec<_>>(),
+            ["terraform_data.replace"]
+        );
         let debug = format!("{metadata:?}");
         assert!(!debug.contains("secret"));
     }
@@ -189,5 +191,32 @@ mod tests {
                 .any(|output| output == "endpoint")
         );
         assert!(metadata.applyable());
+    }
+
+    #[test]
+    fn lists_replacements_in_either_order_without_counting_them_as_deletes() {
+        let document = json!({
+            "format_version": "1.0",
+            "applyable": true,
+            "resource_changes": [
+                {"address": "terraform_data.create_first", "change": {"actions": ["create", "delete"]}},
+                {"address": "terraform_data.delete_first", "change": {"actions": ["delete", "create"]}},
+                {"address": "terraform_data.destroy", "change": {"actions": ["delete"]}}
+            ]
+        });
+
+        let metadata =
+            parse_metadata(document.to_string().as_bytes(), true).expect("metadata should parse");
+
+        assert_eq!(metadata.replacements(), 2);
+        assert_eq!(metadata.deletions(), 1);
+        assert_eq!(
+            metadata.replacement_addresses().collect::<Vec<_>>(),
+            ["terraform_data.create_first", "terraform_data.delete_first"]
+        );
+        assert_eq!(
+            metadata.destructive_addresses().collect::<Vec<_>>(),
+            ["terraform_data.destroy"]
+        );
     }
 }

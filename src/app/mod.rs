@@ -3,7 +3,6 @@
 pub(crate) mod attribution;
 pub(crate) mod copy;
 pub(crate) mod execution;
-#[cfg(test)]
 pub(crate) mod plan;
 pub(crate) mod review;
 pub(crate) mod session;

@@ -27,6 +27,7 @@ pub(crate) enum TerraformCommand {
     Show,
     Apply,
     WorkspaceShow,
+    Version,
 }
 
 impl Display for TerraformCommand {
@@ -36,6 +37,7 @@ impl Display for TerraformCommand {
             Self::Show => "show",
             Self::Apply => "apply",
             Self::WorkspaceShow => "workspace show",
+            Self::Version => "version",
         })
     }
 }
@@ -159,6 +161,9 @@ pub(crate) enum TerraformExecutionErrorKind {
     InvalidWorkspace {
         message: String,
     },
+    InvalidVersion {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -206,6 +211,12 @@ impl Display for TerraformExecutionError {
                 write!(
                     formatter,
                     "terraform workspace output could not be parsed: {message}"
+                )
+            }
+            TerraformExecutionErrorKind::InvalidVersion { message } => {
+                write!(
+                    formatter,
+                    "terraform version output could not be parsed: {message}"
                 )
             }
         }?;
