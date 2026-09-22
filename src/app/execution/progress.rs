@@ -294,9 +294,7 @@ impl ExecutionProgress {
                 let Some(action) = resource.action.as_ref() else {
                     return;
                 };
-                if is_replacement_action(action) && is_replacement_target(target_state.actions()) {
-                    target_state.completed_stages = target_state.spec.actions.len();
-                    target_state.status = ExecutionTargetStatus::Completed;
+                if is_replacement_action(action) {
                     return;
                 }
                 let Some(expected) = target_state.spec.actions.get(target_state.completed_stages)
@@ -625,7 +623,7 @@ mod tests {
     }
 
     #[test]
-    fn replace_event_completes_replacements_in_either_plan_order() {
+    fn replace_event_requires_individual_replacement_stages() {
         for actions in [
             vec![PlanAction::Delete, PlanAction::Create],
             vec![PlanAction::Create, PlanAction::Delete],
@@ -655,9 +653,9 @@ mod tests {
 
             assert_eq!(
                 progress.targets()[0].status(),
-                ExecutionTargetStatus::Completed
+                ExecutionTargetStatus::Running
             );
-            assert_eq!(progress.targets()[0].completed_stages(), 2);
+            assert_eq!(progress.targets()[0].completed_stages(), 0);
         }
     }
 

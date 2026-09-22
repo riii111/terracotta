@@ -6,6 +6,9 @@ use super::{
     review::PlanReview,
 };
 
+const REDACTION_TEXT: &str = "(sensitive value)";
+const PROTECTED_REDACTION: &str = "\u{0}terracotta-redacted\u{0}";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CopyTarget {
     Diagnostic,
@@ -143,26 +146,47 @@ pub(crate) fn sanitize_text(text: &str, sensitive_values: &[SensitiveValue]) -> 
     values.sort_by_key(|value| std::cmp::Reverse(sensitive_value_text(value).len()));
     values.dedup();
 
-    values
-        .into_iter()
-        .fold(text.to_owned(), |text, value| match value {
-            SensitiveValue::Text(value) if is_short_token(value) => {
-                replace_scalar_tokens(&text, value, false)
+    let sanitized = values.into_iter().fold(
+        text.replace(REDACTION_TEXT, PROTECTED_REDACTION),
+        |text, value| match value {
+            SensitiveValue::Text(value) if value.len() < 4 && !value.is_empty() => {
+                transform_unmasked(&text, |text| redact_lines_containing(text, value))
             }
-            SensitiveValue::Text(value) => text.replace(value, "(sensitive value)"),
-            SensitiveValue::Number(value) => replace_scalar_tokens(&text, value, true),
-            SensitiveValue::Bool(value) => {
-                replace_scalar_tokens(&text, if *value { "true" } else { "false" }, false)
+            SensitiveValue::Text(value) => {
+                transform_unmasked(&text, |text| text.replace(value, PROTECTED_REDACTION))
             }
-        })
+            SensitiveValue::Number(value) => {
+                transform_unmasked(&text, |text| replace_scalar_tokens(text, value, true))
+            }
+            SensitiveValue::Bool(value) => transform_unmasked(&text, |text| {
+                replace_scalar_tokens(text, if *value { "true" } else { "false" }, false)
+            }),
+        },
+    );
+    sanitized.replace(PROTECTED_REDACTION, REDACTION_TEXT)
 }
 
-fn is_short_token(value: &str) -> bool {
-    value.len() < 4
-        && !value.is_empty()
-        && value
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+fn transform_unmasked(text: &str, transform: impl Fn(&str) -> String) -> String {
+    text.split(PROTECTED_REDACTION)
+        .map(transform)
+        .collect::<Vec<_>>()
+        .join(PROTECTED_REDACTION)
+}
+
+fn redact_lines_containing(text: &str, value: &str) -> String {
+    text.split_inclusive('\n')
+        .map(|line| {
+            if line.contains(value) {
+                if line.ends_with('\n') {
+                    format!("{PROTECTED_REDACTION}\n")
+                } else {
+                    PROTECTED_REDACTION.to_owned()
+                }
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect()
 }
 
 fn sensitive_value_text(value: &SensitiveValue) -> &str {
@@ -191,7 +215,7 @@ fn replace_scalar_tokens(text: &str, value: &str, numeric: bool) -> String {
             continue;
         }
         result.push_str(&text[cursor..start]);
-        result.push_str("(sensitive value)");
+        result.push_str(PROTECTED_REDACTION);
         cursor = end;
     }
     result.push_str(&text[cursor..]);
@@ -345,12 +369,21 @@ mod tests {
     }
 
     #[test]
-    fn short_text_sensitive_values_do_not_mask_inside_other_words() {
-        let sensitive = [SensitiveValue::Text("a".to_owned())];
+    fn short_text_sensitive_values_redact_the_whole_affected_line() {
+        let sensitive = [SensitiveValue::Text("abc".to_owned())];
 
         assert_eq!(
-            sanitize_text("terraform_data.api token=a", &sensitive),
-            "terraform_data.api token=(sensitive value)"
+            sanitize_text("terraform_data.api\nrequest xabcx failed\nsafe", &sensitive),
+            "terraform_data.api\n(sensitive value)\nsafe"
         );
+    }
+
+    #[test]
+    fn sanitizing_already_redacted_text_is_idempotent() {
+        let sensitive = [SensitiveValue::Text("value".to_owned())];
+        let text = sanitize_text("value", &sensitive);
+
+        assert_eq!(text, "(sensitive value)");
+        assert_eq!(sanitize_text(&text, &sensitive), text);
     }
 }
