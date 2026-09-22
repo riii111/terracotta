@@ -7,6 +7,7 @@ use crate::app::execution::{
     EventStream, ExecutionEvent, ExecutionEventKind, ExecutionSummary, ResourceEvent,
     ResourceEventKind,
 };
+use crate::app::plan::PlanAction;
 
 #[derive(Default)]
 pub(crate) struct TerraformEventParser {
@@ -127,7 +128,9 @@ fn parse_json_event(stream: EventStream, value: &Value) -> ExecutionEventKind {
             message,
         },
         Some(event_type) => resource_event_kind(event_type)
-            .and_then(|kind| resource_address(object).map(|address| (kind, address)))
+            .and_then(|kind| {
+                resource_address(object).map(|address| (kind, address, resource_action(object)))
+            })
             .map_or_else(
                 || {
                     ExecutionEventKind::Diagnostic(unknown_event_diagnostic(
@@ -137,10 +140,11 @@ fn parse_json_event(stream: EventStream, value: &Value) -> ExecutionEventKind {
                         severity,
                     ))
                 },
-                |(kind, address)| {
+                |(kind, address, action)| {
                     ExecutionEventKind::Resource(ResourceEvent {
                         address,
                         kind,
+                        action,
                         message: message.clone(),
                     })
                 },
@@ -180,6 +184,34 @@ fn resource_address(object: &Map<String, Value>) -> Option<String> {
         .iter()
         .find_map(|field| object.get(*field))
         .and_then(|value| resource_address_from_value(value, 0))
+}
+
+fn resource_action(object: &Map<String, Value>) -> Option<PlanAction> {
+    ["hook", "change", "resource"]
+        .iter()
+        .find_map(|field| object.get(*field))
+        .and_then(|value| resource_action_from_value(value, 0))
+}
+
+fn resource_action_from_value(value: &Value, depth: usize) -> Option<PlanAction> {
+    if depth > 2 {
+        return None;
+    }
+    let object = value.as_object()?;
+    if let Some(action) = object.get("action").and_then(Value::as_str) {
+        return Some(match action {
+            "create" => PlanAction::Create,
+            "read" => PlanAction::Read,
+            "update" => PlanAction::Update,
+            "delete" => PlanAction::Delete,
+            "no-op" => PlanAction::NoOp,
+            _ => PlanAction::Unknown(action.to_owned()),
+        });
+    }
+    ["resource", "hook", "change"]
+        .iter()
+        .find_map(|field| object.get(*field))
+        .and_then(|nested| resource_action_from_value(nested, depth + 1))
 }
 
 fn resource_address_from_value(value: &Value, depth: usize) -> Option<String> {
@@ -334,6 +366,7 @@ mod tests {
             ExecutionEventKind::Resource(ResourceEvent {
                 address: "aws_vpc.main".to_owned(),
                 kind: ResourceEventKind::RefreshStart,
+                action: None,
                 message: Some("aws_vpc.main: Refreshing state...".to_owned()),
             })
         );
@@ -344,9 +377,30 @@ mod tests {
             ExecutionEventKind::Resource(ResourceEvent {
                 address: "aws_vpc.main".to_owned(),
                 kind: ResourceEventKind::RefreshComplete,
+                action: None,
                 message: None,
             })
         );
+    }
+
+    #[test]
+    fn preserves_hook_action_for_apply_progress() {
+        let mut parser = TerraformEventParser::new();
+        let events = parser.push(
+            EventStream::Stdout,
+            br#"{"type":"apply_complete","hook":{"resource":{"addr":"aws_vpc.main"},"action":"update"}}
+"#,
+            Instant::now(),
+        );
+
+        assert!(matches!(
+            &events[0].kind,
+            ExecutionEventKind::Resource(ResourceEvent {
+                action: Some(PlanAction::Update),
+                kind: ResourceEventKind::ApplyComplete,
+                ..
+            })
+        ));
     }
 
     #[test]

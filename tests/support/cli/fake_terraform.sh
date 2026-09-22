@@ -68,20 +68,20 @@ case "$1" in
     test -n "$plan_path"
     test -f "$plan_path"
     if [ "${TERRACOTTA_FAKE_MODE:-success}" = apply_interrupt ]; then
-      exec python3 -c 'import os,signal,sys,time; signal.signal(signal.SIGINT, lambda *_: (print("Stopping apply", flush=True), time.sleep(1), sys.exit(130))); open(os.environ["TERRACOTTA_FAKE_PID_PATH"], "w").write(f"{os.getpid()}\n"); print("{\"type\":\"apply_start\",\"@message\":\"Applying saved plan...\",\"hook\":{\"resource\":{\"addr\":\"terraform_data.api\"}}}", flush=True); time.sleep(30)'
+      exec python3 -c 'import os,signal,sys,time; signal.signal(signal.SIGINT, lambda *_: (print("Stopping apply", flush=True), time.sleep(1), sys.exit(130))); open(os.environ["TERRACOTTA_FAKE_PID_PATH"], "w").write(f"{os.getpid()}\n"); print("{\"type\":\"apply_start\",\"@message\":\"Applying saved plan...\",\"hook\":{\"resource\":{\"addr\":\"terraform_data.api\"},\"action\":\"update\"}}", flush=True); time.sleep(30)'
     fi
     printf '%s\n' "$$" > "$TERRACOTTA_FAKE_PID_PATH"
     if [ "${TERRACOTTA_FAKE_MODE:-success}" = apply_failure ]; then
       sleep 1
-      printf '%s\n' '{"type":"apply_start","@message":"Applying saved plan...","hook":{"resource":{"addr":"terraform_data.api"}}}'
+      printf '%s\n' '{"type":"apply_start","@message":"Applying saved plan...","hook":{"resource":{"addr":"terraform_data.api"},"action":"update"}}'
       printf '%s\n' '{"type":"diagnostic","@level":"error","diagnostic":{"severity":"error","summary":"synthetic apply failure","detail":"Changes may already be applied. must-not-be-logged","address":"terraform_data.api"}}'
-      printf '%s\n' '{"type":"apply_errored","@message":"Apply failed","hook":{"resource":{"addr":"terraform_data.api"}}}'
+      printf '%s\n' '{"type":"apply_errored","@message":"Apply failed","hook":{"resource":{"addr":"terraform_data.api"},"action":"update"}}'
       exit 1
     fi
-    printf '%s\n' '{"type":"apply_start","@message":"Applying saved plan...","hook":{"resource":{"addr":"terraform_data.api"}}}'
+    printf '%s\n' '{"type":"apply_start","@message":"Applying saved plan...","hook":{"resource":{"addr":"terraform_data.api"},"action":"update"}}'
     sleep 1
-    printf '%s\n' '{"type":"apply_progress","@message":"terraform_data.api: Applying must-not-be-logged","hook":{"resource":{"addr":"terraform_data.api"}}}'
-    printf '%s\n' '{"type":"apply_complete","@message":"terraform_data.api: Creation complete","hook":{"resource":{"addr":"terraform_data.api"}}}'
+    printf '%s\n' '{"type":"apply_progress","@message":"terraform_data.api: Applying must-not-be-logged","hook":{"resource":{"addr":"terraform_data.api"},"action":"update"}}'
+    printf '%s\n' '{"type":"apply_complete","@message":"terraform_data.api: Update complete","hook":{"resource":{"addr":"terraform_data.api"},"action":"update"}}'
     printf '%s\n' '{"type":"change_summary","@message":"Apply complete! Resources: 1 added, 1 changed, 0 destroyed.","changes":{"add":1,"change":1,"remove":0,"operation":"apply"}}'
     printf '%s\n' '{"type":"outputs","@message":"endpoint = \"https://example.test\""}'
     exit 0

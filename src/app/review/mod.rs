@@ -7,7 +7,7 @@ use std::{
 use super::{
     execution::{
         ApplyStatus, Diagnostic, ExecutionContext, ExecutionContextValue, ExecutionEvent,
-        ExecutionTargetSpec,
+        ExecutionTargetSpec, SensitiveValue,
     },
     plan::{PlanAction, PlanResource},
 };
@@ -186,7 +186,7 @@ pub(crate) struct PlanMetadata {
     deletions: usize,
     applyable: bool,
     apply_targets: Vec<ExecutionTargetSpec>,
-    sensitive_values: Vec<String>,
+    sensitive_values: Vec<SensitiveValue>,
 }
 
 impl Debug for PlanMetadata {
@@ -249,7 +249,7 @@ impl PlanMetadata {
     }
 
     #[must_use]
-    pub(crate) fn with_sensitive_values(mut self, sensitive_values: Vec<String>) -> Self {
+    pub(crate) fn with_sensitive_values(mut self, sensitive_values: Vec<SensitiveValue>) -> Self {
         self.sensitive_values = sensitive_values;
         self
     }
@@ -304,7 +304,7 @@ impl PlanMetadata {
     }
 
     #[must_use]
-    pub(crate) fn sensitive_values(&self) -> &[String] {
+    pub(crate) fn sensitive_values(&self) -> &[SensitiveValue] {
         &self.sensitive_values
     }
 

@@ -143,8 +143,8 @@ mod tests {
             response: RefCell::new(Some((
                 ProcessStatus::Exited(0),
                 ProcessOutput::new(
-                    br#"{"type":"apply_start","hook":{"resource":{"addr":"terraform_data.api"}}}
-{"type":"apply_complete","hook":{"resource":{"addr":"terraform_data.api"}}}
+                    br#"{"type":"apply_start","hook":{"resource":{"addr":"terraform_data.api"},"action":"update"}}
+{"type":"apply_complete","hook":{"resource":{"addr":"terraform_data.api"},"action":"update"}}
 {"type":"change_summary","@message":"Apply complete! Resources: 1 added, 0 changed, 0 destroyed.","changes":{"add":1,"change":0,"remove":0,"operation":"apply"}}
 "#.to_vec(),
                     b"warning: retained\n".to_vec(),

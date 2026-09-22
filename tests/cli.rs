@@ -49,7 +49,7 @@ mod pty_tests {
       "after_sensitive": {"secret": true}
     }
   }],
-  "output_changes": {"endpoint": {"after": "must-not-be-logged", "after_sensitive": true}}
+  "output_changes": {"endpoint": {"change": {"after": "must-not-be-logged", "after_sensitive": true}}}
 }"#;
 
     const PLAN_TEXT: &str = r#"Terraform will perform the following actions:

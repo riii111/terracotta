@@ -11,7 +11,7 @@ pub(crate) use event::{
     Diagnostic, DiagnosticPoint, DiagnosticPosition, DiagnosticSeverity, DiagnosticSource,
     EventStream, ExecutionEvent, ExecutionEventKind, ExecutionLogLine, ExecutionPhase,
     ExecutionSummary, ExecutionTargetSpec, ProcessExitStatus, ProcessTermination, ResourceEvent,
-    ResourceEventKind,
+    ResourceEventKind, SensitiveValue,
 };
 #[expect(
     unused_imports,
@@ -116,7 +116,7 @@ impl ExecutionState {
         started_at: Instant,
         context: ExecutionContext,
         targets: Vec<ExecutionTargetSpec>,
-        sensitive_values: Vec<String>,
+        sensitive_values: Vec<SensitiveValue>,
     ) -> Self {
         Self::at_stage_with_progress(
             started_at,
@@ -237,6 +237,17 @@ impl ExecutionState {
                 }),
             });
         }
+        let status = if status == ApplyStatus::Succeeded
+            && self
+                .progress
+                .targets()
+                .iter()
+                .any(|target| target.status() != ExecutionTargetStatus::Completed)
+        {
+            ApplyStatus::Failed
+        } else {
+            status
+        };
         self.finished_at.get_or_insert(received_at);
         self.stage = match status {
             ApplyStatus::Succeeded => ExecutionStage::ApplySucceeded,
@@ -387,6 +398,8 @@ impl ExecutionState {
 
 #[cfg(test)]
 mod tests {
+    use crate::app::plan::PlanAction;
+
     use super::*;
 
     impl ExecutionState {
@@ -410,7 +423,7 @@ mod tests {
             started_at,
             ExecutionContext::loading("loading..."),
             Vec::new(),
-            vec!["secret-value".to_owned()],
+            vec![SensitiveValue::Text("secret-value".to_owned())],
         );
 
         state.finish_apply(
@@ -424,6 +437,29 @@ mod tests {
             state.result().and_then(ExecutionResult::summary_line),
             Some("Apply complete: (sensitive value)")
         );
+    }
+
+    #[test]
+    fn successful_process_with_incomplete_targets_is_not_reported_as_success() {
+        let started_at = Instant::now();
+        let mut state = ExecutionState::applying_with_targets(
+            started_at,
+            ExecutionContext::loading("loading..."),
+            vec![ExecutionTargetSpec {
+                address: "terraform_data.api".to_owned(),
+                actions: vec![PlanAction::Update],
+            }],
+            Vec::new(),
+        );
+
+        state.finish_apply(
+            ApplyStatus::Succeeded,
+            Some("Apply complete.".to_owned()),
+            None,
+            started_at,
+        );
+
+        assert_eq!(state.stage(), ExecutionStage::ApplyFailed);
     }
 
     #[test]

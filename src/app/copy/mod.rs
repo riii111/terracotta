@@ -2,7 +2,7 @@ use std::fmt::{Debug, Formatter};
 use std::time::Duration;
 
 use super::{
-    execution::{Diagnostic, ExecutionStage, ExecutionState},
+    execution::{Diagnostic, ExecutionStage, ExecutionState, SensitiveValue},
     review::PlanReview,
 };
 
@@ -90,7 +90,7 @@ pub(crate) fn plan_effect(review: &PlanReview) -> CopyEffect {
 pub(crate) fn diagnostic_effect(
     diagnostics: &[Diagnostic],
     fallback: Option<&str>,
-    sensitive_values: &[String],
+    sensitive_values: &[SensitiveValue],
 ) -> CopyEffect {
     let text = if diagnostics.is_empty() {
         sanitize_text(
@@ -132,20 +132,62 @@ pub(crate) fn execution_effect(state: &ExecutionState) -> CopyEffect {
     CopyEffect::new(CopyTarget::Execution, sections.join("\n"))
 }
 
-pub(crate) fn sanitize_text(text: &str, sensitive_values: &[String]) -> String {
+pub(crate) fn sanitize_text(text: &str, sensitive_values: &[SensitiveValue]) -> String {
     let mut values = sensitive_values
         .iter()
-        .filter(|value| !value.is_empty())
+        .filter(|value| match value {
+            SensitiveValue::Text(value) | SensitiveValue::Number(value) => !value.is_empty(),
+            SensitiveValue::Bool(_) => true,
+        })
         .collect::<Vec<_>>();
-    values.sort_by_key(|value| std::cmp::Reverse(value.len()));
+    values.sort_by_key(|value| std::cmp::Reverse(sensitive_value_text(value).len()));
     values.dedup();
 
-    values.into_iter().fold(text.to_owned(), |text, value| {
-        text.replace(value, "(sensitive value)")
-    })
+    values
+        .into_iter()
+        .fold(text.to_owned(), |text, value| match value {
+            SensitiveValue::Text(value) => text.replace(value, "(sensitive value)"),
+            SensitiveValue::Number(value) => replace_scalar_tokens(&text, value, true),
+            SensitiveValue::Bool(value) => {
+                replace_scalar_tokens(&text, if *value { "true" } else { "false" }, false)
+            }
+        })
 }
 
-fn diagnostic_text(diagnostics: &[Diagnostic], sensitive_values: &[String]) -> String {
+fn sensitive_value_text(value: &SensitiveValue) -> &str {
+    match value {
+        SensitiveValue::Text(value) | SensitiveValue::Number(value) => value,
+        SensitiveValue::Bool(value) if *value => "true",
+        SensitiveValue::Bool(_) => "false",
+    }
+}
+
+fn replace_scalar_tokens(text: &str, value: &str, numeric: bool) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut cursor = 0;
+    for (start, _) in text.match_indices(value) {
+        let end = start + value.len();
+        let before = text[..start].chars().next_back();
+        let after = text[end..].chars().next();
+        let is_boundary = |character: Option<char>| {
+            !character.is_some_and(|character| {
+                character.is_ascii_alphanumeric()
+                    || character == '_'
+                    || (numeric && matches!(character, '.' | '-'))
+            })
+        };
+        if !is_boundary(before) || !is_boundary(after) {
+            continue;
+        }
+        result.push_str(&text[cursor..start]);
+        result.push_str("(sensitive value)");
+        cursor = end;
+    }
+    result.push_str(&text[cursor..]);
+    result
+}
+
+fn diagnostic_text(diagnostics: &[Diagnostic], sensitive_values: &[SensitiveValue]) -> String {
     diagnostics
         .iter()
         .map(|diagnostic| {
@@ -275,5 +317,19 @@ mod tests {
             .expect("apply result copy should be available");
         assert!(effect.text().contains("Applying saved plan..."));
         assert_eq!(effect.text().matches(summary).count(), 1);
+    }
+
+    #[test]
+    fn scalar_sensitive_values_are_replaced_only_at_token_boundaries() {
+        let text = "true feature=true id=1 total=10 version1";
+        let sensitive = [
+            SensitiveValue::Bool(true),
+            SensitiveValue::Number("1".to_owned()),
+        ];
+
+        assert_eq!(
+            sanitize_text(text, &sensitive),
+            "(sensitive value) feature=(sensitive value) id=(sensitive value) total=10 version1"
+        );
     }
 }

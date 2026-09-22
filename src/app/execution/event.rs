@@ -35,7 +35,21 @@ pub(crate) enum ResourceEventKind {
 pub(crate) struct ResourceEvent {
     pub(crate) address: String,
     pub(crate) kind: ResourceEventKind,
+    pub(crate) action: Option<PlanAction>,
     pub(crate) message: Option<String>,
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum SensitiveValue {
+    Text(String),
+    Number(String),
+    Bool(bool),
+}
+
+impl Debug for SensitiveValue {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("<redacted>")
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -60,6 +74,7 @@ impl Debug for ResourceEvent {
             .debug_struct("ResourceEvent")
             .field("address", &self.address)
             .field("kind", &self.kind)
+            .field("action", &self.action)
             .field("message", &self.message.as_ref().map(|_| "<redacted>"))
             .finish()
     }

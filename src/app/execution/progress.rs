@@ -13,7 +13,7 @@ use crate::app::plan::PlanAction;
 
 use super::event::{
     Diagnostic, EventStream, ExecutionEvent, ExecutionEventKind, ExecutionLogLine,
-    ExecutionTargetSpec, ProcessTermination, ResourceEvent, ResourceEventKind,
+    ExecutionTargetSpec, ProcessTermination, ResourceEvent, ResourceEventKind, SensitiveValue,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,7 +78,7 @@ pub(crate) struct ExecutionProgress {
     diagnostics: Vec<Diagnostic>,
     log: Vec<ExecutionLogLine>,
     targets: Vec<ExecutionTargetState>,
-    sensitive_values: Vec<String>,
+    sensitive_values: Vec<SensitiveValue>,
     first_error_line: Option<usize>,
     termination: Option<ProcessTermination>,
     last_event_at: Option<Instant>,
@@ -107,7 +107,10 @@ impl Default for ExecutionProgress {
 
 impl ExecutionProgress {
     #[must_use]
-    pub(crate) fn new(targets: Vec<ExecutionTargetSpec>, sensitive_values: Vec<String>) -> Self {
+    pub(crate) fn new(
+        targets: Vec<ExecutionTargetSpec>,
+        sensitive_values: Vec<SensitiveValue>,
+    ) -> Self {
         Self {
             diagnostics: Vec::new(),
             log: Vec::new(),
@@ -159,10 +162,14 @@ impl ExecutionProgress {
                     self.first_error_line = Some(rendered_line_count(&self.log));
                 }
                 let address = diagnostic.address.clone();
-                let text = diagnostic.detail.as_ref().map_or_else(
-                    || diagnostic.summary.clone(),
-                    |detail| format!("{}\n{detail}", diagnostic.summary),
-                );
+                let summary =
+                    super::super::copy::sanitize_text(&diagnostic.summary, &self.sensitive_values);
+                let detail = diagnostic.detail.as_ref().map(|detail| {
+                    super::super::copy::sanitize_text(detail, &self.sensitive_values)
+                });
+                let text = detail
+                    .as_ref()
+                    .map_or_else(|| summary.clone(), |detail| format!("{summary}\n{detail}"));
                 self.append_log(
                     EventStream::Stderr,
                     &text,
@@ -177,7 +184,11 @@ impl ExecutionProgress {
                 {
                     self.targets[target].status = ExecutionTargetStatus::Failed;
                 }
-                self.diagnostics.push(diagnostic);
+                self.diagnostics.push(Diagnostic {
+                    summary,
+                    detail,
+                    ..diagnostic
+                });
             }
             ExecutionEventKind::Informational {
                 message: Some(message),
@@ -222,7 +233,7 @@ impl ExecutionProgress {
     }
 
     #[must_use]
-    pub(crate) fn sensitive_values(&self) -> &[String] {
+    pub(crate) fn sensitive_values(&self) -> &[SensitiveValue] {
         &self.sensitive_values
     }
 
@@ -261,13 +272,26 @@ impl ExecutionProgress {
             | ResourceEventKind::ApplyProgress
             | ResourceEventKind::ProvisionStart
             | ResourceEventKind::ProvisionProgress => {
-                if self.targets[target].status == ExecutionTargetStatus::Pending {
+                if self.targets[target].status == ExecutionTargetStatus::Pending
+                    && resource.action.as_ref().is_some_and(|action| {
+                        self.targets[target]
+                            .actions()
+                            .iter()
+                            .any(|expected| expected == action)
+                    })
+                {
                     self.targets[target].status = ExecutionTargetStatus::Running;
                 }
             }
             ResourceEventKind::ApplyComplete => {
                 let target_state = &mut self.targets[target];
                 if target_state.status == ExecutionTargetStatus::Failed {
+                    return;
+                }
+                let Some(action) = resource.action.as_ref() else {
+                    return;
+                };
+                if target_state.spec.actions.get(target_state.completed_stages) != Some(action) {
                     return;
                 }
                 target_state.status = ExecutionTargetStatus::Running;
@@ -375,6 +399,7 @@ mod tests {
         progress.record(event(ExecutionEventKind::Resource(ResourceEvent {
             address: "terraform_data.api".to_owned(),
             kind: ResourceEventKind::PlannedChange,
+            action: None,
             message: Some("terraform_data.api will be updated in-place".to_owned()),
         })));
         progress.record(event(ExecutionEventKind::Summary(ExecutionSummary {
@@ -419,6 +444,7 @@ mod tests {
             kind: ExecutionEventKind::Resource(ResourceEvent {
                 address: "terraform_data.api".to_owned(),
                 kind: ResourceEventKind::ApplyStart,
+                action: Some(PlanAction::Delete),
                 message: Some("terraform_data.api: Destroying...".to_owned()),
             }),
         });
@@ -427,6 +453,7 @@ mod tests {
             kind: ExecutionEventKind::Resource(ResourceEvent {
                 address: "terraform_data.api".to_owned(),
                 kind: ResourceEventKind::ApplyComplete,
+                action: Some(PlanAction::Delete),
                 message: None,
             }),
         });
@@ -442,6 +469,7 @@ mod tests {
             kind: ExecutionEventKind::Resource(ResourceEvent {
                 address: "terraform_data.api".to_owned(),
                 kind: ResourceEventKind::ApplyComplete,
+                action: Some(PlanAction::Create),
                 message: Some("terraform_data.api: Creation complete".to_owned()),
             }),
         });
@@ -461,7 +489,7 @@ mod tests {
                 address: "terraform_data.api".to_owned(),
                 actions: vec![PlanAction::Update],
             }],
-            vec!["secret-value".to_owned()],
+            vec![SensitiveValue::Text("secret-value".to_owned())],
         );
         let received_at = Instant::now();
         progress.record(ExecutionEvent {
@@ -504,6 +532,56 @@ mod tests {
             "Request (sensitive value) failed\ndetail"
         );
         assert_eq!(progress.log()[1].text, "Future event\nEvent type: future");
+        assert_eq!(
+            progress.diagnostics()[0].summary,
+            "Request (sensitive value) failed"
+        );
+        assert_eq!(progress.diagnostics()[0].detail.as_deref(), Some("detail"));
+    }
+
+    #[test]
+    fn replacement_completion_requires_the_next_planned_action() {
+        let mut progress = ExecutionProgress::new(
+            vec![ExecutionTargetSpec {
+                address: "terraform_data.api".to_owned(),
+                actions: vec![PlanAction::Delete, PlanAction::Create],
+            }],
+            Vec::new(),
+        );
+        let received_at = Instant::now();
+
+        for action in [PlanAction::Create, PlanAction::Delete, PlanAction::Delete] {
+            progress.record(ExecutionEvent {
+                received_at,
+                kind: ExecutionEventKind::Resource(ResourceEvent {
+                    address: "terraform_data.api".to_owned(),
+                    kind: ResourceEventKind::ApplyComplete,
+                    action: Some(action),
+                    message: None,
+                }),
+            });
+        }
+        assert_eq!(progress.targets()[0].completed_stages(), 1);
+        assert_eq!(
+            progress.targets()[0].status(),
+            ExecutionTargetStatus::Running
+        );
+
+        progress.record(ExecutionEvent {
+            received_at,
+            kind: ExecutionEventKind::Resource(ResourceEvent {
+                address: "terraform_data.api".to_owned(),
+                kind: ResourceEventKind::ApplyComplete,
+                action: Some(PlanAction::Create),
+                message: None,
+            }),
+        });
+
+        assert_eq!(progress.targets()[0].completed_stages(), 2);
+        assert_eq!(
+            progress.targets()[0].status(),
+            ExecutionTargetStatus::Completed
+        );
     }
 
     #[test]
@@ -527,6 +605,7 @@ mod tests {
             kind: ExecutionEventKind::Resource(ResourceEvent {
                 address: "terraform_data.running".to_owned(),
                 kind: ResourceEventKind::ApplyStart,
+                action: Some(PlanAction::Update),
                 message: None,
             }),
         });

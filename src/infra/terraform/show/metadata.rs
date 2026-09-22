@@ -1,6 +1,6 @@
 use serde_json::{Map, Value};
 
-use crate::app::execution::ExecutionTargetSpec;
+use crate::app::execution::{ExecutionTargetSpec, SensitiveValue};
 use crate::app::plan::{PlanAction, PlanResource};
 use crate::app::review::PlanMetadata;
 
@@ -102,7 +102,7 @@ fn is_apply_target(
     )
 }
 
-fn sensitive_values(root: &Map<String, Value>, resources: &[Value]) -> Vec<String> {
+fn sensitive_values(root: &Map<String, Value>, resources: &[Value]) -> Vec<SensitiveValue> {
     let mut values = Vec::new();
     for resource in resources.iter().filter_map(Value::as_object) {
         let Some(change) = resource.get("change").and_then(Value::as_object) else {
@@ -118,24 +118,31 @@ fn sensitive_values(root: &Map<String, Value>, resources: &[Value]) -> Vec<Strin
     }
     if let Some(outputs) = root.get("output_changes").and_then(Value::as_object) {
         for output in outputs.values().filter_map(Value::as_object) {
-            if output.get("sensitive") == Some(&Value::Bool(true))
-                && let Some(value) = output.get("value").or_else(|| output.get("after"))
+            let change = output
+                .get("change")
+                .and_then(Value::as_object)
+                .unwrap_or(output);
+            if change.get("sensitive") == Some(&Value::Bool(true))
+                && let Some(value) = change.get("value").or_else(|| change.get("after"))
             {
                 collect_scalar_values(value, &mut values);
             }
-            if let (Some(value), Some(mask)) = (output.get("after"), output.get("after_sensitive"))
+            if let (Some(value), Some(mask)) = (change.get("after"), change.get("after_sensitive"))
             {
                 collect_masked_values(value, mask, &mut values);
             }
         }
     }
-    values.retain(|value| !value.is_empty());
+    values.retain(|value| match value {
+        SensitiveValue::Text(value) | SensitiveValue::Number(value) => !value.is_empty(),
+        SensitiveValue::Bool(_) => true,
+    });
     values.sort();
     values.dedup();
     values
 }
 
-fn collect_masked_values(value: &Value, mask: &Value, values: &mut Vec<String>) {
+fn collect_masked_values(value: &Value, mask: &Value, values: &mut Vec<SensitiveValue>) {
     match mask {
         Value::Bool(true) => collect_scalar_values(value, values),
         Value::Object(mask) => {
@@ -160,11 +167,11 @@ fn collect_masked_values(value: &Value, mask: &Value, values: &mut Vec<String>) 
     }
 }
 
-fn collect_scalar_values(value: &Value, values: &mut Vec<String>) {
+fn collect_scalar_values(value: &Value, values: &mut Vec<SensitiveValue>) {
     match value {
-        Value::String(value) => values.push(value.clone()),
-        Value::Number(value) => values.push(value.to_string()),
-        Value::Bool(value) => values.push(value.to_string()),
+        Value::String(value) => values.push(SensitiveValue::Text(value.clone())),
+        Value::Number(value) => values.push(SensitiveValue::Number(value.to_string())),
+        Value::Bool(value) => values.push(SensitiveValue::Bool(*value)),
         Value::Array(values_array) => {
             for value in values_array {
                 collect_scalar_values(value, values);
@@ -383,7 +390,11 @@ mod tests {
                 }
             ],
             "output_changes": {
-                "endpoint": {"sensitive": true, "value": "output-secret"}
+                "endpoint": {"change": {
+                    "actions": ["update"],
+                    "after": "output-secret",
+                    "after_sensitive": true
+                }}
             }
         });
 
@@ -394,7 +405,11 @@ mod tests {
         assert_eq!(metadata.apply_targets()[0].address, "terraform_data.api");
         assert_eq!(
             metadata.sensitive_values(),
-            ["new-secret", "old-secret", "output-secret"]
+            [
+                SensitiveValue::Text("new-secret".to_owned()),
+                SensitiveValue::Text("old-secret".to_owned()),
+                SensitiveValue::Text("output-secret".to_owned())
+            ]
         );
         let debug = format!("{metadata:?}");
         assert!(!debug.contains("old-secret"));
