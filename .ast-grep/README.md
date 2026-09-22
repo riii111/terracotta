@@ -1,6 +1,6 @@
 # ast-grep
 
-Rules live in `.ast-grep/rules/`; valid and invalid examples live in `.ast-grep/tests/`.
+ast-grep checks repository source conventions. Rules live in `.ast-grep/rules/`; valid and invalid examples live in `.ast-grep/tests/`.
 
 The Nix devShell provides ast-grep and Lefthook. From the repository root:
 
