@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     io,
     path::PathBuf,
     time::{Duration, Instant},
@@ -301,6 +301,7 @@ fn synthetic_review() -> ReviewSessionState {
         Vec::new(),
     )
     .with_plan(Plan {
+        value_addresses: BTreeSet::new(),
         changes: Vec::new(),
         resource_changes: vec![
             synthetic_change(
