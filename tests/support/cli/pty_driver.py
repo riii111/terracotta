@@ -225,14 +225,13 @@ def wait_file(path, name, timeout=20):
 def diagnostic_and_plan_is_ordered(current):
     markers = (
         "Plan:",
-        "synthetic init warning",
         "synthetic plan warning",
         "terraform_data.api",
     )
     positions = [current.find(marker) for marker in markers]
     if any(position < 0 for position in positions):
         return False
-    return positions[0] < positions[1] < positions[3] and positions[0] < positions[2] < positions[3]
+    return positions[1] < positions[0] < positions[2]
 
 
 def wait_exit(timeout=20):
@@ -316,7 +315,7 @@ def kill_child():
 
 
 try:
-    if scenario == "full_text":
+    if scenario in ("full_text", "user_output", "cli_args", "detailed"):
         wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
         exit_code = quit_with_enter()
     elif scenario == "filter_navigation":
@@ -350,7 +349,16 @@ try:
         wait_parts(["Apply complete", "Apply complete! Resources:"], "apply_result", timeout=60)
         send_key(b"y")
         exit_code = quit_with_enter()
-    elif scenario in ("apply_success", "apply_failure", "apply_interrupt", "apply_log_view"):
+    elif scenario == "no_changes":
+        observed.append("no_changes")
+        exit_code = wait_exit()
+    elif scenario in (
+        "apply_success",
+        "apply_failure",
+        "apply_interrupt",
+        "apply_log_view",
+        "apply_mapping",
+    ):
         wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
         send_key(b"a")
         wait_new("Apply this reviewed plan?", "apply_confirmation")
@@ -368,7 +376,7 @@ try:
             wait_new("Applying saved plan...", "apply_logs_reopened")
             wait_parts(["Apply complete", "endpoint ="], "apply_success", timeout=60)
             exit_code = quit_with_enter()
-        elif scenario == "apply_success":
+        elif scenario in ("apply_success", "apply_mapping"):
             wait_parts(["Apply complete", "endpoint ="], "apply_success")
             exit_code = quit_with_enter()
         elif scenario == "apply_failure":
@@ -421,7 +429,6 @@ try:
             "diagnostic_and_plan",
             (
                 "Plan:",
-                "synthetic init warning",
                 "synthetic plan warning",
                 "terraform_data.api",
             ),
@@ -451,10 +458,9 @@ try:
         wait_new("Quit Terracotta?", "quit_confirmation_after_copy")
         send_key(b"\r")
         exit_code = wait_exit()
-    elif scenario in ("failure", "init_failure"):
-        marker = "synthetic init failure" if scenario == "init_failure" else "synthetic plan failure"
-        wait_parts(["Terraform failed", marker], "failed")
-        exit_code = quit_with_enter()
+    elif scenario == "failure":
+        observed.append("failed")
+        exit_code = wait_exit()
     elif scenario == "interrupt":
         wait_file(os.environ["TERRACOTTA_FAKE_PID_PATH"], "terraform_started")
         send_key(b"\x03")

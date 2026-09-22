@@ -26,19 +26,20 @@ impl ApplyResult {
     }
 }
 
-pub(crate) fn run_apply(
+pub(crate) fn run_apply_with_arguments(
     root: &Path,
+    global_arguments: &[OsString],
+    apply_arguments: &[OsString],
     plan_path: &Path,
     cancellation: &CancellationToken,
     runner: &dyn ProcessRunner,
     event_sink: &mut dyn FnMut(ExecutionEvent),
 ) -> Result<ApplyResult, TerraformExecutionError> {
-    let arguments = vec![
-        OsString::from("apply"),
-        OsString::from("-input=false"),
-        OsString::from("-no-color"),
-        plan_path.as_os_str().to_owned(),
-    ];
+    let mut arguments = global_arguments.to_vec();
+    arguments.push(OsString::from("apply"));
+    arguments.push(OsString::from("-input=false"));
+    arguments.extend(apply_arguments.iter().cloned());
+    arguments.push(plan_path.as_os_str().to_owned());
     let output = run_command_with_text_events(
         root,
         TerraformCommand::Apply,
@@ -149,8 +150,10 @@ mod tests {
         let cancellation = CancellationToken::new();
         let mut events = Vec::new();
 
-        let result = run_apply(
+        let result = run_apply_with_arguments(
             Path::new("/project"),
+            &[],
+            &[OsString::from("-no-color")],
             Path::new("/project/review.tfplan"),
             &cancellation,
             &runner,
@@ -194,8 +197,10 @@ mod tests {
             arguments: RefCell::new(Vec::new()),
         };
         let mut events = Vec::new();
-        let failed = run_apply(
+        let failed = run_apply_with_arguments(
             Path::new("/project"),
+            &[],
+            &[OsString::from("-no-color")],
             Path::new("/project/review.tfplan"),
             &CancellationToken::new(),
             &failed_runner,
@@ -211,8 +216,10 @@ mod tests {
 
         let cancelled = CancellationToken::new();
         cancelled.cancel();
-        let interrupted = run_apply(
+        let interrupted = run_apply_with_arguments(
             Path::new("/project"),
+            &[],
+            &[OsString::from("-no-color")],
             Path::new("/project/review.tfplan"),
             &cancelled,
             &failed_runner,
@@ -232,8 +239,10 @@ mod tests {
             arguments: RefCell::new(Vec::new()),
         };
 
-        let result = run_apply(
+        let result = run_apply_with_arguments(
             Path::new("/project"),
+            &[],
+            &[OsString::from("-no-color")],
             Path::new("/project/review.tfplan"),
             &CancellationToken::new(),
             &runner,

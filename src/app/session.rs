@@ -13,6 +13,8 @@ use super::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SessionOutcome {
     Reviewed(PlanMetadata),
+    NoChanges,
+    ApplyCanceled,
     Applied {
         status: ApplyStatus,
         summary_line: Option<String>,
@@ -261,6 +263,9 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
                     execution.stage(),
                 )));
             }
+            if review.apply_entry() && !review.metadata().applyable() {
+                return Some(Effect::Finish(SessionOutcome::NoChanges));
+            }
             *state = SessionState::Review(Box::new(ReviewSessionState::new(review)));
             None
         }
@@ -289,7 +294,10 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
             let SessionState::Review(review) = state else {
                 return None;
             };
-            if review.review.search_query().is_empty() && review.review.metadata().applyable() {
+            if review.review.search_query().is_empty()
+                && review.review.apply_allowed()
+                && review.review.metadata().applyable()
+            {
                 let review = review.review.clone();
                 *state =
                     SessionState::ApplyConfirmation(Box::new(ApplyConfirmationState::new(review)));
@@ -394,13 +402,18 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
                     ),
                 )))
             }
+            SessionState::Review(review)
+                if review.review.apply_entry() && review.review.search_query().is_empty() =>
+            {
+                Some(Effect::Finish(SessionOutcome::ApplyCanceled))
+            }
             SessionState::Review(review) if review.review.search_query().is_empty() => Some(
                 Effect::Finish(SessionOutcome::Reviewed(review.review.metadata().clone())),
             ),
             SessionState::Execution(_) | SessionState::Review(_) => None,
-            SessionState::ApplyConfirmation(confirmation) => Some(Effect::Finish(
-                SessionOutcome::Reviewed(confirmation.review.metadata().clone()),
-            )),
+            SessionState::ApplyConfirmation(_) => {
+                Some(Effect::Finish(SessionOutcome::ApplyCanceled))
+            }
             SessionState::Apply(execution) => execution.result().map(|result| {
                 Effect::Finish(SessionOutcome::Applied {
                     status: match execution.stage() {

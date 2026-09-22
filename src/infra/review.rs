@@ -125,7 +125,7 @@ fn run_review_with_dependencies(
     }
 
     let workspace =
-        terraform::test_support::read_workspace_with_runner(&execution_root, cancellation, runner)?;
+        terraform::read_workspace_with_arguments(&execution_root, &[], cancellation, runner)?;
     if cancellation.is_cancelled() {
         return Err(ReviewError::Interrupted);
     }

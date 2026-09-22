@@ -12,13 +12,18 @@ use crate::infra::terraform::{
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Subcommand {
+pub(crate) enum Subcommand {
     Plan,
     Apply,
 }
 
-struct Invocation {
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "these fields preserve Terraform's independent CLI boolean options"
+)]
+pub(crate) struct Invocation {
     subcommand: Subcommand,
+    launch_root: PathBuf,
     directory: PathBuf,
     global_arguments: Vec<OsString>,
     effective_arguments: Vec<OsString>,
@@ -26,6 +31,7 @@ struct Invocation {
     auto_approve: bool,
     input: bool,
     saved_plan: Option<OsString>,
+    detailed_exitcode: bool,
 }
 
 pub(crate) fn run(arguments: &[OsString]) -> ExitCode {
@@ -40,13 +46,25 @@ pub(crate) fn run(arguments: &[OsString]) -> ExitCode {
 
 fn execute(arguments: &[OsString]) -> io::Result<ExitCode> {
     let executable = terraform::resolve_executable()?;
-    if let Some(directory) = review_directory(arguments) {
-        return Ok(super::run_plan(&directory, None));
+    let Some(root) = env::current_dir().ok() else {
+        return terraform::delegate(&executable, arguments);
+    };
+    let Some(invocation) = review_invocation(arguments, &root) else {
+        return terraform::delegate(&executable, arguments);
+    };
+    if !matches!(
+        configuration::execution_location(
+            &invocation.directory,
+            env::var_os("TF_DATA_DIR").as_deref(),
+        ),
+        Ok(ExecutionLocation::Local)
+    ) {
+        return terraform::delegate(&executable, arguments);
     }
-    terraform::delegate(&executable, arguments)
+    Ok(super::run_invocation(&executable, &invocation))
 }
 
-fn review_directory(arguments: &[OsString]) -> Option<PathBuf> {
+fn review_invocation(arguments: &[OsString], root: &Path) -> Option<Invocation> {
     let terminals = [
         io::stdin().is_terminal(),
         io::stdout().is_terminal(),
@@ -60,23 +78,11 @@ fn review_directory(arguments: &[OsString]) -> Option<PathBuf> {
         return None;
     }
 
-    let root = env::current_dir().ok()?;
-    let invocation = parse(arguments, &root, |name| env::var_os(name))?;
-    // SBI01-02 will connect effective options and apply to the managed execution path.
-    if !invocation.review_candidate()
-        || invocation.subcommand != Subcommand::Plan
-        || !invocation.global_arguments.is_empty()
-        || !invocation.effective_arguments.is_empty()
-    {
+    let invocation = parse(arguments, root, |name| env::var_os(name))?;
+    if !invocation.review_candidate() {
         return None;
     }
-
-    let location = configuration::execution_location(
-        &invocation.directory,
-        env::var_os("TF_DATA_DIR").as_deref(),
-    )
-    .ok()?;
-    (location == ExecutionLocation::Local).then_some(invocation.directory)
+    Some(invocation)
 }
 
 fn interactive(terminals: [bool; 3], ci: Option<&OsStr>, automation: Option<&OsStr>) -> bool {
@@ -103,11 +109,21 @@ fn parse(
 ) -> Option<Invocation> {
     let mut offset = 0;
     let mut directory = root.to_path_buf();
-    if let Some(value) = arguments.first()?.to_str()?.strip_prefix("-chdir=") {
-        if !value.is_empty() {
+    if let Some(first) = arguments.first()?.to_str() {
+        if let Some(value) = first.strip_prefix("-chdir=") {
+            if value.is_empty() {
+                return None;
+            }
             directory = root.join(value);
+            offset = 1;
+        } else if first == "-chdir" {
+            let value = arguments.get(1)?.to_str()?;
+            if value.is_empty() {
+                return None;
+            }
+            directory = root.join(value);
+            offset = 2;
         }
-        offset = 1;
     }
     let command = arguments.get(offset)?.to_str()?;
     let subcommand = match command {
@@ -128,6 +144,7 @@ fn parse(
     effective_arguments.extend_from_slice(&arguments[offset + 1..]);
     let mut invocation = Invocation {
         subcommand,
+        launch_root: root.to_path_buf(),
         directory,
         global_arguments: arguments[..offset].to_vec(),
         effective_arguments,
@@ -136,6 +153,7 @@ fn parse(
         input: !lookup("TF_INPUT")
             .is_some_and(|value| value == "0" || value.eq_ignore_ascii_case("false")),
         saved_plan: None,
+        detailed_exitcode: false,
     };
     classify_options(&mut invocation)?;
     Some(invocation)
@@ -172,7 +190,7 @@ fn classify_options(invocation: &mut Invocation) -> Option<()> {
                 flag_bool(value)?;
             }
             "detailed-exitcode" if invocation.subcommand == Subcommand::Plan => {
-                flag_bool(value)?;
+                invocation.detailed_exitcode = flag_bool(value)?;
             }
             "var" | "var-file" | "target" | "replace" | "parallelism" | "lock-timeout" => {
                 if value.is_none() {
@@ -188,6 +206,94 @@ fn classify_options(invocation: &mut Invocation) -> Option<()> {
         }
     }
     Some(())
+}
+
+impl Invocation {
+    pub(crate) fn launch_root(&self) -> &Path {
+        &self.launch_root
+    }
+
+    pub(crate) fn directory(&self) -> &Path {
+        &self.directory
+    }
+
+    pub(crate) fn global_arguments(&self) -> &[OsString] {
+        &self.global_arguments
+    }
+
+    pub(crate) fn plan_arguments(&self) -> Vec<OsString> {
+        let mut arguments = self
+            .effective_arguments
+            .iter()
+            .filter(|argument| option_name(argument).is_none_or(|option| option != "auto-approve"))
+            .cloned()
+            .collect::<Vec<_>>();
+        if self.subcommand == Subcommand::Plan {
+            arguments
+                .retain(|argument| option_name(argument).as_deref() != Some("detailed-exitcode"));
+        }
+        arguments.push(OsString::from("-detailed-exitcode"));
+        arguments
+    }
+
+    pub(crate) fn apply_arguments(&self) -> Vec<OsString> {
+        let mut arguments = Vec::new();
+        let mut index = 0;
+        while index < self.effective_arguments.len() {
+            let argument = &self.effective_arguments[index];
+            let Some(option) = option_name(argument) else {
+                arguments.push(argument.clone());
+                index += 1;
+                continue;
+            };
+            if matches!(
+                option.as_str(),
+                "auto-approve"
+                    | "input"
+                    | "var"
+                    | "var-file"
+                    | "target"
+                    | "replace"
+                    | "refresh"
+                    | "refresh-only"
+                    | "destroy"
+            ) {
+                index += 1;
+                if !argument.to_string_lossy().contains('=')
+                    && matches!(
+                        option.as_str(),
+                        "var" | "var-file" | "target" | "replace" | "parallelism" | "lock-timeout"
+                    )
+                {
+                    index += 1;
+                }
+                continue;
+            }
+            arguments.push(argument.clone());
+            index += 1;
+        }
+        arguments
+    }
+
+    pub(crate) const fn detailed_exitcode(&self) -> bool {
+        self.detailed_exitcode
+    }
+
+    pub(crate) const fn is_apply(&self) -> bool {
+        matches!(self.subcommand, Subcommand::Apply)
+    }
+}
+
+fn option_name(argument: &OsStr) -> Option<String> {
+    let argument = argument.to_string_lossy();
+    let argument = argument.strip_prefix('-')?;
+    let argument = argument.strip_prefix('-').unwrap_or(argument);
+    Some(
+        argument
+            .split_once('=')
+            .map_or(argument, |(name, _)| name)
+            .to_owned(),
+    )
 }
 
 fn flag_bool(value: Option<&str>) -> Option<bool> {
@@ -337,6 +443,84 @@ mod tests {
         assert_eq!(
             parsed.global_arguments,
             [OsString::from("-chdir=directory with spaces")]
+        );
+    }
+
+    #[test]
+    fn separate_chdir_is_kept_as_a_global_argument() {
+        let parsed = invocation(&["-chdir", "directory", "apply"], &[]).expect("chdir");
+        assert_eq!(parsed.directory, Path::new("/root/directory"));
+        assert_eq!(
+            parsed.global_arguments,
+            [OsString::from("-chdir"), OsString::from("directory")]
+        );
+        assert!(parsed.is_apply());
+    }
+
+    #[test]
+    fn apply_plan_and_apply_arguments_have_separate_option_ownership() {
+        let parsed = invocation(
+            &[
+                "apply",
+                "-var",
+                "name=value",
+                "-target=terraform_data.api",
+                "-parallelism",
+                "4",
+                "-lock-timeout",
+                "30s",
+                "-lock=false",
+                "-compact-warnings",
+                "-auto-approve=false",
+            ],
+            &[("TF_CLI_ARGS_apply", "-var-file=env.tfvars")],
+        )
+        .expect("apply arguments");
+
+        assert_eq!(
+            parsed.plan_arguments(),
+            [
+                "-var-file=env.tfvars",
+                "-var",
+                "name=value",
+                "-target=terraform_data.api",
+                "-parallelism",
+                "4",
+                "-lock-timeout",
+                "30s",
+                "-lock=false",
+                "-compact-warnings",
+                "-detailed-exitcode",
+            ]
+            .map(OsString::from)
+        );
+        assert_eq!(
+            parsed.apply_arguments(),
+            [
+                "-parallelism",
+                "4",
+                "-lock-timeout",
+                "30s",
+                "-lock=false",
+                "-compact-warnings",
+            ]
+            .map(OsString::from)
+        );
+    }
+
+    #[rstest]
+    #[case::implicit(&["plan"], false)]
+    #[case::enabled(&["plan", "-detailed-exitcode"], true)]
+    #[case::disabled(&["plan", "-detailed-exitcode=false"], false)]
+    fn detailed_exit_code_is_preserved_only_when_requested(
+        #[case] args: &[&str],
+        #[case] expected: bool,
+    ) {
+        let parsed = invocation(args, &[]).expect("plan arguments");
+        assert_eq!(parsed.detailed_exitcode(), expected);
+        assert_eq!(
+            parsed.plan_arguments().last(),
+            Some(&OsString::from("-detailed-exitcode"))
         );
     }
 

@@ -1,5 +1,5 @@
 use std::{
-    io,
+    fs, io,
     path::Path,
     sync::mpsc::{Receiver, TryRecvError},
     sync::{Arc, Mutex},
@@ -12,11 +12,11 @@ use ratatui::{DefaultTerminal, Terminal, backend::Backend, layout::Rect};
 use crate::{
     app::{
         copy::{CopyEffect, CopyResult, CopyTarget},
-        execution::{ExecutionStage, ExecutionState},
+        execution::{ExecutionContextValue, ExecutionStage, ExecutionState},
         review::PlanReviewMessage,
         session::{self, Action, Effect, SessionOutcome, SessionState},
     },
-    infra::{CancellationToken, ClipboardExecutor, terraform::SavedPlan},
+    infra::{CancellationToken, ClipboardExecutor, terraform, terraform::SavedPlan},
     ui::{
         QuitConfirmationInput,
         features::{execution, plan_review},
@@ -563,6 +563,15 @@ fn apply_effect<C: ClipboardWriter>(
             None
         }
         Some(Effect::StartApply) => {
+            let apply = state.apply()?;
+            if let Err(message) = verify_apply_context(apply, effects) {
+                return dispatch(
+                    state,
+                    Action::ApplyFailed { message },
+                    execution_view,
+                    effects,
+                );
+            }
             let plan_path = effects
                 .saved_plan_slot
                 .lock()
@@ -580,6 +589,8 @@ fn apply_effect<C: ClipboardWriter>(
             };
             match super::spawn_apply_worker(
                 effects.root,
+                effects.global_arguments,
+                effects.apply_arguments,
                 &plan_path,
                 effects.cancellation,
                 effects.sender,
@@ -612,6 +623,39 @@ fn apply_effect<C: ClipboardWriter>(
     }
 }
 
+fn verify_apply_context(
+    apply: &ExecutionState,
+    effects: &RuntimeEffects<'_, impl ClipboardWriter>,
+) -> Result<(), String> {
+    if fs::canonicalize(effects.display_root).ok()
+        != fs::canonicalize(apply.context().cwd_path()).ok()
+    {
+        return Err(
+            "The execution directory changed. Re-run plan and review it again before applying."
+                .to_owned(),
+        );
+    }
+    let workspace = terraform::read_workspace_with_arguments(
+        effects.root,
+        effects.global_arguments,
+        effects.cancellation,
+        &terraform::SystemProcessRunner,
+    )
+    .map_err(|error| format!("Could not re-confirm the Terraform workspace: {error}"))?;
+    let expected = match apply.context().workspace() {
+        ExecutionContextValue::Known(workspace) => workspace,
+        ExecutionContextValue::Loading => {
+            return Err("The Terraform workspace is not available for apply.".to_owned());
+        }
+    };
+    if workspace != *expected {
+        return Err(format!(
+            "The Terraform workspace changed from {expected} to {workspace}. Re-run plan and review it again before applying."
+        ));
+    }
+    Ok(())
+}
+
 pub(super) trait ClipboardWriter {
     fn execute(&mut self, effect: &CopyEffect) -> CopyResult;
 }
@@ -624,6 +668,9 @@ impl ClipboardWriter for ClipboardExecutor {
 
 pub(super) struct RuntimeEffects<'a, C: ClipboardWriter = ClipboardExecutor> {
     pub(super) root: &'a Path,
+    pub(super) display_root: &'a Path,
+    pub(super) global_arguments: &'a [std::ffi::OsString],
+    pub(super) apply_arguments: &'a [std::ffi::OsString],
     pub(super) sender: &'a std::sync::mpsc::Sender<PlanReviewMessage>,
     pub(super) saved_plan_slot: &'a Arc<Mutex<Option<SavedPlan>>>,
     pub(super) cancellation: &'a CancellationToken,
@@ -1198,6 +1245,9 @@ mod tests {
     ) -> RuntimeEffects<'a, TestClipboard> {
         RuntimeEffects {
             root: Path::new("/project"),
+            display_root: Path::new("/project"),
+            global_arguments: &[],
+            apply_arguments: &[],
             sender,
             saved_plan_slot,
             cancellation,
@@ -2232,6 +2282,9 @@ mod tests {
         };
         let mut effects = RuntimeEffects {
             root: Path::new("/project"),
+            display_root: Path::new("/project"),
+            global_arguments: &[],
+            apply_arguments: &[],
             sender: &sender,
             saved_plan_slot: &saved_plan_slot,
             cancellation: &cancellation,

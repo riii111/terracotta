@@ -1,4 +1,5 @@
 use std::{
+    env,
     ffi::{OsStr, OsString},
     fmt::{Debug, Display, Formatter},
     io::{self, Read},
@@ -22,7 +23,6 @@ const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TerraformCommand {
-    Init,
     Plan,
     Show,
     Apply,
@@ -32,7 +32,6 @@ pub(crate) enum TerraformCommand {
 impl Display for TerraformCommand {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
-            Self::Init => "init",
             Self::Plan => "plan",
             Self::Show => "show",
             Self::Apply => "apply",
@@ -54,12 +53,12 @@ impl ProcessStatus {
     }
 
     #[must_use]
-    pub(super) const fn is_plan_success(self) -> bool {
+    pub(crate) const fn is_plan_success(self) -> bool {
         matches!(self, Self::Exited(0 | 2))
     }
 
     #[must_use]
-    pub(super) const fn code(self) -> Option<i32> {
+    pub(crate) const fn code(self) -> Option<i32> {
         match self {
             Self::Exited(code) => Some(code),
             Self::Signaled => None,
@@ -79,7 +78,7 @@ impl Display for ProcessStatus {
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct ProcessOutput {
     pub(super) stdout: Vec<u8>,
-    stderr: Vec<u8>,
+    pub(super) stderr: Vec<u8>,
     ordered: Vec<ProcessOutputRange>,
 }
 
@@ -122,11 +121,6 @@ impl ProcessOutput {
     pub(super) fn stdout(&self) -> &[u8] {
         &self.stdout
     }
-
-    #[must_use]
-    pub(super) fn stderr(&self) -> &[u8] {
-        &self.stderr
-    }
 }
 
 impl Debug for ProcessOutput {
@@ -141,9 +135,6 @@ impl Debug for ProcessOutput {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TerraformExecutionErrorKind {
-    TemporaryPlan {
-        message: String,
-    },
     Launch {
         command: TerraformCommand,
         message: String,
@@ -183,22 +174,11 @@ impl TerraformExecutionError {
             cleanup_error: None,
         }
     }
-
-    pub(super) fn with_cleanup_error(mut self, error: &io::Error) -> Self {
-        self.cleanup_error = Some(error.to_string());
-        self
-    }
 }
 
 impl Display for TerraformExecutionError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         match &self.kind {
-            TerraformExecutionErrorKind::TemporaryPlan { message } => {
-                write!(
-                    formatter,
-                    "failed to create a temporary Terraform plan: {message}"
-                )
-            }
             TerraformExecutionErrorKind::Launch { command, message } => {
                 write!(formatter, "failed to start terraform {command}: {message}")
             }
@@ -460,6 +440,85 @@ pub(crate) fn delegate(
         let status = process.child.wait()?;
         drop(process);
         exit_delegated_process(status)
+    }
+}
+
+pub(crate) fn run_passthrough(
+    executable: &Path,
+    root: &Path,
+    arguments: &[OsString],
+) -> io::Result<ProcessStatus> {
+    let mut command = Command::new(executable);
+    command
+        .current_dir(root)
+        .args(arguments)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    remove_cli_argument_environment(&mut command);
+    #[cfg(unix)]
+    {
+        run_passthrough_unix(command)
+    }
+    #[cfg(windows)]
+    {
+        command.status().map(process_status)
+    }
+}
+
+#[cfg(unix)]
+fn run_passthrough_unix(mut command: Command) -> io::Result<ProcessStatus> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+
+    extern "C" fn record_interrupt(_: libc::c_int) {
+        INTERRUPTED.store(true, Ordering::Relaxed);
+    }
+
+    // SAFETY: the handler only performs an atomic store and is restored after the child exits.
+    let previous = unsafe {
+        libc::signal(
+            libc::SIGINT,
+            record_interrupt as *const () as libc::sighandler_t,
+        )
+    };
+    if previous == libc::SIG_ERR {
+        return Err(io::Error::last_os_error());
+    }
+    INTERRUPTED.store(false, Ordering::Relaxed);
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            // SAFETY: restore the signal disposition captured immediately before spawning.
+            unsafe { libc::signal(libc::SIGINT, previous) };
+            return Err(error);
+        }
+    };
+    let result = (|| {
+        loop {
+            if INTERRUPTED.swap(false, Ordering::Relaxed) {
+                let pid = i32::try_from(child.id())
+                    .map_err(|_| io::Error::other("child PID is too large"))?;
+                // SAFETY: the PID belongs to the child we just spawned.
+                let _ = unsafe { libc::kill(pid, libc::SIGINT) };
+            }
+            if let Some(status) = child.try_wait()? {
+                break Ok(process_status(status));
+            }
+            thread::sleep(PROCESS_POLL_INTERVAL);
+        }
+    })();
+    // SAFETY: restore the signal disposition captured immediately before spawning the child.
+    unsafe { libc::signal(libc::SIGINT, previous) };
+    result
+}
+
+fn remove_cli_argument_environment(command: &mut Command) {
+    for (name, _) in
+        env::vars_os().filter(|(name, _)| name.to_string_lossy().starts_with("TF_CLI_ARGS"))
+    {
+        command.env_remove(name);
     }
 }
 
@@ -754,6 +813,7 @@ impl ProcessRunner for SystemProcessRunner {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        remove_cli_argument_environment(&mut command);
         configure_process_group(&mut command);
         let child = command.spawn()?;
         Ok(Box::new(SystemRunningProcess::new(child)))
@@ -948,6 +1008,11 @@ mod tests {
     }
 
     impl TerraformExecutionError {
+        pub(crate) fn with_cleanup_error(mut self, error: &io::Error) -> Self {
+            self.cleanup_error = Some(error.to_string());
+            self
+        }
+
         pub(crate) const fn kind(&self) -> &TerraformExecutionErrorKind {
             &self.kind
         }
@@ -1067,9 +1132,9 @@ mod tests {
         emit_parser_remainders(&mut parser, &mut |event| events.push(event));
 
         assert_eq!(output.stdout(), [message, b"final line"].concat());
-        assert_eq!(output.stderr(), b"warning\n");
+        assert_eq!(output.stderr, b"warning\n");
         assert_eq!(observed.stdout, output.stdout().len());
-        assert_eq!(observed.stderr, output.stderr().len());
+        assert_eq!(observed.stderr, output.stderr.len());
         assert_eq!(observed.chunks, 4);
         assert_eq!(
             events.iter().filter_map(log_text).collect::<Vec<_>>(),

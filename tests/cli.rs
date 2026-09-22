@@ -69,6 +69,7 @@ Plan: 0 to add, 1 to change, 0 to destroy.
         pid_record: PathBuf,
         show_json: PathBuf,
         show_text: PathBuf,
+        env_log: PathBuf,
     }
 
     impl Fixture {
@@ -86,9 +87,11 @@ Plan: 0 to add, 1 to change, 0 to destroy.
             let pid_record = directory.join("terraform-pid");
             let show_json = directory.join("show.json");
             let show_text = directory.join("show.txt");
+            let env_log = directory.join("environment");
             fs::write(&show_json, PLAN_JSON).expect("fake show JSON should be written");
             fs::write(&show_text, PLAN_TEXT).expect("fake show text should be written");
             fs::write(&invocations, "").expect("invocation log should be created");
+            fs::write(&env_log, "").expect("environment log should be created");
             let terraform = bin.join("terraform");
             fs::write(&terraform, FAKE_TERRAFORM).expect("fake Terraform should be written");
             fs::set_permissions(&terraform, fs::Permissions::from_mode(0o755))
@@ -103,10 +106,32 @@ Plan: 0 to add, 1 to change, 0 to destroy.
                 pid_record,
                 show_json,
                 show_text,
+                env_log,
             }
         }
 
         fn run(&self, scenario: &str, columns: u16, rows: u16) -> PtyResult {
+            self.run_with_command(scenario, columns, rows, "plan")
+        }
+
+        fn run_with_command(
+            &self,
+            scenario: &str,
+            columns: u16,
+            rows: u16,
+            command: &str,
+        ) -> PtyResult {
+            self.run_with_arguments(scenario, columns, rows, command, &[])
+        }
+
+        fn run_with_arguments(
+            &self,
+            scenario: &str,
+            columns: u16,
+            rows: u16,
+            command: &str,
+            arguments: &[&str],
+        ) -> PtyResult {
             let original_path = env::var_os("PATH").expect("PATH should be available");
             let mut path_entries = vec![self.bin.clone()];
             path_entries.extend(env::split_paths(&original_path));
@@ -120,7 +145,8 @@ Plan: 0 to add, 1 to change, 0 to destroy.
                 .arg(columns.to_string())
                 .arg(rows.to_string())
                 .arg(scenario)
-                .arg("plan")
+                .arg(command)
+                .args(arguments)
                 .env("PATH", path)
                 .env("TERRACOTTA_FAKE_MODE", scenario)
                 .env("TERRACOTTA_FAKE_INVOCATIONS", &self.invocations)
@@ -128,6 +154,7 @@ Plan: 0 to add, 1 to change, 0 to destroy.
                 .env("TERRACOTTA_FAKE_PID_PATH", &self.pid_record)
                 .env("TERRACOTTA_FAKE_SHOW_JSON", &self.show_json)
                 .env("TERRACOTTA_FAKE_SHOW_TEXT", &self.show_text)
+                .env("TERRACOTTA_FAKE_ENV_LOG", &self.env_log)
                 .env_remove("TF_IN_AUTOMATION")
                 .env_remove("CI")
                 .env_remove("TF_CLI_ARGS")
@@ -136,6 +163,10 @@ Plan: 0 to add, 1 to change, 0 to destroy.
                 .env("CHECKPOINT_DISABLE", "1");
             if scenario == "panic" {
                 process.env("TERRACOTTA_TEST_PANIC_AFTER_DRAW", "1");
+            }
+            if scenario == "cli_args" {
+                process.env("TF_CLI_ARGS", "-no-color");
+                process.env("TF_CLI_ARGS_plan", "-refresh=false");
             }
             let output = process.output().expect("PTY driver should start");
             assert!(
@@ -173,6 +204,14 @@ Plan: 0 to add, 1 to change, 0 to destroy.
                 path.trim()
             );
         }
+
+        fn forwarded_cli_arguments(&self) -> Vec<String> {
+            fs::read_to_string(&self.env_log)
+                .expect("fake Terraform environment log should be readable")
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        }
     }
 
     impl Drop for Fixture {
@@ -209,6 +248,14 @@ Plan: 0 to add, 1 to change, 0 to destroy.
             assert!(self.cursor_restored, "cursor visibility was not restored");
         }
 
+        fn assert_no_tui(&self) {
+            assert!(!self.restored, "plan failure unexpectedly entered the TUI");
+            assert!(
+                !self.cursor_restored,
+                "plan failure unexpectedly changed the cursor"
+            );
+        }
+
         fn observed(&self, event: &str) {
             assert!(
                 self.observed.split(',').any(|observed| observed == event),
@@ -219,7 +266,7 @@ Plan: 0 to add, 1 to change, 0 to destroy.
     }
 
     #[test]
-    fn pty_runs_init_plan_and_both_show_modes_in_the_original_directory() {
+    fn pty_runs_plan_and_both_show_modes_in_the_original_directory() {
         let fixture = Fixture::new();
         let result = fixture.run("full_text", 100, 24);
 
@@ -227,12 +274,11 @@ Plan: 0 to add, 1 to change, 0 to destroy.
         result.assert_restored();
         result.observed("plan_text");
         let arguments = fixture.invocation_arguments();
-        assert_eq!(arguments[0], "init -input=false -no-color");
+        assert!(arguments[0].starts_with("plan -detailed-exitcode -out="));
         assert_eq!(arguments[1], "workspace show");
-        assert!(arguments[2].starts_with("plan -input=false -json -detailed-exitcode -out="));
-        assert!(arguments[3].starts_with("show -no-color "));
-        assert!(arguments[4].starts_with("show -json "));
-        assert_eq!(arguments.len(), 5);
+        assert!(arguments[2].starts_with("show -no-color "));
+        assert!(arguments[3].starts_with("show -json "));
+        assert_eq!(arguments.len(), 4);
         fixture.assert_saved_plan_removed();
     }
 
@@ -244,6 +290,92 @@ Plan: 0 to add, 1 to change, 0 to destroy.
         assert_eq!(result.exit_code, 0);
         result.assert_restored();
         result.observed("diagnostic_and_plan");
+        fixture.assert_saved_plan_removed();
+    }
+
+    #[test]
+    fn pty_apply_no_changes_exits_without_confirmation_or_apply() {
+        let fixture = Fixture::new();
+        let result = fixture.run_with_command("no_changes", 100, 24, "apply");
+
+        assert_eq!(result.exit_code, 0);
+        result.assert_restored();
+        result.observed("no_changes");
+        assert!(
+            fixture
+                .invocation_arguments()
+                .iter()
+                .all(|arguments| !arguments.starts_with("apply "))
+        );
+        fixture.assert_saved_plan_removed();
+    }
+
+    #[test]
+    fn pty_detailed_exit_code_is_returned_after_review() {
+        let fixture = Fixture::new();
+        let result =
+            fixture.run_with_arguments("detailed", 100, 24, "plan", &["-detailed-exitcode"]);
+
+        assert_eq!(result.exit_code, 2);
+        result.assert_restored();
+        result.observed("plan_text");
+        fixture.assert_saved_plan_removed();
+    }
+
+    #[test]
+    fn pty_apply_maps_plan_only_options_away_from_apply() {
+        let fixture = Fixture::new();
+        let result = fixture.run_with_arguments(
+            "apply_mapping",
+            100,
+            24,
+            "apply",
+            &["-var", "name=value", "-parallelism", "4"],
+        );
+
+        assert_eq!(result.exit_code, 0);
+        result.assert_restored();
+        result.observed("apply_success");
+        let arguments = fixture.invocation_arguments();
+        assert!(arguments[0].contains("-var name=value"));
+        assert!(arguments[0].contains("-parallelism 4"));
+        assert!(arguments[5].contains("-parallelism 4"));
+        assert!(!arguments[5].contains("-var"));
+        fixture.assert_saved_plan_removed();
+    }
+
+    #[test]
+    fn pty_user_owned_output_path_is_not_removed() {
+        let fixture = Fixture::new();
+        let result =
+            fixture.run_with_arguments("user_output", 100, 24, "plan", &["-out=review.tfplan"]);
+
+        assert_eq!(result.exit_code, 0);
+        result.assert_restored();
+        let output = fixture.root.join("review.tfplan");
+        assert!(output.exists());
+        assert!(fixture.invocation_arguments()[0].contains(&output.display().to_string()));
+        fs::remove_file(output).expect("user-owned output should be cleaned by the test");
+    }
+
+    #[test]
+    fn pty_managed_children_do_not_receive_cli_argument_environment_again() {
+        let fixture = Fixture::new();
+        let result = fixture.run("cli_args", 100, 24);
+
+        assert_eq!(result.exit_code, 0);
+        result.assert_restored();
+        result.observed("plan_text");
+        assert!(
+            fixture.invocation_arguments()[0]
+                .starts_with("plan -no-color -refresh=false -detailed-exitcode -out=")
+        );
+        assert!(fixture.forwarded_cli_arguments().iter().all(|line| {
+            matches!(
+                line.as_str(),
+                "TF_CLI_ARGS=" | "TF_CLI_ARGS_plan=" | "TF_CLI_ARGS_apply="
+            )
+        }));
         fixture.assert_saved_plan_removed();
     }
 
@@ -280,7 +412,7 @@ Plan: 0 to add, 1 to change, 0 to destroy.
     #[test]
     fn pty_apply_success_uses_the_saved_plan_once_and_cleans_it_after_quit() {
         let fixture = Fixture::new();
-        let result = fixture.run("apply_success", 100, 24);
+        let result = fixture.run_with_command("apply_success", 100, 24, "apply");
 
         assert_eq!(result.exit_code, 0);
         result.assert_restored();
@@ -289,10 +421,11 @@ Plan: 0 to add, 1 to change, 0 to destroy.
         result.observed("apply_success");
         let arguments = fixture.invocation_arguments();
         assert_eq!(arguments.len(), 6);
-        assert!(arguments[5].starts_with("apply -input=false -no-color "));
+        assert!(arguments[4].starts_with("workspace show"));
+        assert!(arguments[5].starts_with("apply -input=false "));
         assert_eq!(
-            arguments[2].split("-out=").nth(1),
-            arguments[5].split("-input=false -no-color ").nth(1)
+            arguments[0].split("-out=").nth(1),
+            arguments[5].split("-input=false ").nth(1)
         );
         fixture.assert_saved_plan_removed();
     }
@@ -300,7 +433,7 @@ Plan: 0 to add, 1 to change, 0 to destroy.
     #[test]
     fn pty_apply_progress_can_open_close_and_reopen_the_log_viewer() {
         let fixture = Fixture::new();
-        let result = fixture.run("apply_log_view", 100, 24);
+        let result = fixture.run_with_command("apply_log_view", 100, 24, "apply");
 
         assert_eq!(result.exit_code, 0);
         result.assert_restored();
@@ -315,7 +448,7 @@ Plan: 0 to add, 1 to change, 0 to destroy.
     #[test]
     fn pty_apply_failure_keeps_the_result_and_returns_failure() {
         let fixture = Fixture::new();
-        let result = fixture.run("apply_failure", 100, 24);
+        let result = fixture.run_with_command("apply_failure", 100, 24, "apply");
 
         assert_eq!(result.exit_code, 1);
         result.assert_restored();
@@ -336,7 +469,7 @@ Plan: 0 to add, 1 to change, 0 to destroy.
     #[test]
     fn pty_apply_interrupt_waits_for_terraform_and_returns_130() {
         let fixture = Fixture::new();
-        let result = fixture.run("apply_interrupt", 100, 24);
+        let result = fixture.run_with_command("apply_interrupt", 100, 24, "apply");
 
         assert_eq!(result.exit_code, 130);
         result.assert_restored();
@@ -362,9 +495,9 @@ Plan: 0 to add, 1 to change, 0 to destroy.
         #[case] scenario: &str,
     ) {
         let fixture = Fixture::new();
-        let result = fixture.run(scenario, 100, 24);
+        let result = fixture.run_with_command(scenario, 100, 24, "apply");
 
-        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.exit_code, 1);
         result.assert_restored();
         result.observed("apply_confirmation");
         result.observed("plan_restored");
@@ -378,27 +511,15 @@ Plan: 0 to add, 1 to change, 0 to destroy.
     }
 
     #[test]
-    fn pty_init_failure_skips_workspace_plan_and_show() {
-        let fixture = Fixture::new();
-        let result = fixture.run("init_failure", 100, 24);
-
-        assert_eq!(result.exit_code, 1);
-        result.assert_restored();
-        result.observed("failed");
-        assert_eq!(
-            fixture.invocation_arguments(),
-            ["init -input=false -no-color"]
-        );
-    }
-
-    #[test]
-    fn pty_plan_failure_preserves_logs_and_cleans_the_saved_plan() {
+    fn pty_plan_failure_skips_workspace_and_show() {
         let fixture = Fixture::new();
         let result = fixture.run("failure", 100, 24);
 
         assert_eq!(result.exit_code, 1);
-        result.assert_restored();
+        result.assert_no_tui();
         result.observed("failed");
+        assert_eq!(fixture.invocation_arguments().len(), 1);
+        assert!(fixture.invocation_arguments()[0].starts_with("plan "));
         fixture.assert_saved_plan_removed();
     }
 
@@ -408,7 +529,7 @@ Plan: 0 to add, 1 to change, 0 to destroy.
         let result = fixture.run("interrupt", 100, 24);
 
         assert_eq!(result.exit_code, 130);
-        result.assert_restored();
+        result.assert_no_tui();
         result.observed("terraform_started");
         result.observed("interrupt_requested");
         fixture.assert_saved_plan_removed();
@@ -430,7 +551,7 @@ Plan: 0 to add, 1 to change, 0 to destroy.
     #[test]
     fn pty_apply_confirmation_waits_for_resize_before_starting() {
         let fixture = Fixture::new();
-        let result = fixture.run("apply_resize", 100, 24);
+        let result = fixture.run_with_command("apply_resize", 100, 24, "apply");
 
         assert_eq!(result.exit_code, 0);
         result.assert_restored();

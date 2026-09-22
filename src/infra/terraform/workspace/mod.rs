@@ -7,15 +7,18 @@ use super::command::{
     TerraformExecutionErrorKind, interrupted_error, non_zero_error, run_command,
 };
 
-pub(crate) fn read_workspace_with_runner(
+pub(crate) fn read_workspace_with_arguments(
     root: &Path,
+    global_arguments: &[OsString],
     cancellation: &CancellationToken,
     runner: &dyn ProcessRunner,
 ) -> Result<String, TerraformExecutionError> {
+    let mut arguments = global_arguments.to_vec();
+    arguments.extend([OsString::from("workspace"), OsString::from("show")]);
     let output = run_command(
         root,
         TerraformCommand::WorkspaceShow,
-        &[OsString::from("workspace"), OsString::from("show")],
+        &arguments,
         cancellation,
         runner,
     )?;
