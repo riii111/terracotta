@@ -7,9 +7,6 @@ use super::{
     review::{PlanMetadata, PlanReview, PlanReviewMessage},
 };
 
-#[cfg(test)]
-use super::execution::ExecutionContext;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SessionOutcome {
     Reviewed(PlanMetadata),
@@ -439,6 +436,7 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
 mod tests {
     use std::path::PathBuf;
 
+    use super::super::execution::ExecutionContext;
     use super::super::review::test_support::plan_document;
     use super::*;
 

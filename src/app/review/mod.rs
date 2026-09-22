@@ -253,7 +253,6 @@ impl PlanMetadata {
             || self.changes > 0
             || self.replacements > 0
             || self.deletions > 0
-            || !self.resource_changes.is_empty()
             || !self.output_names.is_empty()
     }
 

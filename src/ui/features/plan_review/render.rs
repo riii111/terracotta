@@ -589,7 +589,10 @@ fn confirmation_lines(state: &ApplyConfirmationState) -> Vec<Line<'static>> {
         ]),
         Line::from(vec![
             Span::styled("Directory: ", theme::secondary_style()),
-            Span::styled(relative_directory(context.cwd_path()), theme::body_style()),
+            Span::styled(
+                relative_directory(context.cwd_path(), context.launch_root_path()),
+                theme::body_style(),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Tool: ", theme::secondary_style()),
@@ -680,14 +683,18 @@ fn source_name(path: &std::path::Path) -> String {
     )
 }
 
-fn relative_directory(path: &std::path::Path) -> String {
-    std::env::current_dir()
-        .ok()
-        .and_then(|current| path.strip_prefix(current).ok())
-        .filter(|relative| !relative.as_os_str().is_empty())
+fn relative_directory(path: &std::path::Path, launch_root: Option<&std::path::Path>) -> String {
+    launch_root
+        .and_then(|root| path.strip_prefix(root).ok())
         .map_or_else(
             || path.display().to_string(),
-            |relative| format!("./{}", relative.display()),
+            |relative| {
+                if relative.as_os_str().is_empty() {
+                    ".".to_owned()
+                } else {
+                    format!("./{}", relative.display())
+                }
+            },
         )
 }
 
@@ -1314,7 +1321,7 @@ const fn severity_label(severity: DiagnosticSeverity) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::{
@@ -2972,6 +2979,22 @@ End of synthetic plan body."#;
 
     mod confirmation {
         use super::*;
+
+        #[test]
+        fn relative_directory_uses_the_launch_root_and_shows_dot_for_the_root() {
+            assert_eq!(
+                relative_directory(Path::new("/repo"), Some(Path::new("/repo"))),
+                "."
+            );
+            assert_eq!(
+                relative_directory(Path::new("/repo/infra"), Some(Path::new("/repo"))),
+                "./infra"
+            );
+            assert_eq!(
+                relative_directory(Path::new("/other"), Some(Path::new("/repo"))),
+                "/other"
+            );
+        }
 
         fn confirmation_review(
             root: &str,

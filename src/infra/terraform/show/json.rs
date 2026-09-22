@@ -1,3 +1,11 @@
+#![cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "detailed plan parsing remains for dormant Git attribution tests"
+    )
+)]
+
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 

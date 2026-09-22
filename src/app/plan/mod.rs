@@ -1,3 +1,11 @@
+#![cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "detailed plan data remains for dormant Git attribution tests"
+    )
+)]
+
 use std::collections::BTreeMap;
 use std::fmt::{Debug, Formatter};
 

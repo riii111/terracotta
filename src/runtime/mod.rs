@@ -183,6 +183,7 @@ fn run_saved_plan_review(
         changed,
         apply_entry,
         ExecutionContext::loading(review_root.display().to_string())
+            .with_launch_root(launch_root)
             .with_variable_sources(variable_sources.clone()),
         &cancellation,
         sender.clone(),
@@ -204,6 +205,7 @@ fn run_saved_plan_review(
     };
     let mut clipboard = ClipboardExecutor::new();
     let context = ExecutionContext::loading(review_root.display().to_string())
+        .with_launch_root(launch_root)
         .with_variable_sources(variable_sources);
     let effects = event_loop::RuntimeEffects {
         root: launch_root,

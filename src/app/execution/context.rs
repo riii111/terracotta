@@ -54,6 +54,7 @@ impl VariableSources {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ExecutionContext {
     cwd: PathBuf,
+    launch_root: Option<PathBuf>,
     workspace: ExecutionContextValue,
     display_name: ExecutionContextValue,
     production: Option<bool>,
@@ -64,8 +65,10 @@ pub(crate) struct ExecutionContext {
 
 impl ExecutionContext {
     pub(crate) fn loading(cwd: impl Into<String>) -> Self {
+        let cwd = PathBuf::from(cwd.into());
         Self {
-            cwd: PathBuf::from(cwd.into()),
+            launch_root: None,
+            cwd,
             workspace: ExecutionContextValue::Loading,
             display_name: ExecutionContextValue::Loading,
             production: None,
@@ -73,6 +76,11 @@ impl ExecutionContext {
             tool_version: ExecutionContextValue::Loading,
             variable_sources: VariableSources::default(),
         }
+    }
+
+    pub(crate) fn with_launch_root(mut self, launch_root: impl AsRef<Path>) -> Self {
+        self.launch_root = Some(launch_root.as_ref().to_owned());
+        self
     }
 
     pub(crate) fn with_workspace(mut self, workspace: impl Into<String>) -> Self {
@@ -101,6 +109,11 @@ impl ExecutionContext {
     #[must_use]
     pub(crate) fn cwd_path(&self) -> &Path {
         &self.cwd
+    }
+
+    #[must_use]
+    pub(crate) fn launch_root_path(&self) -> Option<&Path> {
+        self.launch_root.as_deref()
     }
 
     #[must_use]
@@ -198,5 +211,12 @@ mod tests {
             &ExecutionContextValue::Known("production".to_owned())
         );
         assert_eq!(context.is_production(), Some(true));
+    }
+
+    #[test]
+    fn launch_root_is_preserved_for_relative_directory_display() {
+        let context = ExecutionContext::loading("/repo/infra").with_launch_root("/repo");
+
+        assert_eq!(context.launch_root_path(), Some(Path::new("/repo")));
     }
 }

@@ -46,8 +46,6 @@ pub(super) fn parse_metadata(
         resource_changes.push(plan_resource);
     }
 
-    super::json::parse_plan_json_bytes(input)?;
-
     let output_names = root
         .get("output_changes")
         .and_then(Value::as_object)
@@ -228,5 +226,20 @@ mod tests {
             metadata.destructive_addresses().collect::<Vec<_>>(),
             ["terraform_data.destroy", "terraform_data.moved_destroy"]
         );
+    }
+
+    #[test]
+    fn no_op_resources_are_not_reported_as_changes() {
+        let document = json!({
+            "format_version": "1.0",
+            "resource_changes": [
+                {"address": "terraform_data.unchanged", "change": {"actions": ["no-op"]}}
+            ]
+        });
+
+        let metadata =
+            parse_metadata(document.to_string().as_bytes(), true).expect("metadata should parse");
+
+        assert!(!metadata.has_changes());
     }
 }
