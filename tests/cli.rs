@@ -122,6 +122,7 @@ Plan: 0 to add, 3 to change, 0 to destroy.
             let root = directory.join("plain directory with spaces");
             let bin = directory.join("fake-bin");
             fs::create_dir_all(&root).expect("fixture root should be created");
+            fs::write(root.join("main.tf"), "").expect("single environment configuration");
             fs::create_dir(&bin).expect("fake bin should be created");
 
             let invocations = directory.join("invocations");

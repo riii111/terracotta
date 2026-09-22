@@ -273,3 +273,115 @@ fn path_symlink_preserves_the_terraform_name_for_dispatcher_shims() {
     assert_eq!(output.status.code(), Some(37));
     assert_eq!(output.stdout, b"terraform");
 }
+
+mod environment_discovery {
+    use super::*;
+
+    #[rstest]
+    #[case::no_candidates(None, "No environment candidates")]
+    #[case::hcp(Some("terraform {\n cloud {}\n}"), "Excluded: HCP execution")]
+    #[case::broken(Some("terraform {"), "Error:")]
+    fn unusable_environments_fail_before_running_the_cli(
+        #[case] source: Option<&str>,
+        #[case] expected: &str,
+    ) {
+        let fixture = Fixture::new();
+        if let Some(source) = source {
+            fs::create_dir(fixture.directory.join("dev")).unwrap();
+            fs::write(fixture.directory.join("dev/main.tf"), source).unwrap();
+        }
+
+        let output = fixture.pty_command().arg("plan").output().unwrap();
+
+        assert_eq!(output.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&output.stdout).contains(expected));
+        assert!(!output.stdout.contains(&0x1b));
+        assert!(!fixture.directory.join("argv").exists());
+        if source.is_some() {
+            assert!(String::from_utf8_lossy(&output.stdout).contains("No executable environments"));
+        }
+    }
+
+    #[rstest]
+    #[case::out(&["plan", "-out=review.plan"], None, "-out")]
+    #[case::generate(&["plan", "-generate-config-out", "imports.tf"], None, "-generate-config-out")]
+    #[case::data_dir(&["plan"], Some("shared"), "TF_DATA_DIR")]
+    fn forbidden_multiple_environment_options_run_no_child_commands(
+        #[case] arguments: &[&str],
+        #[case] data_dir: Option<&str>,
+        #[case] expected: &str,
+    ) {
+        let fixture = Fixture::new();
+        fs::create_dir(fixture.directory.join("dev")).unwrap();
+        fs::write(
+            fixture.directory.join("dev/main.tf"),
+            "terraform {\n backend \"local\" {}\n}",
+        )
+        .unwrap();
+        let mut command = fixture.pty_command();
+        command.args(arguments);
+        if let Some(data_dir) = data_dir {
+            command.env("TF_DATA_DIR", data_dir);
+        }
+
+        let output = command.output().unwrap();
+
+        assert_eq!(output.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&output.stdout).contains(expected));
+        assert!(!fixture.directory.join("argv").exists());
+        assert!(!fixture.directory.join("review.plan").exists());
+        assert!(!fixture.directory.join("imports.tf").exists());
+    }
+
+    #[test]
+    fn discovery_keeps_tf_workspace_and_selected_tool_without_running_init_or_plan() {
+        let fixture = Fixture::new();
+        fs::create_dir_all(fixture.directory.join("parent/dev")).unwrap();
+        fs::write(
+            fixture.directory.join("parent/dev/main.tofu"),
+            "terraform {\n backend \"local\" {}\n}",
+        )
+        .unwrap();
+        fs::write(
+            fixture.bin.join("tofu"),
+            r#"#!/bin/sh
+printf '%s\000' "$@" > "$RECORD/argv"
+pwd > "$RECORD/cwd"
+printf '%s' "${TF_CLI_ARGS-}" > "$RECORD/env"
+[ "$1" = workspace ] && [ "$2" = show ] || exit 99
+printf '%s\n' "$TF_WORKSPACE"
+"#,
+        )
+        .unwrap();
+
+        let output = fixture
+            .pty_command()
+            .args(["tofu", "-chdir=parent", "plan"])
+            .env("TF_WORKSPACE", "chosen-production")
+            .env("TF_CLI_ARGS", "-var-file=common.tfvars")
+            .output()
+            .unwrap();
+
+        assert_eq!(output.status.code(), Some(1));
+        let output = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.contains("tofu workspace chosen-production"),
+            "{output}"
+        );
+        assert!(output.contains("Multiple-environment plan execution is not available yet"));
+        assert_eq!(fixture.recorded_arguments(), b"workspace\0show\0");
+        assert_eq!(
+            fs::read_to_string(fixture.directory.join("cwd"))
+                .unwrap()
+                .trim(),
+            fixture
+                .directory
+                .join("parent/dev")
+                .canonicalize()
+                .unwrap()
+                .to_str()
+                .unwrap()
+        );
+        assert!(fs::read(fixture.directory.join("env")).unwrap().is_empty());
+    }
+}

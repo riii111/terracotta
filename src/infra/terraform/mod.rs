@@ -1,6 +1,7 @@
 mod apply;
 mod command;
 pub(crate) mod configuration;
+pub(crate) mod discovery;
 mod events;
 mod line_buffer;
 mod providers;
