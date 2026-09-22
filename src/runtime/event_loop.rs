@@ -331,6 +331,10 @@ fn clear_expired_copy_feedback(state: &mut SessionState, now: Instant) {
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "the key dispatcher keeps the existing review and apply paths together"
+)]
 fn handle_key_event<B: Backend>(
     terminal: &Terminal<B>,
     state: &SessionState,
@@ -419,7 +423,9 @@ fn handle_key_event<B: Backend>(
                     .reconcile(u16::MAX, content.rows.len());
                 Some(Action::OpenOverview)
             }
-            Some(plan_review::PlanReviewInput::SearchCancel) if review.is_from_overview() => {
+            Some(plan_review::PlanReviewInput::SearchCancel)
+                if !review_view.searching() && review.is_from_overview() =>
+            {
                 Some(Action::ReturnToOverview)
             }
             Some(input) => {
