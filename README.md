@@ -26,3 +26,9 @@ terracotta plan
 ```
 
 `init → plan → review → apply (optional)`
+
+`terracotta terraform <arguments>` runs Terraform commands. `terracotta plan` and
+`terracotta apply` are shortcuts.
+
+The review UI opens for an interactive `plan` without options. With options,
+`apply`, CI, redirected streams, or HCP configurations, Terraform runs directly.

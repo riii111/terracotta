@@ -10,6 +10,7 @@ use std::{
 };
 
 mod event_loop;
+pub(crate) mod invocation;
 mod synthetic;
 
 use crate::{

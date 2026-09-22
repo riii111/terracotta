@@ -23,47 +23,6 @@ fn help_and_version_work_without_a_terminal_or_terraform(#[case] arg: &str) {
     assert!(!stdout.contains("compare-ref"));
 }
 
-#[test]
-fn plan_explains_non_tty_use_before_starting_terraform() {
-    let output = Command::new(env!("CARGO_BIN_EXE_terracotta"))
-        .env("PATH", "")
-        .arg("plan")
-        .output()
-        .expect("CLI should start");
-
-    assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("interactive terminal"));
-}
-
-#[test]
-fn compare_ref_is_explicitly_unavailable_before_terminal_setup() {
-    let output = Command::new(env!("CARGO_BIN_EXE_terracotta"))
-        .env("PATH", "")
-        .args(["plan", "--compare-ref", "main"])
-        .output()
-        .expect("CLI should start");
-
-    assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
-    assert!(!output.stderr.contains(&0x1b));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("Git comparison is paused"));
-}
-
-#[test]
-fn plan_argument_errors_follow_clap_without_initializing_a_tui() {
-    let output = Command::new(env!("CARGO_BIN_EXE_terracotta"))
-        .env("PATH", "")
-        .args(["plan", "--compare-ref"])
-        .output()
-        .expect("CLI should start");
-
-    assert_eq!(output.status.code(), Some(2));
-    assert!(output.stdout.is_empty());
-    assert!(!output.stderr.is_empty());
-    assert!(!output.stderr.contains(&0x1b));
-}
-
 #[cfg(all(unix, feature = "test-support"))]
 mod pty_tests {
     use rstest::rstest;
@@ -169,7 +128,10 @@ Plan: 0 to add, 1 to change, 0 to destroy.
                 .env("TERRACOTTA_FAKE_PID_PATH", &self.pid_record)
                 .env("TERRACOTTA_FAKE_SHOW_JSON", &self.show_json)
                 .env("TERRACOTTA_FAKE_SHOW_TEXT", &self.show_text)
-                .env("TF_IN_AUTOMATION", "1")
+                .env_remove("TF_IN_AUTOMATION")
+                .env_remove("CI")
+                .env_remove("TF_CLI_ARGS")
+                .env_remove("TF_CLI_ARGS_plan")
                 .env("TF_CLI_CONFIG_FILE", "/dev/null")
                 .env("CHECKPOINT_DISABLE", "1");
             if scenario == "panic" {
@@ -534,7 +496,10 @@ Plan: 0 to add, 1 to change, 0 to destroy.
                 .arg(env!("CARGO_BIN_EXE_terracotta"))
                 .arg(&self.directory)
                 .args(["100", "24", "basic_workflow", "plan"])
-                .env("TF_IN_AUTOMATION", "1")
+                .env_remove("TF_IN_AUTOMATION")
+                .env_remove("CI")
+                .env_remove("TF_CLI_ARGS")
+                .env_remove("TF_CLI_ARGS_plan")
                 .env("TF_DATA_DIR", self.directory.join(".terraform"))
                 .env("TF_CLI_CONFIG_FILE", "/dev/null")
                 .env("CHECKPOINT_DISABLE", "1")

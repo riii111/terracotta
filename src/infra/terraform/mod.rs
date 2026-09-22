@@ -1,5 +1,6 @@
 mod apply;
 mod command;
+pub(crate) mod configuration;
 mod events;
 mod line_buffer;
 // HCL parsing is dormant with Git attribution and remains covered by unit tests.
@@ -10,7 +11,7 @@ mod show;
 mod workspace;
 
 pub(crate) use apply::run_apply;
-pub(crate) use command::SystemProcessRunner;
+pub(crate) use command::{SystemProcessRunner, delegate, resolve_executable};
 pub(crate) use plan::{SavedPlan, run_review};
 
 #[cfg(test)]
