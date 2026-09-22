@@ -10,7 +10,7 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 
-use crate::app::execution::{ExecutionEvent, ExecutionEventKind, ExecutionPhase};
+use crate::app::execution::{ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionPhase};
 use crate::app::review::PlanReview;
 use crate::infra::CancellationToken;
 
@@ -166,12 +166,19 @@ pub(crate) fn read_saved_plan_review(
     plan_path: &Path,
     plan_changed: bool,
     apply_entry: bool,
+    initial_context: ExecutionContext,
     cancellation: &CancellationToken,
     runner: &dyn ProcessRunner,
     event_sink: &mut dyn FnMut(ExecutionEvent),
     phase_sink: &mut dyn FnMut(ExecutionPhase),
 ) -> Result<PlanReview, TerraformExecutionError> {
     phase_sink(ExecutionPhase::Reading);
+    let version = super::version::read_version_with_arguments(
+        launch_root,
+        global_arguments,
+        cancellation,
+        runner,
+    )?;
     let workspace =
         read_workspace_with_arguments(launch_root, global_arguments, cancellation, runner)?;
     event_sink(ExecutionEvent {
@@ -186,6 +193,9 @@ pub(crate) fn read_saved_plan_review(
         cancellation,
         runner,
     )?;
+    let context = initial_context
+        .with_tool_version("terraform", version)
+        .with_workspace(workspace.clone());
     let review = PlanReview::new(
         display_root.to_owned(),
         workspace,
@@ -193,6 +203,7 @@ pub(crate) fn read_saved_plan_review(
         metadata,
         Vec::new(),
     )
+    .with_context(context)
     .with_apply_allowed(apply_entry)
     .with_apply_entry(apply_entry);
     Ok(review)

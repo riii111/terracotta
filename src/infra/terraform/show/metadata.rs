@@ -1,5 +1,6 @@
 use serde_json::{Map, Value};
 
+use crate::app::plan::{PlanAction, PlanResource};
 use crate::app::review::PlanMetadata;
 
 use super::PlanParseError;
@@ -19,28 +20,30 @@ pub(super) fn parse_metadata(
 
     let resources = optional_array(root, "resource_changes")?;
     let mut resource_addresses = Vec::with_capacity(resources.len());
+    let mut resource_changes = Vec::with_capacity(resources.len());
     let mut additions = 0;
     let mut changes = 0;
+    let mut replacements = 0;
     let mut deletions = 0;
     for resource in resources {
         let resource = resource
             .as_object()
             .ok_or(PlanParseError::InvalidField("resource change"))?;
-        resource_addresses.push(required_string(resource, "address")?.to_owned());
+        let address = required_string(resource, "address")?.to_owned();
         let change = required_object(resource, "change")?;
-        let actions = optional_array(change, "actions")?;
-        let has_create = actions
-            .iter()
-            .any(|action| action.as_str() == Some("create"));
-        let has_update = actions
-            .iter()
-            .any(|action| action.as_str() == Some("update"));
-        let has_delete = actions
-            .iter()
-            .any(|action| action.as_str() == Some("delete"));
-        additions += usize::from(has_create);
-        changes += usize::from(has_update);
-        deletions += usize::from(has_delete);
+        let actions = super::json::parse_actions(change, "resource change actions")?;
+        let plan_resource = PlanResource { address, actions };
+        match plan_resource.actions.as_slice() {
+            [PlanAction::Create] => additions += 1,
+            [PlanAction::Update] => changes += 1,
+            [PlanAction::Delete] => deletions += 1,
+            [PlanAction::Create, PlanAction::Delete] | [PlanAction::Delete, PlanAction::Create] => {
+                replacements += 1;
+            }
+            _ => {}
+        }
+        resource_addresses.push(plan_resource.address.clone());
+        resource_changes.push(plan_resource);
     }
 
     let output_names = root
@@ -62,7 +65,8 @@ pub(super) fn parse_metadata(
         changes,
         deletions,
         applyable,
-    ))
+    )
+    .with_resource_changes(resource_changes, replacements))
 }
 
 fn parse_format_version(root: &Map<String, Value>) -> Result<(), PlanParseError> {
@@ -134,9 +138,10 @@ mod tests {
         let metadata =
             parse_metadata(document.to_string().as_bytes(), true).expect("metadata should parse");
 
-        assert_eq!(metadata.additions(), 1);
+        assert_eq!(metadata.additions(), 0);
         assert_eq!(metadata.changes(), 1);
-        assert_eq!(metadata.deletions(), 1);
+        assert_eq!(metadata.replacements(), 1);
+        assert_eq!(metadata.deletions(), 0);
         assert_eq!(metadata.resource_addresses().len(), 2);
         assert!(
             metadata
@@ -145,6 +150,10 @@ mod tests {
                 .any(|output| output == "endpoint")
         );
         assert!(metadata.applyable());
+        assert_eq!(
+            metadata.replacement_addresses().collect::<Vec<_>>(),
+            ["terraform_data.replace"]
+        );
         let debug = format!("{metadata:?}");
         assert!(!debug.contains("secret"));
     }
@@ -189,5 +198,48 @@ mod tests {
                 .any(|output| output == "endpoint")
         );
         assert!(metadata.applyable());
+    }
+
+    #[test]
+    fn lists_replacements_in_either_order_without_counting_them_as_deletes() {
+        let document = json!({
+            "format_version": "1.0",
+            "applyable": true,
+            "resource_changes": [
+                {"address": "terraform_data.create_first", "previous_address": "terraform_data.old", "change": {"actions": ["create", "delete"]}},
+                {"address": "terraform_data.delete_first", "change": {"actions": ["delete", "create"]}},
+                {"address": "terraform_data.destroy", "change": {"actions": ["delete"]}},
+                {"address": "terraform_data.moved_destroy", "previous_address": "terraform_data.previous", "change": {"actions": ["delete"]}}
+            ]
+        });
+
+        let metadata =
+            parse_metadata(document.to_string().as_bytes(), true).expect("metadata should parse");
+
+        assert_eq!(metadata.replacements(), 2);
+        assert_eq!(metadata.deletions(), 2);
+        assert_eq!(
+            metadata.replacement_addresses().collect::<Vec<_>>(),
+            ["terraform_data.create_first", "terraform_data.delete_first"]
+        );
+        assert_eq!(
+            metadata.destructive_addresses().collect::<Vec<_>>(),
+            ["terraform_data.destroy", "terraform_data.moved_destroy"]
+        );
+    }
+
+    #[test]
+    fn no_op_resources_are_not_reported_as_changes() {
+        let document = json!({
+            "format_version": "1.0",
+            "resource_changes": [
+                {"address": "terraform_data.unchanged", "change": {"actions": ["no-op"]}}
+            ]
+        });
+
+        let metadata =
+            parse_metadata(document.to_string().as_bytes(), true).expect("metadata should parse");
+
+        assert!(!metadata.has_changes());
     }
 }

@@ -8,25 +8,33 @@ expression: buffer_text(buffer)
 
  Terracotta | main
 
-
-
-
-
-
-
-
-                    ┌──────────────────────────────────────────────────────────────────────────────┐
-                    │                                                                              │
-                    │ Apply this reviewed plan?                                                    │
-                    │                                                                              │
-                    │ Target: /repo/environments/production/main                                   │
-                    │ Workspace: default                                                           │
-                    │ Plan: 2 to add, 2 to change, 1 to destroy.                                   │
-                    │                                                                              │
-                    │ This plan includes resource deletion.                                        │
-                    │                                                                              │
-                    │ Apply this plan? Type yes or no.                                             │
-                    │ > |                                                                          │
-                    │                                                                              │
-                    └──────────────────────────────────────────────────────────────────────────────┘
-                    Enter confirm | Esc back
+ ┌Plan────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+ │Plan: +2 add  ~2 update  0 replace  -1 destroy                                                                      │
+ │────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
+ │  # terraform_data.api will be updated in-place                                                                    ▲│
+ │  ~ resource "terraform_data" "api" {                                                                              ┃│
+ │      id       = "api-20260920"                                                                                    ┃│
+ │      ~ input  = "before" -> "after"                                                                               ┃│
+ │      # (4 unchang┌──────────────────────────────────────────────────────────────────────────────┐                 ┃│
+ │    }             │                                                                              │                 ┃│
+ │                  │ Apply this reviewed plan?                                                    │                 ┃│
+ │  # terraform_data│                                                                              │                 ┃│
+ │-/+ resource "terr│ Target: main [PROD]                                                          │                 ┃│
+ │      ~ input = "w│ Workspace: default                                                           │                 ┃│
+ │      - old_checks│ Directory: /repo/environments/production/main                                │                 ┃│
+ │      + new_checks│ Tool: terraform loading...                                                   │                 ┃│
+ │    }             │ Plan: +2 add  ~2 update  0 replace  -1 destroy                               │                 ┃│
+ │                  │                                                                              │                 ┃│
+ │  # terraform_data│ Type main to apply (exact match).                                            │                 ┃│
+ │  - resource "terr│ > |                                                                          │                 ││
+ │      id = "old-20│                                                                              │                 ││
+ │    }             └──────────────────────────────────────────────────────────────────────────────┘                 ││
+ │                  Enter confirm | Esc back                                                                         ││
+ │  # terraform_data.new will be created                                                                             ││
+ │  + resource "terraform_data" "new" {                                                                              ││
+ │      input = "new-value"                                                                                          ││
+ │      note  = "A deliberately long synthetic value keeps horizontal scrolling visible"                             ││
+ │    }                                                                                                              ││
+ │                                                                                                                   ▼│
+ └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ ↑/↓/←/→ scroll | / filter | y copy plan | a apply | q quit

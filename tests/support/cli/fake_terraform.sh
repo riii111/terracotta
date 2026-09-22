@@ -7,6 +7,9 @@ printf 'TF_CLI_ARGS_plan=%s\n' "${TF_CLI_ARGS_plan-}" >> "$TERRACOTTA_FAKE_ENV_L
 printf 'TF_CLI_ARGS_apply=%s\n' "${TF_CLI_ARGS_apply-}" >> "$TERRACOTTA_FAKE_ENV_LOG"
 
 case "$1" in
+  version)
+    printf '%s\n' '{"terraform_version":"1.9.0"}'
+    ;;
   init)
     printf 'Initializing the backend...\n'
     printf 'Initializing provider plugins...\n' >&2
@@ -19,7 +22,7 @@ case "$1" in
     fi
     ;;
   workspace)
-    printf 'default\n'
+    printf '%s\n' "${TERRACOTTA_FAKE_WORKSPACE:-default}"
     ;;
   plan)
     plan_path=''

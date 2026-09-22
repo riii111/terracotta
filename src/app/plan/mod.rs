@@ -1,10 +1,18 @@
+#![cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "detailed plan data remains for dormant Git attribution tests"
+    )
+)]
+
 use std::collections::BTreeMap;
 use std::fmt::{Debug, Formatter};
 
+#[cfg(test)]
 mod attribute_diff;
+#[cfg(test)]
 mod path;
-
-pub(crate) use attribute_diff::AttributePathSegment;
 
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum PlanValue {
@@ -42,6 +50,26 @@ pub(crate) enum PlanAction {
     Delete,
     NoOp,
     Unknown(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PlanResource {
+    pub(crate) address: String,
+    pub(crate) actions: Vec<PlanAction>,
+}
+
+impl PlanResource {
+    #[must_use]
+    pub(crate) fn has_action(&self, action: &PlanAction) -> bool {
+        self.actions.iter().any(|candidate| candidate == action)
+    }
+
+    #[must_use]
+    pub(crate) fn is_replacement(&self) -> bool {
+        self.actions.len() == 2
+            && self.has_action(&PlanAction::Create)
+            && self.has_action(&PlanAction::Delete)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

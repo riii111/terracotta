@@ -6,7 +6,7 @@ expression: buffer_text(buffer)
  Terracotta | main
 
  ┌Plan────────────────────────────────────────────────────────────────────────┐
- │Plan: 2 to add, 2 to change, 1 to destroy.                                  │
+ │Plan: +2 add  ~2 update  0 replace  -1 destroy                              │
  │────────────────────────────────────────────────────────────────────────────│
  │  # terraform_data.api will be updated in-place                            ▲│
  │  ~ resource "terraform_data" "api" {                                      ┃│

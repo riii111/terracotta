@@ -6,10 +6,15 @@ use super::ApplyConfirmationInput;
 pub(crate) struct ApplyConfirmationViewState {
     input: String,
     cursor: usize,
+    scroll: u16,
 }
 
 impl ApplyConfirmationViewState {
-    pub(crate) fn apply(&mut self, input: ApplyConfirmationInput) -> Option<Action> {
+    pub(crate) fn apply(
+        &mut self,
+        input: ApplyConfirmationInput,
+        expected: &str,
+    ) -> Option<Action> {
         match input {
             ApplyConfirmationInput::Character(character) => {
                 self.input.insert(self.cursor, character);
@@ -49,17 +54,29 @@ impl ApplyConfirmationViewState {
                 self.cursor = self.input.len();
                 None
             }
-            ApplyConfirmationInput::Confirm if self.input == "yes" => {
+            ApplyConfirmationInput::Confirm if self.input == expected => {
                 self.reset();
-                Some(Action::ConfirmApply)
-            }
-            ApplyConfirmationInput::Confirm if self.input == "no" => {
-                self.reset();
-                Some(Action::CancelApply)
+                Some(Action::ConfirmApply(expected.to_owned()))
             }
             ApplyConfirmationInput::Cancel => {
                 self.reset();
                 Some(Action::CancelApply)
+            }
+            ApplyConfirmationInput::ScrollUp => {
+                self.scroll = self.scroll.saturating_sub(1);
+                None
+            }
+            ApplyConfirmationInput::ScrollDown => {
+                self.scroll = self.scroll.saturating_add(1);
+                None
+            }
+            ApplyConfirmationInput::PageUp => {
+                self.scroll = self.scroll.saturating_sub(5);
+                None
+            }
+            ApplyConfirmationInput::PageDown => {
+                self.scroll = self.scroll.saturating_add(5);
+                None
             }
             ApplyConfirmationInput::Confirm => None,
         }
@@ -73,9 +90,14 @@ impl ApplyConfirmationViewState {
         self.cursor
     }
 
+    pub(crate) const fn scroll(&self) -> u16 {
+        self.scroll
+    }
+
     fn reset(&mut self) {
         self.input.clear();
         self.cursor = 0;
+        self.scroll = 0;
     }
 }
 
@@ -88,7 +110,7 @@ mod tests {
     fn enter(view: &mut ApplyConfirmationViewState, value: &str) {
         for character in value.chars() {
             assert_eq!(
-                view.apply(ApplyConfirmationInput::Character(character)),
+                view.apply(ApplyConfirmationInput::Character(character), "yes"),
                 None
             );
         }
@@ -99,19 +121,28 @@ mod tests {
         let mut view = ApplyConfirmationViewState::default();
         enter(&mut view, "yes");
         assert_eq!(
-            view.apply(ApplyConfirmationInput::Confirm),
-            Some(Action::ConfirmApply)
+            view.apply(ApplyConfirmationInput::Confirm, "yes"),
+            Some(Action::ConfirmApply("yes".to_owned()))
         );
         assert_eq!(view.input(), "");
         assert_eq!(view.cursor(), 0);
 
         enter(&mut view, "no");
         assert_eq!(
-            view.apply(ApplyConfirmationInput::Confirm),
-            Some(Action::CancelApply)
+            view.apply(ApplyConfirmationInput::Confirm, "no"),
+            Some(Action::ConfirmApply("no".to_owned()))
         );
         assert_eq!(view.input(), "");
         assert_eq!(view.cursor(), 0);
+    }
+
+    #[test]
+    fn no_does_not_cancel_when_yes_is_required() {
+        let mut view = ApplyConfirmationViewState::default();
+        enter(&mut view, "no");
+
+        assert_eq!(view.apply(ApplyConfirmationInput::Confirm, "yes"), None);
+        assert_eq!(view.input(), "no");
     }
 
     #[test]
@@ -120,7 +151,7 @@ mod tests {
         enter(&mut view, "maybe");
 
         assert_eq!(
-            view.apply(ApplyConfirmationInput::Cancel),
+            view.apply(ApplyConfirmationInput::Cancel, "yes"),
             Some(Action::CancelApply)
         );
         assert_eq!(view.input(), "");
@@ -135,7 +166,7 @@ mod tests {
         enter(&mut view, value);
         let cursor = view.cursor();
 
-        assert_eq!(view.apply(ApplyConfirmationInput::Confirm), None);
+        assert_eq!(view.apply(ApplyConfirmationInput::Confirm, "yes"), None);
         assert_eq!(view.input(), value);
         assert_eq!(view.cursor(), cursor);
     }
@@ -145,8 +176,8 @@ mod tests {
         let mut view = ApplyConfirmationViewState::default();
         enter(&mut view, "aあb");
 
-        view.apply(ApplyConfirmationInput::Left);
-        view.apply(ApplyConfirmationInput::Backspace);
+        view.apply(ApplyConfirmationInput::Left, "yes");
+        view.apply(ApplyConfirmationInput::Backspace, "yes");
 
         assert_eq!(view.input(), "ab");
         assert_eq!(view.cursor(), 1);

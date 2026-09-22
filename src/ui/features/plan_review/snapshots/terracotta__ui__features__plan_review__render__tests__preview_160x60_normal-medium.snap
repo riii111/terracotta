@@ -19,7 +19,7 @@ expression: buffer_text(buffer)
  Terracotta | repo
 
  ┌Plan────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │Plan: 0 to add, 0 to change, 0 to destroy.                                                                                                                  │
+ │Plan: +0 add  ~0 update  0 replace  -0 destroy                                                                                                              │
  │────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
  │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx                                                                                                            │
  │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx                                                                                                            │

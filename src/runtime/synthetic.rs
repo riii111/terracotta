@@ -15,7 +15,7 @@ use crate::{
             ExecutionEventKind, ExecutionLogLine, ExecutionPhase, ExecutionState,
         },
         review::{PlanBlock, PlanBlockKind, PlanDocument, PlanLineKind, PlanMetadata, PlanReview},
-        session::{Action, Effect, ReviewSessionState, SessionState},
+        session::{Action, ApplyConfirmationState, Effect, ReviewSessionState, SessionState},
     },
     ui::{
         QuitConfirmationInput,
@@ -186,9 +186,11 @@ fn handle_synthetic_key(
 ) -> io::Result<Option<Action>> {
     match state {
         SessionState::Review(review) => synthetic_review_key(terminal, view, review, key),
-        SessionState::ApplyConfirmation(_) => {
-            Ok(synthetic_confirmation_key(confirmation_view, key))
-        }
+        SessionState::ApplyConfirmation(confirmation) => Ok(synthetic_confirmation_key(
+            confirmation_view,
+            confirmation,
+            key,
+        )),
         SessionState::Apply(execution) => {
             synthetic_execution_key(terminal, execution, execution_view, key)
         }
@@ -357,9 +359,11 @@ fn synthetic_execution_key(
 
 fn synthetic_confirmation_key(
     view: &mut plan_review::ApplyConfirmationViewState,
+    state: &ApplyConfirmationState,
     key: KeyEvent,
 ) -> Option<Action> {
-    plan_review::apply_confirmation_key_to_input(key).and_then(|input| view.apply(input))
+    let expected = state.review().confirmation_input();
+    plan_review::apply_confirmation_key_to_input(key).and_then(|input| view.apply(input, &expected))
 }
 
 fn finish_synthetic_apply(
