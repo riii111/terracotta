@@ -1,57 +1,39 @@
 use serde_json::{Map, Value};
 
 use crate::app::execution::{ExecutionTargetSpec, SensitiveValue};
-use crate::app::plan::{PlanAction, PlanResource};
+use crate::app::plan::{Plan, PlanResource};
 use crate::app::review::PlanMetadata;
 
-use super::PlanParseError;
-
-const SUPPORTED_FORMAT_MAJOR: u64 = 1;
-
-pub(super) fn parse_metadata(
-    input: &[u8],
+pub(super) fn metadata_from_document(
+    root: &Map<String, Value>,
+    plan: &Plan,
     detailed_exit_has_changes: bool,
-) -> Result<PlanMetadata, PlanParseError> {
-    let document =
-        serde_json::from_slice::<Value>(input).map_err(|_| PlanParseError::InvalidJson)?;
-    let root = document
-        .as_object()
-        .ok_or(PlanParseError::RootMustBeObject)?;
-    parse_format_version(root)?;
-
-    let resources = optional_array(root, "resource_changes")?;
-    let mut resource_addresses = Vec::with_capacity(resources.len());
-    let mut resource_changes = Vec::with_capacity(resources.len());
-    let mut additions = 0;
-    let mut changes = 0;
-    let mut replacements = 0;
-    let mut deletions = 0;
+) -> PlanMetadata {
+    let resource_addresses = plan
+        .resource_changes
+        .iter()
+        .map(|change| change.address.clone())
+        .collect::<Vec<_>>();
+    let resource_changes = plan
+        .resource_changes
+        .iter()
+        .map(|change| PlanResource {
+            address: change.address.clone(),
+            actions: change.actions.clone(),
+            kind: change.kind,
+        })
+        .collect::<Vec<_>>();
     let mut apply_targets = Vec::new();
-    for resource in resources {
-        let resource = resource
-            .as_object()
-            .ok_or(PlanParseError::InvalidField("resource change"))?;
-        let address = required_string(resource, "address")?.to_owned();
-        let change = required_object(resource, "change")?;
-        let actions = super::json::parse_actions(change, "resource change actions")?;
-        let plan_resource = PlanResource { address, actions };
-        if is_apply_target(resource, change, &plan_resource.actions) {
+    for resource in &plan.resource_changes {
+        if resource.kind.is_standard_change()
+            && resource.previous_address.is_none()
+            && resource.importing.is_none()
+        {
             apply_targets.push(ExecutionTargetSpec {
-                address: plan_resource.address.clone(),
-                actions: plan_resource.actions.clone(),
+                address: resource.address.clone(),
+                actions: resource.actions.clone(),
             });
         }
-        match plan_resource.actions.as_slice() {
-            [PlanAction::Create] => additions += 1,
-            [PlanAction::Update] => changes += 1,
-            [PlanAction::Delete] => deletions += 1,
-            [PlanAction::Create, PlanAction::Delete] | [PlanAction::Delete, PlanAction::Create] => {
-                replacements += 1;
-            }
-            _ => {}
-        }
-        resource_addresses.push(plan_resource.address.clone());
-        resource_changes.push(plan_resource);
     }
 
     let output_names = root
@@ -59,7 +41,7 @@ pub(super) fn parse_metadata(
         .and_then(Value::as_object)
         .map(|outputs| outputs.keys().cloned().collect())
         .unwrap_or_default();
-    let sensitive_values = sensitive_values(root, resources);
+    let sensitive_values = sensitive_values(root);
     let errored = root.get("errored").and_then(Value::as_bool) == Some(true);
     let applyable = !errored
         && root
@@ -67,44 +49,29 @@ pub(super) fn parse_metadata(
             .and_then(Value::as_bool)
             .unwrap_or(detailed_exit_has_changes);
 
-    Ok(PlanMetadata::new(
+    PlanMetadata::new(
         resource_addresses,
         output_names,
-        additions,
-        changes,
-        deletions,
+        plan.summary.creates,
+        plan.summary.updates,
+        plan.summary.deletes,
         applyable,
     )
-    .with_resource_changes(resource_changes, replacements)
+    .with_resource_changes(resource_changes, plan.summary.replaces)
     .with_apply_targets(apply_targets)
-    .with_sensitive_values(sensitive_values))
+    .with_nonstandard_changes(plan.unsupported_changes.len())
+    .with_sensitive_values(sensitive_values)
 }
 
-fn is_apply_target(
-    resource: &Map<String, Value>,
-    change: &Map<String, Value>,
-    actions: &[PlanAction],
-) -> bool {
-    if resource
-        .get("previous_address")
-        .is_some_and(|address| !address.is_null())
-        || change
-            .get("importing")
-            .is_some_and(|importing| !importing.is_null())
-    {
-        return false;
-    }
-    matches!(
-        actions,
-        [PlanAction::Create | PlanAction::Update | PlanAction::Delete]
-            | [PlanAction::Create, PlanAction::Delete]
-            | [PlanAction::Delete, PlanAction::Create]
-    )
-}
-
-fn sensitive_values(root: &Map<String, Value>, resources: &[Value]) -> Vec<SensitiveValue> {
+fn sensitive_values(root: &Map<String, Value>) -> Vec<SensitiveValue> {
     let mut values = Vec::new();
-    for resource in resources.iter().filter_map(Value::as_object) {
+    for resource in root
+        .get("resource_changes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_object)
+    {
         let Some(change) = resource.get("change").and_then(Value::as_object) else {
             continue;
         };
@@ -190,60 +157,29 @@ fn collect_scalar_values(value: &Value, values: &mut Vec<SensitiveValue>) {
     }
 }
 
-fn parse_format_version(root: &Map<String, Value>) -> Result<(), PlanParseError> {
-    let version = required_string(root, "format_version")?;
-    let major = version
-        .split('.')
-        .next()
-        .and_then(|major| major.parse::<u64>().ok())
-        .ok_or(PlanParseError::InvalidField("format_version"))?;
-    if major == SUPPORTED_FORMAT_MAJOR {
-        Ok(())
-    } else {
-        Err(PlanParseError::UnsupportedFormatMajor(major))
-    }
-}
-
-fn optional_array<'a>(
-    object: &'a Map<String, Value>,
-    field: &'static str,
-) -> Result<&'a [Value], PlanParseError> {
-    match object.get(field) {
-        None | Some(Value::Null) => Ok(&[]),
-        Some(value) => value
-            .as_array()
-            .map(Vec::as_slice)
-            .ok_or(PlanParseError::InvalidField(field)),
-    }
-}
-
-fn required_object<'a>(
-    object: &'a Map<String, Value>,
-    field: &'static str,
-) -> Result<&'a Map<String, Value>, PlanParseError> {
-    object
-        .get(field)
-        .ok_or(PlanParseError::MissingField(field))?
-        .as_object()
-        .ok_or(PlanParseError::InvalidField(field))
-}
-
-fn required_string<'a>(
-    object: &'a Map<String, Value>,
-    field: &'static str,
-) -> Result<&'a str, PlanParseError> {
-    object
-        .get(field)
-        .ok_or(PlanParseError::MissingField(field))?
-        .as_str()
-        .ok_or(PlanParseError::InvalidField(field))
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
+    use super::super::{PlanParseError, json};
     use super::*;
+
+    fn parse_metadata(
+        input: &[u8],
+        detailed_exit_has_changes: bool,
+    ) -> Result<PlanMetadata, PlanParseError> {
+        let document =
+            serde_json::from_slice::<Value>(input).map_err(|_| PlanParseError::InvalidJson)?;
+        let root = document
+            .as_object()
+            .ok_or(PlanParseError::RootMustBeObject)?;
+        let plan = json::parse_plan_document(&document)?;
+        Ok(metadata_from_document(
+            root,
+            &plan,
+            detailed_exit_has_changes,
+        ))
+    }
 
     #[test]
     fn extracts_boundaries_counts_and_output_only_applyability_without_values() {
@@ -319,6 +255,40 @@ mod tests {
                 .any(|output| output == "endpoint")
         );
         assert!(metadata.applyable());
+        assert!(metadata.has_changes());
+    }
+
+    #[test]
+    fn nonstandard_only_resource_changes_remain_changes_without_four_category_counts() {
+        for resource in [
+            json!({
+                "address": "terraform_data.imported",
+                "change": {"actions": ["create"], "importing": {"id": "example"}}
+            }),
+            json!({
+                "address": "terraform_data.moved",
+                "previous_address": "terraform_data.previous",
+                "change": {"actions": ["no-op"]}
+            }),
+            json!({
+                "address": "terraform_data.read",
+                "change": {"actions": ["read"]}
+            }),
+        ] {
+            let document = json!({
+                "format_version": "1.0",
+                "applyable": true,
+                "resource_changes": [resource]
+            });
+            let metadata = parse_metadata(document.to_string().as_bytes(), true)
+                .expect("metadata should parse");
+
+            assert!(metadata.has_changes());
+            assert_eq!(metadata.additions(), 0);
+            assert_eq!(metadata.changes(), 0);
+            assert_eq!(metadata.replacements(), 0);
+            assert_eq!(metadata.deletions(), 0);
+        }
     }
 
     #[test]
@@ -337,15 +307,15 @@ mod tests {
         let metadata =
             parse_metadata(document.to_string().as_bytes(), true).expect("metadata should parse");
 
-        assert_eq!(metadata.replacements(), 2);
-        assert_eq!(metadata.deletions(), 2);
+        assert_eq!(metadata.replacements(), 1);
+        assert_eq!(metadata.deletions(), 1);
         assert_eq!(
             metadata.replacement_addresses().collect::<Vec<_>>(),
-            ["terraform_data.create_first", "terraform_data.delete_first"]
+            ["terraform_data.delete_first"]
         );
         assert_eq!(
             metadata.destructive_addresses().collect::<Vec<_>>(),
-            ["terraform_data.destroy", "terraform_data.moved_destroy"]
+            ["terraform_data.destroy"]
         );
     }
 

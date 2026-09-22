@@ -1,17 +1,12 @@
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "detailed plan data remains for dormant Git attribution tests"
-    )
+#![expect(
+    dead_code,
+    reason = "detailed plan data is retained for Overview and dormant Git attribution"
 )]
 
 use std::collections::BTreeMap;
 use std::fmt::{Debug, Formatter};
 
-#[cfg(test)]
 mod attribute_diff;
-#[cfg(test)]
 mod path;
 
 #[derive(Clone, PartialEq, Eq)]
@@ -56,6 +51,7 @@ pub(crate) enum PlanAction {
 pub(crate) struct PlanResource {
     pub(crate) address: String,
     pub(crate) actions: Vec<PlanAction>,
+    pub(crate) kind: ResourceChangeKind,
 }
 
 impl PlanResource {
@@ -66,9 +62,7 @@ impl PlanResource {
 
     #[must_use]
     pub(crate) fn is_replacement(&self) -> bool {
-        self.actions.len() == 2
-            && self.has_action(&PlanAction::Create)
-            && self.has_action(&PlanAction::Delete)
+        self.kind == ResourceChangeKind::Replace
     }
 }
 
@@ -78,11 +72,30 @@ pub(crate) enum ResourceChangeKind {
     Update,
     Replace,
     Delete,
+    NoOp,
+    Read,
+    Move,
+    Import,
+    Unknown,
+    Unsupported,
+}
+
+impl ResourceChangeKind {
+    #[must_use]
+    pub(crate) const fn is_standard_change(self) -> bool {
+        matches!(
+            self,
+            Self::Create | Self::Update | Self::Replace | Self::Delete
+        )
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct ResourceChange {
     pub(crate) address: String,
+    pub(crate) provider: Option<String>,
+    pub(crate) resource_type: Option<String>,
+    pub(crate) resource_name: Option<String>,
     pub(crate) mode: ResourceMode,
     pub(crate) actions: Vec<PlanAction>,
     pub(crate) kind: ResourceChangeKind,
@@ -93,6 +106,8 @@ pub(crate) struct ResourceChange {
     pub(crate) after_unknown: Option<PlanValue>,
     pub(crate) replace_paths: Option<Vec<Vec<ReplacePathSegment>>>,
     pub(crate) action_reason: Option<String>,
+    pub(crate) previous_address: Option<String>,
+    pub(crate) importing: Option<PlanValue>,
 }
 
 impl Debug for ResourceChange {
@@ -100,6 +115,9 @@ impl Debug for ResourceChange {
         formatter
             .debug_struct("ResourceChange")
             .field("address", &self.address)
+            .field("provider", &self.provider)
+            .field("resource_type", &self.resource_type)
+            .field("resource_name", &self.resource_name)
             .field("mode", &self.mode)
             .field("actions", &self.actions)
             .field("kind", &self.kind)
@@ -119,6 +137,8 @@ impl Debug for ResourceChange {
             )
             .field("replace_paths", &self.replace_paths)
             .field("action_reason", &self.action_reason)
+            .field("previous_address", &self.previous_address)
+            .field("importing", &self.importing.as_ref().map(|_| "<redacted>"))
             .finish()
     }
 }
@@ -164,9 +184,127 @@ pub(crate) struct UnsupportedChange {
     pub(crate) action_type: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct OutputChange {
+    pub(crate) address: String,
+    pub(crate) actions: Vec<PlanAction>,
+    pub(crate) before: Option<PlanValue>,
+    pub(crate) after: Option<PlanValue>,
+    pub(crate) before_sensitive: Option<PlanValue>,
+    pub(crate) after_sensitive: Option<PlanValue>,
+    pub(crate) after_unknown: Option<PlanValue>,
+}
+
+impl std::fmt::Debug for OutputChange {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("OutputChange")
+            .field("address", &self.address)
+            .field("actions", &self.actions)
+            .field("before", &self.before.as_ref().map(|_| "<redacted>"))
+            .field("after", &self.after.as_ref().map(|_| "<redacted>"))
+            .field(
+                "before_sensitive",
+                &self.before_sensitive.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "after_sensitive",
+                &self.after_sensitive.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "after_unknown",
+                &self.after_unknown.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Plan {
     pub(crate) changes: Vec<ResourceChange>,
+    pub(crate) resource_changes: Vec<ResourceChange>,
     pub(crate) summary: PlanSummary,
     pub(crate) unsupported_changes: Vec<UnsupportedChange>,
+    pub(crate) output_changes: Vec<OutputChange>,
+}
+
+impl std::fmt::Debug for Plan {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Plan")
+            .field("changes", &self.changes)
+            .field("resource_changes", &self.resource_changes)
+            .field("summary", &self.summary)
+            .field("unsupported_changes", &self.unsupported_changes)
+            .field("output_changes", &self.output_changes)
+            .finish()
+    }
+}
+
+impl Plan {
+    #[must_use]
+    pub(crate) const fn empty() -> Self {
+        Self {
+            changes: Vec::new(),
+            resource_changes: Vec::new(),
+            summary: PlanSummary {
+                creates: 0,
+                updates: 0,
+                replaces: 0,
+                deletes: 0,
+            },
+            unsupported_changes: Vec::new(),
+            output_changes: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AttributeType {
+    Bool,
+    Number,
+    String,
+    List(Box<Self>),
+    Set(Box<Self>),
+    Map(Box<Self>),
+    Tuple(Vec<Self>),
+    Object(BTreeMap<String, Self>),
+    Dynamic,
+}
+
+impl AttributeType {
+    #[must_use]
+    pub(crate) const fn is_simple_value(&self) -> bool {
+        matches!(self, Self::Bool | Self::Number | Self::String)
+    }
+
+    #[must_use]
+    pub(crate) fn is_simple_map(&self) -> bool {
+        matches!(self, Self::Map(value) if value.is_simple_value())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ResourceSchema {
+    pub(crate) attributes: BTreeMap<String, AttributeType>,
+    pub(crate) block_types: BTreeMap<String, AttributeType>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProviderSchema {
+    pub(crate) resources: BTreeMap<String, ResourceSchema>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProviderSchemas {
+    pub(crate) providers: BTreeMap<String, ProviderSchema>,
+}
+
+impl ProviderSchemas {
+    #[must_use]
+    pub(crate) const fn empty() -> Self {
+        Self {
+            providers: BTreeMap::new(),
+        }
+    }
 }

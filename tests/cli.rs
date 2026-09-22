@@ -314,7 +314,8 @@ Plan: 0 to add, 1 to change, 0 to destroy.
         assert_eq!(arguments[2], "workspace show");
         assert!(arguments[3].starts_with("show -no-color "));
         assert!(arguments[4].starts_with("show -json "));
-        assert_eq!(arguments.len(), 5);
+        assert_eq!(arguments[5], "providers schema -json");
+        assert_eq!(arguments.len(), 6);
         fixture.assert_saved_plan_removed();
     }
 
@@ -326,7 +327,7 @@ Plan: 0 to add, 1 to change, 0 to destroy.
         assert_eq!(result.exit_code, 0);
         result.assert_restored();
         result.observed("plan_text");
-        assert_eq!(fixture.invoked_tools(), vec!["tofu".to_owned(); 5]);
+        assert_eq!(fixture.invoked_tools(), vec!["tofu".to_owned(); 6]);
         assert_eq!(fixture.invocation_arguments()[1], "version -json");
         fixture.assert_saved_plan_removed();
     }
@@ -388,8 +389,9 @@ Plan: 0 to add, 1 to change, 0 to destroy.
         let arguments = fixture.invocation_arguments();
         assert!(arguments[0].contains("-var name=value"));
         assert!(arguments[0].contains("-parallelism 4"));
-        assert!(arguments[6].contains("-parallelism 4"));
-        assert!(!arguments[6].contains("-var"));
+        assert_eq!(arguments[6], "workspace show");
+        assert!(arguments[7].contains("-parallelism 4"));
+        assert!(!arguments[7].contains("-var"));
         fixture.assert_saved_plan_removed();
     }
 
@@ -476,12 +478,14 @@ Plan: 0 to add, 1 to change, 0 to destroy.
         result.observed("apply_started");
         result.observed("apply_success");
         let arguments = fixture.invocation_arguments();
-        assert_eq!(arguments.len(), 7);
-        assert!(arguments[5].starts_with("workspace show"));
-        assert!(arguments[6].starts_with("apply -json -input=false "));
+        assert_eq!(arguments.len(), 8);
+        assert!(arguments[2].starts_with("workspace show"));
+        assert_eq!(arguments[5], "providers schema -json");
+        assert_eq!(arguments[6], "workspace show");
+        assert!(arguments[7].starts_with("apply -json -input=false "));
         assert_eq!(
             arguments[0].split("-out=").nth(1),
-            arguments[6].split("-json -input=false ").nth(1)
+            arguments[7].split("-json -input=false ").nth(1)
         );
         fixture.assert_saved_plan_removed();
     }
