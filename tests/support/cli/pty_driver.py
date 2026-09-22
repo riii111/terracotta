@@ -400,22 +400,20 @@ try:
         send_key(b"\r")
         wait_new("Applying...", "apply_started")
         if scenario == "apply_log_view":
-            if "Applying saved plan..." in screen.text():
-                raise RuntimeError("apply log was visible in compact status mode")
-            send_key(b"v")
-            wait_new("Applying saved plan...", "apply_logs_open")
-            send_key(b"\x1b")
-            wait_new("v logs", "apply_logs_closed")
-            send_key(b"v")
-            wait_new("Applying saved plan...", "apply_logs_reopened")
+            send_key(b"\t")
+            wait_new("scroll log", "apply_logs_focused")
+            send_key(b"\t")
+            wait_new("select", "apply_targets_focused")
+            send_key(b"\t")
+            wait_new("scroll log", "apply_logs_refocused")
             wait_parts(
-                ["Apply complete", "endpoint =", "y yank result"],
+                ["Apply complete", "terraform_data.api", "y yank result"],
                 "apply_success",
                 timeout=60,
             )
             exit_code = quit_with_enter()
         elif scenario in ("apply_success", "apply_mapping"):
-            wait_parts(["Apply complete", "endpoint ="], "apply_success")
+            wait_parts(["Apply complete", "terraform_data.api"], "apply_success")
             exit_code = quit_with_enter()
         elif scenario == "apply_failure":
             wait_parts(["Apply failed", "synthetic apply failure"], "apply_failure")
