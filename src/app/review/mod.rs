@@ -88,17 +88,6 @@ impl<'a> FilteredPlan<'a> {
 
 impl PlanDocument {
     #[must_use]
-    #[cfg(test)]
-    pub(crate) fn with_blocks(text: String, blocks: Vec<PlanBlock>) -> Self {
-        let line_kinds = vec![PlanLineKind::Body; text.split('\n').count()];
-        Self {
-            text,
-            blocks,
-            line_kinds,
-        }
-    }
-
-    #[must_use]
     pub(crate) const fn with_blocks_and_line_kinds(
         text: String,
         blocks: Vec<PlanBlock>,
@@ -348,17 +337,22 @@ pub(crate) enum PlanReviewMessage {
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    use super::{PlanBlock, PlanBlockKind, PlanDocument};
+    use super::{PlanBlock, PlanBlockKind, PlanDocument, PlanLineKind};
+
+    pub(crate) fn plan_document_with_blocks(text: String, blocks: Vec<PlanBlock>) -> PlanDocument {
+        let line_kinds = vec![PlanLineKind::Body; text.split('\n').count()];
+        PlanDocument::with_blocks_and_line_kinds(text, blocks, line_kinds)
+    }
 
     pub(crate) fn plan_document(text: String) -> PlanDocument {
         let end = text.split('\n').count();
-        PlanDocument::with_blocks(text, vec![PlanBlock::new(0..end, PlanBlockKind::Common)])
+        plan_document_with_blocks(text, vec![PlanBlock::new(0..end, PlanBlockKind::Common)])
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::plan_document;
+    use super::test_support::{plan_document, plan_document_with_blocks};
     use super::*;
 
     #[test]
@@ -373,7 +367,7 @@ mod tests {
 
     #[test]
     fn document_keeps_common_lines_and_matching_blocks_in_original_order() {
-        let document = PlanDocument::with_blocks(
+        let document = plan_document_with_blocks(
             "preamble\nresource api\napi value\nresource worker\nworker value\nsummary\n"
                 .to_owned(),
             vec![
@@ -402,7 +396,7 @@ mod tests {
 
     #[test]
     fn filter_counts_each_resource_and_output_block_once() {
-        let document = PlanDocument::with_blocks(
+        let document = plan_document_with_blocks(
             "common api\nresource api api api\nresource worker\noutput endpoint\nunknown endpoint\n"
                 .to_owned(),
             vec![
@@ -448,7 +442,7 @@ mod tests {
 
     #[test]
     fn filter_keeps_common_text_when_no_searchable_block_matches() {
-        let document = PlanDocument::with_blocks(
+        let document = plan_document_with_blocks(
             "diagnostic only\nresource api\noutput endpoint\nunknown boundary text\n".to_owned(),
             vec![
                 PlanBlock::new(0..1, PlanBlockKind::Common),

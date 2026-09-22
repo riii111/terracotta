@@ -2,3 +2,5 @@ pre-commit:
   commands:
     fmt:
       run: cargo fmt --all -- --check
+    ast-grep:
+      run: ast-grep scan

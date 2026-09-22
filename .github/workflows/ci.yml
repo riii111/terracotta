@@ -36,7 +36,10 @@ jobs:
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375
         with:
-          tool: cargo-machete
+          tool: cargo-machete,ast-grep@0.42.1
+      - run: ast-grep --version
+      - run: ast-grep test --skip-snapshot-tests
+      - run: ast-grep scan
       - uses: docker://rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
         with:
           args: -color

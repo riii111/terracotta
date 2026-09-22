@@ -1,0 +1,71 @@
+id: test-cfg-module-boundary
+valid:
+  - '#[cfg(test)] mod tests {}'
+  - '#[cfg(test)] pub(crate) mod test_support;'
+  - '#[cfg(test)] mod dormant;'
+  - '#[cfg(all(test, unix))] mod unix_tests {}'
+  - |-
+    #[cfg(test)]
+    // doc
+    #[allow(dead_code)]
+    mod tests {}
+  - '#[cfg(test)] mod tests { fn helper() {} impl State { fn helper() {} } }'
+  - '#[cfg(unix)] fn f() {}'
+  - '#[cfg(feature = "test")] fn f() {}'
+  - 'const S: &str = "#[cfg(test)] fn f() {}";'
+  - '// #[cfg(test)] fn f() {}'
+  - '#[cfg_attr(test, allow(dead_code))] fn f() {}'
+  - |-
+    #[cfg(test)]
+    /// Tests this module.
+    mod tests {}
+  - |-
+    #[cfg(test)]
+    /* tests */
+    mod tests {}
+  - '#[cfg(test)] #[cfg(unix)] pub mod tests;'
+  - '#[cfg(any(test, feature = "test-support"))] mod test_support;'
+  - '#[cfg(all(feature = "test", unix))] fn f() {}'
+  - '#[cfg(all(unix, /* test */ feature = "test"))] fn f() {}'
+  - '#[cfg(any(feature = "test", not(unix)))] fn f() {}'
+  - 'fn f() {} #[cfg(test)] mod tests {}'
+  - '#[cfg(test)] mod tests {} fn f() {}'
+invalid:
+  - '#[cfg(test)] fn f() {}'
+  - 'impl State { #[cfg(test)] fn f() {} }'
+  - '#[cfg(test)] struct S;'
+  - '#[cfg(test)] enum E { A }'
+  - '#[cfg(test)] trait T {}'
+  - '#[cfg(test)] impl S {}'
+  - '#[cfg(test)] const C: u8 = 0;'
+  - '#[cfg(test)] static C: u8 = 0;'
+  - '#[cfg(test)] type A = u8;'
+  - '#[cfg(test)] use foo::Bar;'
+  - '#[cfg(test)] pub use foo::Bar;'
+  - '#[cfg(test)] #[allow(dead_code)] fn f() {}'
+  - |-
+    #[cfg(
+      test
+    )]
+    fn f() {}
+  - '#[cfg(all(unix, test))] fn f() {}'
+  - '#[cfg(any(test, feature = "test-support"))] fn f() {}'
+  - '#[cfg(not(test))] fn f() {}'
+  - 'struct S { #[cfg(test)] field: u8 }'
+  - 'fn f() { #[cfg(test)] let x = 0; }'
+  - '#[cfg(test)] fn f() {} mod tests {}'
+  - '#[cfg(test)] mod tests { #[cfg(test)] fn helper() {} }'
+  - |-
+    #[cfg(test)]
+    /// Helper.
+    fn f() {}
+  - |-
+    #[cfg(test)]
+    /* helper */
+    fn f() {}
+  - 'trait T { #[cfg(test)] fn f(&self); }'
+  - '#[cfg(all(unix, /* test */ test))] fn f() {}'
+  - '#[cfg(any(feature = "test", test))] fn f() {}'
+  - '#[cfg(test)] struct S; mod tests {}'
+  - '#[cfg(test)] use foo::Bar; #[cfg(test)] mod tests {}'
+  - '#[cfg(test)] fn f() {} #[cfg(test)] mod tests {}'

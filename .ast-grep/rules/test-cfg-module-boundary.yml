@@ -1,0 +1,37 @@
+id: test-cfg-module-boundary
+language: Rust
+severity: error
+message: Move test-only definitions into a test module.
+files:
+  - src/**/*.rs
+  - tests/**/*.rs
+  - examples/**/*.rs
+utils:
+  test-cfg:
+    kind: attribute_item
+    has:
+      kind: attribute
+      all:
+        - has:
+            kind: identifier
+            regex: '^cfg$'
+        - has:
+            kind: token_tree
+            has:
+              kind: identifier
+              regex: '^test$'
+              stopBy: end
+  attribute-or-comment:
+    any:
+      - kind: attribute_item
+      - kind: line_comment
+      - kind: block_comment
+rule:
+  all:
+    - matches: test-cfg
+    - not:
+        precedes:
+          kind: mod_item
+          stopBy:
+            not:
+              matches: attribute-or-comment

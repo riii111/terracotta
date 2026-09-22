@@ -64,6 +64,7 @@
               pkgs.cargo-nextest
               pkgs.cargo-audit
               pkgs.cargo-machete
+              pkgs.ast-grep
               pkgs.lefthook
               pkgs.actionlint
               pkgs.nixfmt

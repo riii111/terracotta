@@ -1089,7 +1089,8 @@ mod tests {
         copy::{CopyResult, CopyTarget},
         execution::{Diagnostic, DiagnosticSource, ExecutionContext, ExecutionState},
         review::{
-            PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata, test_support::plan_document,
+            PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata,
+            test_support::{plan_document, plan_document_with_blocks},
         },
         session::{self, Action, SessionState},
     };
@@ -1487,7 +1488,7 @@ End of synthetic plan body."#;
         PlanReview::new(
             PathBuf::from("/repo"),
             "default".to_owned(),
-            PlanDocument::with_blocks(
+            plan_document_with_blocks(
                 text,
                 vec![PlanBlock::new(
                     0..usize::from(line_count),
@@ -1535,7 +1536,7 @@ End of synthetic plan body."#;
             PlanReview::new(
                 PathBuf::from("/repo"),
                 "default".to_owned(),
-                PlanDocument::with_blocks(
+                plan_document_with_blocks(
                     "api line 1\napi line 2\nworker line 1\nworker line 2\ncommon line\n"
                         .to_owned(),
                     vec![
@@ -1560,7 +1561,7 @@ End of synthetic plan body."#;
             PlanReview::new(
                 PathBuf::from("/repo"),
                 "default".to_owned(),
-                PlanDocument::with_blocks(
+                plan_document_with_blocks(
                     "common line 1\ncommon line 2\n".to_owned(),
                     vec![PlanBlock::new(0..2, PlanBlockKind::Common)],
                 ),
