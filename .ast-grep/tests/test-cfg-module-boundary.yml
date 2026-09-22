@@ -6,9 +6,6 @@ valid:
     mod tests {}
   - |-
     #[cfg(test)]
-    pub(crate) mod tests;
-  - |-
-    #[cfg(test)]
     mod tests { mod support; use self::support::fixture; }
   - |-
     #[cfg(test)]
@@ -19,14 +16,8 @@ valid:
         }
     }
   - |-
-    #[cfg(all(test, unix))]
-    mod tests {}
-  - |-
     #[cfg(all(unix, test))]
     mod tests {}
-  - |-
-    #[cfg(any(test, feature = "test-support"))]
-    mod tests;
   - |-
     #[cfg(test)]
     mod test_support;
@@ -34,14 +25,21 @@ valid:
     #[cfg(test)]
     pub(crate) mod git;
   - |-
-    #[cfg(test)]
-    mod helper { mod tests {} }
-  - |-
     #[cfg(all(test, unix))]
     mod unix_tests {}
   - |-
     #[cfg(any(test, feature = "test-support"))]
     mod test_support;
+
+  - |-
+    #[cfg(all(test, not(unix)))]
+    mod test_support {}
+  - |-
+    #[cfg(any(test, not(unix)))]
+    mod test_support {}
+  - |-
+    #[cfg(all(unix, any(test, feature = "x")))]
+    mod test_support {}
 
   # Same-line nested definitions remain inside the gated module.
   - |-
@@ -101,6 +99,13 @@ invalid:
   - |-
     #[cfg(not(not(test)))]
     mod tests {}
+  - |-
+    #[cfg(not(all(test, unix)))]
+    mod m {}
+  - |-
+    #[cfg(not(any(test, unix)))]
+    mod m {}
+
   # A test condition on a function or method must move to a module boundary.
   - |-
     #[cfg(test)]

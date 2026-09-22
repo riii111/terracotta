@@ -40,6 +40,13 @@ utils:
           - has:
               kind: identifier
               regex: '^test$'
+              not:
+                inside:
+                  kind: token_tree
+                  follows:
+                    kind: identifier
+                    regex: '^not$'
+                  stopBy: end
               inside:
                 kind: token_tree
                 follows:
