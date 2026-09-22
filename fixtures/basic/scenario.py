@@ -24,22 +24,25 @@ EXPECTED_ACTIONS = {
 def main():
     parser = argparse.ArgumentParser(description="Create an isolated local Terraform scenario.")
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("setup", help="Create a fresh temporary Git repository and plan")
+    setup_parser = commands.add_parser(
+        "setup", help="Create a fresh temporary Git repository and plan"
+    )
+    setup_parser.add_argument("--tool", choices=("terraform", "tofu"), default="terraform")
     commands.add_parser("demo", help="Build with a checkout-local cache and open a temporary scenario")
     cleanup = commands.add_parser("clean", help="Remove a scenario created by this script")
     cleanup.add_argument("directory", type=Path)
     args = parser.parse_args()
 
     if args.command == "setup":
-        print(setup())
+        print(setup(args.tool))
     elif args.command == "demo":
         sys.exit(demo())
     else:
         clean(args.directory)
 
 
-def setup():
-    for executable in ("git", "terraform"):
+def setup(tool="terraform"):
+    for executable in ("git", tool):
         if shutil.which(executable) is None:
             raise RuntimeError(f"Required executable not found: {executable}")
 
@@ -56,16 +59,16 @@ def setup():
         run(directory, environment, "git", "init", "--initial-branch=main")
         run(directory, environment, "git", "add", ".")
         commit(directory, environment, "test: establish applied baseline")
-        run(directory, environment, "terraform", "init", "-input=false", "-no-color")
-        run(directory, environment, "terraform", "apply", "-auto-approve", "-input=false", "-no-color")
+        run(directory, environment, tool, "init", "-input=false", "-no-color")
+        run(directory, environment, tool, "apply", "-auto-approve", "-input=false", "-no-color")
 
         shutil.copyfile(FIXTURES / "changes" / "pending.tf", directory / "pending.tf")
         run(directory, environment, "git", "add", "pending.tf")
         commit(directory, environment, "test: leave committed change unapplied")
         shutil.copyfile(FIXTURES / "changes" / "main.tf", directory / "main.tf")
 
-        run(directory, environment, "terraform", "plan", "-input=false", "-no-color", "-out=review.tfplan")
-        plan_json = run(directory, environment, "terraform", "show", "-json", "review.tfplan")
+        run(directory, environment, tool, "plan", "-input=false", "-no-color", "-out=review.tfplan")
+        plan_json = run(directory, environment, tool, "show", "-json", "review.tfplan")
         plan = json.loads(plan_json)
         actual = {
             change["address"]: change["change"]["actions"]

@@ -1,6 +1,6 @@
 # Terracotta
 
-Review and apply Terraform plans in your terminal.
+Review and apply Terraform or OpenTofu plans in your terminal.
 
 [![plan](https://github.com/user-attachments/assets/7c6bdb79-bf87-4f5f-9b33-7cafa038bc9e)
 
@@ -19,7 +19,7 @@ Review Terraform's familiar diff and apply the exact plan you reviewed. The UI a
 
 ## Usage
 
-Run from your Terraform configuration directory in an interactive terminal, with Terraform and credentials already configured.
+Run from your Terraform or OpenTofu configuration directory in an interactive terminal, with the selected tool and credentials already configured.
 
 ```sh
 terracotta plan
@@ -40,7 +40,11 @@ changes exits successfully without showing an apply confirmation.
 `terracotta terraform <arguments>` runs Terraform commands. `terracotta plan` and
 `terracotta apply` are shortcuts.
 
+`terracotta tofu <arguments>` runs OpenTofu commands. Use `alias tofu='terracotta tofu'`
+to keep the usual command name. The Terraform equivalent is
+`alias terraform='terracotta terraform'`.
+
 The review UI opens for interactive local `plan` and `apply` invocations,
-including supported Terraform options and `TF_CLI_ARGS*`. CI, redirected
-streams, HCP configurations, and unsupported options are delegated to Terraform
-unchanged. Terracotta does not run `terraform init` implicitly.
+including supported options and the selected tool's `TF_CLI_ARGS*`. CI, redirected
+streams, HCP configurations, and unsupported options are delegated unchanged.
+Terracotta does not run `init` implicitly.

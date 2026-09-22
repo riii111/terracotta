@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use crate::app::execution::{ApplyStatus, ExecutionEvent, ExecutionEventKind};
+use crate::app::execution::{ApplyStatus, ExecutionEvent, ExecutionEventKind, Tool};
 use crate::infra::CancellationToken;
 
 use super::command::{
@@ -26,7 +26,12 @@ impl ApplyResult {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "apply keeps the explicit execution and event boundaries"
+)]
 pub(crate) fn run_apply_with_arguments(
+    tool: Tool,
     root: &Path,
     global_arguments: &[OsString],
     apply_arguments: &[OsString],
@@ -51,6 +56,7 @@ pub(crate) fn run_apply_with_arguments(
         event_sink(event);
     };
     let output = run_command_with_events(
+        tool,
         root,
         TerraformCommand::Apply,
         &arguments,
@@ -66,7 +72,7 @@ pub(crate) fn run_apply_with_arguments(
     }
 
     let Some(status) = output.status else {
-        return Err(interrupted_error(TerraformCommand::Apply, output));
+        return Err(interrupted_error(tool, TerraformCommand::Apply, output));
     };
     if !matches!(status, ProcessStatus::Exited(0)) {
         return Ok(ApplyResult {
@@ -104,6 +110,7 @@ mod tests {
     impl ProcessRunner for FakeRunner {
         fn start(
             &self,
+            _tool: Tool,
             _root: &Path,
             arguments: &[OsString],
         ) -> io::Result<Box<dyn RunningProcess>> {
@@ -156,6 +163,7 @@ mod tests {
         let mut events = Vec::new();
 
         let result = run_apply_with_arguments(
+            Tool::Terraform,
             Path::new("/project"),
             &[],
             &[OsString::from("-no-color")],
@@ -215,6 +223,7 @@ mod tests {
         };
         let mut events = Vec::new();
         let failed = run_apply_with_arguments(
+            Tool::Terraform,
             Path::new("/project"),
             &[],
             &[OsString::from("-no-color")],
@@ -237,6 +246,7 @@ mod tests {
         let cancelled = CancellationToken::new();
         cancelled.cancel();
         let interrupted = run_apply_with_arguments(
+            Tool::Terraform,
             Path::new("/project"),
             &[],
             &[OsString::from("-no-color")],
@@ -260,6 +270,7 @@ mod tests {
         };
 
         let result = run_apply_with_arguments(
+            Tool::Terraform,
             Path::new("/project"),
             &[],
             &[OsString::from("-no-color")],

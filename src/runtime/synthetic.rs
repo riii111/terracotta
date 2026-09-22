@@ -12,7 +12,7 @@ use crate::{
         copy::CopyResult,
         execution::{
             ApplyStatus, EventStream, ExecutionAction, ExecutionContext, ExecutionEvent,
-            ExecutionEventKind, ExecutionLogLine, ExecutionPhase, ExecutionState,
+            ExecutionEventKind, ExecutionLogLine, ExecutionPhase, ExecutionState, Tool,
         },
         review::{PlanBlock, PlanBlockKind, PlanDocument, PlanLineKind, PlanMetadata, PlanReview},
         session::{Action, ApplyConfirmationState, Effect, ReviewSessionState, SessionState},
@@ -256,7 +256,7 @@ fn synthetic_review() -> ReviewSessionState {
         ExecutionContext::loading("/workspace/infra/prod")
             .with_launch_root("/workspace")
             .with_workspace("default")
-            .with_tool_version("terraform", "1.9.0"),
+            .with_tool_version(Tool::Terraform, "1.9.0"),
     );
     ReviewSessionState::new(plan)
 }

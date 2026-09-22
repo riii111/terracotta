@@ -12,7 +12,7 @@ use ratatui::{DefaultTerminal, Terminal, backend::Backend, layout::Rect};
 use crate::{
     app::{
         copy::{CopyEffect, CopyResult, CopyTarget},
-        execution::{ExecutionContextValue, ExecutionStage, ExecutionState},
+        execution::{ExecutionContextValue, ExecutionStage, ExecutionState, Tool},
         review::PlanReviewMessage,
         session::{self, Action, Effect, SessionOutcome, SessionState},
     },
@@ -615,6 +615,7 @@ fn apply_effect<C: ClipboardWriter>(
                 );
             };
             match super::spawn_apply_worker(
+                effects.tool,
                 effects.root,
                 effects.global_arguments,
                 effects.apply_arguments,
@@ -656,6 +657,7 @@ fn verify_apply_context(
 ) -> Result<(), String> {
     verify_apply_directory(apply.context().cwd_path(), effects.display_root)?;
     let workspace = terraform::read_workspace_with_arguments(
+        effects.tool,
         effects.root,
         effects.global_arguments,
         effects.cancellation,
@@ -703,6 +705,7 @@ impl ClipboardWriter for ClipboardExecutor {
 }
 
 pub(super) struct RuntimeEffects<'a, C: ClipboardWriter = ClipboardExecutor> {
+    pub(super) tool: Tool,
     pub(super) root: &'a Path,
     pub(super) display_root: &'a Path,
     pub(super) global_arguments: &'a [std::ffi::OsString],
@@ -1311,6 +1314,7 @@ mod tests {
         apply_worker: &'a mut WorkerGuard,
     ) -> RuntimeEffects<'a, TestClipboard> {
         RuntimeEffects {
+            tool: Tool::Terraform,
             root: Path::new("/project"),
             display_root: Path::new("/project"),
             global_arguments: &[],
@@ -2370,6 +2374,7 @@ mod tests {
             handle: None,
         };
         let mut effects = RuntimeEffects {
+            tool: Tool::Terraform,
             root: Path::new("/project"),
             display_root: Path::new("/project"),
             global_arguments: &[],

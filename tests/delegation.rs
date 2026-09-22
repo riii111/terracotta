@@ -47,6 +47,8 @@ exit 37
         )
         .unwrap();
         fs::set_permissions(bin.join("terraform"), fs::Permissions::from_mode(0o755)).unwrap();
+        fs::copy(bin.join("terraform"), bin.join("tofu")).unwrap();
+        fs::set_permissions(bin.join("tofu"), fs::Permissions::from_mode(0o755)).unwrap();
         Self { directory, bin }
     }
     fn command(&self) -> Command {
@@ -156,7 +158,8 @@ fn delegation_preserves_arguments_environment_cwd_streams_and_exit_status() {
 #[case::other_command(&["terraform", "workspace", "list"], b"workspace\0list\0")]
 #[case::plan_shorthand(&["plan", "-future"], b"plan\0-future\0")]
 #[case::apply_shorthand(&["apply", "saved plan"], b"apply\0saved plan\0")]
-fn terraform_entries_delegate_without_rewriting(#[case] args: &[&str], #[case] expected: &[u8]) {
+#[case::tofu_help(&["tofu", "-help"], b"-help\0")]
+fn tool_entries_delegate_without_rewriting(#[case] args: &[&str], #[case] expected: &[u8]) {
     let fixture = Fixture::new();
     let output = fixture.command().args(args).output().unwrap();
     assert_eq!(output.status.code(), Some(37));

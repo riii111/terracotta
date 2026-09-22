@@ -6,7 +6,7 @@ use std::{
 
 use crate::app::{
     attribution::{AnalysisIssue, SourceFileAnalysis, attribute_changes, mark_analysis_incomplete},
-    execution::{ExecutionEvent, ExecutionPhase},
+    execution::{ExecutionEvent, ExecutionPhase, Tool},
     review::git::{PlanReview, ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus},
 };
 use crate::infra::CancellationToken;
@@ -124,8 +124,13 @@ fn run_review_with_dependencies(
         return Err(ReviewError::Interrupted);
     }
 
-    let workspace =
-        terraform::read_workspace_with_arguments(&execution_root, &[], cancellation, runner)?;
+    let workspace = terraform::read_workspace_with_arguments(
+        Tool::Terraform,
+        &execution_root,
+        &[],
+        cancellation,
+        runner,
+    )?;
     if cancellation.is_cancelled() {
         return Err(ReviewError::Interrupted);
     }
@@ -437,6 +442,7 @@ mod tests {
     impl ProcessRunner for FakeRunner {
         fn start(
             &self,
+            _tool: Tool,
             _root: &Path,
             arguments: &[std::ffi::OsString],
         ) -> io::Result<Box<dyn RunningProcess>> {

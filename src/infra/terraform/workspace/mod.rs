@@ -1,5 +1,6 @@
 use std::{ffi::OsString, path::Path};
 
+use crate::app::execution::Tool;
 use crate::infra::CancellationToken;
 
 use super::command::{
@@ -8,6 +9,7 @@ use super::command::{
 };
 
 pub(crate) fn read_workspace_with_arguments(
+    tool: Tool,
     root: &Path,
     global_arguments: &[OsString],
     cancellation: &CancellationToken,
@@ -16,6 +18,7 @@ pub(crate) fn read_workspace_with_arguments(
     let mut arguments = global_arguments.to_vec();
     arguments.extend([OsString::from("workspace"), OsString::from("show")]);
     let output = run_command(
+        tool,
         root,
         TerraformCommand::WorkspaceShow,
         &arguments,
@@ -23,19 +26,31 @@ pub(crate) fn read_workspace_with_arguments(
         runner,
     )?;
     if output.interrupted {
-        return Err(interrupted_error(TerraformCommand::WorkspaceShow, output));
+        return Err(interrupted_error(
+            tool,
+            TerraformCommand::WorkspaceShow,
+            output,
+        ));
     }
     if !output.status.is_some_and(ProcessStatus::is_success) {
-        return Err(non_zero_error(TerraformCommand::WorkspaceShow, output));
+        return Err(non_zero_error(
+            tool,
+            TerraformCommand::WorkspaceShow,
+            output,
+        ));
     }
     let workspace = String::from_utf8(output.output.stdout).map_err(|error| {
-        TerraformExecutionError::new(TerraformExecutionErrorKind::InvalidWorkspace {
-            message: error.to_string(),
-        })
+        TerraformExecutionError::new_for_tool(
+            tool,
+            TerraformExecutionErrorKind::InvalidWorkspace {
+                message: error.to_string(),
+            },
+        )
     })?;
     let workspace = workspace.trim();
     if workspace.is_empty() {
-        return Err(TerraformExecutionError::new(
+        return Err(TerraformExecutionError::new_for_tool(
+            tool,
             TerraformExecutionErrorKind::InvalidWorkspace {
                 message: "workspace name is empty".to_owned(),
             },

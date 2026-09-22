@@ -1,5 +1,6 @@
 use std::{ffi::OsStr, fs, io, path::Path};
 
+use crate::app::execution::Tool;
 use hcl::Body;
 use serde_json::Value;
 
@@ -9,25 +10,32 @@ pub(crate) enum ExecutionLocation {
     HcpCandidate,
 }
 
-pub(crate) fn execution_location(
+#[cfg(test)]
+fn execution_location(root: &Path, data_dir: Option<&OsStr>) -> io::Result<ExecutionLocation> {
+    execution_location_for_tool(root, Tool::Terraform, data_dir)
+}
+
+pub(crate) fn execution_location_for_tool(
     root: &Path,
+    tool: Tool,
     data_dir: Option<&OsStr>,
 ) -> io::Result<ExecutionLocation> {
     let mut hcp = false;
-    for entry in fs::read_dir(root)? {
-        let path = entry?.path();
+    for path in configuration_files(root, tool)? {
         let Some(name) = path.file_name().and_then(OsStr::to_str) else {
             return Err(invalid_configuration());
         };
         if name.starts_with('.') || name.ends_with('~') || name.starts_with('#') {
             continue;
         }
-        if name.ends_with(".tf.json") {
+        if name.ends_with(".tf.json") || (tool == Tool::OpenTofu && name.ends_with(".tofu.json")) {
             let source = fs::read_to_string(&path)?;
             let value: Value =
                 serde_json::from_str(&source).map_err(|_| invalid_configuration())?;
             hcp |= json_hcp(&value)?;
-        } else if path.extension().is_some_and(|extension| extension == "tf") {
+        } else if path.extension().is_some_and(|extension| {
+            extension == "tf" || (tool == Tool::OpenTofu && extension == "tofu")
+        }) {
             let source = fs::read_to_string(&path)?;
             let body: Body = hcl::from_str(&source).map_err(|_| invalid_configuration())?;
             hcp |= body
@@ -69,6 +77,53 @@ pub(crate) fn execution_location(
     } else {
         ExecutionLocation::Local
     })
+}
+
+#[expect(
+    clippy::case_sensitive_file_extension_comparisons,
+    reason = "Terraform and OpenTofu only recognize their lowercase configuration extensions"
+)]
+fn configuration_files(root: &Path, tool: Tool) -> io::Result<Vec<std::path::PathBuf>> {
+    let mut paths = fs::read_dir(root)?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()?;
+    paths.sort();
+    if tool == Tool::Terraform {
+        return Ok(paths
+            .into_iter()
+            .filter(|path| {
+                path.file_name()
+                    .and_then(OsStr::to_str)
+                    .is_some_and(|name| name.ends_with(".tf") || name.ends_with(".tf.json"))
+            })
+            .collect());
+    }
+
+    let names = paths
+        .iter()
+        .filter_map(|path| path.file_name().and_then(OsStr::to_str))
+        .map(str::to_owned)
+        .collect::<std::collections::HashSet<_>>();
+    Ok(paths
+        .into_iter()
+        .filter(|path| {
+            let Some(name) = path.file_name().and_then(OsStr::to_str) else {
+                return false;
+            };
+            if name.ends_with(".tofu") || name.ends_with(".tofu.json") {
+                return true;
+            }
+            if name.ends_with(".tf") {
+                let tofu_name = format!("{}.tofu", name.trim_end_matches(".tf"));
+                return !names.contains(&tofu_name);
+            }
+            if name.ends_with(".tf.json") {
+                let tofu_name = format!("{}.tofu.json", name.trim_end_matches(".tf.json"));
+                return !names.contains(&tofu_name);
+            }
+            false
+        })
+        .collect())
 }
 
 fn json_hcp(value: &Value) -> io::Result<bool> {
@@ -201,5 +256,31 @@ mod tests {
         }
         fs::write(&state, "broken").unwrap();
         assert!(execution_location(&fixture.0, Some(data.as_os_str())).is_err());
+    }
+
+    #[test]
+    fn opentofu_prefers_tofu_configuration_over_same_named_terraform_file() {
+        let fixture = Fixture::new("main.tf", "terraform {\n  backend \"s3\" {}\n}\n");
+        fs::write(fixture.0.join("main.tofu"), "terraform {\n  cloud {}\n}\n").unwrap();
+
+        assert_eq!(
+            execution_location_for_tool(&fixture.0, Tool::OpenTofu, None).unwrap(),
+            ExecutionLocation::HcpCandidate
+        );
+    }
+
+    #[test]
+    fn opentofu_prefers_tofu_json_over_same_named_terraform_json_file() {
+        let fixture = Fixture::new("main.tf.json", r#"{"terraform":{"backend":{"s3":{}}}}"#);
+        fs::write(
+            fixture.0.join("main.tofu.json"),
+            r#"{"terraform":{"cloud":{}}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            execution_location_for_tool(&fixture.0, Tool::OpenTofu, None).unwrap(),
+            ExecutionLocation::HcpCandidate
+        );
     }
 }

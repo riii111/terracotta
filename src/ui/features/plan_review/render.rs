@@ -1536,7 +1536,7 @@ mod tests {
     use crate::app::{
         copy::{CopyResult, CopyTarget},
         execution::{
-            Diagnostic, DiagnosticSource, ExecutionContext, ExecutionState, VariableSources,
+            Diagnostic, DiagnosticSource, ExecutionContext, ExecutionState, Tool, VariableSources,
         },
         review::{
             PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata, test_support::plan_document,
@@ -1836,7 +1836,7 @@ End of synthetic plan body."#;
             )
             .with_launch_root("/repo")
             .with_workspace("default")
-            .with_tool_version("terraform", "1.9.0")
+            .with_tool_version(Tool::Terraform, "1.9.0")
             .with_variable_sources(VariableSources::new(
                 vec![PathBuf::from("/repo/environments/production/common.tfvars")],
                 vec![PathBuf::from("/repo/secrets/production.tfvars")],
@@ -1919,7 +1919,7 @@ End of synthetic plan body."#;
             ExecutionContext::loading("/repo/environments/production/main")
                 .with_launch_root("/repo")
                 .with_workspace("default")
-                .with_tool_version("terraform", "1.9.0"),
+                .with_tool_version(Tool::Terraform, "1.9.0"),
         );
         let state = confirmation_state(plan);
         let mut view = ApplyConfirmationViewState::default();
