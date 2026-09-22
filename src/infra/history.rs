@@ -1,9 +1,10 @@
+use std::thread;
 use std::{
     env, fs,
     fs::{File, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 #[cfg(unix)]
@@ -14,6 +15,8 @@ use serde_json::{Value, json};
 use crate::app::execution::{HistoryKey, SuccessfulTarget};
 
 const HISTORY_VERSION: u64 = 1;
+const HISTORY_LOCK_WAIT: Duration = Duration::from_secs(1);
+const HISTORY_LOCK_RETRY: Duration = Duration::from_millis(10);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HistoryStore {
@@ -36,7 +39,7 @@ impl HistoryStore {
             return None;
         }
         let lock = self.lock_file().ok()?;
-        lock.lock().ok()?;
+        lock_history(&lock).ok()?;
         read_duration(&self.record_path(key))
     }
 
@@ -47,12 +50,11 @@ impl HistoryStore {
         fs::create_dir_all(&self.root)?;
         set_directory_permissions(&self.root)?;
         let lock = self.lock_file()?;
-        lock.lock()?;
+        lock_history(&lock)?;
 
         let recorded_at = unix_millis();
         for success in successes {
             let path = self.record_path(&success.key);
-            let _previous = read_duration(&path);
             let document = json!({
                 "version": HISTORY_VERSION,
                 "duration_ms": duration_millis(success.duration),
@@ -76,6 +78,25 @@ impl HistoryStore {
         let file = options.open(path)?;
         set_file_permissions(&file, 0o600)?;
         Ok(file)
+    }
+}
+
+fn lock_history(file: &File) -> io::Result<()> {
+    let deadline = Instant::now() + HISTORY_LOCK_WAIT;
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(()),
+            Err(fs::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                thread::sleep(HISTORY_LOCK_RETRY);
+            }
+            Err(fs::TryLockError::WouldBlock) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "timed out waiting for Terracotta history lock",
+                ));
+            }
+            Err(fs::TryLockError::Error(error)) => return Err(error),
+        }
     }
 }
 
@@ -220,7 +241,7 @@ static TEMP_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU6
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, thread};
+    use std::sync::Arc;
 
     use crate::app::{
         execution::{ExecutionContext, ExecutionTargetSpec, Tool},
