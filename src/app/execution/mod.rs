@@ -258,7 +258,8 @@ impl ExecutionState {
         self.result = Some(ExecutionResult {
             phase: ExecutionStage::Applying,
             termination,
-            summary_line,
+            summary_line: summary_line
+                .map(|summary| copy::sanitize_text(&summary, self.progress.sensitive_values())),
             first_error_line: self.progress.first_error_line(),
         });
     }
@@ -400,6 +401,29 @@ mod tests {
 
     fn event(received_at: Instant, kind: ExecutionEventKind) -> ExecutionEvent {
         ExecutionEvent { received_at, kind }
+    }
+
+    #[test]
+    fn apply_result_summary_is_sanitized_before_rendering() {
+        let started_at = Instant::now();
+        let mut state = ExecutionState::applying_with_targets(
+            started_at,
+            ExecutionContext::loading("loading..."),
+            Vec::new(),
+            vec!["secret-value".to_owned()],
+        );
+
+        state.finish_apply(
+            ApplyStatus::Succeeded,
+            Some("Apply complete: secret-value".to_owned()),
+            None,
+            started_at,
+        );
+
+        assert_eq!(
+            state.result().and_then(ExecutionResult::summary_line),
+            Some("Apply complete: (sensitive value)")
+        );
     }
 
     #[test]
