@@ -89,6 +89,14 @@ impl ExecutionTargetState {
     pub(crate) const fn previous(&self) -> Option<Duration> {
         self.previous
     }
+
+    #[must_use]
+    pub(crate) fn elapsed_at(&self, now: Instant) -> Option<Duration> {
+        self.duration.or_else(|| {
+            self.started_at
+                .map(|started_at| now.saturating_duration_since(started_at))
+        })
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -296,6 +304,54 @@ impl ExecutionProgress {
             .collect()
     }
 
+    #[must_use]
+    pub(crate) fn display_target_indices(&self, finished: bool) -> Vec<usize> {
+        let mut indices = (0..self.targets.len()).collect::<Vec<_>>();
+        if finished {
+            indices.sort_by_key(|index| (target_status_order(self.targets[*index].status), *index));
+        }
+        indices
+    }
+
+    #[must_use]
+    pub(crate) fn completed_count(&self) -> usize {
+        self.count_status(ExecutionTargetStatus::Completed)
+    }
+
+    #[must_use]
+    pub(crate) fn failed_count(&self) -> usize {
+        self.count_status(ExecutionTargetStatus::Failed)
+    }
+
+    #[must_use]
+    pub(crate) fn incomplete_count(&self) -> usize {
+        self.count_status(ExecutionTargetStatus::Incomplete)
+    }
+
+    #[must_use]
+    pub(crate) fn skipped_count(&self) -> usize {
+        self.count_status(ExecutionTargetStatus::Skipped)
+    }
+
+    #[must_use]
+    pub(crate) fn has_previous(&self) -> bool {
+        self.targets.iter().any(|target| target.previous.is_some())
+    }
+
+    #[must_use]
+    pub(crate) fn first_failed_index(&self) -> Option<usize> {
+        self.targets
+            .iter()
+            .position(|target| target.status == ExecutionTargetStatus::Failed)
+    }
+
+    fn count_status(&self, status: ExecutionTargetStatus) -> usize {
+        self.targets
+            .iter()
+            .filter(|target| target.status == status)
+            .count()
+    }
+
     fn append_log(&mut self, stream: EventStream, text: &str, target: Option<usize>) {
         let log_id = self.log.len();
         self.log.push(ExecutionLogLine {
@@ -393,6 +449,17 @@ impl ExecutionProgress {
         self.targets
             .iter()
             .position(|target| target.address() == address)
+    }
+}
+
+const fn target_status_order(status: ExecutionTargetStatus) -> u8 {
+    match status {
+        ExecutionTargetStatus::Failed => 0,
+        ExecutionTargetStatus::Incomplete => 1,
+        ExecutionTargetStatus::Skipped => 2,
+        ExecutionTargetStatus::Completed => 3,
+        ExecutionTargetStatus::Running => 4,
+        ExecutionTargetStatus::Pending => 5,
     }
 }
 
@@ -936,5 +1003,42 @@ mod tests {
             progress.targets()[1].status(),
             ExecutionTargetStatus::Incomplete
         );
+    }
+
+    #[test]
+    fn finished_target_order_groups_failures_without_reordering_same_status() {
+        let mut progress = ExecutionProgress::new(
+            vec![
+                ExecutionTargetSpec {
+                    address: "completed-first".to_owned(),
+                    actions: vec![PlanAction::Update],
+                },
+                ExecutionTargetSpec {
+                    address: "failed".to_owned(),
+                    actions: vec![PlanAction::Update],
+                },
+                ExecutionTargetSpec {
+                    address: "completed-second".to_owned(),
+                    actions: vec![PlanAction::Update],
+                },
+                ExecutionTargetSpec {
+                    address: "incomplete".to_owned(),
+                    actions: vec![PlanAction::Update],
+                },
+            ],
+            Vec::new(),
+        );
+        progress.targets[0].status = ExecutionTargetStatus::Completed;
+        progress.targets[1].status = ExecutionTargetStatus::Failed;
+        progress.targets[2].status = ExecutionTargetStatus::Completed;
+        progress.targets[3].status = ExecutionTargetStatus::Incomplete;
+
+        assert_eq!(progress.display_target_indices(false), [0, 1, 2, 3]);
+        assert_eq!(progress.display_target_indices(true), [1, 3, 0, 2]);
+        assert_eq!(progress.completed_count(), 2);
+        assert_eq!(progress.failed_count(), 1);
+        assert_eq!(progress.incomplete_count(), 1);
+        assert_eq!(progress.skipped_count(), 0);
+        assert_eq!(progress.first_failed_index(), Some(1));
     }
 }

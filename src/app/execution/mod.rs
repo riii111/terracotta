@@ -114,13 +114,6 @@ impl ExecutionState {
     }
 
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the original constructor remains the empty-previous baseline for execution fixtures"
-        )
-    )]
     pub(crate) fn applying_with_targets(
         started_at: Instant,
         context: ExecutionContext,
