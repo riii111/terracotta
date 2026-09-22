@@ -188,6 +188,7 @@ fn layout_with_content(
 ) -> PlanReviewLayout {
     let panel_width = shell_layout::centered_width(area);
     let content_metrics = content.metrics();
+    let applyable = state.review().apply_allowed() && state.review().metadata().applyable();
     let filter_visible = filter_active(searching, state);
     let showing = filter_footer_status(
         state.review().search_query(),
@@ -216,12 +217,7 @@ fn layout_with_content(
         });
     let footer_message = footer_status.as_ref().map(|(message, _)| message.as_str());
     let normal_footer_lines = footer::layout_with_notice(
-        footer_items(
-            searching,
-            state.review().metadata().applyable(),
-            content.matches.len(),
-            filter_visible,
-        ),
+        footer_items(searching, applyable, content.matches.len(), filter_visible),
         panel_width,
         footer_message,
     );
@@ -241,7 +237,7 @@ fn layout_with_content(
         .saturating_add(fixed_status_height)
         .saturating_add(body_height);
     let footer_height = common_footer_height(
-        state.review().metadata().applyable(),
+        applyable,
         content.matches.len(),
         panel_width,
         copy_notice.map(CopyNotice::message),
@@ -1167,6 +1163,14 @@ End of synthetic plan body."#;
     }
 
     fn review_with_applyable(applyable: bool) -> PlanReview {
+        review_with_options(applyable, true)
+    }
+
+    fn review_with_apply_allowed(applyable: bool, apply_allowed: bool) -> PlanReview {
+        review_with_options(applyable, apply_allowed)
+    }
+
+    fn review_with_options(applyable: bool, apply_allowed: bool) -> PlanReview {
         PlanReview::new(
             PathBuf::from("/repo/environments/production/main"),
             "default".to_owned(),
@@ -1247,6 +1251,7 @@ End of synthetic plan body."#;
             ),
             Vec::new(),
         )
+        .with_apply_allowed(apply_allowed)
     }
 
     fn review_state(plan: PlanReview) -> ReviewSessionState {
@@ -3305,6 +3310,26 @@ End of synthetic plan body."#;
             assert!(footer_text.contains("/ filter"), "{footer_text}");
             assert!(footer_text.contains("y copy plan"), "{footer_text}");
             assert!(footer_text.contains("q quit"), "{footer_text}");
+        }
+
+        #[test]
+        fn plan_entry_footer_hides_apply_even_when_plan_is_applyable() {
+            let state = review_state(review_with_apply_allowed(true, false));
+            let view = PlanReviewViewState::default();
+            let area = Rect::new(0, 0, 120, 40);
+            let layout = layout(area, false, &state);
+            let buffer = render_to_buffer((area.width, area.height), |frame| {
+                render(frame, &state, &view, Instant::now());
+            });
+            let footer = layout.shell.footer();
+            let mut footer_text = String::new();
+            for y in footer.y..footer.bottom() {
+                for x in footer.x..footer.right() {
+                    footer_text.push_str(buffer.cell((x, y)).expect("footer cell").symbol());
+                }
+            }
+
+            assert!(!footer_text.contains("a apply"), "{footer_text}");
         }
     }
 }

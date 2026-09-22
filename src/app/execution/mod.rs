@@ -140,10 +140,6 @@ impl ExecutionState {
             return;
         }
         match &event.kind {
-            ExecutionEventKind::Phase(ExecutionPhase::Initializing) => {
-                self.stage = ExecutionStage::Initializing;
-                self.active_phase = ExecutionStage::Initializing;
-            }
             ExecutionEventKind::Phase(ExecutionPhase::Planning) => {
                 self.stage = ExecutionStage::Planning;
                 self.active_phase = ExecutionStage::Planning;

@@ -246,6 +246,8 @@ pub(crate) struct PlanReview {
     metadata: PlanMetadata,
     diagnostics: Vec<Diagnostic>,
     search_query: String,
+    apply_allowed: bool,
+    apply_entry: bool,
 }
 
 impl PlanReview {
@@ -264,7 +266,31 @@ impl PlanReview {
             metadata,
             diagnostics,
             search_query: String::new(),
+            apply_allowed: true,
+            apply_entry: false,
         }
+    }
+
+    #[must_use]
+    pub(crate) const fn with_apply_allowed(mut self, allowed: bool) -> Self {
+        self.apply_allowed = allowed;
+        self
+    }
+
+    #[must_use]
+    pub(crate) const fn with_apply_entry(mut self, apply_entry: bool) -> Self {
+        self.apply_entry = apply_entry;
+        self
+    }
+
+    #[must_use]
+    pub(crate) const fn apply_allowed(&self) -> bool {
+        self.apply_allowed
+    }
+
+    #[must_use]
+    pub(crate) const fn apply_entry(&self) -> bool {
+        self.apply_entry
     }
 
     #[must_use]

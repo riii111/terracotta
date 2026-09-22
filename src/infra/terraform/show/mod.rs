@@ -9,7 +9,7 @@ use crate::infra::CancellationToken;
 
 use super::command::{
     ProcessOutput, ProcessRunner, ProcessStatus, TerraformCommand, TerraformExecutionError,
-    TerraformExecutionErrorKind, interrupted_error, non_zero_error, run_command,
+    TerraformExecutionErrorKind, interrupted_error, non_zero_error, run_command_with_events,
 };
 
 #[cfg(test)]
@@ -54,15 +54,30 @@ impl Display for PlanParseError {
 
 impl std::error::Error for PlanParseError {}
 
-pub(super) fn read_review(
+pub(super) fn read_review_with_arguments(
     root: &Path,
+    global_arguments: &[OsString],
     plan_path: &Path,
     plan_changed: bool,
     cancellation: &CancellationToken,
     runner: &dyn ProcessRunner,
 ) -> Result<(PlanDocument, PlanMetadata), TerraformExecutionError> {
-    let text = run_show(root, plan_path, false, cancellation, runner)?;
-    let json = run_show(root, plan_path, true, cancellation, runner)?;
+    let text = run_show(
+        root,
+        global_arguments,
+        plan_path,
+        false,
+        cancellation,
+        runner,
+    )?;
+    let json = run_show(
+        root,
+        global_arguments,
+        plan_path,
+        true,
+        cancellation,
+        runner,
+    )?;
     let metadata = parse_metadata(&json.output.stdout, plan_changed).map_err(invalid_plan)?;
     let document = parse_document(
         text.output.stdout,
@@ -75,6 +90,7 @@ pub(super) fn read_review(
 
 fn run_show(
     root: &Path,
+    global_arguments: &[OsString],
     plan_path: &Path,
     json: bool,
     cancellation: &CancellationToken,
@@ -89,12 +105,15 @@ fn run_show(
             },
         ));
     }
-    let output = run_command(
+    let mut arguments = global_arguments.to_vec();
+    arguments.extend(show_arguments(plan_path, json));
+    let output = run_command_with_events(
         root,
         TerraformCommand::Show,
-        &show_arguments(plan_path, json),
+        &arguments,
         cancellation,
         runner,
+        None,
     )?;
     if output.interrupted {
         return Err(interrupted_error(TerraformCommand::Show, output));
@@ -130,7 +149,7 @@ pub(crate) mod test_support {
         cancellation: &CancellationToken,
         runner: &dyn ProcessRunner,
     ) -> Result<Plan, TerraformExecutionError> {
-        let output = run_show(root, plan_path, true, cancellation, runner)?;
+        let output = run_show(root, &[], plan_path, true, cancellation, runner)?;
         super::json::parse_plan_json_bytes(&output.output.stdout).map_err(invalid_plan)
     }
 }

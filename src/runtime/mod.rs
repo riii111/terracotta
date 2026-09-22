@@ -1,5 +1,6 @@
 use std::{
-    fmt,
+    ffi::OsString,
+    fmt, fs,
     io::{self, IsTerminal, Write},
     panic::{self, AssertUnwindSafe},
     path::Path,
@@ -40,14 +41,141 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
         report_error("terracotta plan requires an interactive terminal");
         return ExitCode::from(EXECUTION_FAILURE);
     }
+    let Ok(executable) = terraform::resolve_executable() else {
+        report_error("terraform was not found in PATH");
+        return ExitCode::from(EXECUTION_FAILURE);
+    };
+    run_managed_invocation(
+        &executable,
+        root,
+        root,
+        &[],
+        &[OsString::from("-detailed-exitcode")],
+        &[],
+        false,
+        false,
+    )
+}
 
+pub(crate) fn run_invocation(executable: &Path, invocation: &invocation::Invocation) -> ExitCode {
+    run_managed_invocation(
+        executable,
+        invocation.launch_root(),
+        invocation.directory(),
+        invocation.global_arguments(),
+        &invocation.plan_arguments(),
+        &invocation.apply_arguments(),
+        invocation.is_apply(),
+        invocation.detailed_exitcode(),
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the managed invocation keeps launch, display, and Terraform argument boundaries"
+)]
+fn run_managed_invocation(
+    executable: &Path,
+    launch_root: &Path,
+    display_root: &Path,
+    global_arguments: &[OsString],
+    plan_arguments: &[OsString],
+    apply_arguments: &[OsString],
+    apply_entry: bool,
+    detailed_exitcode: bool,
+) -> ExitCode {
+    let (saved_plan, plan_arguments) =
+        match terraform::saved_plan_for_plan(display_root, plan_arguments) {
+            Ok(result) => result,
+            Err(error) => {
+                report_error(&format!("failed to prepare the Terraform plan: {error}"));
+                return ExitCode::from(EXECUTION_FAILURE);
+            }
+        };
+    let (plan_run, status) = match terraform::run_passthrough_plan(
+        executable,
+        launch_root,
+        global_arguments,
+        &plan_arguments,
+        saved_plan,
+    ) {
+        Ok(result) => result,
+        Err(error) => {
+            report_error(&format!("failed to run terraform plan: {error}"));
+            return ExitCode::from(EXECUTION_FAILURE);
+        }
+    };
+    if !status.is_plan_success() {
+        let exit = if status == terraform::ProcessStatus::Signaled
+            || status.code() == Some(i32::from(INTERRUPTED))
+        {
+            INTERRUPTED
+        } else {
+            EXECUTION_FAILURE
+        };
+        let _ = plan_run.saved_plan.cleanup();
+        return ExitCode::from(exit);
+    }
+    run_saved_plan_review(
+        launch_root,
+        display_root,
+        global_arguments,
+        apply_arguments,
+        apply_entry,
+        plan_run,
+        detailed_exitcode,
+    )
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "the review lifecycle owns worker joins, outcome mapping, and cleanup"
+)]
+fn run_saved_plan_review(
+    launch_root: &Path,
+    display_root: &Path,
+    global_arguments: &[OsString],
+    apply_arguments: &[OsString],
+    apply_entry: bool,
+    plan_run: terraform::PlanRun,
+    detailed_exitcode: bool,
+) -> ExitCode {
+    let changed = plan_run.changed;
+    let review_root = match fs::canonicalize(display_root) {
+        Ok(root) => root,
+        Err(error) => {
+            report_error(&format!(
+                "failed to resolve the Terraform execution directory before review: {error}"
+            ));
+            let _ = plan_run.saved_plan.cleanup();
+            return ExitCode::from(EXECUTION_FAILURE);
+        }
+    };
     let cancellation = CancellationToken::new();
     let (sender, receiver) = mpsc::channel();
-    let saved_plan_slot = Arc::new(Mutex::new(None));
-    let worker = match spawn_plan_worker(root, &cancellation, sender.clone(), &saved_plan_slot) {
+    let saved_plan_slot = Arc::new(Mutex::new(Some(plan_run.saved_plan)));
+    let Some(plan_path) = saved_plan_slot
+        .lock()
+        .ok()
+        .and_then(|slot| slot.as_ref().map(|plan| plan.path().to_owned()))
+    else {
+        report_error("the reviewed Terraform plan is unavailable");
+        return ExitCode::from(EXECUTION_FAILURE);
+    };
+    let worker = match spawn_review_worker(
+        display_root,
+        launch_root,
+        global_arguments,
+        &plan_path,
+        changed,
+        apply_entry,
+        &cancellation,
+        sender.clone(),
+    ) {
         Ok(worker) => worker,
         Err(error) => {
             report_error(&format!("failed to start the plan worker: {error}"));
+            let _ = take_saved_plan(&saved_plan_slot).map_or(Ok(()), terraform::SavedPlan::cleanup);
             return ExitCode::from(EXECUTION_FAILURE);
         }
     };
@@ -60,9 +188,12 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
         handle: None,
     };
     let mut clipboard = ClipboardExecutor::new();
-    let context = ExecutionContext::loading(root.display().to_string());
+    let context = ExecutionContext::loading(review_root.display().to_string());
     let effects = event_loop::RuntimeEffects {
-        root,
+        root: launch_root,
+        display_root,
+        global_arguments,
+        apply_arguments,
         sender: &sender,
         saved_plan_slot: &saved_plan_slot,
         cancellation: &cancellation,
@@ -81,7 +212,19 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
     let primary_exit = match ui_result {
         Ok(SessionOutcome::Reviewed(metadata)) => {
             report_reviewed(&metadata);
+            if !apply_entry && detailed_exitcode && changed {
+                ExitCode::from(2)
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
+        Ok(SessionOutcome::NoChanges) => {
+            report_no_changes();
             ExitCode::SUCCESS
+        }
+        Ok(SessionOutcome::ApplyCanceled) => {
+            report_apply_canceled();
+            ExitCode::from(EXECUTION_FAILURE)
         }
         Ok(SessionOutcome::Applied {
             status: ApplyStatus::Succeeded,
@@ -185,6 +328,14 @@ fn report_reviewed(metadata: &PlanMetadata) {
     }
 }
 
+fn report_no_changes() {
+    let _ = writeln!(io::stdout(), "No changes.");
+}
+
+fn report_apply_canceled() {
+    let _ = writeln!(io::stdout(), "Apply canceled.");
+}
+
 fn report_apply_success(summary_line: Option<&str>) {
     let _ = writeln!(
         io::stdout(),
@@ -263,15 +414,25 @@ impl fmt::Display for WorkerPanic {
 
 impl std::error::Error for WorkerPanic {}
 
-fn spawn_plan_worker(
-    root: &Path,
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the worker receives the explicit plan execution boundaries"
+)]
+fn spawn_review_worker(
+    display_root: &Path,
+    launch_root: &Path,
+    global_arguments: &[OsString],
+    plan_path: &Path,
+    plan_changed: bool,
+    apply_entry: bool,
     cancellation: &CancellationToken,
     sender: mpsc::Sender<PlanReviewMessage>,
-    saved_plan_slot: &Arc<Mutex<Option<terraform::SavedPlan>>>,
 ) -> io::Result<JoinHandle<()>> {
     let worker_cancellation = cancellation.clone();
-    let worker_root = root.to_owned();
-    let worker_saved_plan_slot = Arc::clone(saved_plan_slot);
+    let worker_display_root = display_root.to_owned();
+    let worker_launch_root = launch_root.to_owned();
+    let worker_global_arguments = global_arguments.to_vec();
+    let worker_plan_path = plan_path.to_owned();
     thread::Builder::new()
         .name("terracotta-plan".to_owned())
         .spawn(move || {
@@ -284,18 +445,19 @@ fn spawn_plan_worker(
                     kind: ExecutionEventKind::Phase(phase),
                 }));
             };
-            match terraform::run_review(
-                &worker_root,
+            match terraform::read_saved_plan_review(
+                &worker_display_root,
+                &worker_launch_root,
+                &worker_global_arguments,
+                &worker_plan_path,
+                plan_changed,
+                apply_entry,
                 &worker_cancellation,
                 &terraform::SystemProcessRunner,
                 &mut event_sink,
                 &mut phase_sink,
             ) {
-                Ok(planned) => {
-                    let (review, saved_plan) = planned.into_parts();
-                    if let Ok(mut slot) = worker_saved_plan_slot.lock() {
-                        *slot = Some(saved_plan);
-                    }
+                Ok(review) => {
                     if !worker_cancellation.is_cancelled() {
                         let _ = sender.send(PlanReviewMessage::Completed(review));
                     }
@@ -318,11 +480,15 @@ fn take_saved_plan(
 
 pub(super) fn spawn_apply_worker(
     root: &Path,
+    global_arguments: &[OsString],
+    apply_arguments: &[OsString],
     plan_path: &Path,
     cancellation: &CancellationToken,
     sender: &mpsc::Sender<PlanReviewMessage>,
 ) -> io::Result<JoinHandle<()>> {
     let worker_root = root.to_owned();
+    let worker_global_arguments = global_arguments.to_vec();
+    let worker_apply_arguments = apply_arguments.to_vec();
     let worker_plan_path = plan_path.to_owned();
     let worker_cancellation = cancellation.clone();
     let worker_sender = sender.clone();
@@ -332,8 +498,10 @@ pub(super) fn spawn_apply_worker(
             let mut event_sink = |event| {
                 let _ = worker_sender.send(PlanReviewMessage::ApplyEvent(event));
             };
-            match terraform::run_apply(
+            match terraform::run_apply_with_arguments(
                 &worker_root,
+                &worker_global_arguments,
+                &worker_apply_arguments,
                 &worker_plan_path,
                 &worker_cancellation,
                 &terraform::SystemProcessRunner,

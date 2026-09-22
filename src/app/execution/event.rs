@@ -154,7 +154,6 @@ pub(crate) enum ExecutionEventKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ExecutionPhase {
-    Initializing,
     Planning,
     Reading,
 }

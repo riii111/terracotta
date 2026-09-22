@@ -25,10 +25,22 @@ Run from your Terraform configuration directory in an interactive terminal, with
 terracotta plan
 ```
 
-`init → plan → review → apply (optional)`
+`terracotta plan` runs Terraform's plan synchronously with the original
+arguments. After a successful plan, Terracotta opens the review UI and exits
+without applying anything.
+
+```sh
+terracotta apply
+```
+
+`terracotta apply` reviews the saved plan and asks for confirmation before
+applying that exact plan. It does not re-plan after review. A plan that has no
+changes exits successfully without showing an apply confirmation.
 
 `terracotta terraform <arguments>` runs Terraform commands. `terracotta plan` and
 `terracotta apply` are shortcuts.
 
-The review UI opens for an interactive `plan` without options. With options,
-`apply`, CI, redirected streams, or HCP configurations, Terraform runs directly.
+The review UI opens for interactive local `plan` and `apply` invocations,
+including supported Terraform options and `TF_CLI_ARGS*`. CI, redirected
+streams, HCP configurations, and unsupported options are delegated to Terraform
+unchanged. Terracotta does not run `terraform init` implicitly.

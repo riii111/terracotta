@@ -10,9 +10,12 @@ mod plan;
 mod show;
 mod workspace;
 
-pub(crate) use apply::run_apply;
-pub(crate) use command::{SystemProcessRunner, delegate, resolve_executable};
-pub(crate) use plan::{SavedPlan, run_review};
+pub(crate) use apply::run_apply_with_arguments;
+pub(crate) use command::{ProcessStatus, SystemProcessRunner, delegate, resolve_executable};
+pub(crate) use plan::{
+    PlanRun, SavedPlan, read_saved_plan_review, run_passthrough_plan, saved_plan_for_plan,
+};
+pub(crate) use workspace::read_workspace_with_arguments;
 
 #[cfg(test)]
 pub(crate) mod test_support {
@@ -21,5 +24,4 @@ pub(crate) mod test_support {
         TerraformExecutionError as CommandTerraformExecutionError,
     };
     pub(crate) use super::plan::test_support::{PlanTestError, run_plan};
-    pub(crate) use super::workspace::read_workspace_with_runner;
 }
