@@ -468,36 +468,18 @@ pub(crate) fn run_passthrough(
 
 #[cfg(unix)]
 fn run_passthrough_unix(mut command: Command) -> io::Result<ProcessStatus> {
-    use std::os::unix::process::CommandExt;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    const extern "C" fn ignore_interrupt(_: libc::c_int) {}
 
-    static INTERRUPTED: AtomicBool = AtomicBool::new(false);
-
-    extern "C" fn record_interrupt(_: libc::c_int) {
-        INTERRUPTED.store(true, Ordering::Relaxed);
-    }
-
-    // SAFETY: `setpgid` is async-signal-safe and runs in the child before `exec`.
-    unsafe {
-        command.pre_exec(|| {
-            if libc::setpgid(0, 0) == -1 {
-                Err(io::Error::last_os_error())
-            } else {
-                Ok(())
-            }
-        });
-    }
-    // SAFETY: the handler only performs an atomic store and is restored after the child exits.
+    // SAFETY: the handler performs no work and is restored after the child exits.
     let previous = unsafe {
         libc::signal(
             libc::SIGINT,
-            record_interrupt as *const () as libc::sighandler_t,
+            ignore_interrupt as *const () as libc::sighandler_t,
         )
     };
     if previous == libc::SIG_ERR {
         return Err(io::Error::last_os_error());
     }
-    INTERRUPTED.store(false, Ordering::Relaxed);
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
@@ -508,12 +490,6 @@ fn run_passthrough_unix(mut command: Command) -> io::Result<ProcessStatus> {
     };
     let result = (|| {
         loop {
-            if INTERRUPTED.swap(false, Ordering::Relaxed) {
-                let pid = i32::try_from(child.id())
-                    .map_err(|_| io::Error::other("child PID is too large"))?;
-                // SAFETY: the negative PID addresses the child process group created above.
-                let _ = unsafe { libc::kill(-pid, libc::SIGINT) };
-            }
             if let Some(status) = child.try_wait()? {
                 break Ok(process_status(status));
             }
