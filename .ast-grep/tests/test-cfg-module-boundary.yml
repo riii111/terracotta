@@ -1,20 +1,31 @@
 id: test-cfg-module-boundary
 valid:
-  - '#[cfg(test)] mod tests {}'
-  - '#[cfg(test)] pub(crate) mod test_support;'
-  - '#[cfg(test)] mod dormant;'
-  - '#[cfg(all(test, unix))] mod unix_tests {}'
+  # The module declaration owns the test condition, regardless of its name or body form.
+  - |-
+    #[cfg(test)]
+    mod tests {}
+  - |-
+    #[cfg(test)]
+    pub(crate) mod test_support;
+  - |-
+    #[cfg(test)]
+    mod dormant;
+  - |-
+    #[cfg(all(test, unix))]
+    mod unix_tests {}
+  - |-
+    #[cfg(any(test, feature = "test-support"))]
+    mod test_support;
+  # Same-line nested definitions remain inside the gated module.
+  - |-
+    #[cfg(test)] mod tests { fn helper() {} impl State { fn helper() {} } }
+
+  # Attributes and comments between cfg and mod remain attached to the module.
   - |-
     #[cfg(test)]
     // doc
     #[allow(dead_code)]
     mod tests {}
-  - '#[cfg(test)] mod tests { fn helper() {} impl State { fn helper() {} } }'
-  - '#[cfg(unix)] fn f() {}'
-  - '#[cfg(feature = "test")] fn f() {}'
-  - 'const S: &str = "#[cfg(test)] fn f() {}";'
-  - '// #[cfg(test)] fn f() {}'
-  - '#[cfg_attr(test, allow(dead_code))] fn f() {}'
   - |-
     #[cfg(test)]
     /// Tests this module.
@@ -23,38 +34,96 @@ valid:
     #[cfg(test)]
     /* tests */
     mod tests {}
-  - '#[cfg(test)] #[cfg(unix)] pub mod tests;'
-  - '#[cfg(any(test, feature = "test-support"))] mod test_support;'
-  - '#[cfg(all(feature = "test", unix))] fn f() {}'
-  - '#[cfg(all(unix, /* test */ feature = "test"))] fn f() {}'
-  - '#[cfg(any(feature = "test", not(unix)))] fn f() {}'
-  - 'fn f() {} #[cfg(test)] mod tests {}'
-  - '#[cfg(test)] mod tests {} fn f() {}'
-invalid:
-  - '#[cfg(test)] fn f() {}'
-  - 'impl State { #[cfg(test)] fn f() {} }'
-  - '#[cfg(test)] struct S;'
-  - '#[cfg(test)] enum E { A }'
-  - '#[cfg(test)] trait T {}'
-  - '#[cfg(test)] impl S {}'
-  - '#[cfg(test)] const C: u8 = 0;'
-  - '#[cfg(test)] static C: u8 = 0;'
-  - '#[cfg(test)] type A = u8;'
-  - '#[cfg(test)] use foo::Bar;'
-  - '#[cfg(test)] pub use foo::Bar;'
-  - '#[cfg(test)] #[allow(dead_code)] fn f() {}'
+  # Same-line attributes must still be treated as belonging to one module.
   - |-
-    #[cfg(
-      test
-    )]
+    #[cfg(test)] #[cfg(unix)] pub mod tests;
+
+  # These forms contain no outer cfg predicate named test.
+  - |-
+    #[cfg(unix)]
     fn f() {}
-  - '#[cfg(all(unix, test))] fn f() {}'
-  - '#[cfg(any(test, feature = "test-support"))] fn f() {}'
-  - '#[cfg(not(test))] fn f() {}'
-  - 'struct S { #[cfg(test)] field: u8 }'
-  - 'fn f() { #[cfg(test)] let x = 0; }'
-  - '#[cfg(test)] fn f() {} mod tests {}'
-  - '#[cfg(test)] mod tests { #[cfg(test)] fn helper() {} }'
+  - |-
+    #[cfg(feature = "test")]
+    fn f() {}
+  - |-
+    #[cfg(all(feature = "test", unix))]
+    fn f() {}
+  - |-
+    #[cfg(all(unix, /* test */ feature = "test"))]
+    fn f() {}
+  - |-
+    #[cfg(any(feature = "test", not(unix)))]
+    fn f() {}
+  - |-
+    const S: &str = "#[cfg(test)] fn f() {}";
+  - |-
+    // #[cfg(test)] fn f() {}
+  - |-
+    #[cfg_attr(test, allow(dead_code))]
+    fn f() {}
+
+  # Adjacent definitions on one line cannot make the preceding item a module.
+  - |-
+    fn f() {} #[cfg(test)] mod tests {}
+  - |-
+    #[cfg(test)] mod tests {} fn f() {}
+
+invalid:
+  # A test condition on a function or method must move to a module boundary.
+  - |-
+    #[cfg(test)]
+    fn f() {}
+  - |-
+    impl State { #[cfg(test)] fn f() {} }
+  - |-
+    trait T { #[cfg(test)] fn f(&self); }
+  - |-
+    #[cfg(test)] mod tests { #[cfg(test)] fn helper() {} }
+
+  # Types, implementations, values, and imports cannot each carry the test condition.
+  - |-
+    #[cfg(test)]
+    struct S;
+  - |-
+    #[cfg(test)]
+    enum E { A }
+  - |-
+    #[cfg(test)]
+    trait T {}
+  - |-
+    #[cfg(test)]
+    impl S {}
+  - |-
+    #[cfg(test)]
+    const C: u8 = 0;
+  - |-
+    #[cfg(test)]
+    static C: u8 = 0;
+  - |-
+    #[cfg(test)]
+    type A = u8;
+  - |-
+    #[cfg(test)]
+    use foo::Bar;
+  - |-
+    #[cfg(test)]
+    pub use foo::Bar;
+
+  # Attributes on fields and statements are also individual gates.
+  - |-
+    struct S {
+        #[cfg(test)]
+        field: u8,
+    }
+  - |-
+    fn f() {
+        #[cfg(test)]
+        let x = 0;
+    }
+
+  # Other attributes and comments do not hide the forbidden attachment.
+  - |-
+    #[cfg(test)] #[allow(dead_code)] fn f() {}
   - |-
     #[cfg(test)]
     /// Helper.
@@ -63,9 +132,35 @@ invalid:
     #[cfg(test)]
     /* helper */
     fn f() {}
-  - 'trait T { #[cfg(test)] fn f(&self); }'
-  - '#[cfg(all(unix, /* test */ test))] fn f() {}'
-  - '#[cfg(any(feature = "test", test))] fn f() {}'
-  - '#[cfg(test)] struct S; mod tests {}'
-  - '#[cfg(test)] use foo::Bar; #[cfg(test)] mod tests {}'
-  - '#[cfg(test)] fn f() {} #[cfg(test)] mod tests {}'
+
+  # A line-broken or nested test predicate is still a test condition.
+  - |-
+    #[cfg(
+      test
+    )]
+    fn f() {}
+  - |-
+    #[cfg(all(unix, test))]
+    fn f() {}
+  - |-
+    #[cfg(any(test, feature = "test-support"))]
+    fn f() {}
+  - |-
+    #[cfg(not(test))]
+    fn f() {}
+  - |-
+    #[cfg(all(unix, /* test */ test))]
+    fn f() {}
+  - |-
+    #[cfg(any(feature = "test", test))]
+    fn f() {}
+
+  # A later module on the same line must not legalize an earlier non-module item.
+  - |-
+    #[cfg(test)] fn f() {} mod tests {}
+  - |-
+    #[cfg(test)] struct S; mod tests {}
+  - |-
+    #[cfg(test)] use foo::Bar; #[cfg(test)] mod tests {}
+  - |-
+    #[cfg(test)] fn f() {} #[cfg(test)] mod tests {}
