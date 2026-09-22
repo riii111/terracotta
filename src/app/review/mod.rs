@@ -5,7 +5,10 @@ use std::{
 };
 
 use super::{
-    execution::{ApplyStatus, Diagnostic, ExecutionContext, ExecutionContextValue, ExecutionEvent},
+    execution::{
+        ApplyStatus, Diagnostic, ExecutionContext, ExecutionContextValue, ExecutionEvent,
+        ExecutionTargetSpec, SensitiveValue,
+    },
     plan::{PlanAction, PlanResource},
 };
 
@@ -158,7 +161,7 @@ impl Debug for PlanDocument {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct PlanMetadata {
     resource_addresses: Vec<String>,
     resource_changes: Vec<PlanResource>,
@@ -168,6 +171,26 @@ pub(crate) struct PlanMetadata {
     replacements: usize,
     deletions: usize,
     applyable: bool,
+    apply_targets: Vec<ExecutionTargetSpec>,
+    sensitive_values: Vec<SensitiveValue>,
+}
+
+impl Debug for PlanMetadata {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PlanMetadata")
+            .field("resource_addresses", &self.resource_addresses)
+            .field("resource_changes", &self.resource_changes)
+            .field("output_names", &self.output_names)
+            .field("additions", &self.additions)
+            .field("changes", &self.changes)
+            .field("replacements", &self.replacements)
+            .field("deletions", &self.deletions)
+            .field("applyable", &self.applyable)
+            .field("apply_targets", &self.apply_targets)
+            .field("sensitive_values", &"<redacted>")
+            .finish()
+    }
 }
 
 impl PlanMetadata {
@@ -189,6 +212,8 @@ impl PlanMetadata {
             replacements: 0,
             deletions,
             applyable,
+            apply_targets: Vec::new(),
+            sensitive_values: Vec::new(),
         }
     }
 
@@ -200,6 +225,18 @@ impl PlanMetadata {
     ) -> Self {
         self.resource_changes = resource_changes;
         self.replacements = replacements;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn with_apply_targets(mut self, apply_targets: Vec<ExecutionTargetSpec>) -> Self {
+        self.apply_targets = apply_targets;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn with_sensitive_values(mut self, sensitive_values: Vec<SensitiveValue>) -> Self {
+        self.sensitive_values = sensitive_values;
         self
     }
 
@@ -245,6 +282,16 @@ impl PlanMetadata {
     #[must_use]
     pub(crate) const fn applyable(&self) -> bool {
         self.applyable
+    }
+
+    #[must_use]
+    pub(crate) fn apply_targets(&self) -> &[ExecutionTargetSpec] {
+        &self.apply_targets
+    }
+
+    #[must_use]
+    pub(crate) fn sensitive_values(&self) -> &[SensitiveValue] {
+        &self.sensitive_values
     }
 
     pub(crate) fn destructive_addresses(&self) -> impl Iterator<Item = &str> {

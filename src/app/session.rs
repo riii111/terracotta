@@ -312,9 +312,11 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
             if input != confirmation.review.confirmation_input() {
                 return None;
             }
-            *state = SessionState::Apply(Box::new(ExecutionState::applying(
+            *state = SessionState::Apply(Box::new(ExecutionState::applying_with_targets(
                 now,
                 confirmation.review.context().clone(),
+                confirmation.review.metadata().apply_targets().to_vec(),
+                confirmation.review.metadata().sensitive_values().to_vec(),
             )));
             Some(Effect::StartApply)
         }

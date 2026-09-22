@@ -1,12 +1,12 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use crate::app::execution::{ApplyStatus, ExecutionEvent};
+use crate::app::execution::{ApplyStatus, ExecutionEvent, ExecutionEventKind};
 use crate::infra::CancellationToken;
 
 use super::command::{
     ProcessRunner, ProcessStatus, TerraformCommand, TerraformExecutionError, interrupted_error,
-    run_command_with_text_events,
+    run_command_with_events,
 };
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ApplyResult {
@@ -37,16 +37,26 @@ pub(crate) fn run_apply_with_arguments(
 ) -> Result<ApplyResult, TerraformExecutionError> {
     let mut arguments = global_arguments.to_vec();
     arguments.push(OsString::from("apply"));
+    arguments.push(OsString::from("-json"));
     arguments.push(OsString::from("-input=false"));
     arguments.extend(apply_arguments.iter().cloned());
     arguments.push(plan_path.as_os_str().to_owned());
-    let output = run_command_with_text_events(
+    let mut summary_line = None;
+    let mut structured_event_sink = |event: ExecutionEvent| {
+        if let ExecutionEventKind::Summary(summary) = &event.kind
+            && summary.message.is_some()
+        {
+            summary_line.clone_from(&summary.message);
+        }
+        event_sink(event);
+    };
+    let output = run_command_with_events(
         root,
         TerraformCommand::Apply,
         &arguments,
         cancellation,
         runner,
-        Some(event_sink),
+        Some(&mut structured_event_sink),
     )?;
     if output.interrupted {
         return Ok(ApplyResult {
@@ -65,18 +75,9 @@ pub(crate) fn run_apply_with_arguments(
         });
     }
 
-    let summary_line = output
-        .output
-        .stdout()
-        .split(|byte| *byte == b'\n')
-        .filter_map(|line| std::str::from_utf8(line).ok())
-        .map(str::trim_end)
-        .find(|line| line.starts_with("Apply complete! Resources:"))
-        .map(str::to_owned)
-        .or_else(|| Some("Apply complete.".to_owned()));
     Ok(ApplyResult {
         status: ApplyStatus::Succeeded,
-        summary_line,
+        summary_line: summary_line.or_else(|| Some("Apply complete.".to_owned())),
     })
 }
 
@@ -85,7 +86,9 @@ mod tests {
     use std::{cell::RefCell, io};
 
     use super::*;
-    use crate::app::execution::{EventStream, ExecutionEventKind, ExecutionLogLine};
+    use crate::app::execution::{
+        Diagnostic, DiagnosticSeverity, DiagnosticSource, EventStream, ResourceEventKind,
+    };
     use crate::infra::terraform::tests::support::{ProcessOutput, RunningProcess};
 
     struct FakeRunner {
@@ -135,13 +138,15 @@ mod tests {
     }
 
     #[test]
-    fn successful_apply_preserves_human_output_and_summary() {
+    fn successful_apply_parses_structured_events_and_summary() {
         let runner = FakeRunner {
             response: RefCell::new(Some((
                 ProcessStatus::Exited(0),
                 ProcessOutput::new(
-                    b"Applying saved plan...\nApply complete! Resources: 1 added, 0 changed, 0 destroyed.\n"
-                        .to_vec(),
+                    br#"{"type":"apply_start","hook":{"resource":{"addr":"terraform_data.api"},"action":"update"}}
+{"type":"apply_complete","hook":{"resource":{"addr":"terraform_data.api"},"action":"update"}}
+{"type":"change_summary","@message":"Apply complete! Resources: 1 added, 0 changed, 0 destroyed.","changes":{"add":1,"change":0,"remove":0,"operation":"apply"}}
+"#.to_vec(),
                     b"warning: retained\n".to_vec(),
                 ),
             ))),
@@ -168,18 +173,26 @@ mod tests {
         );
         assert!(events.iter().any(|event| matches!(
             &event.kind,
-            ExecutionEventKind::Log(ExecutionLogLine { text, .. })
-                if text == "Applying saved plan..."
+            ExecutionEventKind::Resource(event)
+                if event.address == "terraform_data.api"
+                    && event.kind == ResourceEventKind::ApplyStart
         )));
         assert!(events.iter().any(|event| matches!(
             &event.kind,
-            ExecutionEventKind::Log(ExecutionLogLine { stream: EventStream::Stderr, text })
-                if text == "warning: retained"
+            ExecutionEventKind::Diagnostic(Diagnostic {
+                severity: DiagnosticSeverity::Unknown,
+                source: DiagnosticSource::NonJson {
+                    stream: EventStream::Stderr,
+                },
+                summary,
+                ..
+            }) if summary == "warning: retained"
         )));
         assert_eq!(
             runner.arguments.borrow().as_slice(),
             [
                 OsString::from("apply"),
+                OsString::from("-json"),
                 OsString::from("-input=false"),
                 OsString::from("-no-color"),
                 OsString::from("/project/review.tfplan"),
@@ -192,7 +205,11 @@ mod tests {
         let failed_runner = FakeRunner {
             response: RefCell::new(Some((
                 ProcessStatus::Exited(1),
-                ProcessOutput::new(Vec::new(), b"Error: apply failed\n".to_vec()),
+                ProcessOutput::new(
+                    Vec::new(),
+                    br#"{"type":"diagnostic","@level":"error","diagnostic":{"severity":"error","summary":"apply failed","detail":"provider rejected the request","address":"terraform_data.api"}}
+"#.to_vec(),
+                ),
             ))),
             arguments: RefCell::new(Vec::new()),
         };
@@ -210,8 +227,11 @@ mod tests {
         assert_eq!(failed.status(), ApplyStatus::Failed);
         assert!(events.iter().any(|event| matches!(
             &event.kind,
-            ExecutionEventKind::Log(ExecutionLogLine { text, .. })
-                if text == "Error: apply failed"
+            ExecutionEventKind::Diagnostic(Diagnostic {
+                summary,
+                address: Some(address),
+                ..
+            }) if summary == "apply failed" && address == "terraform_data.api"
         )));
 
         let cancelled = CancellationToken::new();

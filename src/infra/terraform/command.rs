@@ -118,11 +118,6 @@ impl ProcessOutput {
             range,
         });
     }
-
-    #[must_use]
-    pub(super) fn stdout(&self) -> &[u8] {
-        &self.stdout
-    }
 }
 
 impl Debug for ProcessOutput {
@@ -558,25 +553,6 @@ pub(super) fn run_command_with_events(
     )
 }
 
-pub(super) fn run_command_with_text_events(
-    root: &Path,
-    command: TerraformCommand,
-    arguments: &[OsString],
-    cancellation: &CancellationToken,
-    runner: &dyn ProcessRunner,
-    event_sink: Option<&mut dyn FnMut(ExecutionEvent)>,
-) -> Result<ProcessResult, TerraformExecutionError> {
-    run_command_with_parser(
-        root,
-        command,
-        arguments,
-        cancellation,
-        runner,
-        event_sink,
-        true,
-    )
-}
-
 fn run_command_with_parser(
     root: &Path,
     command: TerraformCommand,
@@ -1002,6 +978,11 @@ mod tests {
                 stderr,
                 ordered: Vec::new(),
             }
+        }
+
+        #[must_use]
+        pub(crate) fn stdout(&self) -> &[u8] {
+            &self.stdout
         }
     }
 
