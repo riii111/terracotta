@@ -44,28 +44,12 @@ impl EnvironmentView {
         if self.raw
             && let Some(review) = selected.review()
         {
-            plan_review::render_with_quit_confirmation(
+            plan_review::render_environment(
                 frame,
                 review,
                 &self.reviews[self.selected],
                 std::time::Instant::now(),
-                false,
             );
-            let footer = Rect::new(
-                area.x,
-                area.bottom().saturating_sub(1),
-                area.width,
-                area.height.min(1),
-            );
-            if !self.reviews[self.selected].searching()
-                && self.reviews[self.selected].overlay().is_none()
-            {
-                frame.render_widget(Clear, footer);
-                frame.render_widget(
-                    Paragraph::new("Esc environments   / filter   y copy   q quit"),
-                    footer,
-                );
-            }
         } else {
             self.raw = false;
             self.render_environments(frame, state);
@@ -258,7 +242,7 @@ impl EnvironmentView {
             PlanReviewInput::Apply | PlanReviewInput::OpenOverview => return None,
             _ => {}
         }
-        let layout = plan_review::layout(
+        let layout = plan_review::environment_layout(
             Rect::new(0, 0, size.width, size.height),
             view.searching(),
             review,

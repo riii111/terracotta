@@ -1,9 +1,11 @@
 use super::*;
 use crate::{
     app::{
+        copy::CopyResult,
         environments::{Environment, EnvironmentAvailability, EnvironmentIdentity, PlanResult},
         execution::Tool,
         review::{PlanMetadata, PlanReview, test_support::plan_document},
+        session::Effect,
     },
     ui::test_support::{buffer_text, render_to_buffer},
 };
@@ -138,5 +140,61 @@ fn small_terminals_keep_cancel_and_quit_operable() {
             ),
             Some(EnvironmentInput::Interrupt)
         ));
+    }
+}
+
+#[test]
+fn ready_review_keeps_position_filter_counts_and_copy_notices() {
+    for size in [(80, 24), (120, 40), (160, 60)] {
+        let mut state = partial_session();
+        let mut view = EnvironmentView {
+            raw: true,
+            ..EnvironmentView::default()
+        };
+
+        let text = buffer_text(&render_to_buffer(size, |frame| view.render(frame, &state)));
+        assert!(text.contains("Esc environments"), "{size:?}: {text}");
+        assert!(text.contains("1/2"), "{size:?}: {text}");
+        for (result, notice) in [
+            (CopyResult::Written, "Copied."),
+            (CopyResult::Failed, "Copy failed."),
+        ] {
+            let Some(EnvironmentInput::Review(index, action)) = view.handle_key(
+                KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+                Size::new(size.0, size.1),
+                &state,
+            ) else {
+                panic!("copy input should reach the environment review");
+            };
+            assert!(matches!(
+                state.update_review(index, *action, std::time::Instant::now()),
+                Some(Effect::WriteClipboard(_))
+            ));
+            state.update_review(
+                index,
+                Action::CopyCompleted {
+                    target: CopyTarget::Plan,
+                    result,
+                },
+                std::time::Instant::now(),
+            );
+
+            let text = buffer_text(&render_to_buffer(size, |frame| view.render(frame, &state)));
+            assert!(text.contains(notice), "{size:?}: {text}");
+            assert!(text.contains("Esc environments"), "{size:?}: {text}");
+        }
+        let mut filtered = partial_session();
+        filtered.update_review(
+            0,
+            Action::ReviewSearchChanged("missing".to_owned()),
+            std::time::Instant::now(),
+        );
+
+        let text = buffer_text(&render_to_buffer(size, |frame| {
+            view.render(frame, &filtered);
+        }));
+        assert!(text.contains("No matches"), "{size:?}: {text}");
+        assert!(text.contains("Esc clear"), "{size:?}: {text}");
+        assert!(!text.contains("Esc environments"), "{size:?}: {text}");
     }
 }

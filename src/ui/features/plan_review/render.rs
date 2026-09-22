@@ -137,6 +137,12 @@ impl ApplyConfirmationLayout {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReviewNavigation {
+    Standalone,
+    Environments,
+}
+
 pub(crate) struct PlanReviewLayout {
     shell: shell_layout::ShellLayout,
     body: Rect,
@@ -188,11 +194,41 @@ pub(crate) fn layout(area: Rect, searching: bool, state: &ReviewSessionState) ->
     layout_with_quit_confirmation(area, searching, state, false)
 }
 
+pub(crate) fn environment_layout(
+    area: Rect,
+    searching: bool,
+    state: &ReviewSessionState,
+) -> PlanReviewLayout {
+    layout_for_navigation(
+        area,
+        searching,
+        state,
+        false,
+        ReviewNavigation::Environments,
+    )
+}
+
 pub(crate) fn layout_with_quit_confirmation(
     area: Rect,
     searching: bool,
     state: &ReviewSessionState,
     quit_confirmation: bool,
+) -> PlanReviewLayout {
+    layout_for_navigation(
+        area,
+        searching,
+        state,
+        quit_confirmation,
+        ReviewNavigation::Standalone,
+    )
+}
+
+fn layout_for_navigation(
+    area: Rect,
+    searching: bool,
+    state: &ReviewSessionState,
+    quit_confirmation: bool,
+    navigation: ReviewNavigation,
 ) -> PlanReviewLayout {
     let filtered_view = filter_active(searching, state);
     let content = prepare_view_content(state, filtered_view);
@@ -203,6 +239,7 @@ pub(crate) fn layout_with_quit_confirmation(
         &content,
         state.copy_notice(),
         quit_confirmation,
+        navigation,
     )
 }
 
@@ -217,6 +254,7 @@ fn layout_with_content(
     content: &PreparedContent<'_>,
     copy_notice: Option<CopyNotice>,
     quit_confirmation: bool,
+    navigation: ReviewNavigation,
 ) -> PlanReviewLayout {
     let panel_width = area.width;
     let content_metrics = content.metrics();
@@ -272,12 +310,18 @@ fn layout_with_content(
     };
     let footer_message = footer_status.as_ref().map(|(message, _)| message.as_str());
     let normal_footer_lines = footer::layout_with_notice(
-        footer_items(searching, applyable, content.matches.len(), filter_visible),
+        footer_items(
+            searching,
+            applyable,
+            content.matches.len(),
+            filter_visible,
+            navigation,
+        ),
         panel_width,
         footer_message,
     );
     let normal_required = footer::layout_with_notice(
-        required_footer_items(searching, content.matches.len(), filter_visible),
+        required_footer_items(searching, content.matches.len(), filter_visible, navigation),
         panel_width,
         footer_message,
     );
@@ -288,6 +332,7 @@ fn layout_with_content(
         panel_width,
         copy_notice.map(CopyNotice::message),
         showing.as_deref(),
+        navigation,
     );
     let frame_footer_lines = footer::pad_lines(normal_footer_lines, footer_height);
     let frame_required = footer::pad_lines(normal_required, footer_height);
@@ -354,17 +399,18 @@ fn common_footer_height(
     width: u16,
     copy_notice: Option<&str>,
     showing: Option<&str>,
+    navigation: ReviewNavigation,
 ) -> usize {
     [None, copy_notice, showing]
         .into_iter()
         .flat_map(|notice| {
             [
-                footer_items(false, applyable, match_count, false),
-                footer_items(true, applyable, match_count, true),
-                footer_items(false, applyable, match_count.max(2), true),
-                required_footer_items(false, match_count, false),
-                required_footer_items(true, match_count, true),
-                required_footer_items(false, match_count.max(2), true),
+                footer_items(false, applyable, match_count, false, navigation),
+                footer_items(true, applyable, match_count, true, navigation),
+                footer_items(false, applyable, match_count.max(2), true, navigation),
+                required_footer_items(false, match_count, false, navigation),
+                required_footer_items(true, match_count, true, navigation),
+                required_footer_items(false, match_count.max(2), true, navigation),
             ]
             .into_iter()
             .map(move |items| footer::layout_with_notice(items, width, notice).len())
@@ -899,16 +945,50 @@ fn render_dialog(
     );
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "the plan renderer keeps the feature layout and content projection in one path"
-)]
+pub(crate) fn render_environment(
+    frame: &mut Frame<'_>,
+    state: &ReviewSessionState,
+    view: &PlanReviewViewState,
+    now: Instant,
+) {
+    render_for_navigation(
+        frame,
+        state,
+        view,
+        now,
+        false,
+        ReviewNavigation::Environments,
+    );
+}
+
 pub(crate) fn render_with_quit_confirmation(
     frame: &mut Frame<'_>,
     state: &ReviewSessionState,
     view: &PlanReviewViewState,
     now: Instant,
     quit_confirmation: bool,
+) {
+    render_for_navigation(
+        frame,
+        state,
+        view,
+        now,
+        quit_confirmation,
+        ReviewNavigation::Standalone,
+    );
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "the plan renderer keeps the feature layout and content projection in one path"
+)]
+fn render_for_navigation(
+    frame: &mut Frame<'_>,
+    state: &ReviewSessionState,
+    view: &PlanReviewViewState,
+    now: Instant,
+    quit_confirmation: bool,
+    navigation: ReviewNavigation,
 ) {
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
@@ -933,6 +1013,7 @@ pub(crate) fn render_with_quit_confirmation(
         &content,
         state.copy_notice_at(now),
         quit_confirmation,
+        navigation,
     );
     if layout.body().width == 0 || layout.body().height == 0 {
         terminal_notice::render_wrapped(
@@ -1457,8 +1538,9 @@ fn footer_items(
     applyable: bool,
     _match_count: usize,
     filtered: bool,
+    navigation: ReviewNavigation,
 ) -> Vec<Line<'static>> {
-    if searching {
+    let mut items = if searching {
         vec![
             footer::hint(&["Enter"], "confirm"),
             footer::hint(&["Esc"], "cancel"),
@@ -1480,15 +1562,20 @@ fn footer_items(
         }
         items.extend([footer::hint(&["?"], "help"), footer::hint(&["q"], "quit")]);
         items
+    };
+    if navigation == ReviewNavigation::Environments && !searching && !filtered {
+        items.insert(0, footer::hint(&["Esc"], "environments"));
     }
+    items
 }
 
 fn required_footer_items(
     searching: bool,
     match_count: usize,
     filtered: bool,
+    navigation: ReviewNavigation,
 ) -> Vec<Line<'static>> {
-    if searching {
+    let mut items = if searching {
         vec![
             footer::hint(&["Enter"], "confirm"),
             footer::hint(&["Esc"], "cancel"),
@@ -1510,7 +1597,11 @@ fn required_footer_items(
             footer::hint(&["?"], "help"),
             footer::hint(&["q"], "quit"),
         ]
+    };
+    if navigation == ReviewNavigation::Environments && !searching && !filtered {
+        items.insert(0, footer::hint(&["Esc"], "environments"));
     }
+    items
 }
 
 const fn severity_label(severity: DiagnosticSeverity) -> &'static str {
@@ -2296,6 +2387,7 @@ End of synthetic plan body."#;
                     state.review().metadata().applyable(),
                     content.matches.len(),
                     false,
+                    ReviewNavigation::Standalone,
                 ),
                 shell_layout::centered_width(area),
                 None,

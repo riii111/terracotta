@@ -166,6 +166,20 @@ mod pty_tests {
         }
 
         #[test]
+        fn show_failure_remains_visible_alongside_successful_plan_warnings() {
+            let fixture = fixture(&["a-ready", "b-error"]);
+            for marker in ["warning-plan", "invalid-show"] {
+                fs::write(fixture.root.join("b-error").join(marker), "").unwrap();
+            }
+
+            let result = fixture.run("env_show_failure", 120, 40);
+
+            assert_eq!(result.exit_code, 1);
+            result.observed("warning_and_failure");
+            assert_clean(&fixture, &result);
+        }
+
+        #[test]
         fn interrupted_child_stops_the_queue_and_returns_130() {
             let fixture = fixture(&["a-interrupted", "z-pending"]);
             fs::write(fixture.root.join("a-interrupted/interrupt-plan"), "").unwrap();

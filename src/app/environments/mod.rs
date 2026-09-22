@@ -275,7 +275,20 @@ impl EnvironmentPlan {
         let diagnostics = self.review().map_or(self.diagnostics.as_slice(), |review| {
             review.review().diagnostics()
         });
-        copy::diagnostic_effect(diagnostics, self.failure.as_deref(), sensitive)
+        let effect = copy::diagnostic_effect(diagnostics, self.failure.as_deref(), sensitive);
+        if !diagnostics.is_empty()
+            && let Some(failure) = self.failure.as_deref()
+        {
+            return CopyEffect::new(
+                effect.target(),
+                format!(
+                    "{}\n\n{}",
+                    copy::sanitize_text(failure, sensitive),
+                    effect.text()
+                ),
+            );
+        }
+        effect
     }
 }
 

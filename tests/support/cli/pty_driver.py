@@ -347,6 +347,12 @@ try:
                 wait_new("Ready: 2/2", "all_ready")
                 send_key(b"q")
                 exit_code = wait_exit()
+        elif scenario == "env_show_failure":
+            wait_parts(["Ready: 1/2", "Error"], "failed_environment")
+            send_key(b"j")
+            wait_parts(["show output could not be parsed", "synthetic plan warning"], "warning_and_failure")
+            send_key(b"q")
+            exit_code = wait_exit()
         elif scenario == "env_retry":
             wait_parts(["Ready: 1/2", "Error"], "failed_environment")
             send_key(b"j")

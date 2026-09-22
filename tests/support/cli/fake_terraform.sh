@@ -25,6 +25,9 @@ case "${TERRACOTTA_FAKE_MODE:-}" in
         for argument in "$@"; do
           case "$argument" in -out=*) printf '%s\n' "${argument#-out=}" >> "$TERRACOTTA_FAKE_PLAN_PATH.all" ;; esac
         done
+        if [ -f warning-plan ]; then
+          printf '%s\n' '{"type":"diagnostic","diagnostic":{"severity":"warning","summary":"synthetic plan warning","detail":"Review this provider warning"}}'
+        fi
         if [ -f interrupt-plan ]; then exit 130; fi
         if [ -f require-init ]; then
           printf '%s\n' '{"type":"diagnostic","diagnostic":{"severity":"error","summary":"Backend initialization required","detail":"Run init"}}'
@@ -130,6 +133,7 @@ case "$1" in
   show)
     case "${TERRACOTTA_FAKE_MODE:-}" in env_*) printf "%s|%s\n" "$PWD" "$*" >> "$TERRACOTTA_FAKE_PLAN_PATH.shows" ;; esac
     if [ "$2" = -json ]; then
+      if [ -f invalid-show ]; then printf '%s\n' '{"format_version":"99.0"}'; exit 0; fi
       if [ "${TERRACOTTA_FAKE_MODE:-success}" = no_changes ]; then
         printf '%s\n' '{"format_version":"1.0","applyable":false}'
       else
