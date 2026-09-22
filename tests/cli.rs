@@ -302,13 +302,13 @@ Plan: 0 to add, 1 to change, 0 to destroy.
     }
 
     #[test]
-    fn pty_success_keeps_plan_status_above_diagnostics_and_plan_text() {
+    fn pty_success_keeps_plan_status_above_plan_text() {
         let fixture = Fixture::new();
         let result = fixture.run("diagnostic_success", 100, 24);
 
         assert_eq!(result.exit_code, 0);
         result.assert_restored();
-        result.observed("diagnostic_and_plan");
+        result.observed("plan_status_and_text");
         fixture.assert_saved_plan_removed();
     }
 
@@ -405,9 +405,13 @@ Plan: 0 to add, 1 to change, 0 to destroy.
 
         assert_eq!(result.exit_code, 0);
         result.assert_restored();
+        result.observed("plan_position");
         result.observed("filter_input");
         result.observed("filter_matches");
         result.observed("filter_confirmed");
+        result.observed("filter_help");
+        result.observed("filter_context");
+        result.observed("filter_copy");
         result.observed("filter_cleared");
         fixture.assert_saved_plan_removed();
     }
@@ -435,7 +439,10 @@ Plan: 0 to add, 1 to change, 0 to destroy.
 
         assert_eq!(result.exit_code, 0);
         result.assert_restored();
+        result.observed("plan_help");
         result.observed("apply_confirmation");
+        result.observed("apply_help");
+        result.observed("apply_context");
         result.observed("apply_started");
         result.observed("apply_success");
         let arguments = fixture.invocation_arguments();

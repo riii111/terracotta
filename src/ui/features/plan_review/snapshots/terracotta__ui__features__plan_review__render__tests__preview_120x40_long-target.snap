@@ -2,12 +2,11 @@
 source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
-main [PROD]  ws:default  terraform loading...  /repo/environments/production/main
+very-long-target-name-for-review [PROD]  ws:default  terraform 1.9.0  ./environments/production...target-name-for-review
 Plan: +2 add  ~2 update  0 replace  -1 destroy
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  # terraform_data.api will be updated in-place                                                                        ▲
-  ~ resource "terraform_data" "api" {                                                                                  ┃
-      id       = "api-20260920"                                                                                        ┃
+  ~ resource "terraform_data" "api" {                                                                                  ▲
+      id       = "api-20260920"                                                                                        │
       ~ input  = "before" -> "after"                                                                                   ┃
       # (4 unchanged attributes hidden)                                                                                ┃
     }                                                                                                                  ┃
@@ -36,9 +35,10 @@ Changes to Outputs:                                                             
                                                                                                                        ┃
 Warning: Value for "pending" is not known until apply                                                                  ┃
                                                                                                                        ┃
-Plan: 2 to add, 2 to change, 1 to destroy.                                                                             │
-                                                                                                                       │
+Plan: 2 to add, 2 to change, 1 to destroy.                                                                             ┃
+                                                                                                                       ┃
 Synthetic review text continues below so the viewport and scrollbar remain meaningful.                                 │
 The same long body is intentionally reused across every review state and terminal size.                                │
-No Terraform process, provider, state file, or cloud credential is used by this fixture.                               ▼
-/ filter | ? help | q quit                                                                                          3/43
+No Terraform process, provider, state file, or cloud credential is used by this fixture.                               │
+The review surface preserves Terraform order, attributes, output values, and diagnostics.                              ▼
+/ filter | a apply | ? help | q quit                                                                                4/43

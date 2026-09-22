@@ -295,10 +295,7 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
             let SessionState::Review(review) = state else {
                 return None;
             };
-            if review.review.search_query().is_empty()
-                && review.review.apply_allowed()
-                && review.review.metadata().applyable()
-            {
+            if review.review.apply_allowed() && review.review.metadata().applyable() {
                 let review = review.review.clone();
                 *state =
                     SessionState::ApplyConfirmation(Box::new(ApplyConfirmationState::new(review)));
@@ -372,9 +369,7 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
             SessionState::Execution(execution) | SessionState::Apply(execution) => {
                 execution.copy_effect(target)
             }
-            SessionState::Review(review)
-                if target == CopyTarget::Plan && review.review.search_query().is_empty() =>
-            {
+            SessionState::Review(review) if target == CopyTarget::Plan => {
                 Some(copy::plan_effect(&review.review))
             }
             SessionState::Review(_) | SessionState::ApplyConfirmation(_) => None,
@@ -408,15 +403,13 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
                     ),
                 )))
             }
-            SessionState::Review(review)
-                if review.review.apply_entry() && review.review.search_query().is_empty() =>
-            {
+            SessionState::Review(review) if review.review.apply_entry() => {
                 Some(Effect::Finish(SessionOutcome::ApplyCanceled))
             }
-            SessionState::Review(review) if review.review.search_query().is_empty() => Some(
-                Effect::Finish(SessionOutcome::Reviewed(review.review.metadata().clone())),
-            ),
-            SessionState::Execution(_) | SessionState::Review(_) => None,
+            SessionState::Review(review) => Some(Effect::Finish(SessionOutcome::Reviewed(
+                review.review.metadata().clone(),
+            ))),
+            SessionState::Execution(_) => None,
             SessionState::ApplyConfirmation(_) => {
                 Some(Effect::Finish(SessionOutcome::ApplyCanceled))
             }
@@ -514,7 +507,7 @@ mod tests {
     }
 
     #[test]
-    fn filtered_review_rejects_copy_and_quit_actions() {
+    fn filtered_review_copies_the_full_document_and_quits() {
         let now = Instant::now();
         let mut filtered = review();
         filtered.set_search_query("not-present".to_owned());
@@ -524,8 +517,14 @@ mod tests {
         ));
         update(&mut state, Action::ReviewCompleted(filtered), now);
 
-        assert!(update(&mut state, Action::Copy(CopyTarget::Plan), now).is_none());
-        assert!(update(&mut state, Action::Quit, now).is_none());
+        assert!(matches!(
+            update(&mut state, Action::Copy(CopyTarget::Plan), now),
+            Some(Effect::WriteClipboard(_))
+        ));
+        assert!(matches!(
+            update(&mut state, Action::Quit, now),
+            Some(Effect::Finish(SessionOutcome::Reviewed(_)))
+        ));
         assert!(state.review().is_some());
     }
 
@@ -683,9 +682,9 @@ mod tests {
     }
 
     #[test]
-    fn filtered_review_rejects_apply_confirmation() {
+    fn filtered_review_applies_the_complete_plan() {
         let now = Instant::now();
-        let mut filtered = applyable_review();
+        let mut filtered = applyable_review().with_apply_entry(true);
         filtered.set_search_query("not-present".to_owned());
         let mut state = SessionState::new(ExecutionState::with_context(
             now,
@@ -693,7 +692,7 @@ mod tests {
         ));
         update(&mut state, Action::ReviewCompleted(filtered), now);
         assert!(update(&mut state, Action::OpenApplyConfirmation, now).is_none());
-        assert!(state.review().is_some());
+        assert!(state.apply_confirmation().is_some());
     }
 
     #[test]
