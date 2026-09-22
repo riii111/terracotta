@@ -7,7 +7,13 @@ use std::collections::BTreeMap;
 use std::fmt::{Debug, Formatter};
 
 mod attribute_diff;
-mod path;
+mod grouping;
+#[expect(
+    unused_imports,
+    reason = "grouping result types are the app contract for the Overview SBI"
+)]
+pub(crate) use grouping::{ChangeGroup, PlanGrouping, group_resource_changes};
+pub(crate) mod path;
 
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum PlanValue {
@@ -37,7 +43,7 @@ pub(crate) enum ResourceMode {
     Data,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum PlanAction {
     Create,
     Read,
@@ -256,6 +262,11 @@ impl Plan {
             unsupported_changes: Vec::new(),
             output_changes: Vec::new(),
         }
+    }
+
+    #[must_use]
+    pub(crate) fn grouped_changes(&self, schemas: Option<&ProviderSchemas>) -> PlanGrouping {
+        group_resource_changes(&self.resource_changes, schemas)
     }
 }
 
