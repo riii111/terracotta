@@ -4,11 +4,13 @@ use crate::app::copy::CopyTarget;
 use crate::app::execution::{ExecutionAction, ExecutionStage};
 use crate::ui::input::normalize_key;
 
-use super::ExecutionScroll;
+use super::{ExecutionScroll, ExecutionTargetMove};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ExecutionInput {
     Action(ExecutionAction),
+    SelectTarget(ExecutionTargetMove),
+    ToggleFocus,
     Scroll(ExecutionScroll),
     Copy(CopyTarget),
     End,
@@ -38,6 +40,7 @@ pub(crate) fn execution_key_to_input(
             | ExecutionStage::ApplyFailed
             | ExecutionStage::ApplyInterrupted
     );
+    let apply_screen = apply_in_progress || apply_result;
 
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
         return Some(if finished {
@@ -58,6 +61,10 @@ pub(crate) fn execution_key_to_input(
         }));
     }
 
+    if apply_screen && key.modifiers == KeyModifiers::NONE && key.code == KeyCode::Tab {
+        return Some(ExecutionInput::ToggleFocus);
+    }
+
     if apply_in_progress && key.modifiers == KeyModifiers::NONE {
         if key.code == KeyCode::Char('v') {
             return Some(if logs_open {
@@ -71,8 +78,16 @@ pub(crate) fn execution_key_to_input(
         }
     }
 
-    if apply_in_progress && !logs_open {
-        return None;
+    if apply_screen && !logs_open {
+        return match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                Some(ExecutionInput::SelectTarget(ExecutionTargetMove::Previous))
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                Some(ExecutionInput::SelectTarget(ExecutionTargetMove::Next))
+            }
+            _ => None,
+        };
     }
 
     if key.code == KeyCode::Char('a') && key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -251,14 +266,58 @@ mod tests {
     }
 
     #[test]
-    fn compact_apply_ignores_log_navigation_but_keeps_cancellation() {
+    fn tab_switches_focus_and_target_arrows_select_resources_while_running() {
+        assert_eq!(
+            execution_key_to_input(
+                key(KeyCode::Tab, KeyModifiers::NONE),
+                ExecutionStage::Applying,
+                false,
+            ),
+            Some(ExecutionInput::ToggleFocus)
+        );
         assert_eq!(
             execution_key_to_input(
                 key(KeyCode::Down, KeyModifiers::NONE),
                 ExecutionStage::Applying,
                 false,
             ),
-            None
+            Some(ExecutionInput::SelectTarget(ExecutionTargetMove::Next))
+        );
+        assert_eq!(
+            execution_key_to_input(
+                key(KeyCode::Down, KeyModifiers::NONE),
+                ExecutionStage::Applying,
+                true,
+            ),
+            Some(ExecutionInput::Scroll(ExecutionScroll::Down))
+        );
+        assert_eq!(
+            execution_key_to_input(
+                key(KeyCode::Tab, KeyModifiers::NONE),
+                ExecutionStage::ApplySucceeded,
+                false,
+            ),
+            Some(ExecutionInput::ToggleFocus)
+        );
+        assert_eq!(
+            execution_key_to_input(
+                key(KeyCode::Down, KeyModifiers::NONE),
+                ExecutionStage::ApplySucceeded,
+                false,
+            ),
+            Some(ExecutionInput::SelectTarget(ExecutionTargetMove::Next))
+        );
+    }
+
+    #[test]
+    fn target_focus_selects_targets_but_keeps_cancellation() {
+        assert_eq!(
+            execution_key_to_input(
+                key(KeyCode::Down, KeyModifiers::NONE),
+                ExecutionStage::Applying,
+                false,
+            ),
+            Some(ExecutionInput::SelectTarget(ExecutionTargetMove::Next))
         );
         assert_eq!(
             execution_key_to_input(

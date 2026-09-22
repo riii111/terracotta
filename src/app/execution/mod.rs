@@ -15,10 +15,6 @@ pub(crate) use event::{
     ResourceEvent, ResourceEventKind, SensitiveValue,
 };
 pub(crate) use history::{HistoryKey, SuccessfulTarget};
-#[expect(
-    unused_imports,
-    reason = "execution target types are consumed by the SBI03-03 execution UI"
-)]
 pub(crate) use progress::{ExecutionProgress, ExecutionTargetState, ExecutionTargetStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,13 +110,6 @@ impl ExecutionState {
     }
 
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the original constructor remains the empty-previous baseline for execution fixtures"
-        )
-    )]
     pub(crate) fn applying_with_targets(
         started_at: Instant,
         context: ExecutionContext,

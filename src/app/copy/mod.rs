@@ -121,8 +121,23 @@ pub(crate) fn execution_effect(state: &ExecutionState) -> CopyEffect {
         }
         _ => sections.push(format!("{} failed.", state.context().tool_name())),
     }
+    let progress = state.progress();
+    sections.push(format!(
+        "Completed: {}/{}    Failed: {}    Incomplete: {}    Skipped: {}",
+        progress.completed_count(),
+        progress.targets().len(),
+        progress.failed_count(),
+        progress.incomplete_count(),
+        progress.skipped_count(),
+    ));
+    let elapsed = state.elapsed_at(std::time::Instant::now());
+    sections.push(format!(
+        "Elapsed: {}.{:01}s",
+        elapsed.as_secs(),
+        elapsed.subsec_millis() / 100
+    ));
     if let Some(result) = state.result() {
-        let log = state.progress().log();
+        let log = progress.log();
         if let Some(summary) = result.summary_line()
             && !log
                 .iter()

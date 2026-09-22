@@ -12,8 +12,11 @@ use crate::{
         copy::CopyResult,
         execution::{
             ApplyStatus, EventStream, ExecutionAction, ExecutionContext, ExecutionEvent,
-            ExecutionEventKind, ExecutionLogLine, ExecutionPhase, ExecutionState, Tool,
+            ExecutionEventKind, ExecutionLogLine, ExecutionPhase, ExecutionState,
+            ExecutionTargetSpec, ExecutionTargetState, ResourceAction, ResourceEvent,
+            ResourceEventKind, Tool,
         },
+        plan::PlanAction,
         review::{PlanBlock, PlanBlockKind, PlanDocument, PlanLineKind, PlanMetadata, PlanReview},
         session::{Action, ApplyConfirmationState, Effect, ReviewSessionState, SessionState},
     },
@@ -77,6 +80,7 @@ pub(super) fn run_synthetic() -> io::Result<()> {
                 Instant::now(),
             ) {
                 Some(Effect::StartApply) => {
+                    record_synthetic_apply_events(&mut state, &mut execution_view);
                     complete_apply_at = Some(Instant::now() + Duration::from_millis(250));
                 }
                 Some(Effect::WriteClipboard(effect)) => {
@@ -219,7 +223,7 @@ fn synthetic_review() -> ReviewSessionState {
         PathBuf::from("/workspace/infra/prod"),
         "default".to_owned(),
         PlanDocument::with_blocks_and_line_kinds(
-            "Terraform will perform the following actions:\n\n  # terraform_data.example will be updated in-place\n  ~ resource \"terraform_data.example\" {\n      ~ input = \"before\" -> \"after\"\n      note = \"searchable synthetic value\"\n    }\n\nPlan: 0 to add, 1 to change, 0 to destroy.\n"
+            "Terraform will perform the following actions:\n\n  # terraform_data.example will be updated in-place\n  ~ resource \"terraform_data.example\" {\n      ~ input = \"before\" -> \"after\"\n      note = \"searchable synthetic value\"\n    }\n\n  # terraform_data.cache will be created\n  + resource \"terraform_data\" \"cache\" {\n      input = \"cache\"\n    }\n\n  # terraform_data.old will be destroyed\n  - resource \"terraform_data\" \"old\" {}\n\nPlan: 1 to add, 1 to change, 1 to destroy.\n"
                 .to_owned(),
             vec![
                 PlanBlock::new(0..2, PlanBlockKind::Common),
@@ -227,7 +231,11 @@ fn synthetic_review() -> ReviewSessionState {
                     2..7,
                     PlanBlockKind::Resource,
                 ),
-                PlanBlock::new(7..10, PlanBlockKind::Common),
+                PlanBlock::new(7..8, PlanBlockKind::Common),
+                PlanBlock::new(8..12, PlanBlockKind::Resource),
+                PlanBlock::new(12..13, PlanBlockKind::Common),
+                PlanBlock::new(13..15, PlanBlockKind::Resource),
+                PlanBlock::new(15..17, PlanBlockKind::Common),
             ],
             vec![
                 PlanLineKind::Intro,
@@ -237,19 +245,31 @@ fn synthetic_review() -> ReviewSessionState {
                 PlanLineKind::Body,
                 PlanLineKind::Body,
                 PlanLineKind::Body,
+                PlanLineKind::Intro,
+                PlanLineKind::Note,
                 PlanLineKind::Body,
+                PlanLineKind::Body,
+                PlanLineKind::Body,
+                PlanLineKind::Intro,
+                PlanLineKind::Note,
+                PlanLineKind::Body,
+                PlanLineKind::Intro,
                 PlanLineKind::Summary,
-                PlanLineKind::Body,
             ],
         ),
         PlanMetadata::new(
-            vec!["terraform_data.example".to_owned()],
+            vec![
+                "terraform_data.example".to_owned(),
+                "terraform_data.cache".to_owned(),
+                "terraform_data.old".to_owned(),
+            ],
             Vec::new(),
-            0,
             1,
-            0,
+            1,
+            1,
             true,
-        ),
+        )
+        .with_apply_targets(synthetic_apply_targets()),
         Vec::new(),
     )
     .with_context(
@@ -357,6 +377,33 @@ fn synthetic_execution_key(
             view.close_logs();
             Ok(None)
         }
+        Some(execution::ExecutionInput::ToggleFocus) => {
+            view.toggle_focus();
+            Ok(None)
+        }
+        Some(execution::ExecutionInput::SelectTarget(direction)) => {
+            let targets = state
+                .progress()
+                .display_target_indices(state.result().is_some());
+            view.select_target(direction, &targets);
+            let size = terminal.size()?;
+            let layout = execution::execution_layout_with_view(
+                ratatui::layout::Rect::new(0, 0, size.width, size.height),
+                state,
+                *view,
+            );
+            if let Some(position) = view
+                .selected_target()
+                .and_then(|selected| targets.iter().position(|index| *index == selected))
+            {
+                view.ensure_target_visible(
+                    position,
+                    layout.target_body().height,
+                    layout.target_max_vertical(),
+                );
+            }
+            Ok(None)
+        }
         Some(execution::ExecutionInput::End) => {
             view.end();
             Ok(None)
@@ -368,6 +415,12 @@ fn synthetic_execution_key(
                 state,
                 *view,
             );
+            if state.is_apply() && !view.logs_open() {
+                let (current, max) =
+                    execution::execution_target_scroll_position_with_view(*view, &layout);
+                view.apply_target_scroll(scroll, current, max, layout.target_body().height);
+                return Ok(None);
+            }
             let (current_vertical, _) =
                 execution::execution_scroll_position_with_view(state, *view, &layout);
             match scroll {
@@ -411,7 +464,7 @@ fn finish_synthetic_apply(
         Action::ApplyCompleted {
             status: ApplyStatus::Succeeded,
             summary_line: Some(
-                "Apply complete! Resources: 0 added, 1 changed, 0 destroyed.".to_owned(),
+                "Apply complete! Resources: 1 added, 1 changed, 1 destroyed.".to_owned(),
             ),
         },
         execution_view,
@@ -419,21 +472,59 @@ fn finish_synthetic_apply(
     );
 }
 
+fn record_synthetic_apply_events(
+    state: &mut SessionState,
+    execution_view: &mut execution::ExecutionViewState,
+) {
+    let now = Instant::now();
+    for kind in synthetic_apply_events() {
+        let _ = super::event_loop::update_session(
+            state,
+            Action::ApplyWorkerEvent(ExecutionEvent {
+                received_at: now,
+                kind,
+            }),
+            execution_view,
+            now,
+        );
+    }
+}
+
+fn resource_event(
+    address: &str,
+    kind: ResourceEventKind,
+    action: ResourceAction,
+    message: &str,
+) -> ExecutionEventKind {
+    ExecutionEventKind::Resource(ResourceEvent {
+        address: address.to_owned(),
+        kind,
+        action: Some(action),
+        message: Some(message.to_owned()),
+    })
+}
+
 pub(super) fn run_synthetic_execution() -> io::Result<()> {
     let started = Instant::now();
-    let mut state = ExecutionState::with_context(started, ExecutionContext::loading("infra/prod"));
+    let mut state = ExecutionState::applying_with_targets(
+        started,
+        ExecutionContext::loading("infra/prod").with_workspace("default"),
+        synthetic_apply_targets(),
+        Vec::new(),
+    );
     state.record(ExecutionEvent {
         received_at: started,
         kind: ExecutionEventKind::Phase(ExecutionPhase::Planning),
     });
-    state.record(ExecutionEvent {
-        received_at: started,
-        kind: ExecutionEventKind::Log(ExecutionLogLine {
-            stream: EventStream::Stdout,
-            text: "Planning Terraform changes...".to_owned(),
-        }),
-    });
+    for kind in synthetic_apply_events() {
+        state.record(ExecutionEvent {
+            received_at: started,
+            kind,
+        });
+    }
     let mut view = execution::ExecutionViewState::default();
+    view.initialize_target_selection(&state.progress().display_target_indices(false));
+    let mut complete_apply_at = Some(started + Duration::from_millis(750));
     ratatui::run(|terminal| {
         loop {
             terminal.draw(|frame| {
@@ -445,6 +536,26 @@ pub(super) fn run_synthetic_execution() -> io::Result<()> {
                     false,
                 );
             })?;
+            if complete_apply_at.is_some_and(|at| Instant::now() >= at) {
+                state.finish_apply(
+                    ApplyStatus::Succeeded,
+                    Some("Apply complete! Resources: 1 added, 1 changed, 1 destroyed.".to_owned()),
+                    None,
+                    Instant::now(),
+                );
+                view.select_result_target(
+                    &state.progress().display_target_indices(true),
+                    state.progress().first_bound_failed_index(),
+                    state
+                        .progress()
+                        .first_bound_failed_index()
+                        .and_then(|index| state.progress().targets().get(index))
+                        .and_then(ExecutionTargetState::first_error_line),
+                    true,
+                );
+                complete_apply_at = None;
+                continue;
+            }
             if let Event::Key(key) = event::read()? {
                 if !key.is_press() {
                     continue;
@@ -452,12 +563,88 @@ pub(super) fn run_synthetic_execution() -> io::Result<()> {
                 if key.code == KeyCode::Esc {
                     return Ok(());
                 }
-                if synthetic_execution_key(terminal, &state, &mut view, key)?
-                    == Some(Action::Execution(ExecutionAction::RequestCancellation))
-                {
-                    state.apply(ExecutionAction::RequestCancellation);
+                match synthetic_execution_key(terminal, &state, &mut view, key)? {
+                    Some(Action::Quit) => return Ok(()),
+                    Some(Action::Execution(ExecutionAction::RequestCancellation)) => {
+                        state.apply(ExecutionAction::RequestCancellation);
+                        state.finish_apply(ApplyStatus::Interrupted, None, None, Instant::now());
+                        view.select_result_target(
+                            &state.progress().display_target_indices(true),
+                            state.progress().first_bound_failed_index(),
+                            state
+                                .progress()
+                                .first_bound_failed_index()
+                                .and_then(|index| state.progress().targets().get(index))
+                                .and_then(ExecutionTargetState::first_error_line),
+                            false,
+                        );
+                        complete_apply_at = None;
+                    }
+                    _ => {}
                 }
             }
         }
     })
+}
+
+fn synthetic_apply_targets() -> Vec<ExecutionTargetSpec> {
+    vec![
+        ExecutionTargetSpec {
+            address: "terraform_data.example".to_owned(),
+            actions: vec![PlanAction::Update],
+        },
+        ExecutionTargetSpec {
+            address: "terraform_data.cache".to_owned(),
+            actions: vec![PlanAction::Create],
+        },
+        ExecutionTargetSpec {
+            address: "terraform_data.old".to_owned(),
+            actions: vec![PlanAction::Delete],
+        },
+    ]
+}
+
+fn synthetic_apply_events() -> Vec<ExecutionEventKind> {
+    vec![
+        ExecutionEventKind::Log(ExecutionLogLine {
+            stream: EventStream::Stdout,
+            text: "Applying saved plan...".to_owned(),
+        }),
+        resource_event(
+            "terraform_data.example",
+            ResourceEventKind::ApplyStart,
+            ResourceAction::Update,
+            "terraform_data.example: Modifying...",
+        ),
+        resource_event(
+            "terraform_data.example",
+            ResourceEventKind::ApplyComplete,
+            ResourceAction::Update,
+            "terraform_data.example: Modifications complete",
+        ),
+        resource_event(
+            "terraform_data.cache",
+            ResourceEventKind::ApplyStart,
+            ResourceAction::Create,
+            "terraform_data.cache: Creating...",
+        ),
+        resource_event(
+            "terraform_data.cache",
+            ResourceEventKind::ApplyComplete,
+            ResourceAction::Create,
+            "terraform_data.cache: Creation complete",
+        ),
+        resource_event(
+            "terraform_data.old",
+            ResourceEventKind::ApplyStart,
+            ResourceAction::Delete,
+            "terraform_data.old: Destroying...",
+        ),
+        resource_event(
+            "terraform_data.old",
+            ResourceEventKind::ApplyComplete,
+            ResourceAction::Delete,
+            "terraform_data.old: Destruction complete",
+        ),
+    ]
 }

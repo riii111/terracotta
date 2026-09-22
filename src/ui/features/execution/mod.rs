@@ -22,18 +22,28 @@ enum VerticalScroll {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExecutionTargetMove {
+    Previous,
+    Next,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ExecutionViewState {
     vertical: VerticalScroll,
+    target_vertical: VerticalScroll,
     horizontal: u16,
     logs_open: bool,
+    selected_target: Option<usize>,
 }
 
 impl Default for ExecutionViewState {
     fn default() -> Self {
         Self {
             vertical: VerticalScroll::Initial,
+            target_vertical: VerticalScroll::Initial,
             horizontal: 0,
             logs_open: false,
+            selected_target: None,
         }
     }
 }
@@ -61,6 +71,28 @@ impl ExecutionViewState {
         self.vertical = VerticalScroll::Manual(offset);
     }
 
+    pub(crate) fn apply_target_scroll(
+        &mut self,
+        action: ExecutionScroll,
+        current_offset: u16,
+        max_offset: u16,
+        page_height: u16,
+    ) {
+        let page_height = page_height.max(1);
+        let offset = match action {
+            ExecutionScroll::Up => current_offset.saturating_sub(1),
+            ExecutionScroll::Down => current_offset.saturating_add(1).min(max_offset),
+            ExecutionScroll::PageUp => current_offset.saturating_sub(page_height),
+            ExecutionScroll::PageDown => current_offset.saturating_add(page_height).min(max_offset),
+            ExecutionScroll::Top => 0,
+            ExecutionScroll::Left
+            | ExecutionScroll::Right
+            | ExecutionScroll::LeftEdge
+            | ExecutionScroll::RightEdge => current_offset,
+        };
+        self.target_vertical = VerticalScroll::Manual(offset);
+    }
+
     pub(crate) fn apply_horizontal_scroll(
         &mut self,
         action: ExecutionScroll,
@@ -80,6 +112,7 @@ impl ExecutionViewState {
 
     pub(crate) const fn end(&mut self) {
         self.vertical = VerticalScroll::FollowLatest;
+        self.target_vertical = VerticalScroll::FollowLatest;
     }
 
     pub(crate) const fn open_logs(&mut self) {
@@ -90,6 +123,84 @@ impl ExecutionViewState {
 
     pub(crate) const fn close_logs(&mut self) {
         self.logs_open = false;
+    }
+
+    pub(crate) const fn toggle_focus(&mut self) {
+        if self.logs_open {
+            self.close_logs();
+        } else {
+            self.logs_open = true;
+        }
+    }
+
+    pub(crate) const fn initialize_target_selection(&mut self, targets: &[usize]) {
+        self.selected_target = targets.first().copied();
+    }
+
+    pub(crate) fn select_result_target(
+        &mut self,
+        targets: &[usize],
+        first_failed: Option<usize>,
+        first_failed_error_line: Option<usize>,
+        successful: bool,
+    ) {
+        self.selected_target =
+            first_failed.or_else(|| successful.then(|| targets.first().copied()).flatten());
+        self.logs_open = first_failed.is_some();
+        self.vertical = if first_failed.is_some() {
+            VerticalScroll::Manual(
+                u16::try_from(first_failed_error_line.unwrap_or(0)).unwrap_or(u16::MAX),
+            )
+        } else {
+            VerticalScroll::Initial
+        };
+        self.target_vertical = VerticalScroll::Initial;
+    }
+
+    pub(crate) fn select_target(&mut self, direction: ExecutionTargetMove, targets: &[usize]) {
+        if targets.is_empty() {
+            self.selected_target = None;
+            return;
+        }
+        self.selected_target = match direction {
+            ExecutionTargetMove::Next => match self
+                .selected_target
+                .and_then(|selected| targets.iter().position(|index| *index == selected))
+            {
+                Some(position) if position + 1 < targets.len() => Some(targets[position + 1]),
+                Some(_) => None,
+                None => Some(targets[0]),
+            },
+            ExecutionTargetMove::Previous => match self
+                .selected_target
+                .and_then(|selected| targets.iter().position(|index| *index == selected))
+            {
+                Some(position) if position > 0 => Some(targets[position - 1]),
+                Some(_) => None,
+                None => Some(targets[targets.len() - 1]),
+            },
+        };
+        self.target_vertical = VerticalScroll::Initial;
+        self.vertical = VerticalScroll::Initial;
+    }
+
+    pub(crate) fn ensure_target_visible(&mut self, position: usize, height: u16, max: u16) {
+        let height = usize::from(height.max(1));
+        let current = usize::from(self.target_vertical_offset(0, max));
+        let next = if position < current {
+            position
+        } else if position >= current.saturating_add(height) {
+            position.saturating_add(1).saturating_sub(height)
+        } else {
+            current
+        };
+        self.target_vertical =
+            VerticalScroll::Manual(u16::try_from(next).unwrap_or(u16::MAX).min(max));
+    }
+
+    #[must_use]
+    pub(crate) const fn selected_target(self) -> Option<usize> {
+        self.selected_target
     }
 
     #[must_use]
@@ -127,12 +238,34 @@ impl ExecutionViewState {
             }
         }
     }
+
+    #[must_use]
+    pub(crate) const fn target_vertical_offset(self, initial: u16, max: u16) -> u16 {
+        match self.target_vertical {
+            VerticalScroll::Initial => {
+                if initial < max {
+                    initial
+                } else {
+                    max
+                }
+            }
+            VerticalScroll::FollowLatest => max,
+            VerticalScroll::Manual(offset) => {
+                if offset < max {
+                    offset
+                } else {
+                    max
+                }
+            }
+        }
+    }
 }
 
 pub(crate) use input::{ExecutionInput, execution_key_to_input};
 pub(crate) use render::{
     execution_horizontal_scroll_position_with_view, execution_layout_with_view,
-    execution_scroll_position_with_view, render_execution_with_quit_confirmation,
+    execution_scroll_position_with_view, execution_target_scroll_position_with_view,
+    render_execution_with_quit_confirmation,
 };
 
 #[cfg(test)]
@@ -168,5 +301,43 @@ mod tests {
 
         assert_eq!(view.vertical_offset(0, 5), 5);
         assert_eq!(view.horizontal(), 1);
+    }
+
+    #[test]
+    fn target_selection_wraps_and_focus_switches_between_panels() {
+        let mut view = ExecutionViewState::default();
+        view.initialize_target_selection(&[2, 4]);
+
+        view.select_target(ExecutionTargetMove::Next, &[2, 4]);
+        assert_eq!(view.selected_target(), Some(4));
+        view.select_target(ExecutionTargetMove::Next, &[2, 4]);
+        assert_eq!(view.selected_target(), None);
+        view.select_target(ExecutionTargetMove::Next, &[2, 4]);
+        assert_eq!(view.selected_target(), Some(2));
+        view.select_target(ExecutionTargetMove::Previous, &[2, 4]);
+        assert_eq!(view.selected_target(), None);
+        view.select_target(ExecutionTargetMove::Previous, &[2, 4]);
+        assert_eq!(view.selected_target(), Some(4));
+        view.toggle_focus();
+        assert!(view.logs_open());
+        view.toggle_focus();
+        assert!(!view.logs_open());
+    }
+
+    #[test]
+    fn result_selection_prioritizes_bound_failures_and_falls_back_to_all_logs() {
+        let mut view = ExecutionViewState::default();
+
+        view.select_result_target(&[2, 1, 0], Some(1), Some(7), false);
+        assert_eq!(view.selected_target(), Some(1));
+        assert!(view.logs_open());
+        assert_eq!(view.vertical_offset(8, 20), 7);
+
+        view.select_result_target(&[1, 0], None, None, false);
+        assert_eq!(view.selected_target(), None);
+        assert!(!view.logs_open());
+
+        view.select_result_target(&[2, 0], None, None, true);
+        assert_eq!(view.selected_target(), Some(2));
     }
 }

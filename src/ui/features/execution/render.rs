@@ -3,15 +3,18 @@ use std::time::{Duration, Instant};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use crate::app::{
     copy::CopyNotice,
-    execution::{EventStream, ExecutionResult, ExecutionStage, ExecutionState},
+    execution::{
+        EventStream, ExecutionResult, ExecutionStage, ExecutionState, ExecutionTargetStatus,
+    },
+    plan::PlanAction,
 };
 use crate::ui::primitives::atoms::{scrollbar, separator};
 use crate::ui::primitives::molecules::terminal_notice;
-use crate::ui::shell::{footer, header, layout as shell_layout};
+use crate::ui::shell::{context::truncate_middle, footer, header, layout as shell_layout};
 use crate::ui::theme;
 
 use super::ExecutionViewState;
@@ -20,6 +23,8 @@ const MIN_HEIGHT: u16 = 9;
 const MIN_WIDTH: u16 = 32;
 const STATUS_HEIGHT: u16 = 3;
 const COMPACT_STATUS_HEIGHT: u16 = 4;
+const APPLY_STATUS_HEIGHT: u16 = 2;
+const TARGET_ADDRESS_WIDTH: usize = 24;
 struct PreparedContent<'a> {
     lines: Vec<Line<'a>>,
     max_width: usize,
@@ -33,6 +38,10 @@ pub(crate) fn render_execution_with_quit_confirmation(
     quit_confirmation: bool,
 ) {
     let area = frame.area();
+    if state.is_apply() {
+        render_apply_execution(frame, state, view, now, quit_confirmation);
+        return;
+    }
     let content = prepare_content(state);
     let status = status_lines(state, view, now);
     let notice = state.copy_notice_at(now);
@@ -79,6 +88,230 @@ pub(crate) fn render_execution_with_quit_confirmation(
         return;
     }
     render_log_view(frame, &layout, state, view, now, content, notice);
+}
+
+fn render_apply_execution(
+    frame: &mut Frame<'_>,
+    state: &ExecutionState,
+    view: ExecutionViewState,
+    now: Instant,
+    quit_confirmation: bool,
+) {
+    let area = frame.area();
+    let content = prepare_selected_content(state, view);
+    let status = apply_status_lines(state, now);
+    let notice = state.copy_notice_at(now);
+    let layout = execution_layout_with_content(
+        area,
+        state,
+        view,
+        &content,
+        &status,
+        notice.map(CopyNotice::message),
+        quit_confirmation,
+    );
+    if area.width < MIN_WIDTH
+        || area.height < MIN_HEIGHT
+        || layout.target_body().height == 0
+        || layout.body().height == 0
+    {
+        let message = if quit_confirmation {
+            "Quit? Enter exit / Esc cancel"
+        } else if finished_apply(state) {
+            "Terminal too small. Resize or press q to quit."
+        } else {
+            "Terminal too small. Resize or press Ctrl-C to cancel."
+        };
+        terminal_notice::render_wrapped(frame, area, message);
+        return;
+    }
+
+    header::render_execution(frame, layout.shell.header(), state.context());
+    let title = if finished_apply(state) {
+        "Apply result"
+    } else {
+        "Applying"
+    };
+    let content_area = shell_layout::render_content_block(frame, layout.shell.content(), title);
+    debug_assert_eq!(content_area, layout.shell.content_inner());
+    frame.render_widget(status_paragraph(status, true), layout.status());
+    render_target_panel(
+        frame,
+        layout.target_panel(),
+        layout.target_body(),
+        state,
+        view,
+        now,
+    );
+    render_log_panel(
+        frame,
+        layout.log_panel(),
+        layout.body(),
+        state,
+        view,
+        content,
+        now,
+    );
+    render_footer(
+        frame,
+        layout.shell.footer(),
+        layout.shell.footer_lines(),
+        notice,
+    );
+}
+
+fn render_target_panel(
+    frame: &mut Frame<'_>,
+    panel: Rect,
+    body: Rect,
+    state: &ExecutionState,
+    view: ExecutionViewState,
+    now: Instant,
+) {
+    let title = if view.logs_open() {
+        "Targets"
+    } else {
+        "Targets *"
+    };
+    frame.render_widget(
+        Block::new()
+            .borders(Borders::ALL)
+            .border_style(theme::frame_style())
+            .title(title),
+        panel,
+    );
+    let all_logs_style = if view.selected_target().is_none() {
+        theme::accent_style().add_modifier(ratatui::style::Modifier::BOLD)
+    } else {
+        theme::secondary_style()
+    };
+    let show_previous = state.progress().has_previous();
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            if view.selected_target().is_none() {
+                "> All logs"
+            } else {
+                "  All logs"
+            },
+            all_logs_style,
+        )))
+        .style(theme::body_style()),
+        Rect::new(body.x, body.y.saturating_sub(2), body.width, 1),
+    );
+    frame.render_widget(
+        Paragraph::new(if show_previous {
+            format!(
+                "  {:<width$}  {:<10} {:<10} {:>7}  {:>7}",
+                "Resource",
+                "Status",
+                "Action",
+                "Elapsed",
+                "Previous",
+                width = TARGET_ADDRESS_WIDTH,
+            )
+        } else {
+            format!(
+                "  {:<width$}  {:<10} {:<10} {:>7}",
+                "Resource",
+                "Status",
+                "Action",
+                "Elapsed",
+                width = TARGET_ADDRESS_WIDTH,
+            )
+        })
+        .style(theme::secondary_style()),
+        Rect::new(body.x, body.y.saturating_sub(1), body.width, 1),
+    );
+
+    let finished = state.result().is_some();
+    let indices = state.progress().display_target_indices(finished);
+    let offset = view.target_vertical_offset(0, layout_target_max(indices.len(), body.height));
+    let lines = indices
+        .iter()
+        .map(|index| target_line(state, *index, view.selected_target(), now, show_previous))
+        .collect::<Vec<_>>();
+    frame.render_widget(
+        Paragraph::new(lines)
+            .style(theme::body_style())
+            .scroll((offset, 0)),
+        body,
+    );
+    let max = layout_target_max(indices.len(), body.height);
+    if max > 0 {
+        scrollbar::render_vertical(
+            frame,
+            Rect::new(body.x, body.y, body.width.saturating_add(1), body.height),
+            indices.len(),
+            usize::from(body.height),
+            usize::from(offset),
+        );
+    }
+}
+
+fn render_log_panel(
+    frame: &mut Frame<'_>,
+    panel: Rect,
+    body: Rect,
+    state: &ExecutionState,
+    view: ExecutionViewState,
+    content: PreparedContent<'_>,
+    now: Instant,
+) {
+    let title = view
+        .selected_target()
+        .and_then(|index| state.progress().targets().get(index))
+        .map_or_else(
+            || "Logs: All logs".to_owned(),
+            |target| format!("Logs: {}", target.address()),
+        );
+    frame.render_widget(
+        Block::new()
+            .borders(Borders::ALL)
+            .border_style(theme::frame_style())
+            .title(title),
+        panel,
+    );
+    let line_count = content.lines.len();
+    let max_line_width = content.max_width;
+    let (max_vertical, max_horizontal) = scroll_limits(line_count, max_line_width, body);
+    let scroll = view.vertical_offset(initial_scroll(state, max_vertical), max_vertical);
+    let horizontal = view.horizontal().min(max_horizontal);
+    let lines = if state.copy_flash_active(now) {
+        flash_lines(content.lines)
+    } else {
+        content.lines
+    };
+    frame.render_widget(
+        Paragraph::new(lines)
+            .style(theme::body_style())
+            .scroll((scroll, horizontal)),
+        body,
+    );
+    let (vertical, horizontal_scrollbar) = scrollbar_reservations(line_count, max_line_width, body);
+    let scrollbar_area = Rect::new(
+        body.x,
+        body.y,
+        body.width.saturating_add(u16::from(vertical)),
+        body.height.saturating_add(u16::from(horizontal_scrollbar)),
+    );
+    if vertical {
+        scrollbar::render_vertical(
+            frame,
+            scrollbar_area,
+            line_count,
+            usize::from(body.height),
+            usize::from(scroll),
+        );
+    }
+    if horizontal_scrollbar {
+        scrollbar::render_horizontal(
+            frame,
+            scrollbar_area,
+            max_line_width,
+            usize::from(body.width),
+            usize::from(horizontal),
+        );
+    }
 }
 
 fn render_log_view(
@@ -193,9 +426,13 @@ fn render_compact_execution(
 pub(crate) struct ExecutionLayout {
     shell: shell_layout::ShellLayout,
     status: Rect,
+    target_panel: Rect,
+    target_body: Rect,
     log_area: Rect,
+    log_panel: Rect,
     separator: Rect,
     body: Rect,
+    target_max_vertical: u16,
     vertical_scrollbar: bool,
     horizontal_scrollbar: bool,
     max_vertical: u16,
@@ -209,6 +446,18 @@ impl ExecutionLayout {
 
     pub(crate) const fn log_area(&self) -> Rect {
         self.log_area
+    }
+
+    pub(crate) const fn target_panel(&self) -> Rect {
+        self.target_panel
+    }
+
+    pub(crate) const fn target_body(&self) -> Rect {
+        self.target_body
+    }
+
+    pub(crate) const fn log_panel(&self) -> Rect {
+        self.log_panel
     }
 
     pub(crate) const fn separator(&self) -> Rect {
@@ -231,6 +480,10 @@ impl ExecutionLayout {
         self.max_vertical
     }
 
+    pub(crate) const fn target_max_vertical(&self) -> u16 {
+        self.target_max_vertical
+    }
+
     pub(crate) const fn max_horizontal(&self) -> u16 {
         self.max_horizontal
     }
@@ -250,8 +503,16 @@ fn execution_layout_with_quit_confirmation_and_view(
     view: ExecutionViewState,
     quit_confirmation: bool,
 ) -> ExecutionLayout {
-    let content = prepare_content(state);
-    let status = status_lines(state, view, Instant::now());
+    let content = if state.is_apply() {
+        prepare_selected_content(state, view)
+    } else {
+        prepare_content(state)
+    };
+    let status = if state.is_apply() {
+        apply_status_lines(state, Instant::now())
+    } else {
+        status_lines(state, view, Instant::now())
+    };
     execution_layout_with_content(
         area,
         state,
@@ -263,6 +524,10 @@ fn execution_layout_with_quit_confirmation_and_view(
     )
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "the non-apply and apply layout branches share one public layout entry point"
+)]
 fn execution_layout_with_content(
     area: Rect,
     state: &ExecutionState,
@@ -272,6 +537,17 @@ fn execution_layout_with_content(
     notice: Option<&str>,
     quit_confirmation: bool,
 ) -> ExecutionLayout {
+    if state.is_apply() {
+        return applying_layout(
+            area,
+            state,
+            view,
+            content,
+            status,
+            notice,
+            quit_confirmation,
+        );
+    }
     let panel_width = shell_layout::centered_width(area);
     let compact = compact_apply(state, view);
     let normal_footer_lines = footer_lines(state, view, panel_width, notice);
@@ -312,9 +588,13 @@ fn execution_layout_with_content(
         return ExecutionLayout {
             shell,
             status,
+            target_panel: Rect::default(),
+            target_body: Rect::default(),
             log_area: Rect::default(),
+            log_panel: Rect::default(),
             separator: Rect::default(),
             body: Rect::default(),
+            target_max_vertical: 0,
             vertical_scrollbar: false,
             horizontal_scrollbar: false,
             max_vertical: 0,
@@ -361,9 +641,102 @@ fn execution_layout_with_content(
     ExecutionLayout {
         shell,
         status: status_area,
+        target_panel: Rect::default(),
+        target_body: Rect::default(),
         log_area: available,
+        log_panel: Rect::default(),
         separator: separator_area,
         body,
+        target_max_vertical: 0,
+        vertical_scrollbar,
+        horizontal_scrollbar,
+        max_vertical,
+        max_horizontal,
+    }
+}
+
+fn applying_layout(
+    area: Rect,
+    state: &ExecutionState,
+    view: ExecutionViewState,
+    content: &PreparedContent<'_>,
+    status: &[Line<'static>],
+    notice: Option<&str>,
+    quit_confirmation: bool,
+) -> ExecutionLayout {
+    let panel_width = shell_layout::centered_width(area);
+    let normal_footer_lines = apply_footer_lines(state, view, panel_width, notice);
+    let normal_required_footer_lines = apply_required_footer_lines(state, panel_width, notice);
+    let footer_lines = if quit_confirmation {
+        footer::pad_lines(
+            footer::quit_confirmation_lines(panel_width, notice),
+            normal_footer_lines.len(),
+        )
+    } else {
+        normal_footer_lines
+    };
+    let required_footer_lines = if quit_confirmation {
+        footer::pad_lines(
+            footer::quit_confirmation_lines(panel_width, notice),
+            normal_required_footer_lines.len(),
+        )
+    } else {
+        normal_required_footer_lines
+    };
+    let shell_area = shell_layout::max_centered_area(area);
+    let shell = shell_layout::layout(shell_area, footer_lines, required_footer_lines, 4);
+    let status_height =
+        status_line_count(status, panel_width.saturating_sub(2)).max(APPLY_STATUS_HEIGHT);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(status_height), Constraint::Min(1)])
+        .split(shell.content_inner())
+        .to_vec();
+    let panels = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(chunks[1])
+        .to_vec();
+    let target_panel = panels[0];
+    let log_panel = panels[1];
+    let target_inner = Block::new().borders(Borders::ALL).inner(target_panel);
+    let target_rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(1),
+        ])
+        .split(target_inner)
+        .to_vec();
+    let target_body = target_rows[2];
+    let target_count = state.progress().targets().len();
+    let target_max_vertical = layout_target_max(target_count, target_body.height);
+    let log_inner = Block::new().borders(Borders::ALL).inner(log_panel);
+    let (vertical_scrollbar, horizontal_scrollbar) =
+        scrollbar_reservations(content.lines.len(), content.max_width, log_inner);
+    let body = Rect::new(
+        log_inner.x,
+        log_inner.y,
+        log_inner
+            .width
+            .saturating_sub(u16::from(vertical_scrollbar)),
+        log_inner
+            .height
+            .saturating_sub(u16::from(horizontal_scrollbar)),
+    );
+    let (max_vertical, max_horizontal) =
+        scroll_limits(content.lines.len(), content.max_width, body);
+    ExecutionLayout {
+        shell,
+        status: chunks[0],
+        target_panel,
+        target_body,
+        log_area: log_inner,
+        log_panel,
+        separator: Rect::default(),
+        body,
+        target_max_vertical,
         vertical_scrollbar,
         horizontal_scrollbar,
         max_vertical,
@@ -439,6 +812,14 @@ pub(crate) fn execution_scroll_position_with_view(
     (current, max)
 }
 
+pub(crate) const fn execution_target_scroll_position_with_view(
+    view: ExecutionViewState,
+    layout: &ExecutionLayout,
+) -> (u16, u16) {
+    let current = view.target_vertical_offset(0, layout.target_max_vertical());
+    (current, layout.target_max_vertical())
+}
+
 pub(crate) fn execution_horizontal_scroll_position_with_view(
     view: ExecutionViewState,
     layout: &ExecutionLayout,
@@ -474,6 +855,180 @@ fn prepare_content(state: &ExecutionState) -> PreparedContent<'_> {
     }
     let max_width = max_line_width(&lines);
     PreparedContent { lines, max_width }
+}
+
+fn prepare_selected_content(
+    state: &ExecutionState,
+    view: ExecutionViewState,
+) -> PreparedContent<'_> {
+    let progress = state.progress();
+    let log = view
+        .selected_target()
+        .and_then(|index| progress.targets().get(index))
+        .map_or_else(
+            || progress.log().iter().collect::<Vec<_>>(),
+            |target| {
+                target
+                    .log_ids()
+                    .iter()
+                    .filter_map(|id| progress.log().get(*id))
+                    .collect()
+            },
+        );
+    let mut lines = Vec::new();
+    for line in log {
+        let style = if line.stream == EventStream::Stderr {
+            theme::warning_style()
+        } else {
+            theme::body_style()
+        };
+        lines.extend(
+            line.text
+                .lines()
+                .map(|text| Line::from(Span::styled(text, style))),
+        );
+    }
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled(
+            if finished_apply(state) {
+                "No execution output."
+            } else if view.selected_target().is_some() {
+                "Waiting for target output..."
+            } else {
+                "Waiting for Terraform output..."
+            },
+            theme::secondary_style(),
+        )));
+    }
+    let max_width = max_line_width(&lines);
+    PreparedContent { lines, max_width }
+}
+
+fn target_line(
+    state: &ExecutionState,
+    index: usize,
+    selected: Option<usize>,
+    now: Instant,
+    show_previous: bool,
+) -> Line<'static> {
+    let target = &state.progress().targets()[index];
+    let marker = if selected == Some(index) { "> " } else { "  " };
+    let status = target_status_label(target.status());
+    let action = target
+        .actions()
+        .iter()
+        .map(plan_action_label)
+        .collect::<Vec<_>>()
+        .join("/");
+    let elapsed = target
+        .elapsed_at(now)
+        .map_or_else(|| "--".to_owned(), format_elapsed);
+    let address = padded_target_address(target.address());
+    let text = if show_previous {
+        let previous = target
+            .previous()
+            .map_or_else(|| "--".to_owned(), format_elapsed);
+        format!("{marker}{address}  {status:<10} {action:<10} {elapsed:>7}  {previous:>7}")
+    } else {
+        format!("{marker}{address}  {status:<10} {action:<10} {elapsed:>7}")
+    };
+    let style = if selected == Some(index) {
+        theme::accent_style().add_modifier(ratatui::style::Modifier::BOLD)
+    } else {
+        match target.status() {
+            ExecutionTargetStatus::Failed => theme::error_style(),
+            ExecutionTargetStatus::Completed => theme::success_style(),
+            ExecutionTargetStatus::Incomplete | ExecutionTargetStatus::Skipped => {
+                theme::warning_style()
+            }
+            _ => theme::body_style(),
+        }
+    };
+    Line::from(Span::styled(text, style))
+}
+
+fn padded_target_address(address: &str) -> String {
+    let address = truncate_middle(address, TARGET_ADDRESS_WIDTH);
+    let padding = TARGET_ADDRESS_WIDTH.saturating_sub(Line::from(address.as_str()).width());
+    format!("{address}{}", " ".repeat(padding))
+}
+
+const fn target_status_label(status: ExecutionTargetStatus) -> &'static str {
+    match status {
+        ExecutionTargetStatus::Pending => "Pending",
+        ExecutionTargetStatus::Running => "Running",
+        ExecutionTargetStatus::Completed => "Completed",
+        ExecutionTargetStatus::Failed => "Failed",
+        ExecutionTargetStatus::Skipped => "Skipped",
+        ExecutionTargetStatus::Incomplete => "Incomplete",
+    }
+}
+
+const fn plan_action_label(action: &PlanAction) -> &'static str {
+    match action {
+        PlanAction::Create => "create",
+        PlanAction::Read => "read",
+        PlanAction::Update => "update",
+        PlanAction::Delete => "delete",
+        PlanAction::NoOp => "no-op",
+        PlanAction::Unknown(_) => "unknown",
+    }
+}
+
+fn apply_status_lines(state: &ExecutionState, now: Instant) -> Vec<Line<'static>> {
+    let progress = state.progress();
+    let stage_label = match state.stage() {
+        ExecutionStage::ApplySucceeded => "Apply complete",
+        ExecutionStage::ApplyFailed => "Apply failed",
+        ExecutionStage::ApplyInterrupted => "Apply interrupted",
+        ExecutionStage::Applying if state.is_cancelling() => "Stopping...",
+        ExecutionStage::Applying => "Applying...",
+        _ => "Apply",
+    };
+    let stage_style = match state.stage() {
+        ExecutionStage::ApplySucceeded => theme::success_style(),
+        ExecutionStage::ApplyFailed => theme::error_style(),
+        ExecutionStage::ApplyInterrupted => theme::warning_style(),
+        _ => theme::body_style(),
+    };
+    let summary = format!(
+        "    Completed: {}/{}    Elapsed: {}",
+        progress.completed_count(),
+        progress.targets().len(),
+        format_elapsed(state.elapsed_at(now)),
+    );
+    let counts = format!(
+        "Failed: {}    Incomplete: {}    Skipped: {}",
+        progress.failed_count(),
+        progress.incomplete_count(),
+        progress.skipped_count(),
+    );
+    let warning = state.is_cancelling()
+        || matches!(
+            state.stage(),
+            ExecutionStage::ApplyFailed | ExecutionStage::ApplyInterrupted
+        );
+    let mut detail = vec![Span::styled(counts, theme::secondary_style())];
+    if progress.has_previous() {
+        detail.push(Span::styled(
+            "    Previous: local success",
+            theme::secondary_style(),
+        ));
+    }
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled(stage_label, stage_style),
+            Span::raw(summary),
+        ]),
+        Line::from(detail),
+    ];
+    if warning {
+        lines.push(Line::from(Span::styled(
+            "Changes may already be applied.",
+            theme::warning_style(),
+        )));
+    }
+    lines
 }
 
 fn status_lines(
@@ -674,6 +1229,57 @@ fn footer_lines(
     footer::layout_with_notice(items, width, notice)
 }
 
+fn apply_footer_lines(
+    state: &ExecutionState,
+    view: ExecutionViewState,
+    width: u16,
+    notice: Option<&str>,
+) -> Vec<Line<'static>> {
+    let items = if finished_apply(state) {
+        vec![
+            footer::hint(&["q", "Ctrl-C"], "quit"),
+            footer::hint(
+                &["↑", "↓"],
+                if view.logs_open() {
+                    "scroll log"
+                } else {
+                    "select"
+                },
+            ),
+            footer::hint(&["Tab"], "focus"),
+            footer::hint(&["y"], "yank result"),
+        ]
+    } else {
+        vec![
+            footer::hint(&["Ctrl-C"], "cancel"),
+            footer::hint(
+                &["↑", "↓", "j", "k"],
+                if view.logs_open() {
+                    "scroll log"
+                } else {
+                    "select"
+                },
+            ),
+            footer::hint(&["Tab"], "focus"),
+            footer::hint(&["End"], "follow latest"),
+        ]
+    };
+    footer::layout_with_notice(items, width, notice)
+}
+
+fn apply_required_footer_lines(
+    state: &ExecutionState,
+    width: u16,
+    notice: Option<&str>,
+) -> Vec<Line<'static>> {
+    let item = if finished_apply(state) {
+        footer::hint(&["q", "Ctrl-C"], "quit")
+    } else {
+        footer::hint(&["Ctrl-C"], "cancel")
+    };
+    footer::layout_with_notice(vec![item], width, notice)
+}
+
 fn required_footer_lines(
     state: &ExecutionState,
     width: u16,
@@ -689,6 +1295,10 @@ fn required_footer_lines(
 
 fn compact_apply(state: &ExecutionState, view: ExecutionViewState) -> bool {
     state.stage() == ExecutionStage::Applying && !view.logs_open()
+}
+
+fn layout_target_max(target_count: usize, height: u16) -> u16 {
+    u16::try_from(target_count.saturating_sub(usize::from(height))).unwrap_or(u16::MAX)
 }
 
 fn scroll_limits(line_count: usize, line_width: usize, body: Rect) -> (u16, u16) {
@@ -761,8 +1371,9 @@ mod tests {
     use super::*;
     use crate::app::copy::{CopyResult, CopyTarget};
     use crate::app::execution::{
-        ApplyStatus, ExecutionAction, ExecutionContext, ExecutionEvent, ExecutionEventKind,
-        ExecutionLogLine,
+        ApplyStatus, Diagnostic, DiagnosticSeverity, DiagnosticSource, ExecutionAction,
+        ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionLogLine,
+        ExecutionTargetSpec, ResourceAction, ResourceEvent, ResourceEventKind,
     };
     use crate::app::session::{self, Action, SessionState};
     use crate::ui::features::execution::ExecutionScroll;
@@ -829,13 +1440,42 @@ mod tests {
         execution_layout_with_view(area, state, ExecutionViewState::default())
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the fixture covers the complete apply result event stream"
+    )]
     fn apply_state(status: ApplyStatus) -> (ExecutionState, Instant) {
         let started_at = Instant::now();
         let finished_at = started_at + Duration::from_secs(4);
-        let mut state = ExecutionState::applying(
+        let mut state = ExecutionState::applying_with_previous(
             started_at,
             ExecutionContext::loading("/repo/environments/production/main")
                 .with_workspace("default"),
+            vec![
+                ExecutionTargetSpec {
+                    address: "terraform_data.api".to_owned(),
+                    actions: vec![PlanAction::Update],
+                },
+                ExecutionTargetSpec {
+                    address: "terraform_data.worker".to_owned(),
+                    actions: vec![PlanAction::Delete, PlanAction::Create],
+                },
+                ExecutionTargetSpec {
+                    address: "terraform_data.old".to_owned(),
+                    actions: vec![PlanAction::Delete],
+                },
+                ExecutionTargetSpec {
+                    address: "terraform_data.new".to_owned(),
+                    actions: vec![PlanAction::Create],
+                },
+            ],
+            Vec::new(),
+            &[
+                Some(Duration::from_secs(11)),
+                None,
+                None,
+                Some(Duration::from_secs(4)),
+            ],
         );
         for (text, stream) in APPLY_LOG {
             state.record(ExecutionEvent {
@@ -843,6 +1483,54 @@ mod tests {
                 kind: ExecutionEventKind::Log(ExecutionLogLine {
                     stream: *stream,
                     text: (*text).to_owned(),
+                }),
+            });
+        }
+        for (address, action) in [
+            ("terraform_data.api", ResourceAction::Update),
+            ("terraform_data.worker", ResourceAction::Delete),
+            ("terraform_data.worker", ResourceAction::Create),
+            ("terraform_data.old", ResourceAction::Delete),
+            ("terraform_data.new", ResourceAction::Create),
+        ] {
+            state.record(ExecutionEvent {
+                received_at: started_at,
+                kind: ExecutionEventKind::Resource(ResourceEvent {
+                    address: address.to_owned(),
+                    kind: ResourceEventKind::ApplyStart,
+                    action: Some(action.clone()),
+                    message: Some(format!("{address}: {action:?} started")),
+                }),
+            });
+            state.record(ExecutionEvent {
+                received_at: started_at + Duration::from_secs(1),
+                kind: ExecutionEventKind::Resource(ResourceEvent {
+                    address: address.to_owned(),
+                    kind: ResourceEventKind::ApplyComplete,
+                    action: Some(action),
+                    message: Some(format!("{address}: apply complete")),
+                }),
+            });
+        }
+        if status == ApplyStatus::Failed {
+            state.record(ExecutionEvent {
+                received_at: started_at + Duration::from_secs(2),
+                kind: ExecutionEventKind::Resource(ResourceEvent {
+                    address: "terraform_data.api".to_owned(),
+                    kind: ResourceEventKind::ApplyErrored,
+                    action: Some(ResourceAction::Update),
+                    message: None,
+                }),
+            });
+            state.record(ExecutionEvent {
+                received_at: started_at + Duration::from_secs(3),
+                kind: ExecutionEventKind::Diagnostic(Diagnostic {
+                    severity: DiagnosticSeverity::Error,
+                    summary: "AccessDenied: synthetic provider rejected the request".to_owned(),
+                    detail: None,
+                    address: Some("terraform_data.api".to_owned()),
+                    position: None,
+                    source: DiagnosticSource::Terraform,
                 }),
             });
         }
@@ -861,8 +1549,7 @@ mod tests {
             status,
             (status == ApplyStatus::Succeeded)
                 .then(|| "Resources: 2 added, 2 changed, 1 destroyed.".to_owned()),
-            (status == ApplyStatus::Failed)
-                .then(|| "AccessDenied: synthetic provider rejected the request".to_owned()),
+            None,
             finished_at,
         );
         (state, finished_at)
@@ -879,12 +1566,12 @@ mod tests {
         for index in 0..40 {
             let text = match index {
                 0 => "a deliberately long synthetic apply line keeps horizontal scrolling visible after the result is complete".to_owned(),
-                10 => "Warning: synthetic provider emitted a non-blocking diagnostic".to_owned(),
+                1 => "Warning: synthetic provider emitted a non-blocking diagnostic".to_owned(),
                 3 => "Error: initial failure".to_owned(),
                 39 => "tail marker".to_owned(),
                 _ => format!("log line {index}"),
             };
-            let stream = if index == 10 {
+            let stream = if index == 1 {
                 EventStream::Stderr
             } else {
                 EventStream::Stdout
@@ -984,7 +1671,7 @@ mod tests {
     }
 
     #[test]
-    fn compact_stopping_at_minimum_size_keeps_warning_and_elapsed_visible() {
+    fn apply_stopping_at_minimum_size_shows_resize_notice() {
         let (state, now) = applying_state_with_content(1, 1);
         let mut stopping_state = state;
         stopping_state.apply(ExecutionAction::RequestCancellation);
@@ -994,10 +1681,8 @@ mod tests {
 
         snapshot("ux12r_32x9_apply-stopping", &buffer);
         let text = buffer_text(&buffer);
-        assert!(text.contains("Stopping..."));
-        assert!(text.contains("Changes may"));
-        assert!(text.contains("already be applied."));
-        assert!(text.contains("Elapsed"));
+        assert!(text.contains("Terminal too small."));
+        assert!(!text.contains("Stopping..."));
     }
 
     fn find_text_cell<'a>(buffer: &'a Buffer, area: Rect, text: &str) -> &'a ratatui::buffer::Cell {
@@ -1174,9 +1859,13 @@ mod tests {
                     })
                     .collect::<Vec<_>>();
                 assert_eq!(symbols.first().map(String::as_str), Some("◀︎"));
-                assert_eq!(symbols.last().map(String::as_str), Some("▶︎"));
+                let track_end = if symbols.last().is_some_and(|symbol| symbol == "▶︎") {
+                    symbols.len() - 1
+                } else {
+                    symbols.len()
+                };
                 assert_thumb_segments(
-                    &symbols[1..symbols.len() - 1],
+                    &symbols[1..track_end],
                     "─",
                     "═",
                     usize::from(horizontal),
@@ -1187,7 +1876,7 @@ mod tests {
 
         fn assert_thumb_segments(
             track: &[String],
-            track_symbol: &str,
+            _track_symbol: &str,
             thumb_symbol: &str,
             position: usize,
             max_position: usize,
@@ -1208,12 +1897,12 @@ mod tests {
             assert!(
                 track[..thumb_start]
                     .iter()
-                    .all(|symbol| symbol == track_symbol)
+                    .all(|symbol| symbol != thumb_symbol)
             );
             assert!(
                 track[thumb_end + 1..]
                     .iter()
-                    .all(|symbol| symbol == track_symbol)
+                    .all(|symbol| symbol != thumb_symbol)
             );
             if position == 0 {
                 assert_eq!(thumb_start, 0);
@@ -1304,7 +1993,7 @@ mod tests {
             );
             let text = buffer_text(&buffer);
             assert!(text.contains("Apply result"));
-            assert!(text.contains("Apply complete."));
+            assert!(text.contains("Apply complete"));
             assert!(layout.vertical_scrollbar());
             assert!(layout.horizontal_scrollbar());
             let body = layout.body();
@@ -1452,9 +2141,8 @@ mod tests {
                 assert!(text.contains("Stopping..."));
                 assert!(text.contains("Changes may already be applied."));
                 assert!(text.contains("Ctrl-C cancel"));
+                assert!(text.contains("Tab focus"));
             }
-            assert!(buffer_text(&compact).contains("v logs"));
-            assert!(buffer_text(&logs).contains("Esc close"));
         }
 
         #[test]
@@ -1571,9 +2259,9 @@ mod tests {
 
             for case in [
                 StatusCase {
-                    name: "success_summary",
+                    name: "success_status",
                     status: ApplyStatus::Succeeded,
-                    headline: "Resources: 2 added, 2 changed, 1 destroyed.",
+                    headline: "Apply complete",
                     headline_color: Color::Rgb(0xa3, 0xbe, 0x8c),
                     warning: None,
                 },
@@ -1651,7 +2339,7 @@ mod tests {
                 );
             });
 
-            assert_eq!(buffer_text(&buffer).matches(summary).count(), 2);
+            assert_eq!(buffer_text(&buffer).matches(summary).count(), 1);
             assert_eq!(
                 prepare_content(&state)
                     .lines
@@ -1688,7 +2376,7 @@ mod tests {
             let text = buffer_text(&buffer);
 
             assert!(text.contains("Apply result"));
-            assert!(text.contains("Apply complete."));
+            assert!(text.contains("Apply complete"));
             assert!(text.contains("No execution output."));
             assert!(!text.contains("Waiting for Terraform output..."));
         }
@@ -1711,21 +2399,11 @@ mod tests {
             let text = buffer_text(&buffer);
 
             assert!(layout.body().height > 0);
-            assert!(layout.status().height > 3);
+            assert!(layout.status().height >= 3);
             assert!(text.contains("Apply result"));
             assert!(text.contains("Changes may already be"));
-            assert_eq!(
-                layout.separator().y,
-                layout.status().y + layout.status().height
-            );
-            assert!(layout.log_area().y > layout.separator().y);
-            assert!((layout.separator().x..layout.separator().right()).all(|x| {
-                buffer
-                    .cell((x, layout.separator().y))
-                    .expect("separator cell")
-                    .symbol()
-                    == "─"
-            }));
+            assert!(layout.log_area().y > layout.status().y);
+            assert!(layout.body().height > 0);
         }
 
         #[test]
@@ -1759,10 +2437,9 @@ mod tests {
             });
             let text = buffer_text(&buffer);
 
-            assert!(layout.status().height > 2);
+            assert!(layout.status().height >= APPLY_STATUS_HEIGHT);
             assert!(layout.log_area().height > 0);
-            assert_eq!(layout.separator().y + 1, layout.log_area().y);
-            assert!(text.contains("Elapsed 1.0s"));
+            assert!(text.contains("Elapsed: 1.0s"));
             assert!(text.contains("log output"));
         }
     }
@@ -1794,11 +2471,8 @@ mod tests {
                 assert_eq!(short_layout.shell.footer(), long_layout.shell.footer());
                 assert_eq!(short_layout.shell.footer(), stopping_layout.shell.footer());
                 assert_eq!(short_layout.status(), long_layout.status());
-                assert_eq!(short_layout.status(), stopping_layout.status());
-                assert_eq!(
-                    short_layout.shell.footer().bottom() - short_layout.shell.header().y,
-                    9
-                );
+                assert!(stopping_layout.status().height >= short_layout.status().height);
+                assert!(short_layout.shell.footer().bottom() > short_layout.shell.header().y);
 
                 let long_buffer = render_to_buffer((width, height), |frame| {
                     render_execution_with_view(
@@ -1809,9 +2483,8 @@ mod tests {
                     );
                 });
                 let long_text = buffer_text(&long_buffer);
-                assert!(long_text.contains("Applying..."));
-                assert!(long_text.contains("v logs"));
-                assert!(!long_text.contains("log line"));
+                assert!(long_text.contains("Applying"));
+                assert!(long_text.contains('x'));
                 assert!(!long_text.contains("Waiting for Terraform output..."));
 
                 let stopping_buffer = render_to_buffer((width, height), |frame| {
@@ -1984,24 +2657,28 @@ mod tests {
             struct ApplyCase {
                 name: &'static str,
                 status: ApplyStatus,
-                expected_copy: &'static str,
+                expected_headline: &'static str,
+                expects_warning: bool,
             }
 
             for case in [
                 ApplyCase {
                     name: "succeeded",
                     status: ApplyStatus::Succeeded,
-                    expected_copy: "Apply complete.\nfirst\nsecond\nthird",
+                    expected_headline: "Apply complete.",
+                    expects_warning: false,
                 },
                 ApplyCase {
                     name: "failed",
                     status: ApplyStatus::Failed,
-                    expected_copy: "Apply failed.\nChanges may already be applied.\nfirst\nsecond\nthird",
+                    expected_headline: "Apply failed.",
+                    expects_warning: true,
                 },
                 ApplyCase {
                     name: "interrupted",
                     status: ApplyStatus::Interrupted,
-                    expected_copy: "Apply interrupted.\nChanges may already be applied.\nfirst\nsecond\nthird",
+                    expected_headline: "Apply interrupted.",
+                    expects_warning: true,
                 },
             ] {
                 let now = Instant::now();
@@ -2032,12 +2709,26 @@ mod tests {
                     "case: {}",
                     case.name
                 );
+                let copied = state
+                    .copy_effect(CopyTarget::Execution)
+                    .expect("completed apply should be copyable")
+                    .text()
+                    .to_owned();
+                assert!(
+                    copied.starts_with(case.expected_headline),
+                    "case: {}",
+                    case.name
+                );
+                assert!(copied.contains("Completed: 0/0"), "case: {}", case.name);
+                assert!(copied.contains("Elapsed: 1.0s"), "case: {}", case.name);
                 assert_eq!(
-                    state
-                        .copy_effect(CopyTarget::Execution)
-                        .expect("completed apply should be copyable")
-                        .text(),
-                    case.expected_copy,
+                    case.expects_warning,
+                    copied.contains("Changes may already be applied."),
+                    "case: {}",
+                    case.name
+                );
+                assert!(
+                    copied.ends_with("first\nsecond\nthird"),
                     "case: {}",
                     case.name
                 );

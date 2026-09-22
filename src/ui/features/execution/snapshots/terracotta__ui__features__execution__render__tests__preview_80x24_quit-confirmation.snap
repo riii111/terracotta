@@ -6,22 +6,22 @@ expression: buffer_text(buffer)
  Terracotta | main
 
  ┌Apply result────────────────────────────────────────────────────────────────┐
- │Resources: 2 added, 2 changed, 1 destroyed.                                 │
- │Elapsed 4.0s                                                                │
- │────────────────────────────────────────────────────────────────────────────│
- │terraform apply review.tfplan                                               │
- │terraform_data.api: Modifying... [id=api-20260920]                          │
- │terraform_data.api: Modifications complete after 1s [id=api-20260920]       │
- │terraform_data.worker: Replacing... [id=worker-20260920]                    │
- │terraform_data.worker: Destruction complete after 1s                        │
- │terraform_data.worker: Creation complete after 1s [id=worker-20260920]      │
- │terraform_data.old: Destruction complete after 1s                           │
- │terraform_data.new: Creation complete after 1s [id=new-20260920]            │
- │A deliberately long synthetic apply line keeps horizontal scrolling visible │
- │Warning: synthetic provider emitted a non-blocking diagnostic               │
- │Apply finished successfully.                                                │
- │Outputs: endpoint = synthetic                                               │
- │Apply log remains in receive order.                                         │
- │◀︎═══════════════════════════════════════════════════════───────────────────▶︎│
+ │Apply complete    Completed: 4/4    Elapsed: 4.0s                           │
+ │Failed: 0    Incomplete: 0    Skipped: 0    Previous: local success         │
+ │┌Targets *─────────────────────────────────────────────────────────────────┐│
+ ││> All logs                                                                ││
+ ││  Resource                  Status     Action     Elapsed  Previous       ││
+ ││  terraform_data.api        Completed  update        1.0s    11.0s        ││
+ ││  terraform_data.worker     Completed  delete/create    1.0s       --     ││
+ ││  terraform_data.old        Completed  delete        1.0s       --        ││
+ ││  terraform_data.new        Completed  create        1.0s     4.0s        ││
+ │└──────────────────────────────────────────────────────────────────────────┘│
+ │┌Logs: All logs────────────────────────────────────────────────────────────┐│
+ ││Warning: synthetic provider emitted a non-blocking diagnostic            ▲││
+ ││Apply finished successfully.                                             │││
+ ││Outputs: endpoint = synthetic                                            │││
+ ││Apply log remains in receive order.                                      ┃││
+ ││◀︎════════════════════════════════════════════════════────────────────────▶︎││
+ │└──────────────────────────────────────────────────────────────────────────┘│
  └────────────────────────────────────────────────────────────────────────────┘
  Quit Terracotta?   [Enter] Quit   [Esc] Cancel

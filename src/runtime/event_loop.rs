@@ -12,7 +12,9 @@ use ratatui::{DefaultTerminal, Terminal, backend::Backend, layout::Rect};
 use crate::{
     app::{
         copy::{CopyEffect, CopyResult, CopyTarget},
-        execution::{ExecutionContextValue, ExecutionStage, ExecutionState, Tool},
+        execution::{
+            ExecutionContextValue, ExecutionStage, ExecutionState, ExecutionTargetState, Tool,
+        },
         review::PlanReviewMessage,
         session::{self, Action, Effect, SessionOutcome, SessionState},
     },
@@ -407,6 +409,33 @@ fn handle_execution_key_event<B: Backend>(
         match execution::execution_key_to_input(key, state.stage(), execution_view.logs_open()) {
             Some(execution::ExecutionInput::Quit) => Some(Action::Quit),
             Some(execution::ExecutionInput::Action(action)) => Some(Action::Execution(action)),
+            Some(execution::ExecutionInput::SelectTarget(direction)) => {
+                let targets = state
+                    .progress()
+                    .display_target_indices(state.result().is_some());
+                execution_view.select_target(direction, &targets);
+                let size = terminal.size()?;
+                let layout = execution::execution_layout_with_view(
+                    Rect::new(0, 0, size.width, size.height),
+                    state,
+                    *execution_view,
+                );
+                if let Some(position) = execution_view
+                    .selected_target()
+                    .and_then(|selected| targets.iter().position(|index| *index == selected))
+                {
+                    execution_view.ensure_target_visible(
+                        position,
+                        layout.target_body().height,
+                        layout.target_max_vertical(),
+                    );
+                }
+                None
+            }
+            Some(execution::ExecutionInput::ToggleFocus) => {
+                execution_view.toggle_focus();
+                None
+            }
             Some(execution::ExecutionInput::OpenLogs) => {
                 execution_view.open_logs();
                 None
@@ -426,6 +455,19 @@ fn handle_execution_key_event<B: Backend>(
                     state,
                     *execution_view,
                 );
+                if state.is_apply() && !execution_view.logs_open() {
+                    let (current, max) = execution::execution_target_scroll_position_with_view(
+                        *execution_view,
+                        &layout,
+                    );
+                    execution_view.apply_target_scroll(
+                        scroll,
+                        current,
+                        max,
+                        layout.target_body().height,
+                    );
+                    return Ok(None);
+                }
                 let (current_vertical, _) =
                     execution::execution_scroll_position_with_view(state, *execution_view, &layout);
                 match scroll {
@@ -561,8 +603,26 @@ pub(super) fn update_session(
     let entered_apply = !was_apply && state.apply().is_some();
     let apply_result_ready =
         !had_apply_result && state.apply().is_some_and(|apply| apply.result().is_some());
-    if entered_apply || apply_result_ready {
+    if entered_apply {
         *execution_view = execution::ExecutionViewState::default();
+        if let Some(apply) = state.apply() {
+            let targets = apply.progress().display_target_indices(false);
+            execution_view.initialize_target_selection(&targets);
+        }
+    } else if apply_result_ready {
+        *execution_view = execution::ExecutionViewState::default();
+        if let Some(apply) = state.apply() {
+            execution_view.select_result_target(
+                &apply.progress().display_target_indices(true),
+                apply.progress().first_bound_failed_index(),
+                apply
+                    .progress()
+                    .first_bound_failed_index()
+                    .and_then(|index| apply.progress().targets().get(index))
+                    .and_then(ExecutionTargetState::first_error_line),
+                apply.stage() == ExecutionStage::ApplySucceeded,
+            );
+        }
     }
     effect
 }
@@ -2245,7 +2305,7 @@ mod tests {
             confirmation_view,
             now,
         );
-        assert!(!compact_text.contains("new tail marker"));
+        assert!(compact_text.contains("new tail marker"));
 
         assert_eq!(
             handle_key_event(
@@ -2430,6 +2490,18 @@ mod tests {
             render_apply_to_text(state, terminal, *view, review_view, confirmation_view, now);
         assert!(text.contains("tail apply marker"));
 
+        assert_eq!(
+            handle_key_event(
+                terminal,
+                state,
+                view,
+                review_view,
+                confirmation_view,
+                KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            )
+            .expect("tab should focus logs after result"),
+            None
+        );
         for key in [
             KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
             KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),

@@ -5,7 +5,7 @@ use terracotta::run_synthetic_execution;
 fn main() -> io::Result<()> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Err(io::Error::other(
-            "the execution example requires an interactive terminal",
+            "the execution progress example requires an interactive terminal",
         ));
     }
 

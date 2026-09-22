@@ -15,6 +15,7 @@ Review Terraform's familiar diff and apply the exact plan you reviewed. The UI a
 
 - **Plan review**: Full plan display, scrolling, and keyword filtering
 - **Saved plan apply**: Target directory and workspace confirmation, with no replanning
+- **Apply progress**: Resource status and its log stay visible together; `Previous` shows local successful history
 - **Clipboard**: Copy the full plan or apply results
 
 ## Usage
@@ -36,6 +37,12 @@ terracotta apply
 `terracotta apply` reviews the saved plan and asks for confirmation before
 applying that exact plan. It does not re-plan after review. A plan that has no
 changes exits successfully without showing an apply confirmation.
+
+During apply, the upper panel lists resources and the lower panel shows the
+selected resource's log. Use `↑`/`↓` or `j`/`k` to select a resource, `Tab` to
+switch between the resource list and log, and select `All logs` to read output
+that is not tied to a resource. The completed result keeps the counts and
+elapsed time visible; `q` closes it and `y` copies the result and full log.
 
 `terracotta terraform <arguments>` runs Terraform commands. `terracotta plan` and
 `terracotta apply` are shortcuts.
