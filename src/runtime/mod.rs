@@ -10,6 +10,7 @@ use std::{
     time::Instant,
 };
 
+mod environments;
 mod event_loop;
 pub(crate) mod invocation;
 mod synthetic;

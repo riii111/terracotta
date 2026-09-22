@@ -11,7 +11,7 @@ use std::{
 use std::os::unix::fs::OpenOptionsExt;
 
 use crate::app::execution::{
-    ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionPhase, Tool,
+    Diagnostic, ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionPhase, Tool,
 };
 use crate::app::review::PlanReview;
 use crate::infra::CancellationToken;
@@ -101,6 +101,56 @@ pub(crate) fn run_passthrough_plan(
         },
         status,
     ))
+}
+
+pub(crate) fn run_environment_plan(
+    tool: Tool,
+    root: &Path,
+    plan_arguments: &[OsString],
+    cancellation: &CancellationToken,
+    runner: &dyn ProcessRunner,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<bool, TerraformExecutionError> {
+    use super::command::{interrupted_error, non_zero_error, run_command_with_events};
+    let mut initialized = super::init::needed(root);
+    if initialized {
+        initialize_environment(tool, root, cancellation, runner, diagnostics)?;
+    }
+    let mut arguments = vec![OsString::from("plan")];
+    arguments.extend_from_slice(plan_arguments);
+    arguments.extend(["-json", "-input=false", "-detailed-exitcode"].map(OsString::from));
+    loop {
+        let mut attempt_diagnostics = Vec::new();
+        let process = run_command_with_events(
+            tool,
+            root,
+            TerraformCommand::Plan,
+            &arguments,
+            cancellation,
+            runner,
+            Some(&mut |event| {
+                if let ExecutionEventKind::Diagnostic(diagnostic) = event.kind {
+                    attempt_diagnostics.push(diagnostic);
+                }
+            }),
+        )?;
+        let reinit = attempt_diagnostics.iter().any(requires_init);
+        if process.interrupted {
+            diagnostics.extend(attempt_diagnostics);
+            return Err(interrupted_error(tool, TerraformCommand::Plan, process));
+        }
+        if process.status.is_some_and(ProcessStatus::is_plan_success) {
+            diagnostics.extend(attempt_diagnostics);
+            return Ok(process.status == Some(ProcessStatus::Exited(2)));
+        }
+        if !initialized && reinit {
+            initialized = true;
+            initialize_environment(tool, root, cancellation, runner, diagnostics)?;
+        } else {
+            diagnostics.extend(attempt_diagnostics);
+            return Err(non_zero_error(tool, TerraformCommand::Plan, process));
+        }
+    }
 }
 
 pub(crate) fn saved_plan_for_plan(
@@ -222,6 +272,37 @@ pub(crate) fn read_saved_plan_review(
     .with_apply_allowed(apply_entry)
     .with_apply_entry(apply_entry);
     Ok(review)
+}
+
+fn initialize_environment(
+    tool: Tool,
+    root: &Path,
+    cancellation: &CancellationToken,
+    runner: &dyn ProcessRunner,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<(), TerraformExecutionError> {
+    let mut init_diagnostics = Vec::new();
+    let result = super::init::run(tool, root, cancellation, runner, &mut |event| {
+        if let ExecutionEventKind::Diagnostic(diagnostic) = event.kind {
+            init_diagnostics.push(diagnostic);
+        }
+    });
+    if result.is_err() {
+        diagnostics.extend(init_diagnostics);
+    }
+    result
+}
+
+fn requires_init(diagnostic: &Diagnostic) -> bool {
+    [
+        "Backend initialization required",
+        "Required plugins are not installed",
+        "Inconsistent dependency lock file",
+        "Module not installed",
+        "Module source has changed",
+    ]
+    .iter()
+    .any(|summary| diagnostic.summary.starts_with(summary))
 }
 
 impl Drop for SavedPlan {
@@ -430,7 +511,7 @@ mod tests {
     use super::test_support::{execute_plan, finish_plan, run_plan};
     use super::*;
     use crate::app::execution::{
-        Diagnostic, DiagnosticSource, EventStream, ProcessExitStatus, ProcessTermination,
+        DiagnosticSource, EventStream, ProcessExitStatus, ProcessTermination,
     };
     use crate::app::plan::Plan;
     use std::process::Command;

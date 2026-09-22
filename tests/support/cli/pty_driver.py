@@ -322,6 +322,50 @@ try:
         wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
         observe_current_or_wait("3/", "plan_position")
         exit_code = quit_with_enter()
+    elif scenario.startswith("env_"):
+        if scenario == "env_child_interrupt":
+            exit_code = wait_exit()
+        elif scenario in ("env_partial", "env_cancel"):
+            wait_parts(["Ready: 1/2", "Running", "z-slow"], "partial_results")
+            send_key(b"\r")
+            wait_new("terraform_data.api", "ready_review_while_running")
+            send_key(b"a")
+            send_key(b"\x1b")
+            wait_new("Environment plans", "back_to_environments")
+            if scenario == "env_cancel":
+                wait_file(os.environ["TERRACOTTA_FAKE_PID_PATH"], "active_process")
+                send_key(b"q")
+                wait_new("Stop acquiring", "cancel_confirmation")
+                send_key(b"\x1b")
+                wait_new("Environment plans", "continue_acquisition")
+                send_key(b"q")
+                wait_new("Stop acquiring", "cancel_again")
+                send_key(b"\r")
+                exit_code = wait_exit()
+            else:
+                open(os.path.join(root, "z-slow/release-plan"), "w").close()
+                wait_new("Ready: 2/2", "all_ready")
+                send_key(b"q")
+                exit_code = wait_exit()
+        elif scenario == "env_retry":
+            wait_parts(["Ready: 1/2", "Error"], "failed_environment")
+            send_key(b"j")
+            wait_new("Missing required variable", "error_diagnostic")
+            send_key(b"r")
+            wait_new("Ready: 2/2", "retry_success")
+            send_key(b"q")
+            exit_code = wait_exit()
+        else:
+            expected = "Ready: 1/2" if scenario in ("env_init_failure", "env_excluded", "env_reinit_failure") else "Ready: 2/2"
+            observe_current_or_wait(expected, "final_environment_results")
+            if scenario in ("env_init_failure", "env_reinit_failure"):
+                send_key(b"j")
+                observe_current_or_wait("Error", "failed_environment")
+            if scenario == "env_detailed":
+                send_key(b"\r")
+                wait_new("chosen-production", "selected_workspace")
+            send_key(b"q")
+            exit_code = wait_exit()
     elif scenario == "filter_navigation":
         wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
         observe_current_or_wait("3/", "plan_position")

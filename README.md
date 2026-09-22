@@ -55,7 +55,7 @@ to keep the usual command name. The Terraform equivalent is
 The review UI opens for interactive local `plan` and `apply` invocations,
 including supported options and the selected tool's `TF_CLI_ARGS*`. CI, redirected
 streams, HCP configurations, and unsupported options are delegated unchanged.
-Terracotta does not run `init` implicitly.
+Single-environment commands do not run `init` implicitly.
 
 In the review screen, press `s` to open the single-environment change overview.
 Use `↑`/`↓` or `j`/`k` to select a row, `Space` to expand repeated changes,
@@ -67,6 +67,15 @@ and copy always use the complete reviewed plan.
 When an interactive `plan` starts in a directory without configuration files,
 Terracotta inspects its immediate child directories for backend or cloud
 configuration. HCP candidates are excluded and invalid configurations are
-reported. Multi-environment plan execution is not available yet; run from an
-individual environment directory to review its plan. This discovery path rejects
-`-out`, `-generate-config-out`, and a shared `TF_DATA_DIR` before running commands.
+reported. Local environments run one at a time in path order, using their current
+workspace. Each environment initializes noninteractively when needed; missing
+variables or initialization failures appear as `Error` while other plans continue.
+Select an environment with `↑`/`↓`, press `Enter` to review a ready plan, and use
+`Esc` to return. Press `r` to retry the selected `Error`, or `q` to stop acquisition
+and discard the temporary plans. This mode supports plan review only.
+
+This discovery path rejects `-out`, `-generate-config-out`, and a shared
+`TF_DATA_DIR` before running commands. Relative `-var-file` paths resolve from the
+parent directory. The exit code is 130 when interrupted, 1 if any environment has
+an error or is excluded, and otherwise 2 for changes with `-detailed-exitcode`,
+or 0 without it.

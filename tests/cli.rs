@@ -36,6 +36,191 @@ mod pty_tests {
 
     static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
+    mod environment_plans {
+        use super::*;
+
+        fn fixture(names: &[&str]) -> Fixture {
+            let fixture = Fixture::new();
+            fs::remove_file(fixture.root.join("main.tf")).unwrap();
+            for name in names {
+                let directory = fixture.root.join(name);
+                fs::create_dir(&directory).unwrap();
+                fs::write(
+                    directory.join("main.tf"),
+                    "terraform {\n backend \"local\" {}\n}",
+                )
+                .unwrap();
+            }
+            fixture
+        }
+
+        fn calls(fixture: &Fixture, command: &str) -> Vec<String> {
+            fs::read_to_string(&fixture.invocations)
+                .unwrap()
+                .lines()
+                .filter_map(|line| {
+                    let (directory, arguments) = line.split_once('|').unwrap();
+                    (arguments.split_whitespace().next() == Some(command)).then(|| {
+                        Path::new(directory)
+                            .file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .into_owned()
+                    })
+                })
+                .collect()
+        }
+
+        fn assert_clean(fixture: &Fixture, result: &PtyResult) {
+            assert!(result.restored);
+            let paths = fs::read_to_string(fixture.plan_path_record.with_extension("all")).unwrap();
+            assert!(
+                paths.lines().all(|path| !Path::new(path).exists()),
+                "{paths}"
+            );
+            assert!(calls(fixture, "apply").is_empty());
+            assert_eq!(
+                fs::read_dir(fixture.directory.join("owned-plans"))
+                    .unwrap()
+                    .count(),
+                0
+            );
+        }
+
+        #[test]
+        fn sequential_plans_preserve_options_and_clean_all_results() {
+            for (scenario, expected, plan_count, init_count) in [
+                ("env_success", 0, 2, 2),
+                ("env_detailed", 2, 2, 2),
+                ("env_init_failure", 1, 1, 2),
+                ("env_excluded", 1, 1, 1),
+                ("env_reinit", 0, 3, 2),
+                ("env_reinit_failure", 1, 3, 2),
+            ] {
+                let fixture = fixture(&["a-ready", "b-other"]);
+                let other = fixture.root.join("b-other");
+                match scenario {
+                    "env_init_failure" => {
+                        fs::write(other.join("fail-init"), "").unwrap();
+                    }
+                    "env_excluded" => {
+                        fs::write(other.join("main.tf"), "terraform {\n cloud {}\n}").unwrap();
+                    }
+                    "env_reinit" | "env_reinit_failure" => {
+                        fs::create_dir(other.join(".terraform")).unwrap();
+                        fs::write(
+                            other.join(".terraform/terraform.tfstate"),
+                            r#"{"backend":{"type":"local"}}"#,
+                        )
+                        .unwrap();
+                        fs::write(other.join("require-init"), "").unwrap();
+                        if scenario == "env_reinit_failure" {
+                            fs::write(other.join("always-reinit"), "").unwrap();
+                        }
+                    }
+                    _ => {}
+                }
+                let args = if scenario == "env_detailed" {
+                    vec![
+                        "-detailed-exitcode",
+                        "-parallelism=3",
+                        "-input=true",
+                        "-var-file=common.tfvars",
+                    ]
+                } else {
+                    Vec::new()
+                };
+                let result = fixture.run_with_arguments(
+                    scenario,
+                    120,
+                    40,
+                    "tofu",
+                    &[&["plan"], args.as_slice()].concat(),
+                );
+
+                assert_eq!(result.exit_code, expected, "{scenario}");
+                let plans = calls(&fixture, "plan");
+                assert_eq!(plans[0], "a-ready");
+                assert_eq!(plans.len(), plan_count, "{scenario}");
+                assert_eq!(calls(&fixture, "init").len(), init_count, "{scenario}");
+                let invocations = fs::read_to_string(&fixture.invocations).unwrap();
+                for line in invocations.lines().filter(|line| line.contains("|plan ")) {
+                    assert!(line.ends_with("-json -input=false -detailed-exitcode"));
+                    if scenario == "env_detailed" {
+                        assert!(line.contains("-parallelism=3"));
+                        assert!(line.contains(&format!(
+                            "-var-file={}/common.tfvars",
+                            fixture.root.canonicalize().unwrap().display()
+                        )));
+                    }
+                }
+                assert!(fixture.invoked_tools().iter().all(|tool| tool == "tofu"));
+                assert!(
+                    fixture
+                        .forwarded_cli_arguments()
+                        .iter()
+                        .all(|line| line.ends_with('='))
+                );
+                assert_clean(&fixture, &result);
+            }
+        }
+
+        #[test]
+        fn interrupted_child_stops_the_queue_and_returns_130() {
+            let fixture = fixture(&["a-interrupted", "z-pending"]);
+            fs::write(fixture.root.join("a-interrupted/interrupt-plan"), "").unwrap();
+
+            let result = fixture.run("env_child_interrupt", 80, 24);
+
+            assert_eq!(result.exit_code, 130);
+            assert_eq!(calls(&fixture, "plan"), ["a-interrupted"]);
+            assert_clean(&fixture, &result);
+        }
+
+        #[test]
+        fn failed_environment_retries_without_replanning_ready_environment() {
+            let fixture = fixture(&["a-ready", "b-error"]);
+            fs::write(fixture.root.join("b-error/fail-plan"), "").unwrap();
+
+            let result =
+                fixture.run_with_arguments("env_retry", 120, 40, "plan", &["-detailed-exitcode"]);
+
+            assert_eq!(result.exit_code, 2);
+            assert_eq!(calls(&fixture, "plan"), ["a-ready", "b-error", "b-error"]);
+            assert_eq!(calls(&fixture, "init"), ["a-ready", "b-error"]);
+            assert_clean(&fixture, &result);
+        }
+
+        #[test]
+        fn ready_plan_is_reviewable_while_later_environment_runs() {
+            for (scenario, expected) in [("env_partial", 0), ("env_cancel", 130)] {
+                let fixture = fixture(&["a-ready", "z-slow"]);
+                fs::write(fixture.root.join("z-slow/slow-plan"), "").unwrap();
+
+                let result = fixture.run(scenario, 80, 24);
+
+                assert_eq!(result.exit_code, expected, "{scenario}");
+                assert!(result.observed.contains("ready_review_while_running"));
+                assert_eq!(calls(&fixture, "plan"), ["a-ready", "z-slow"]);
+                assert_clean(&fixture, &result);
+                if scenario == "env_cancel" {
+                    let pid: i32 = fs::read_to_string(&fixture.pid_record)
+                        .unwrap()
+                        .trim()
+                        .parse()
+                        .unwrap();
+                    // SAFETY: signal zero only checks whether the recorded child still exists.
+                    assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+                    assert!(
+                        fs::read_to_string(&fixture.signal_log)
+                            .unwrap()
+                            .contains("plan_present=True")
+                    );
+                }
+            }
+        }
+    }
+
     const PLAN_JSON: &str = r#"{
   "format_version": "1.0",
   "applyable": true,
@@ -223,6 +408,16 @@ Plan: 0 to add, 3 to change, 0 to destroy.
                 .env_remove("TF_CLI_ARGS_plan")
                 .env("TF_CLI_CONFIG_FILE", "/dev/null")
                 .env("CHECKPOINT_DISABLE", "1");
+            if scenario.starts_with("env_") {
+                let plans = self.directory.join("owned-plans");
+                fs::create_dir(&plans).unwrap();
+                process.env("TMPDIR", plans).env_remove("TF_DATA_DIR");
+            }
+            if scenario == "env_detailed" {
+                process
+                    .env("TF_WORKSPACE", "chosen-production")
+                    .env("TF_CLI_ARGS", "-parallelism=9");
+            }
             if scenario == "panic" {
                 process.env("TERRACOTTA_TEST_PANIC_AFTER_DRAW", "1");
             }

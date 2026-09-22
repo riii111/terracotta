@@ -11,6 +11,10 @@ use ratatui::DefaultTerminal;
 use crate::{
     app::{
         copy::{CopyResult, CopyTarget},
+        environments::{
+            Environment, EnvironmentAvailability, EnvironmentIdentity, EnvironmentSession,
+            PlanResult,
+        },
         execution::{
             ApplyStatus, EventStream, ExecutionAction, ExecutionContext, ExecutionEvent,
             ExecutionEventKind, ExecutionLogLine, ExecutionPhase, ExecutionState,
@@ -26,12 +30,18 @@ use crate::{
     },
     ui::{
         QuitConfirmationInput,
-        features::{execution, overview, plan_review},
+        features::{
+            environments::{EnvironmentInput, EnvironmentView},
+            execution, overview, plan_review,
+        },
         quit_confirmation_key_to_input,
     },
 };
 
 pub(super) fn run_synthetic() -> io::Result<()> {
+    if std::env::args().any(|argument| argument == "--environments") {
+        return run_synthetic_environments();
+    }
     let mut state = SessionState::Review(Box::new(synthetic_review()));
     let mut view = plan_review::PlanReviewViewState::default();
     let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
@@ -680,6 +690,67 @@ fn resource_event(
         kind,
         action: Some(action),
         message: Some(message.to_owned()),
+    })
+}
+
+fn run_synthetic_environments() -> io::Result<()> {
+    let mut state = EnvironmentSession::new(
+        ["dev", "stg", "prod"]
+            .into_iter()
+            .map(|name| Environment {
+                tool: Tool::Terraform,
+                availability: EnvironmentAvailability::Available(EnvironmentIdentity {
+                    directory: PathBuf::from(format!("/example/{name}")),
+                    workspace: "default".to_owned(),
+                }),
+            })
+            .collect(),
+        true,
+    );
+    let first = state.start_next().expect("first environment");
+    state.complete(
+        first,
+        PlanResult::Ready {
+            review: Box::new(
+                synthetic_review()
+                    .review()
+                    .clone()
+                    .with_apply_allowed(false)
+                    .with_apply_entry(false),
+            ),
+            changed: true,
+        },
+        Vec::new(),
+    );
+    let second = state.start_next().expect("second environment");
+    state.complete(
+        second,
+        PlanResult::Error("Missing required variable. Set it before retrying.".to_owned()),
+        Vec::new(),
+    );
+    state.start_next();
+    let mut view = EnvironmentView::default();
+    ratatui::run(|terminal| {
+        loop {
+            terminal.draw(|frame| view.render(frame, &state))?;
+            if !event::poll(Duration::from_millis(100))? {
+                continue;
+            }
+            let Event::Key(key) = event::read()? else {
+                continue;
+            };
+            match view.handle_key(key, terminal.size()?, &state) {
+                Some(EnvironmentInput::Quit | EnvironmentInput::Interrupt) => break,
+                Some(EnvironmentInput::Retry(index)) => {
+                    state.retry(index);
+                }
+                Some(EnvironmentInput::Review(index, action)) => {
+                    state.update_review(index, *action, Instant::now());
+                }
+                None => {}
+            }
+        }
+        Ok(())
     })
 }
 

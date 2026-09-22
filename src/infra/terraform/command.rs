@@ -23,6 +23,7 @@ const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TerraformCommand {
+    Init,
     Plan,
     Show,
     Apply,
@@ -34,6 +35,7 @@ pub(crate) enum TerraformCommand {
 impl Display for TerraformCommand {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
+            Self::Init => "init",
             Self::Plan => "plan",
             Self::Show => "show",
             Self::Apply => "apply",
@@ -171,6 +173,17 @@ pub(crate) struct TerraformExecutionError {
 }
 
 impl TerraformExecutionError {
+    pub(crate) const fn is_interrupted(&self) -> bool {
+        matches!(
+            self.kind,
+            TerraformExecutionErrorKind::Interrupted { .. }
+                | TerraformExecutionErrorKind::NonZero {
+                    status: ProcessStatus::Signaled | ProcessStatus::Exited(130),
+                    ..
+                }
+        )
+    }
+
     pub(super) const fn new_for_tool(tool: Tool, kind: TerraformExecutionErrorKind) -> Self {
         Self {
             tool,

@@ -77,7 +77,8 @@ fn execute(tool: Tool, arguments: &[OsString]) -> io::Result<ExitCode> {
                 &CancellationToken::new(),
                 &terraform::SystemProcessRunner,
             )?;
-            return report_discovery(&environments);
+            validate_discovery(&environments)?;
+            return super::environments::run(&invocation, environments);
         }
     }
     let variable_sources = invocation.variable_sources()?;
@@ -114,38 +115,31 @@ fn select_entry(invocation: &mut Invocation, data_dir: Option<&OsStr>) -> io::Re
     Ok(Entry::Multiple)
 }
 
-fn report_discovery(environments: &[Environment]) -> io::Result<ExitCode> {
+fn validate_discovery(environments: &[Environment]) -> io::Result<()> {
     if environments.is_empty() {
         return Err(io::Error::other(
             "No environment candidates: no immediate child directory has a backend or cloud block.",
         ));
     }
-    for environment in environments {
-        let message = match &environment.availability {
-            EnvironmentAvailability::Available(identity) => format!(
-                "{}: {} workspace {}",
-                identity.directory.display(),
-                environment.tool.display_name(),
-                identity.workspace,
-            ),
-            EnvironmentAvailability::ExcludedHcp { directory } => {
-                format!("{}: Excluded: HCP execution", directory.display())
-            }
-            EnvironmentAvailability::Error { directory, message } => {
-                format!("{}: Error: {message}", directory.display())
-            }
-        };
-        super::report_error(&message);
-    }
     if !environments.iter().any(Environment::is_available) {
-        return Err(io::Error::other(
-            "No executable environments: all candidates are excluded or have errors.",
-        ));
+        let reasons = environments
+            .iter()
+            .map(|environment| match &environment.availability {
+                EnvironmentAvailability::ExcludedHcp { directory } => {
+                    format!("{}: Excluded: HCP execution", directory.display())
+                }
+                EnvironmentAvailability::Error { directory, message } => {
+                    format!("{}: Error: {message}", directory.display())
+                }
+                EnvironmentAvailability::Available(_) => unreachable!(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(io::Error::other(format!(
+            "No executable environments: all candidates are excluded or have errors.\n{reasons}"
+        )));
     }
-    // SBI05-02 owns init/plan execution and will consume these discovered targets.
-    Err(io::Error::other(
-        "Multiple-environment plan execution is not available yet. Run plan from an individual environment directory.",
-    ))
+    Ok(())
 }
 
 fn review_invocation(tool: Tool, arguments: &[OsString], root: &Path) -> Option<Invocation> {
