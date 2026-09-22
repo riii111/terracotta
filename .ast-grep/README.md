@@ -22,7 +22,7 @@ fn helper() {}
 mod support;
 ```
 
-The rule also catches `#[cfg(not(test))]` and compound conditions containing `test`. A `not(test)` item belongs to production code; keep it outside `tests` and reconsider selecting production implementations by test build mode.
+The rule also catches `#[cfg(not(test))]` and compound conditions containing `test`, including a production-only `mod tests`. Use a direct positive `test` predicate for the test entry. A `not(test)` item belongs to production code; keep it outside `tests` and reconsider selecting production implementations by test build mode.
 
 A named rstest case such as `#[case::up_arrow(Key::Up)]` is allowed on a function; an unnamed `#[case(Key::Up)]` is rejected. The `#[case]` marker on a function argument is allowed.
 

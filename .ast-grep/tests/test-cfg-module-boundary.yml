@@ -14,6 +14,9 @@ valid:
     #[cfg(all(test, unix))]
     mod tests {}
   - |-
+    #[cfg(all(unix, test))]
+    mod tests {}
+  - |-
     #[cfg(any(test, feature = "test-support"))]
     mod tests;
   # Same-line nested definitions remain inside the gated module.
@@ -77,6 +80,15 @@ invalid:
   - |-
     #[cfg(all(test, unix))]
     mod unix_tests {}
+  - |-
+    #[cfg(not(test))]
+    mod tests {}
+  - |-
+    #[cfg(all(not(test), unix))]
+    mod tests {}
+  - |-
+    #[cfg(not(not(test)))]
+    mod tests {}
   - |-
     #[cfg(any(test, feature = "test-support"))]
     mod test_support;
