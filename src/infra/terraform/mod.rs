@@ -3,11 +3,10 @@ mod command;
 pub(crate) mod configuration;
 mod events;
 mod line_buffer;
-// HCL parsing is dormant with Git attribution and remains covered by unit tests.
-#[cfg(test)]
-pub(crate) mod hcl;
 mod plan;
 mod show;
+#[cfg(test)]
+pub(in crate::infra) mod tests;
 mod version;
 mod workspace;
 
@@ -17,12 +16,3 @@ pub(crate) use plan::{
     PlanRun, SavedPlan, read_saved_plan_review, run_passthrough_plan, saved_plan_for_plan,
 };
 pub(crate) use workspace::read_workspace_with_arguments;
-
-#[cfg(test)]
-pub(crate) mod test_support {
-    pub(crate) use super::command::{
-        ProcessOutput, ProcessRunner, ProcessStatus, RunningProcess,
-        TerraformExecutionError as CommandTerraformExecutionError,
-    };
-    pub(crate) use super::plan::test_support::{PlanTestError, run_plan};
-}

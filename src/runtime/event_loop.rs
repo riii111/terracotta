@@ -711,7 +711,7 @@ mod tests {
             ApplyStatus, EventStream, ExecutionAction, ExecutionContext, ExecutionEvent,
             ExecutionEventKind, ExecutionLogLine,
         },
-        review::{PlanMetadata, PlanReview, test_support::plan_document},
+        review::{PlanMetadata, PlanReview, tests::support::plan_document},
         session::{ApplyConfirmationState, ReviewSessionState},
     };
     use crate::runtime::{WorkerGuard, finalize_ui_result};

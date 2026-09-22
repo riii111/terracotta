@@ -86,7 +86,7 @@ mod tests {
 
     use super::*;
     use crate::app::execution::{EventStream, ExecutionEventKind, ExecutionLogLine};
-    use crate::infra::terraform::test_support::{ProcessOutput, RunningProcess};
+    use crate::infra::terraform::tests::support::{ProcessOutput, RunningProcess};
 
     struct FakeRunner {
         response: RefCell<Option<(ProcessStatus, ProcessOutput)>>,

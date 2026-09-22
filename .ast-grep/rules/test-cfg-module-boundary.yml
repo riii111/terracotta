@@ -1,7 +1,7 @@
 id: test-cfg-module-boundary
 language: Rust
 severity: error
-message: Move test-only definitions into a test module.
+message: Put the test condition on a mod tests declaration.
 files:
   - src/**/*.rs
   - tests/**/*.rs
@@ -32,6 +32,10 @@ rule:
     - not:
         precedes:
           kind: mod_item
+          has:
+            field: name
+            kind: identifier
+            regex: '^tests$'
           stopBy:
             not:
               matches: attribute-or-comment

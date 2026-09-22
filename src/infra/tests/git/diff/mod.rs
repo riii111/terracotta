@@ -3,10 +3,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::app::attribution::{SourceLineChange, SourceRange, SourceSide};
+use crate::app::tests::attribution::{SourceLineChange, SourceRange, SourceSide};
 use crate::infra::CancellationToken;
 
-use crate::infra::terraform::hcl::HclSourceFile;
+use crate::infra::terraform::tests::hcl::HclSourceFile;
 
 mod hunks;
 mod name_status;
@@ -764,7 +764,6 @@ fn failed_diff_with_comparison_error(
     ))
 }
 
-#[cfg(test)]
 mod tests {
     use std::{
         sync::atomic::{AtomicU64, Ordering},

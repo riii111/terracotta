@@ -149,7 +149,7 @@ mod tests {
         },
         review::{
             PlanBlock, PlanBlockKind, PlanMetadata,
-            test_support::{plan_document, plan_document_with_blocks},
+            tests::support::{plan_document, plan_document_with_blocks},
         },
     };
 

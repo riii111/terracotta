@@ -1,6 +1,7 @@
 use std::fmt::Write;
 
-use super::{ReplacePathSegment, attribute_diff::AttributePathSegment};
+use super::super::ReplacePathSegment;
+use super::attribute_diff::AttributePathSegment;
 
 pub(crate) fn format_attribute_path(path: &[AttributePathSegment]) -> String {
     if path.is_empty() {
@@ -61,7 +62,6 @@ fn is_simple_path_key(key: &str) -> bool {
             .all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
-#[cfg(test)]
 mod tests {
     use super::*;
 

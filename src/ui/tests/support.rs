@@ -6,7 +6,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
 use ratatui::{Frame, Terminal};
 
-pub(super) fn render_to_buffer(
+pub(in crate::ui) fn render_to_buffer(
     (width, height): (u16, u16),
     render: impl FnOnce(&mut Frame<'_>),
 ) -> Buffer {
@@ -16,7 +16,7 @@ pub(super) fn render_to_buffer(
     terminal.backend().buffer().clone()
 }
 
-pub(super) fn buffer_text(buffer: &Buffer) -> String {
+pub(in crate::ui) fn buffer_text(buffer: &Buffer) -> String {
     let area = buffer.area();
     (area.y..area.bottom())
         .map(|y| {
@@ -31,7 +31,7 @@ pub(super) fn buffer_text(buffer: &Buffer) -> String {
         .join("\n")
 }
 
-pub(super) fn buffer_terminal_capture(buffer: &Buffer) -> String {
+pub(in crate::ui) fn buffer_terminal_capture(buffer: &Buffer) -> String {
     let area = buffer.area();
     let mut capture = String::new();
     for y in area.y..area.bottom() {
@@ -48,7 +48,7 @@ pub(super) fn buffer_terminal_capture(buffer: &Buffer) -> String {
     capture
 }
 
-pub(super) fn write_buffer_captures(name: &str, buffer: &Buffer) {
+pub(in crate::ui) fn write_buffer_captures(name: &str, buffer: &Buffer) {
     let Some(directory) = env::var_os("TERRACOTTA_PREVIEW_CAPTURE_DIR").map(PathBuf::from) else {
         return;
     };
@@ -96,7 +96,7 @@ fn modifier_escape(modifier: Modifier) -> String {
     escape
 }
 
-pub(super) fn assert_shell_frame_and_footer(
+pub(in crate::ui) fn assert_shell_frame_and_footer(
     buffer: &Buffer,
     content: Rect,
     footer: Rect,

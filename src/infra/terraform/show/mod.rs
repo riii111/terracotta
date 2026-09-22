@@ -135,20 +135,6 @@ fn show_arguments(plan_path: &Path, json: bool) -> Vec<OsString> {
 }
 
 #[cfg(test)]
-pub(crate) mod test_support {
-    use crate::app::plan::Plan;
-
-    use super::{
-        CancellationToken, Path, ProcessRunner, TerraformExecutionError, invalid_plan, run_show,
-    };
-
-    pub(crate) fn read_plan(
-        root: &Path,
-        plan_path: &Path,
-        cancellation: &CancellationToken,
-        runner: &dyn ProcessRunner,
-    ) -> Result<Plan, TerraformExecutionError> {
-        let output = run_show(root, &[], plan_path, true, cancellation, runner)?;
-        super::json::parse_plan_json_bytes(&output.output.stdout).map_err(invalid_plan)
-    }
+pub(crate) mod tests {
+    pub(crate) mod support;
 }

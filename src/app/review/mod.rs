@@ -9,9 +9,6 @@ use super::{
     plan::{PlanAction, PlanResource},
 };
 
-#[cfg(test)]
-pub(crate) mod git;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PlanBlockKind {
     Common,
@@ -417,23 +414,12 @@ pub(crate) enum PlanReviewMessage {
 }
 
 #[cfg(test)]
-pub(crate) mod test_support {
-    use super::{PlanBlock, PlanBlockKind, PlanDocument, PlanLineKind};
+pub(crate) mod tests {
+    pub(crate) mod git;
 
-    pub(crate) fn plan_document_with_blocks(text: String, blocks: Vec<PlanBlock>) -> PlanDocument {
-        let line_kinds = vec![PlanLineKind::Body; text.split('\n').count()];
-        PlanDocument::with_blocks_and_line_kinds(text, blocks, line_kinds)
-    }
+    pub(crate) mod support;
 
-    pub(crate) fn plan_document(text: String) -> PlanDocument {
-        let end = text.split('\n').count();
-        plan_document_with_blocks(text, vec![PlanBlock::new(0..end, PlanBlockKind::Common)])
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::test_support::{plan_document, plan_document_with_blocks};
+    use self::support::{plan_document, plan_document_with_blocks};
     use super::*;
 
     #[test]

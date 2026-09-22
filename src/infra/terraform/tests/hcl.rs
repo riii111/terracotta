@@ -5,7 +5,7 @@ use std::{
 
 use hcl::Structure;
 
-use crate::app::attribution::{
+use crate::app::tests::attribution::{
     ResourceAddress, ResourceSourceLocation, SourceFileAnalysis, SourceIssue, SourceIssueKind,
     SourceRange, SourceSide,
 };
@@ -579,7 +579,6 @@ const fn is_identifier_continue(byte: u8) -> bool {
     is_identifier_start(byte) || byte.is_ascii_digit() || byte == b'-'
 }
 
-#[cfg(test)]
 mod tests {
     use rstest::rstest;
 

@@ -1335,13 +1335,13 @@ mod tests {
         execution::{Diagnostic, DiagnosticSource, ExecutionContext, ExecutionState},
         review::{
             PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata,
-            test_support::{plan_document, plan_document_with_blocks},
+            tests::support::{plan_document, plan_document_with_blocks},
         },
         session::{self, Action, SessionState},
     };
     use crate::ui::{
         features::plan_review::{ApplyConfirmationInput, PlanReviewInput, key_to_input},
-        test_support::{
+        tests::support::{
             assert_shell_frame_and_footer, buffer_terminal_capture, buffer_text, render_to_buffer,
             write_buffer_captures,
         },

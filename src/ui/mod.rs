@@ -3,7 +3,7 @@ mod input;
 mod primitives;
 mod shell;
 #[cfg(test)]
-mod test_support;
+pub(in crate::ui) mod tests;
 mod theme;
 
 pub(crate) use input::{QuitConfirmationInput, quit_confirmation_key_to_input};

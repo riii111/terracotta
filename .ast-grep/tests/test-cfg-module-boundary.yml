@@ -1,21 +1,21 @@
 id: test-cfg-module-boundary
 valid:
-  # The module declaration owns the test condition, regardless of its name or body form.
+  # Only a tests module owns a test condition; its nested helpers need no attribute.
   - |-
     #[cfg(test)]
     mod tests {}
   - |-
     #[cfg(test)]
-    pub(crate) mod test_support;
+    pub(crate) mod tests;
   - |-
     #[cfg(test)]
-    mod dormant;
+    mod tests { mod support; use self::support::fixture; }
   - |-
     #[cfg(all(test, unix))]
-    mod unix_tests {}
+    mod tests {}
   - |-
     #[cfg(any(test, feature = "test-support"))]
-    mod test_support;
+    mod tests;
   # Same-line nested definitions remain inside the gated module.
   - |-
     #[cfg(test)] mod tests { fn helper() {} impl State { fn helper() {} } }
@@ -37,6 +37,11 @@ valid:
   # Same-line attributes must still be treated as belonging to one module.
   - |-
     #[cfg(test)] #[cfg(unix)] pub mod tests;
+
+  # The cross-crate feature gate is distinct from cfg(test).
+  - |-
+    #[cfg(feature = "test-support")]
+    mod test_support;
 
   # These forms contain no outer cfg predicate named test.
   - |-
@@ -69,6 +74,23 @@ valid:
     #[cfg(test)] mod tests {} fn f() {}
 
 invalid:
+  # A test-only module with another name must live inside mod tests.
+  - |-
+    #[cfg(test)]
+    mod test_support;
+  - |-
+    #[cfg(test)]
+    pub(crate) mod git;
+  - |-
+    #[cfg(test)]
+    mod helper { mod tests {} }
+  - |-
+    #[cfg(all(test, unix))]
+    mod unix_tests {}
+  - |-
+    #[cfg(any(test, feature = "test-support"))]
+    mod test_support;
+
   # A test condition on a function or method must move to a module boundary.
   - |-
     #[cfg(test)]

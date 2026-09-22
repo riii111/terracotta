@@ -6,8 +6,8 @@ use std::{
 };
 
 use crate::app::{
-    attribution::{AnalysisIssue, ResourceAttribution, SourceFileAnalysis, SourceSide},
     plan::Plan,
+    tests::attribution::{AnalysisIssue, ResourceAttribution, SourceFileAnalysis, SourceSide},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -227,7 +227,6 @@ impl PlanReview {
     }
 }
 
-#[cfg(test)]
 mod tests {
     use super::*;
 

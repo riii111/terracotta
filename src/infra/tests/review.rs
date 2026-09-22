@@ -5,21 +5,23 @@ use std::{
 };
 
 use crate::app::{
-    attribution::{AnalysisIssue, SourceFileAnalysis, attribute_changes, mark_analysis_incomplete},
     execution::{ExecutionEvent, ExecutionPhase},
-    review::git::{PlanReview, ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus},
+    review::tests::git::{
+        PlanReview, ReviewComparison, ReviewComparisonBasis, ReviewComparisonStatus,
+    },
+    tests::attribution::{
+        AnalysisIssue, SourceFileAnalysis, attribute_changes, mark_analysis_incomplete,
+    },
 };
 use crate::infra::CancellationToken;
 
-use super::{
-    git::{self, ComparisonBasis, ConfigurationComparison, ConfigurationSnapshot, GitDiff},
-    terraform::{self, hcl},
-};
+use super::git::{self, ComparisonBasis, ConfigurationComparison, ConfigurationSnapshot, GitDiff};
+use crate::infra::terraform::{self, tests::hcl};
 
 #[derive(Debug)]
 pub(crate) enum ReviewError {
     Interrupted,
-    Terraform(terraform::test_support::PlanTestError),
+    Terraform(terraform::tests::support::PlanTestError),
 }
 
 impl Display for ReviewError {
@@ -33,15 +35,15 @@ impl Display for ReviewError {
 
 impl std::error::Error for ReviewError {}
 
-impl From<terraform::test_support::PlanTestError> for ReviewError {
-    fn from(error: terraform::test_support::PlanTestError) -> Self {
+impl From<terraform::tests::support::PlanTestError> for ReviewError {
+    fn from(error: terraform::tests::support::PlanTestError) -> Self {
         Self::Terraform(error)
     }
 }
 
-impl From<terraform::test_support::CommandTerraformExecutionError> for ReviewError {
-    fn from(error: terraform::test_support::CommandTerraformExecutionError) -> Self {
-        Self::Terraform(terraform::test_support::PlanTestError::Terraform(error))
+impl From<terraform::tests::support::CommandTerraformExecutionError> for ReviewError {
+    fn from(error: terraform::tests::support::CommandTerraformExecutionError) -> Self {
+        Self::Terraform(terraform::tests::support::PlanTestError::Terraform(error))
     }
 }
 
@@ -89,7 +91,7 @@ fn run_review_with_dependencies(
     root: &Path,
     compare_ref: Option<&str>,
     cancellation: &CancellationToken,
-    runner: &dyn terraform::test_support::ProcessRunner,
+    runner: &dyn terraform::tests::support::ProcessRunner,
     after_git_diff: Option<&mut dyn FnMut()>,
     event_sink: &mut dyn FnMut(ReviewEvent),
     phase_sink: &mut dyn FnMut(ExecutionPhase),
@@ -131,7 +133,7 @@ fn run_review_with_dependencies(
     }
     event_sink(ReviewEvent::Workspace(workspace.clone()));
     let mut terraform_event_sink = |event| event_sink(ReviewEvent::Terraform(event));
-    let plan = terraform::test_support::run_plan(
+    let plan = terraform::tests::support::run_plan(
         &execution_root,
         cancellation,
         runner,
@@ -322,7 +324,6 @@ fn review_comparison(diff: &GitDiff) -> ReviewComparison {
     ReviewComparison::new(basis, diff.compare_ref().map(str::to_owned), status)
 }
 
-#[cfg(test)]
 mod tests {
     use std::{
         cell::RefCell,
@@ -333,8 +334,8 @@ mod tests {
     };
 
     use crate::{
-        app::attribution::{AnalysisIssueKind, AttributionStatus},
-        infra::terraform::test_support::{
+        app::tests::attribution::{AnalysisIssueKind, AttributionStatus},
+        infra::terraform::tests::support::{
             ProcessOutput, ProcessRunner, ProcessStatus, RunningProcess,
         },
     };
