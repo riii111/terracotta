@@ -362,9 +362,21 @@ impl ExecutionProgress {
 
     #[must_use]
     pub(crate) fn first_bound_failed_index(&self) -> Option<usize> {
-        self.targets.iter().position(|target| {
-            target.status == ExecutionTargetStatus::Failed && target.first_error_line.is_some()
-        })
+        if self.diagnostics.iter().any(|diagnostic| {
+            diagnostic.severity == super::event::DiagnosticSeverity::Error
+                && diagnostic
+                    .address
+                    .as_deref()
+                    .and_then(|address| self.target_index(address))
+                    .is_none()
+        }) {
+            return None;
+        }
+        let index = self.first_failed_index()?;
+        self.targets[index]
+            .first_error_line
+            .is_some()
+            .then_some(index)
     }
 
     fn count_status(&self, status: ExecutionTargetStatus) -> usize {
@@ -914,6 +926,60 @@ mod tests {
             "Request (sensitive value) failed"
         );
         assert_eq!(progress.diagnostics()[0].detail.as_deref(), Some("detail"));
+    }
+
+    #[test]
+    fn unbound_error_diagnostic_keeps_failed_result_on_all_logs() {
+        let mut progress = ExecutionProgress::new(
+            vec![
+                ExecutionTargetSpec {
+                    address: "terraform_data.first".to_owned(),
+                    actions: vec![PlanAction::Update],
+                },
+                ExecutionTargetSpec {
+                    address: "terraform_data.second".to_owned(),
+                    actions: vec![PlanAction::Update],
+                },
+            ],
+            Vec::new(),
+        );
+        let received_at = Instant::now();
+        progress.record(ExecutionEvent {
+            received_at,
+            kind: ExecutionEventKind::Resource(ResourceEvent {
+                address: "terraform_data.first".to_owned(),
+                kind: ResourceEventKind::ApplyErrored,
+                action: Some(ResourceAction::Update),
+                message: None,
+            }),
+        });
+        progress.record(ExecutionEvent {
+            received_at,
+            kind: ExecutionEventKind::Diagnostic(Diagnostic {
+                severity: DiagnosticSeverity::Error,
+                summary: "provider rejected the request".to_owned(),
+                detail: None,
+                address: None,
+                position: None,
+                source: DiagnosticSource::Terraform,
+            }),
+        });
+        progress.record(ExecutionEvent {
+            received_at,
+            kind: ExecutionEventKind::Resource(ResourceEvent {
+                address: "terraform_data.second".to_owned(),
+                kind: ResourceEventKind::ApplyErrored,
+                action: Some(ResourceAction::Update),
+                message: Some("terraform_data.second: failed".to_owned()),
+            }),
+        });
+        progress.finish(ProcessTermination {
+            status: ProcessExitStatus::Exited(1),
+            interrupted: false,
+        });
+
+        assert_eq!(progress.first_failed_index(), Some(0));
+        assert_eq!(progress.first_bound_failed_index(), None);
     }
 
     #[test]
