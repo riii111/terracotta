@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 
+printf '%s\n' "$(basename "$0")" >> "$TERRACOTTA_FAKE_TOOL_LOG"
 printf '%s|%s\n' "$PWD" "$*" >> "$TERRACOTTA_FAKE_INVOCATIONS"
 printf 'TF_CLI_ARGS=%s\n' "${TF_CLI_ARGS-}" >> "$TERRACOTTA_FAKE_ENV_LOG"
 printf 'TF_CLI_ARGS_plan=%s\n' "${TF_CLI_ARGS_plan-}" >> "$TERRACOTTA_FAKE_ENV_LOG"

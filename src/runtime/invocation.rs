@@ -7,7 +7,7 @@ use std::{
     process::ExitCode,
 };
 
-use crate::app::execution::VariableSources;
+use crate::app::execution::{Tool, VariableSources};
 use crate::infra::terraform::{
     self,
     configuration::{self, ExecutionLocation},
@@ -24,6 +24,7 @@ pub(crate) enum Subcommand {
     reason = "these fields preserve Terraform's independent CLI boolean options"
 )]
 pub(crate) struct Invocation {
+    tool: Tool,
     subcommand: Subcommand,
     launch_root: PathBuf,
     directory: PathBuf,
@@ -36,8 +37,8 @@ pub(crate) struct Invocation {
     detailed_exitcode: bool,
 }
 
-pub(crate) fn run(arguments: &[OsString]) -> ExitCode {
-    match execute(arguments) {
+pub(crate) fn run(tool: Tool, arguments: &[OsString]) -> ExitCode {
+    match execute(tool, arguments) {
         Ok(exit) => exit,
         Err(error) => {
             super::report_error(&error.to_string());
@@ -46,17 +47,18 @@ pub(crate) fn run(arguments: &[OsString]) -> ExitCode {
     }
 }
 
-fn execute(arguments: &[OsString]) -> io::Result<ExitCode> {
-    let executable = terraform::resolve_executable()?;
+fn execute(tool: Tool, arguments: &[OsString]) -> io::Result<ExitCode> {
+    let executable = terraform::resolve_executable(tool)?;
     let Some(root) = env::current_dir().ok() else {
         return terraform::delegate(&executable, arguments);
     };
-    let Some(invocation) = review_invocation(arguments, &root) else {
+    let Some(invocation) = review_invocation(tool, arguments, &root) else {
         return terraform::delegate(&executable, arguments);
     };
     if !matches!(
-        configuration::execution_location(
+        configuration::execution_location_for_tool(
             &invocation.directory,
+            tool,
             env::var_os("TF_DATA_DIR").as_deref(),
         ),
         Ok(ExecutionLocation::Local)
@@ -71,7 +73,7 @@ fn execute(arguments: &[OsString]) -> io::Result<ExitCode> {
     ))
 }
 
-fn review_invocation(arguments: &[OsString], root: &Path) -> Option<Invocation> {
+fn review_invocation(tool: Tool, arguments: &[OsString], root: &Path) -> Option<Invocation> {
     let terminals = [
         io::stdin().is_terminal(),
         io::stdout().is_terminal(),
@@ -85,7 +87,7 @@ fn review_invocation(arguments: &[OsString], root: &Path) -> Option<Invocation> 
         return None;
     }
 
-    let invocation = parse(arguments, root, |name| env::var_os(name))?;
+    let invocation = parse_for_tool(tool, arguments, root, |name| env::var_os(name))?;
     if !invocation.review_candidate() {
         return None;
     }
@@ -109,7 +111,8 @@ impl Invocation {
     }
 }
 
-fn parse(
+fn parse_for_tool(
+    tool: Tool,
     arguments: &[OsString],
     root: &Path,
     lookup: impl Fn(&str) -> Option<OsString>,
@@ -139,7 +142,7 @@ fn parse(
         _ => return None,
     };
     let mut effective_arguments = Vec::new();
-    for name in ["TF_CLI_ARGS".to_owned(), format!("TF_CLI_ARGS_{command}")] {
+    for name in tool.cli_argument_environment_names(command) {
         if let Some(value) = lookup(&name) {
             effective_arguments.extend(
                 split_arguments(value.to_str()?)?
@@ -150,6 +153,7 @@ fn parse(
     }
     effective_arguments.extend_from_slice(&arguments[offset + 1..]);
     let mut invocation = Invocation {
+        tool,
         subcommand,
         launch_root: root.to_path_buf(),
         directory,
@@ -216,6 +220,10 @@ fn classify_options(invocation: &mut Invocation) -> Option<()> {
 }
 
 impl Invocation {
+    pub(crate) const fn tool(&self) -> Tool {
+        self.tool
+    }
+
     pub(crate) fn launch_root(&self) -> &Path {
         &self.launch_root
     }
@@ -431,6 +439,14 @@ mod tests {
     use super::*;
     use rstest::rstest;
 
+    fn parse(
+        arguments: &[OsString],
+        root: &Path,
+        lookup: impl Fn(&str) -> Option<OsString>,
+    ) -> Option<Invocation> {
+        parse_for_tool(Tool::Terraform, arguments, root, lookup)
+    }
+
     fn invocation(args: &[&str], environment: &[(&str, &str)]) -> Option<Invocation> {
         parse(
             &args.iter().map(OsString::from).collect::<Vec<_>>(),
@@ -469,6 +485,28 @@ mod tests {
                 "-json=false"
             ]
             .map(OsString::from)
+        );
+    }
+
+    #[test]
+    fn opentofu_uses_the_shared_cli_argument_environment_contract() {
+        let parsed = parse_for_tool(
+            Tool::OpenTofu,
+            &[OsString::from("plan"), OsString::from("-refresh=true")],
+            Path::new("/root"),
+            |name| match name {
+                "TF_CLI_ARGS" => Some(OsString::from("-input=false")),
+                "TF_CLI_ARGS_plan" => Some(OsString::from("-refresh=false")),
+                _ => None,
+            },
+        )
+        .expect("OpenTofu options should be recognized");
+
+        assert_eq!(parsed.tool(), Tool::OpenTofu);
+        assert!(parsed.review_candidate());
+        assert_eq!(
+            parsed.plan_arguments()[..2],
+            ["-input=false", "-refresh=false"].map(OsString::from)
         );
     }
 

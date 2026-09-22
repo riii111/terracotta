@@ -10,7 +10,9 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 
-use crate::app::execution::{ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionPhase};
+use crate::app::execution::{
+    ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionPhase, Tool,
+};
 use crate::app::review::PlanReview;
 use crate::infra::CancellationToken;
 
@@ -160,6 +162,7 @@ fn resolve_output_path(root: &Path, value: &str) -> PathBuf {
     reason = "the review worker receives the explicit execution and UI boundaries"
 )]
 pub(crate) fn read_saved_plan_review(
+    tool: Tool,
     display_root: &Path,
     launch_root: &Path,
     global_arguments: &[OsString],
@@ -174,18 +177,20 @@ pub(crate) fn read_saved_plan_review(
 ) -> Result<PlanReview, TerraformExecutionError> {
     phase_sink(ExecutionPhase::Reading);
     let version = super::version::read_version_with_arguments(
+        tool,
         launch_root,
         global_arguments,
         cancellation,
         runner,
     )?;
     let workspace =
-        read_workspace_with_arguments(launch_root, global_arguments, cancellation, runner)?;
+        read_workspace_with_arguments(tool, launch_root, global_arguments, cancellation, runner)?;
     event_sink(ExecutionEvent {
         received_at: std::time::Instant::now(),
         kind: ExecutionEventKind::Workspace(workspace.clone()),
     });
     let (document, metadata) = read_review_with_arguments(
+        tool,
         launch_root,
         global_arguments,
         plan_path,
@@ -194,7 +199,7 @@ pub(crate) fn read_saved_plan_review(
         runner,
     )?;
     let context = initial_context
-        .with_tool_version("terraform", version)
+        .with_tool_version(tool, version)
         .with_workspace(workspace.clone());
     let review = PlanReview::new(
         display_root.to_owned(),
@@ -246,6 +251,7 @@ fn create_plan_path() -> io::Result<PathBuf> {
 pub(crate) mod test_support {
     use std::fmt::{Display, Formatter};
 
+    use crate::app::execution::Tool;
     use crate::app::plan::Plan;
 
     use super::super::command::{
@@ -340,6 +346,7 @@ pub(crate) mod test_support {
     ) -> Result<Plan, TerraformExecutionError> {
         let plan_arguments = plan_arguments(plan_path);
         let plan_output = run_command_with_events(
+            Tool::Terraform,
             root,
             TerraformCommand::Plan,
             &plan_arguments,
@@ -348,10 +355,18 @@ pub(crate) mod test_support {
             Some(event_sink),
         )?;
         if plan_output.interrupted {
-            return Err(interrupted_error(TerraformCommand::Plan, plan_output));
+            return Err(interrupted_error(
+                Tool::Terraform,
+                TerraformCommand::Plan,
+                plan_output,
+            ));
         }
         if !plan_output.status.is_some_and(ProcessStatus::is_success) {
-            return Err(non_zero_error(TerraformCommand::Plan, plan_output));
+            return Err(non_zero_error(
+                Tool::Terraform,
+                TerraformCommand::Plan,
+                plan_output,
+            ));
         }
 
         phase_sink(ExecutionPhase::Reading);
@@ -475,6 +490,7 @@ mod tests {
     impl ProcessRunner for FakeRunner {
         fn start(
             &self,
+            _tool: Tool,
             root: &Path,
             arguments: &[OsString],
         ) -> io::Result<Box<dyn RunningProcess>> {

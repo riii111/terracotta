@@ -8,6 +8,8 @@ mod ui;
 
 use std::{path::Path, process::ExitCode};
 
+use crate::app::execution::Tool;
+
 /// Runs an interactive Terraform plan review for the supplied root.
 #[must_use]
 pub fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
@@ -34,5 +36,10 @@ pub fn run_synthetic_execution() -> std::io::Result<()> {
 
 #[must_use]
 pub fn run_terraform(arguments: &[std::ffi::OsString]) -> ExitCode {
-    runtime::invocation::run(arguments)
+    runtime::invocation::run(Tool::Terraform, arguments)
+}
+
+#[must_use]
+pub fn run_tofu(arguments: &[std::ffi::OsString]) -> ExitCode {
+    runtime::invocation::run(Tool::OpenTofu, arguments)
 }

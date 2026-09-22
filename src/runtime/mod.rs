@@ -18,7 +18,7 @@ use crate::{
     app::{
         execution::{
             ApplyStatus, ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionPhase,
-            ExecutionStage, ExecutionState, VariableSources,
+            ExecutionStage, ExecutionState, Tool, VariableSources,
         },
         review::{PlanMetadata, PlanReviewMessage},
         session::SessionOutcome,
@@ -41,12 +41,13 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
         report_error("terracotta plan requires an interactive terminal");
         return ExitCode::from(EXECUTION_FAILURE);
     }
-    let Ok(executable) = terraform::resolve_executable() else {
+    let Ok(executable) = terraform::resolve_executable(Tool::Terraform) else {
         report_error("terraform was not found in PATH");
         return ExitCode::from(EXECUTION_FAILURE);
     };
     run_managed_invocation(
         &executable,
+        Tool::Terraform,
         root,
         root,
         &[],
@@ -65,6 +66,7 @@ pub(crate) fn run_invocation(
 ) -> ExitCode {
     run_managed_invocation(
         executable,
+        invocation.tool(),
         invocation.launch_root(),
         invocation.directory(),
         invocation.global_arguments(),
@@ -82,6 +84,7 @@ pub(crate) fn run_invocation(
 )]
 fn run_managed_invocation(
     executable: &Path,
+    tool: Tool,
     launch_root: &Path,
     display_root: &Path,
     global_arguments: &[OsString],
@@ -95,7 +98,10 @@ fn run_managed_invocation(
         match terraform::saved_plan_for_plan(display_root, plan_arguments) {
             Ok(result) => result,
             Err(error) => {
-                report_error(&format!("failed to prepare the Terraform plan: {error}"));
+                report_error(&format!(
+                    "failed to prepare the {} plan: {error}",
+                    tool.display_name()
+                ));
                 return ExitCode::from(EXECUTION_FAILURE);
             }
         };
@@ -108,7 +114,10 @@ fn run_managed_invocation(
     ) {
         Ok(result) => result,
         Err(error) => {
-            report_error(&format!("failed to run terraform plan: {error}"));
+            report_error(&format!(
+                "failed to run {} plan: {error}",
+                tool.display_name()
+            ));
             return ExitCode::from(EXECUTION_FAILURE);
         }
     };
@@ -124,6 +133,7 @@ fn run_managed_invocation(
         return ExitCode::from(exit);
     }
     run_saved_plan_review(
+        tool,
         launch_root,
         display_root,
         global_arguments,
@@ -144,6 +154,7 @@ fn run_managed_invocation(
     reason = "the runtime passes each execution boundary to the review worker"
 )]
 fn run_saved_plan_review(
+    tool: Tool,
     launch_root: &Path,
     display_root: &Path,
     global_arguments: &[OsString],
@@ -158,7 +169,8 @@ fn run_saved_plan_review(
         Ok(root) => root,
         Err(error) => {
             report_error(&format!(
-                "failed to resolve the Terraform execution directory before review: {error}"
+                "failed to resolve the {} execution directory before review: {error}",
+                tool.display_name()
             ));
             let _ = plan_run.saved_plan.cleanup();
             return ExitCode::from(EXECUTION_FAILURE);
@@ -172,10 +184,14 @@ fn run_saved_plan_review(
         .ok()
         .and_then(|slot| slot.as_ref().map(|plan| plan.path().to_owned()))
     else {
-        report_error("the reviewed Terraform plan is unavailable");
+        report_error(&format!(
+            "the reviewed {} plan is unavailable",
+            tool.display_name()
+        ));
         return ExitCode::from(EXECUTION_FAILURE);
     };
     let worker = match spawn_review_worker(
+        tool,
         display_root,
         launch_root,
         global_arguments,
@@ -183,6 +199,7 @@ fn run_saved_plan_review(
         changed,
         apply_entry,
         ExecutionContext::loading(review_root.display().to_string())
+            .with_tool(tool)
             .with_launch_root(launch_root)
             .with_variable_sources(variable_sources.clone()),
         &cancellation,
@@ -205,9 +222,11 @@ fn run_saved_plan_review(
     };
     let mut clipboard = ClipboardExecutor::new();
     let context = ExecutionContext::loading(review_root.display().to_string())
+        .with_tool(tool)
         .with_launch_root(launch_root)
         .with_variable_sources(variable_sources);
     let effects = event_loop::RuntimeEffects {
+        tool,
         root: launch_root,
         display_root,
         global_arguments,
@@ -280,7 +299,8 @@ fn run_saved_plan_review(
     };
     if let Err(error) = cleanup_result {
         report_error(&format!(
-            "failed to remove the temporary Terraform plan: {error}"
+            "failed to remove the temporary {} plan: {error}",
+            tool.display_name()
         ));
         ExitCode::from(EXECUTION_FAILURE)
     } else {
@@ -438,6 +458,7 @@ impl std::error::Error for WorkerPanic {}
     reason = "the worker receives the explicit plan execution boundaries"
 )]
 fn spawn_review_worker(
+    tool: Tool,
     display_root: &Path,
     launch_root: &Path,
     global_arguments: &[OsString],
@@ -467,6 +488,7 @@ fn spawn_review_worker(
                 }));
             };
             match terraform::read_saved_plan_review(
+                tool,
                 &worker_display_root,
                 &worker_launch_root,
                 &worker_global_arguments,
@@ -501,6 +523,7 @@ fn take_saved_plan(
 }
 
 pub(super) fn spawn_apply_worker(
+    tool: Tool,
     root: &Path,
     global_arguments: &[OsString],
     apply_arguments: &[OsString],
@@ -521,6 +544,7 @@ pub(super) fn spawn_apply_worker(
                 let _ = worker_sender.send(PlanReviewMessage::ApplyEvent(event));
             };
             match terraform::run_apply_with_arguments(
+                tool,
                 &worker_root,
                 &worker_global_arguments,
                 &worker_apply_arguments,

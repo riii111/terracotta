@@ -1,5 +1,32 @@
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Tool {
+    Terraform,
+    OpenTofu,
+}
+
+impl Tool {
+    #[must_use]
+    pub(crate) const fn executable_name(self) -> &'static str {
+        match self {
+            Self::Terraform => "terraform",
+            Self::OpenTofu => "tofu",
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn display_name(self) -> &'static str {
+        self.executable_name()
+    }
+
+    #[must_use]
+    pub(crate) fn cli_argument_environment_names(self, command: &str) -> [String; 2] {
+        let _ = self;
+        ["TF_CLI_ARGS".to_owned(), format!("TF_CLI_ARGS_{command}")]
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ExecutionContextValue {
     Loading,
@@ -58,7 +85,7 @@ pub(crate) struct ExecutionContext {
     workspace: ExecutionContextValue,
     display_name: ExecutionContextValue,
     production: Option<bool>,
-    tool_name: String,
+    tool: Tool,
     tool_version: ExecutionContextValue,
     variable_sources: VariableSources,
 }
@@ -72,7 +99,7 @@ impl ExecutionContext {
             workspace: ExecutionContextValue::Loading,
             display_name: ExecutionContextValue::Loading,
             production: None,
-            tool_name: "terraform".to_owned(),
+            tool: Tool::Terraform,
             tool_version: ExecutionContextValue::Loading,
             variable_sources: VariableSources::default(),
         }
@@ -91,12 +118,13 @@ impl ExecutionContext {
         self
     }
 
-    pub(crate) fn with_tool_version(
-        mut self,
-        tool_name: impl Into<String>,
-        version: impl Into<String>,
-    ) -> Self {
-        self.tool_name = tool_name.into();
+    pub(crate) const fn with_tool(mut self, tool: Tool) -> Self {
+        self.tool = tool;
+        self
+    }
+
+    pub(crate) fn with_tool_version(mut self, tool: Tool, version: impl Into<String>) -> Self {
+        self.tool = tool;
         self.tool_version = ExecutionContextValue::Known(version.into());
         self
     }
@@ -132,8 +160,8 @@ impl ExecutionContext {
     }
 
     #[must_use]
-    pub(crate) fn tool_name(&self) -> &str {
-        &self.tool_name
+    pub(crate) const fn tool_name(&self) -> &str {
+        self.tool.display_name()
     }
 
     #[must_use]
@@ -218,5 +246,20 @@ mod tests {
         let context = ExecutionContext::loading("/repo/infra").with_launch_root("/repo");
 
         assert_eq!(context.launch_root_path(), Some(Path::new("/repo")));
+    }
+
+    #[test]
+    fn opentofu_context_keeps_the_selected_tool_for_the_header() {
+        let loading = ExecutionContext::loading("/repo/infra").with_tool(Tool::OpenTofu);
+        assert_eq!(loading.tool_name(), "tofu");
+        assert_eq!(loading.tool_version(), &ExecutionContextValue::Loading);
+
+        let context = loading.with_tool_version(Tool::OpenTofu, "1.10.0");
+
+        assert_eq!(context.tool_name(), "tofu");
+        assert_eq!(
+            context.tool_version(),
+            &ExecutionContextValue::Known("1.10.0".to_owned())
+        );
     }
 }

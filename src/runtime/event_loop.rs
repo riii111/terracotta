@@ -12,7 +12,7 @@ use ratatui::{DefaultTerminal, Terminal, backend::Backend, layout::Rect};
 use crate::{
     app::{
         copy::{CopyEffect, CopyResult, CopyTarget},
-        execution::{ExecutionContextValue, ExecutionStage, ExecutionState},
+        execution::{ExecutionContextValue, ExecutionStage, ExecutionState, Tool},
         review::PlanReviewMessage,
         session::{self, Action, Effect, SessionOutcome, SessionState},
     },
@@ -615,6 +615,7 @@ fn apply_effect<C: ClipboardWriter>(
                 );
             };
             match super::spawn_apply_worker(
+                effects.tool,
                 effects.root,
                 effects.global_arguments,
                 effects.apply_arguments,
@@ -654,34 +655,54 @@ fn verify_apply_context(
     apply: &ExecutionState,
     effects: &RuntimeEffects<'_, impl ClipboardWriter>,
 ) -> Result<(), String> {
-    verify_apply_directory(apply.context().cwd_path(), effects.display_root)?;
+    verify_apply_directory(
+        apply.context().cwd_path(),
+        effects.display_root,
+        effects.tool,
+    )?;
     let workspace = terraform::read_workspace_with_arguments(
+        effects.tool,
         effects.root,
         effects.global_arguments,
         effects.cancellation,
         &terraform::SystemProcessRunner,
     )
-    .map_err(|error| format!("Could not re-confirm the Terraform workspace: {error}"))?;
+    .map_err(|error| {
+        format!(
+            "Could not re-confirm the {} workspace: {error}",
+            effects.tool.display_name()
+        )
+    })?;
     let expected = match apply.context().workspace() {
         ExecutionContextValue::Known(workspace) => workspace,
         ExecutionContextValue::Loading => {
-            return Err("The Terraform workspace is not available for apply.".to_owned());
+            return Err(format!(
+                "The {} workspace is not available for apply.",
+                effects.tool.display_name()
+            ));
         }
     };
     if workspace != *expected {
         return Err(format!(
-            "The Terraform workspace changed from {expected} to {workspace}. Re-run plan and review it again before applying."
+            "The {} workspace changed from {expected} to {workspace}. Re-run plan and review it again before applying.",
+            effects.tool.display_name()
         ));
     }
     Ok(())
 }
 
-fn verify_apply_directory(expected: &Path, current: &Path) -> Result<(), String> {
+fn verify_apply_directory(expected: &Path, current: &Path, tool: Tool) -> Result<(), String> {
     let expected_root = fs::canonicalize(expected).map_err(|error| {
-        format!("Could not re-confirm the reviewed Terraform directory: {error}")
+        format!(
+            "Could not re-confirm the reviewed {} directory: {error}",
+            tool.display_name()
+        )
     })?;
     let current_root = fs::canonicalize(current).map_err(|error| {
-        format!("Could not resolve the current Terraform execution directory: {error}")
+        format!(
+            "Could not resolve the current {} execution directory: {error}",
+            tool.display_name()
+        )
     })?;
     if current_root != expected_root {
         return Err(
@@ -703,6 +724,7 @@ impl ClipboardWriter for ClipboardExecutor {
 }
 
 pub(super) struct RuntimeEffects<'a, C: ClipboardWriter = ClipboardExecutor> {
+    pub(super) tool: Tool,
     pub(super) root: &'a Path,
     pub(super) display_root: &'a Path,
     pub(super) global_arguments: &'a [std::ffi::OsString],
@@ -765,7 +787,7 @@ mod tests {
         fs::remove_file(&link).expect("initial directory link should be removed");
         symlink(&second, &link).expect("retargeted directory link should be created");
 
-        let error = verify_apply_directory(&expected, &link)
+        let error = verify_apply_directory(&expected, &link, Tool::Terraform)
             .expect_err("apply should reject a changed symlink target");
         assert!(error.contains("execution directory changed"));
         fs::remove_dir_all(root).expect("test directories should be removed");
@@ -1311,6 +1333,7 @@ mod tests {
         apply_worker: &'a mut WorkerGuard,
     ) -> RuntimeEffects<'a, TestClipboard> {
         RuntimeEffects {
+            tool: Tool::Terraform,
             root: Path::new("/project"),
             display_root: Path::new("/project"),
             global_arguments: &[],
@@ -2370,6 +2393,7 @@ mod tests {
             handle: None,
         };
         let mut effects = RuntimeEffects {
+            tool: Tool::Terraform,
             root: Path::new("/project"),
             display_root: Path::new("/project"),
             global_arguments: &[],

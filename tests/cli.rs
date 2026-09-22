@@ -77,6 +77,7 @@ Plan: 0 to add, 1 to change, 0 to destroy.
         show_json: PathBuf,
         show_text: PathBuf,
         env_log: PathBuf,
+        tool_log: PathBuf,
     }
 
     impl Fixture {
@@ -96,15 +97,21 @@ Plan: 0 to add, 1 to change, 0 to destroy.
             let show_json = directory.join("show.json");
             let show_text = directory.join("show.txt");
             let env_log = directory.join("environment");
+            let tool_log = directory.join("tools");
             fs::write(&show_json, PLAN_JSON).expect("fake show JSON should be written");
             fs::write(&show_text, PLAN_TEXT).expect("fake show text should be written");
             fs::write(&invocations, "").expect("invocation log should be created");
             fs::write(&env_log, "").expect("environment log should be created");
+            fs::write(&tool_log, "").expect("tool log should be created");
             fs::write(&signal_log, "").expect("signal log should be created");
             let terraform = bin.join("terraform");
             fs::write(&terraform, FAKE_TERRAFORM).expect("fake Terraform should be written");
             fs::set_permissions(&terraform, fs::Permissions::from_mode(0o755))
                 .expect("fake Terraform should be executable");
+            let tofu = bin.join("tofu");
+            fs::write(&tofu, FAKE_TERRAFORM).expect("fake OpenTofu should be written");
+            fs::set_permissions(&tofu, fs::Permissions::from_mode(0o755))
+                .expect("fake OpenTofu should be executable");
 
             Self {
                 directory,
@@ -117,6 +124,7 @@ Plan: 0 to add, 1 to change, 0 to destroy.
                 show_json,
                 show_text,
                 env_log,
+                tool_log,
             }
         }
 
@@ -166,6 +174,7 @@ Plan: 0 to add, 1 to change, 0 to destroy.
                 .env("TERRACOTTA_FAKE_SHOW_JSON", &self.show_json)
                 .env("TERRACOTTA_FAKE_SHOW_TEXT", &self.show_text)
                 .env("TERRACOTTA_FAKE_ENV_LOG", &self.env_log)
+                .env("TERRACOTTA_FAKE_TOOL_LOG", &self.tool_log)
                 .env_remove("TF_IN_AUTOMATION")
                 .env_remove("CI")
                 .env_remove("TF_CLI_ARGS")
@@ -229,6 +238,14 @@ Plan: 0 to add, 1 to change, 0 to destroy.
                 .expect("signal log should be readable")
                 .lines()
                 .count()
+        }
+
+        fn invoked_tools(&self) -> Vec<String> {
+            fs::read_to_string(&self.tool_log)
+                .expect("fake tool log should be readable")
+                .lines()
+                .map(str::to_owned)
+                .collect()
         }
     }
 
@@ -298,6 +315,19 @@ Plan: 0 to add, 1 to change, 0 to destroy.
         assert!(arguments[3].starts_with("show -no-color "));
         assert!(arguments[4].starts_with("show -json "));
         assert_eq!(arguments.len(), 5);
+        fixture.assert_saved_plan_removed();
+    }
+
+    #[test]
+    fn pty_opentofu_uses_the_shared_review_path_and_selected_executable() {
+        let fixture = Fixture::new();
+        let result = fixture.run_with_arguments("full_text", 100, 24, "tofu", &["plan"]);
+
+        assert_eq!(result.exit_code, 0);
+        result.assert_restored();
+        result.observed("plan_text");
+        assert_eq!(fixture.invoked_tools(), vec!["tofu".to_owned(); 5]);
+        assert_eq!(fixture.invocation_arguments()[1], "version -json");
         fixture.assert_saved_plan_removed();
     }
 

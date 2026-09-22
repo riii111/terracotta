@@ -13,7 +13,7 @@ use std::{
 
 use crate::app::execution::{
     EventStream, ExecutionEvent, ExecutionEventKind, ExecutionLogLine, ProcessExitStatus,
-    ProcessTermination,
+    ProcessTermination, Tool,
 };
 use crate::infra::CancellationToken;
 
@@ -163,13 +163,15 @@ pub(crate) enum TerraformExecutionErrorKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TerraformExecutionError {
+    tool: Tool,
     kind: TerraformExecutionErrorKind,
     cleanup_error: Option<String>,
 }
 
 impl TerraformExecutionError {
-    pub(super) const fn new(kind: TerraformExecutionErrorKind) -> Self {
+    pub(super) const fn new_for_tool(tool: Tool, kind: TerraformExecutionErrorKind) -> Self {
         Self {
+            tool,
             kind,
             cleanup_error: None,
         }
@@ -180,38 +182,54 @@ impl Display for TerraformExecutionError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         match &self.kind {
             TerraformExecutionErrorKind::Launch { command, message } => {
-                write!(formatter, "failed to start terraform {command}: {message}")
+                write!(
+                    formatter,
+                    "failed to start {} {command}: {message}",
+                    self.tool.display_name()
+                )
             }
             TerraformExecutionErrorKind::Process { command, message } => {
                 write!(
                     formatter,
-                    "failed while running terraform {command}: {message}"
+                    "failed while running {} {command}: {message}",
+                    self.tool.display_name()
                 )
             }
             TerraformExecutionErrorKind::NonZero {
                 command, status, ..
             } => {
-                write!(formatter, "terraform {command} failed with {status}")
+                write!(
+                    formatter,
+                    "{} {command} failed with {status}",
+                    self.tool.display_name()
+                )
             }
             TerraformExecutionErrorKind::Interrupted { command, .. } => {
-                write!(formatter, "terraform {command} was interrupted")
+                write!(
+                    formatter,
+                    "{} {command} was interrupted",
+                    self.tool.display_name()
+                )
             }
             TerraformExecutionErrorKind::InvalidPlan { source } => {
                 write!(
                     formatter,
-                    "terraform show output could not be parsed: {source}"
+                    "{} show output could not be parsed: {source}",
+                    self.tool.display_name()
                 )
             }
             TerraformExecutionErrorKind::InvalidWorkspace { message } => {
                 write!(
                     formatter,
-                    "terraform workspace output could not be parsed: {message}"
+                    "{} workspace output could not be parsed: {message}",
+                    self.tool.display_name()
                 )
             }
             TerraformExecutionErrorKind::InvalidVersion { message } => {
                 write!(
                     formatter,
-                    "terraform version output could not be parsed: {message}"
+                    "{} version output could not be parsed: {message}",
+                    self.tool.display_name()
                 )
             }
         }?;
@@ -251,7 +269,12 @@ pub(crate) struct ProcessOutputChunk {
 }
 
 pub(crate) trait ProcessRunner {
-    fn start(&self, root: &Path, arguments: &[OsString]) -> io::Result<Box<dyn RunningProcess>>;
+    fn start(
+        &self,
+        tool: Tool,
+        root: &Path,
+        arguments: &[OsString],
+    ) -> io::Result<Box<dyn RunningProcess>>;
 }
 
 pub(crate) trait RunningProcess {
@@ -347,14 +370,14 @@ fn log_event(stream: EventStream, line: &[u8], received_at: Instant) -> Executio
     }
 }
 
-pub(crate) fn resolve_executable() -> io::Result<std::path::PathBuf> {
+pub(crate) fn resolve_executable(tool: Tool) -> io::Result<std::path::PathBuf> {
     let current = std::env::current_exe()?;
     let path = std::env::var_os("PATH").unwrap_or_default();
     for directory in std::env::split_paths(&path) {
         let candidate = directory.join(if cfg!(windows) {
-            "terraform.exe"
+            format!("{}.exe", tool.executable_name())
         } else {
-            "terraform"
+            tool.executable_name().to_owned()
         });
         if !is_executable(&candidate) {
             continue;
@@ -365,13 +388,16 @@ pub(crate) fn resolve_executable() -> io::Result<std::path::PathBuf> {
             std::env::current_dir()?.join(candidate)
         };
         if same_executable(&candidate, &current)? {
-            return Err(io::Error::other("terraform resolves to Terracotta itself"));
+            return Err(io::Error::other(format!(
+                "{} resolves to Terracotta itself",
+                tool.display_name()
+            )));
         }
         return Ok(candidate);
     }
     Err(io::Error::new(
         io::ErrorKind::NotFound,
-        "terraform was not found in PATH",
+        format!("{} was not found in PATH", tool.display_name()),
     ))
 }
 
@@ -525,16 +551,27 @@ fn exit_delegated_process(status: ExitStatus) -> ! {
 }
 
 pub(super) fn run_command(
+    tool: Tool,
     root: &Path,
     command: TerraformCommand,
     arguments: &[OsString],
     cancellation: &CancellationToken,
     runner: &dyn ProcessRunner,
 ) -> Result<ProcessResult, TerraformExecutionError> {
-    run_command_with_parser(root, command, arguments, cancellation, runner, None, false)
+    run_command_with_parser(
+        tool,
+        root,
+        command,
+        arguments,
+        cancellation,
+        runner,
+        None,
+        false,
+    )
 }
 
 pub(super) fn run_command_with_events(
+    tool: Tool,
     root: &Path,
     command: TerraformCommand,
     arguments: &[OsString],
@@ -543,6 +580,7 @@ pub(super) fn run_command_with_events(
     event_sink: Option<&mut dyn FnMut(ExecutionEvent)>,
 ) -> Result<ProcessResult, TerraformExecutionError> {
     run_command_with_parser(
+        tool,
         root,
         command,
         arguments,
@@ -553,7 +591,16 @@ pub(super) fn run_command_with_events(
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "command parsing keeps process and event boundaries explicit"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "command execution keeps polling, cancellation, and output draining together"
+)]
 fn run_command_with_parser(
+    tool: Tool,
     root: &Path,
     command: TerraformCommand,
     arguments: &[OsString],
@@ -577,36 +624,48 @@ fn run_command_with_parser(
         return Ok(ProcessResult::interrupted(ProcessOutput::empty(), None));
     }
 
-    let mut process = runner.start(root, arguments).map_err(|error| {
-        TerraformExecutionError::new(TerraformExecutionErrorKind::Launch {
-            command,
-            message: error.to_string(),
-        })
+    let mut process = runner.start(tool, root, arguments).map_err(|error| {
+        TerraformExecutionError::new_for_tool(
+            tool,
+            TerraformExecutionErrorKind::Launch {
+                command,
+                message: error.to_string(),
+            },
+        )
     })?;
 
     loop {
         let chunks = process.poll_output().map_err(|error| {
-            TerraformExecutionError::new(TerraformExecutionErrorKind::Process {
-                command,
-                message: error.to_string(),
-            })
+            TerraformExecutionError::new_for_tool(
+                tool,
+                TerraformExecutionErrorKind::Process {
+                    command,
+                    message: error.to_string(),
+                },
+            )
         })?;
         if let (Some(parser), Some(event_sink)) = (parser.as_mut(), event_sink.as_deref_mut()) {
             emit_chunks(parser, &mut observed, chunks, event_sink);
         }
 
         let status = process.try_wait().map_err(|error| {
-            TerraformExecutionError::new(TerraformExecutionErrorKind::Process {
-                command,
-                message: error.to_string(),
-            })
+            TerraformExecutionError::new_for_tool(
+                tool,
+                TerraformExecutionErrorKind::Process {
+                    command,
+                    message: error.to_string(),
+                },
+            )
         })?;
         if let Some(status) = status {
             let output = process.collect_output().map_err(|error| {
-                TerraformExecutionError::new(TerraformExecutionErrorKind::Process {
-                    command,
-                    message: error.to_string(),
-                })
+                TerraformExecutionError::new_for_tool(
+                    tool,
+                    TerraformExecutionErrorKind::Process {
+                        command,
+                        message: error.to_string(),
+                    },
+                )
             })?;
             if let (Some(parser), Some(event_sink)) = (parser.as_mut(), event_sink.as_deref_mut()) {
                 emit_unobserved_output(parser, &mut observed, &output, event_sink);
@@ -627,16 +686,22 @@ fn run_command_with_parser(
                 .err()
                 .map(|error| error.to_string());
             let status = process.wait().map_err(|error| {
-                TerraformExecutionError::new(TerraformExecutionErrorKind::Process {
-                    command,
-                    message: error.to_string(),
-                })
+                TerraformExecutionError::new_for_tool(
+                    tool,
+                    TerraformExecutionErrorKind::Process {
+                        command,
+                        message: error.to_string(),
+                    },
+                )
             })?;
             let output = process.collect_output().map_err(|error| {
-                TerraformExecutionError::new(TerraformExecutionErrorKind::Process {
-                    command,
-                    message: error.to_string(),
-                })
+                TerraformExecutionError::new_for_tool(
+                    tool,
+                    TerraformExecutionErrorKind::Process {
+                        command,
+                        message: error.to_string(),
+                    },
+                )
             })?;
             if let (Some(parser), Some(event_sink)) = (parser.as_mut(), event_sink.as_deref_mut()) {
                 emit_unobserved_output(parser, &mut observed, &output, event_sink);
@@ -757,30 +822,43 @@ fn emit_termination(
 }
 
 pub(super) fn interrupted_error(
+    tool: Tool,
     command: TerraformCommand,
     process: ProcessResult,
 ) -> TerraformExecutionError {
-    TerraformExecutionError::new(TerraformExecutionErrorKind::Interrupted {
-        command,
-        output: Box::new(process.output),
-        interrupt_error: process.interrupt_error,
-    })
+    TerraformExecutionError::new_for_tool(
+        tool,
+        TerraformExecutionErrorKind::Interrupted {
+            command,
+            output: Box::new(process.output),
+            interrupt_error: process.interrupt_error,
+        },
+    )
 }
 
 pub(super) fn non_zero_error(
+    tool: Tool,
     command: TerraformCommand,
     process: ProcessResult,
 ) -> TerraformExecutionError {
-    TerraformExecutionError::new(TerraformExecutionErrorKind::NonZero {
-        command,
-        status: process.status.unwrap_or(ProcessStatus::Signaled),
-        output: Box::new(process.output),
-    })
+    TerraformExecutionError::new_for_tool(
+        tool,
+        TerraformExecutionErrorKind::NonZero {
+            command,
+            status: process.status.unwrap_or(ProcessStatus::Signaled),
+            output: Box::new(process.output),
+        },
+    )
 }
 
 impl ProcessRunner for SystemProcessRunner {
-    fn start(&self, root: &Path, arguments: &[OsString]) -> io::Result<Box<dyn RunningProcess>> {
-        let mut command = Command::new(OsStr::new("terraform"));
+    fn start(
+        &self,
+        tool: Tool,
+        root: &Path,
+        arguments: &[OsString],
+    ) -> io::Result<Box<dyn RunningProcess>> {
+        let mut command = Command::new(OsStr::new(tool.executable_name()));
         command
             .current_dir(root)
             .args(arguments)
