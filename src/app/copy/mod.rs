@@ -246,7 +246,8 @@ mod tests {
             ExecutionEvent, ExecutionEventKind, ExecutionLogLine,
         },
         review::{
-            PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata, test_support::plan_document,
+            PlanBlock, PlanBlockKind, PlanMetadata,
+            test_support::{plan_document, plan_document_with_blocks},
         },
     };
 
@@ -291,7 +292,7 @@ mod tests {
         let review = PlanReview::new(
             PathBuf::from("/project"),
             "default".to_owned(),
-            PlanDocument::with_blocks(
+            plan_document_with_blocks(
                 source.clone(),
                 vec![PlanBlock::new(0..end, PlanBlockKind::Common)],
             ),

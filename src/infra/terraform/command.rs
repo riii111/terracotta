@@ -118,12 +118,6 @@ impl ProcessOutput {
             range,
         });
     }
-
-    #[must_use]
-    #[cfg(test)]
-    pub(super) fn stdout(&self) -> &[u8] {
-        &self.stdout
-    }
 }
 
 impl Debug for ProcessOutput {
@@ -984,6 +978,11 @@ mod tests {
                 stderr,
                 ordered: Vec::new(),
             }
+        }
+
+        #[must_use]
+        pub(crate) fn stdout(&self) -> &[u8] {
+            &self.stdout
         }
     }
 

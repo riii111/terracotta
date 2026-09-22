@@ -14,9 +14,6 @@ mod attribute_diff;
 #[cfg(test)]
 mod path;
 
-#[cfg(test)]
-pub(crate) use attribute_diff::AttributePathSegment;
-
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum PlanValue {
     Null,

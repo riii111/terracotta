@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use super::{AttributePathSegment, ReplacePathSegment};
+use super::{ReplacePathSegment, attribute_diff::AttributePathSegment};
 
 pub(crate) fn format_attribute_path(path: &[AttributePathSegment]) -> String {
     if path.is_empty() {
