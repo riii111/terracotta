@@ -368,7 +368,7 @@ try:
         wait_new("Apply this reviewed plan?", "apply_confirmation")
         send_text("yes")
         send_key(b"\r")
-        wait_parts(["Apply complete", "Apply complete! Resources:"], "apply_result", timeout=60)
+        wait_parts(["Apply complete", "terraform_data.api"], "apply_result", timeout=60)
         send_key(b"y")
         exit_code = quit_with_enter()
     elif scenario == "no_changes":
