@@ -8,6 +8,7 @@ pub(crate) struct ApplyConfirmationViewState {
     cursor: usize,
     scroll: u16,
     overlay: Option<ConfirmationOverlay>,
+    overlay_scroll: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,10 +88,12 @@ impl ApplyConfirmationViewState {
             }
             ApplyConfirmationInput::OpenHelp => {
                 self.overlay = Some(ConfirmationOverlay::Help);
+                self.overlay_scroll = 0;
                 None
             }
             ApplyConfirmationInput::OpenContext => {
                 self.overlay = Some(ConfirmationOverlay::Context);
+                self.overlay_scroll = 0;
                 None
             }
             ApplyConfirmationInput::Confirm => None,
@@ -113,8 +116,29 @@ impl ApplyConfirmationViewState {
         self.overlay
     }
 
+    pub(crate) const fn overlay_scroll(&self) -> u16 {
+        self.overlay_scroll
+    }
+
+    pub(crate) const fn scroll_overlay(&mut self, delta: i16) {
+        if delta.is_negative() {
+            self.overlay_scroll = self.overlay_scroll.saturating_sub(delta.unsigned_abs());
+        } else {
+            self.overlay_scroll = self.overlay_scroll.saturating_add(delta.cast_unsigned());
+        }
+    }
+
+    pub(crate) const fn overlay_top(&mut self) {
+        self.overlay_scroll = 0;
+    }
+
+    pub(crate) const fn overlay_bottom(&mut self) {
+        self.overlay_scroll = u16::MAX;
+    }
+
     pub(crate) const fn close_overlay(&mut self) {
         self.overlay = None;
+        self.overlay_scroll = 0;
     }
 
     fn reset(&mut self) {
@@ -205,5 +229,18 @@ mod tests {
 
         assert_eq!(view.input(), "ab");
         assert_eq!(view.cursor(), 1);
+    }
+
+    #[test]
+    fn opening_an_overlay_resets_its_scroll_position() {
+        let mut view = ApplyConfirmationViewState::default();
+
+        view.apply(ApplyConfirmationInput::OpenContext, "yes");
+        view.scroll_overlay(4);
+        assert_eq!(view.overlay_scroll(), 4);
+
+        view.close_overlay();
+        view.apply(ApplyConfirmationInput::OpenHelp, "yes");
+        assert_eq!(view.overlay_scroll(), 0);
     }
 }

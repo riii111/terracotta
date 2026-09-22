@@ -50,6 +50,7 @@ pub(crate) struct PlanReviewViewState {
     search: Option<SearchInputState>,
     selected: Option<usize>,
     overlay: Option<PlanReviewOverlay>,
+    overlay_scroll: u16,
 }
 
 impl PlanReviewViewState {
@@ -131,10 +132,12 @@ impl PlanReviewViewState {
             }
             PlanReviewInput::OpenHelp => {
                 self.overlay = Some(PlanReviewOverlay::Help);
+                self.overlay_scroll = 0;
                 None
             }
             PlanReviewInput::OpenContext => {
                 self.overlay = Some(PlanReviewOverlay::Context);
+                self.overlay_scroll = 0;
                 None
             }
             PlanReviewInput::SearchChar(_)
@@ -193,6 +196,26 @@ impl PlanReviewViewState {
 
     pub(crate) const fn overlay(&self) -> Option<PlanReviewOverlay> {
         self.overlay
+    }
+
+    pub(crate) const fn overlay_scroll(&self) -> u16 {
+        self.overlay_scroll
+    }
+
+    pub(crate) const fn scroll_overlay(&mut self, delta: i16) {
+        if delta.is_negative() {
+            self.overlay_scroll = self.overlay_scroll.saturating_sub(delta.unsigned_abs());
+        } else {
+            self.overlay_scroll = self.overlay_scroll.saturating_add(delta.cast_unsigned());
+        }
+    }
+
+    pub(crate) const fn overlay_top(&mut self) {
+        self.overlay_scroll = 0;
+    }
+
+    pub(crate) const fn overlay_bottom(&mut self) {
+        self.overlay_scroll = u16::MAX;
     }
 
     pub(crate) const fn close_overlay(&mut self) {
@@ -852,6 +875,8 @@ mod tests {
         assert_eq!(view.overlay(), Some(PlanReviewOverlay::Help));
         assert_eq!(view.scroll(), position);
         assert_eq!(view.selected(), selected);
+        view.scroll_overlay(3);
+        assert_eq!(view.overlay_scroll(), 3);
         view.close_overlay();
         assert_eq!(view.overlay(), None);
 
@@ -864,6 +889,7 @@ mod tests {
             &matches,
         );
         assert_eq!(view.overlay(), Some(PlanReviewOverlay::Context));
+        assert_eq!(view.overlay_scroll(), 0);
         assert_eq!(view.scroll(), position);
         assert_eq!(view.selected(), selected);
     }

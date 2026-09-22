@@ -54,6 +54,7 @@ impl PreparedContent<'_> {
 struct PlanSource<'a> {
     text: &'a str,
     kind: PlanLineKind,
+    line_number: usize,
 }
 
 pub(crate) struct ApplyConfirmationLayout {
@@ -194,13 +195,12 @@ pub(crate) fn layout_with_quit_confirmation(
     quit_confirmation: bool,
 ) -> PlanReviewLayout {
     let filtered_view = filter_active(searching, state);
-    let (content, base_metrics) = prepare_view_content(state, filtered_view);
+    let content = prepare_view_content(state, filtered_view);
     layout_with_content(
         area,
         searching,
         state,
         &content,
-        base_metrics,
         state.copy_notice(),
         quit_confirmation,
     )
@@ -215,7 +215,6 @@ fn layout_with_content(
     searching: bool,
     state: &ReviewSessionState,
     content: &PreparedContent<'_>,
-    base_metrics: ContentMetrics,
     copy_notice: Option<CopyNotice>,
     quit_confirmation: bool,
 ) -> PlanReviewLayout {
@@ -250,7 +249,8 @@ fn layout_with_content(
                         (
                             review_footer_status_text(
                                 message,
-                                &position_status(
+                                &position_status_for_content(
+                                    content,
                                     0,
                                     state.review().document().text().split('\n').count(),
                                 ),
@@ -260,7 +260,11 @@ fn layout_with_content(
                     })
                 } else {
                     Some((
-                        position_status(0, base_metrics.line_count),
+                        position_status_for_content(
+                            content,
+                            0,
+                            state.review().document().text().split('\n').count(),
+                        ),
                         theme::secondary_style(),
                     ))
                 }
@@ -443,7 +447,7 @@ pub(crate) fn render_apply_confirmation(
     clear_dim(frame, layout.frame());
     clear_dim(frame, layout.footer());
     if let Some(overlay) = view.overlay() {
-        render_confirmation_overlay(frame, area, state.review(), overlay);
+        render_confirmation_overlay(frame, area, state.review(), overlay, view.overlay_scroll());
     }
 }
 
@@ -751,7 +755,13 @@ fn render_overlay(
         PlanReviewOverlay::Help => plan_help_lines(review, view),
         PlanReviewOverlay::Context => context::context_lines(review.context()),
     };
-    render_dialog(frame, area, overlay_title(overlay), lines);
+    render_dialog(
+        frame,
+        area,
+        overlay_title(overlay),
+        lines,
+        view.overlay_scroll(),
+    );
 }
 
 fn render_confirmation_overlay(
@@ -759,6 +769,7 @@ fn render_confirmation_overlay(
     area: Rect,
     review: &PlanReview,
     overlay: ConfirmationOverlay,
+    scroll: u16,
 ) {
     let lines = match overlay {
         ConfirmationOverlay::Help => vec![
@@ -768,12 +779,18 @@ fn render_confirmation_overlay(
             footer::hint(&["←", "→"], "move input"),
             footer::hint(&["Home", "End"], "input start/end"),
             footer::hint(&["Backspace"], "delete input"),
-            footer::hint(&["c"], "context"),
+            footer::hint(&["Tab"], "context"),
             footer::hint(&["?", "Esc"], "close help"),
         ],
         ConfirmationOverlay::Context => context::context_lines(review.context()),
     };
-    render_dialog(frame, area, confirmation_overlay_title(overlay), lines);
+    render_dialog(
+        frame,
+        area,
+        confirmation_overlay_title(overlay),
+        lines,
+        scroll,
+    );
 }
 
 fn plan_help_lines(review: &PlanReview, view: &PlanReviewViewState) -> Vec<Line<'static>> {
@@ -827,11 +844,14 @@ fn render_dialog(
     area: Rect,
     title: &'static str,
     lines: Vec<Line<'static>>,
+    scroll: u16,
 ) {
     let width = area.width.saturating_sub(4).min(96);
-    let height = u16::try_from(lines.len())
+    let inner_width = width.saturating_sub(2);
+    let body = Paragraph::new(lines).wrap(Wrap { trim: false });
+    let height = u16::try_from(body.line_count(inner_width))
         .unwrap_or(u16::MAX)
-        .saturating_add(4)
+        .saturating_add(3)
         .min(area.height.saturating_sub(2));
     if width < 12 || height < 4 {
         terminal_notice::render_wrapped(frame, area, "Terminal too small. Resize or press Esc.");
@@ -863,10 +883,12 @@ fn render_dialog(
         inner.width,
         inner.height.saturating_sub(1),
     );
+    let max_scroll = body
+        .line_count(content_area.width)
+        .saturating_sub(usize::from(content_area.height));
+    let scroll = u16::try_from(usize::from(scroll).min(max_scroll)).unwrap_or(u16::MAX);
     frame.render_widget(
-        Paragraph::new(lines)
-            .style(theme::body_style())
-            .wrap(Wrap { trim: false }),
+        body.style(theme::body_style()).scroll((scroll, 0)),
         content_area,
     );
     footer::render(
@@ -903,13 +925,12 @@ pub(crate) fn render_with_quit_confirmation(
     }
 
     let filtered_view = filter_active(view.searching(), state);
-    let (content, base_metrics) = prepare_view_content(state, filtered_view);
+    let content = prepare_view_content(state, filtered_view);
     let layout = layout_with_content(
         area,
         view.searching(),
         state,
         &content,
-        base_metrics,
         state.copy_notice_at(now),
         quit_confirmation,
     );
@@ -990,12 +1011,7 @@ pub(crate) fn render_with_quit_confirmation(
         layout.footer_status.clone()
     } else {
         Some((
-            review_footer_status(
-                state,
-                view,
-                content.matches.len(),
-                layout.shell.footer().width,
-            ),
+            review_footer_status(state, view, &content, layout.shell.footer().width),
             theme::secondary_style(),
         ))
     };
@@ -1030,17 +1046,8 @@ fn prepare_content<'a>(
     }
 }
 
-fn prepare_view_content(
-    state: &ReviewSessionState,
-    filtered_view: bool,
-) -> (PreparedContent<'_>, ContentMetrics) {
-    let content = prepare_content(state, filtered_view, state.review().search_query());
-    let base_metrics = if filtered_view {
-        prepare_content(state, false, "").metrics()
-    } else {
-        content.metrics()
-    };
-    (content, base_metrics)
+fn prepare_view_content(state: &ReviewSessionState, filtered_view: bool) -> PreparedContent<'_> {
+    prepare_content(state, filtered_view, state.review().search_query())
 }
 
 fn render_status(
@@ -1079,7 +1086,6 @@ fn review_lines<'a>(
     let mut lines = diagnostic_lines(review);
     let mut sources = vec![None; lines.len()];
     let mut matches = Vec::new();
-    let mut removed_summary = false;
     if filtered.matching_resources() == 0
         && filtered.matching_outputs() == 0
         && !filter_query.is_empty()
@@ -1097,10 +1103,6 @@ fn review_lines<'a>(
         if kind == PlanLineKind::Intro {
             continue;
         }
-        if kind == PlanLineKind::Summary {
-            removed_summary = true;
-            continue;
-        }
         if filtered_view && filtered.matching_outputs() == 0 && kind == PlanLineKind::OutputSection
         {
             continue;
@@ -1109,14 +1111,16 @@ fn review_lines<'a>(
         let (rendered, line_matches) =
             plan_line_and_matches(line, filter_query, line_index, None, kind);
         lines.push(rendered);
-        sources.push(Some(PlanSource { text: line, kind }));
+        sources.push(Some(PlanSource {
+            text: line,
+            kind,
+            line_number,
+        }));
         matches.extend(line_matches);
     }
-    if removed_summary {
-        while lines.last().is_some_and(|line| line.width() == 0) {
-            lines.pop();
-            sources.pop();
-        }
+    while lines.last().is_some_and(|line| line.width() == 0) {
+        lines.pop();
+        sources.pop();
     }
     (lines, sources, matches)
 }
@@ -1370,16 +1374,37 @@ fn position_status(position: u16, total: usize) -> String {
 fn review_footer_status(
     state: &ReviewSessionState,
     view: &PlanReviewViewState,
-    visible_line_count: usize,
+    content: &PreparedContent<'_>,
     width: u16,
 ) -> String {
-    let position = position_status(
+    let position = position_status_for_content(
+        content,
         view.scroll().0,
         state.review().document().text().split('\n').count(),
     );
-    filter_footer_status(state.review().search_query(), visible_line_count, width).map_or_else(
+    filter_footer_status(state.review().search_query(), content.matches.len(), width).map_or_else(
         || position.clone(),
         |message| review_footer_status_text(&message, &position),
+    )
+}
+
+fn position_status_for_content(
+    content: &PreparedContent<'_>,
+    position: u16,
+    total: usize,
+) -> String {
+    let display_index = usize::from(position);
+    let source_position = content
+        .sources
+        .get(display_index)
+        .and_then(|source| source.as_ref())
+        .map_or_else(
+            || display_index.saturating_add(1),
+            |source| source.line_number.saturating_add(1),
+        );
+    position_status(
+        u16::try_from(source_position.saturating_sub(1)).unwrap_or(u16::MAX),
+        total,
     )
 }
 
@@ -1816,7 +1841,9 @@ End of synthetic plan body."#;
                 vec![PathBuf::from("/repo/environments/production/common.tfvars")],
                 vec![PathBuf::from("/repo/secrets/production.tfvars")],
                 true,
-                vec!["TF_VAR_region".to_owned(), "TF_VAR_account".to_owned()],
+                std::iter::once("TF_VAR_region".to_owned())
+                    .chain((0..32).map(|index| format!("TF_VAR_{index:02}")))
+                    .collect(),
             )),
         );
         let state = review_state(plan);
@@ -1878,6 +1905,11 @@ End of synthetic plan body."#;
         assert!(context_text.contains("Execution directory"));
         assert!(compact_context.contains("/repo/secrets/production.tfvars"));
         assert!(context_text.contains("TF_VAR_region"));
+        view.overlay_bottom();
+        let scrolled_context = render_to_buffer((80, 24), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        assert!(buffer_text(&scrolled_context).contains("TF_VAR_31"));
         assert_eq!(view.scroll(), position);
     }
 
@@ -1898,6 +1930,7 @@ End of synthetic plan body."#;
         let help_text = buffer_text(&help);
         assert!(help_text.contains("Apply help"));
         assert!(help_text.contains("Enter confirm"));
+        assert!(help_text.contains("Tab context"));
 
         view.close_overlay();
         assert_eq!(
@@ -2422,7 +2455,7 @@ End of synthetic plan body."#;
         }
 
         #[test]
-        fn normal_body_omits_only_the_final_summary_and_its_trailing_blank() {
+        fn normal_body_keeps_the_final_summary_without_its_trailing_blank() {
             let review = PlanReview::new(
                 PathBuf::from("/project"),
                 "default".to_owned(),
@@ -2443,7 +2476,7 @@ End of synthetic plan body."#;
 
             assert_eq!(
                 lines.iter().map(Line::to_string).collect::<Vec<_>>(),
-                ["body"]
+                ["body", "Plan: 1 to add, 0 to change, 0 to destroy."]
             );
         }
 
@@ -2461,7 +2494,7 @@ End of synthetic plan body."#;
 
             assert_eq!(
                 lines.iter().map(Line::to_string).collect::<Vec<_>>(),
-                ["Plan: application text", "following body text", ""]
+                ["Plan: application text", "following body text"]
             );
         }
     }
@@ -3246,7 +3279,7 @@ End of synthetic plan body."#;
         }
 
         #[test]
-        fn filtered_body_omits_the_plan_summary() {
+        fn filtered_body_keeps_the_plan_summary() {
             let mut review = PlanReview::new(
                 PathBuf::from("/project"),
                 "default".to_owned(),
@@ -3268,8 +3301,8 @@ End of synthetic plan body."#;
                     .all(|line| line.to_string() != "Plan total (full plan):")
             );
             assert!(
-                lines.iter().all(|line| {
-                    line.to_string() != "Plan: 1 to add, 0 to change, 0 to destroy."
+                lines.iter().any(|line| {
+                    line.to_string() == "Plan: 1 to add, 0 to change, 0 to destroy."
                 })
             );
         }

@@ -41,4 +41,4 @@ Plan: 2 to add, 2 to change, 1 to destroy.                                      
 Synthetic review text continues below so the viewport and scrollbar remain meaningful.                                 │
 The same long body is intentionally reused across every review state and terminal size.                                │
 No Terraform process, provider, state file, or cloud credential is used by this fixture.                               ▼
-/ filter | ? help | q quit                                                                                          1/43
+/ filter | ? help | q quit                                                                                          3/43

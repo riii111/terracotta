@@ -73,23 +73,55 @@ fn fit_header(parts: &[String], width: u16) -> Line<'static> {
     let value = if Line::from(full.as_str()).width() <= width {
         full
     } else {
-        let suffix = parts.last().map_or("", String::as_str);
-        let prefix = parts[..parts.len().saturating_sub(1)].join(GAP);
-        let prefix_width = Line::from(prefix.as_str()).width();
-        let suffix_width = width.saturating_sub(prefix_width + separator_width);
-        if suffix_width >= 4 {
-            format!("{prefix}{GAP}{}", truncate_middle(suffix, suffix_width))
+        let separators = separator_width.saturating_mul(parts.len().saturating_sub(1));
+        let available = width.saturating_sub(separators);
+        let minimums = parts
+            .iter()
+            .enumerate()
+            .map(|(index, part)| match index {
+                0 => Line::from(part.as_str()).width().min(12),
+                index if index == parts.len().saturating_sub(1) => 5,
+                1 => Line::from(part.as_str()).width().min(10),
+                2 => Line::from(part.as_str()).width().min(15),
+                _ => 4,
+            })
+            .collect::<Vec<_>>();
+        if available < minimums.iter().sum() {
+            truncate_middle(&full, width)
         } else {
-            let prefix_width = width.saturating_sub(separator_width);
-            format!(
-                "{}{}{}",
-                truncate_middle(&parts[0], prefix_width / 2),
-                GAP,
-                truncate_middle(suffix, prefix_width.saturating_sub(prefix_width / 2)),
-            )
+            let mut allocations = minimums;
+            let mut remaining = available.saturating_sub(allocations.iter().sum());
+            for (allocation, part) in allocations.iter_mut().zip(parts) {
+                let extra = remaining.min(
+                    Line::from(part.as_str())
+                        .width()
+                        .saturating_sub(*allocation),
+                );
+                *allocation += extra;
+                remaining -= extra;
+            }
+            parts
+                .iter()
+                .zip(allocations)
+                .enumerate()
+                .map(|(index, (part, allocation))| {
+                    truncate_header_part(part, allocation, index == parts.len().saturating_sub(1))
+                })
+                .collect::<Vec<_>>()
+                .join(GAP)
         }
     };
     Line::from(Span::styled(value, theme::secondary_style()))
+}
+
+fn truncate_header_part(value: &str, max_width: usize, is_directory: bool) -> String {
+    if is_directory && value.starts_with("./") && Line::from(value).width() > max_width {
+        if max_width <= 2 {
+            return truncate_middle(value, max_width);
+        }
+        return format!("./{}", truncate_middle(&value[2..], max_width - 2));
+    }
+    truncate_middle(value, max_width)
 }
 
 fn header_line(path: &Path, workspace: Option<&str>, width: u16) -> Line<'static> {
@@ -120,4 +152,27 @@ fn header_line(path: &Path, workspace: Option<&str>, width: u16) -> Line<'static
         },
     );
     Line::from(Span::styled(value, theme::secondary_style()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn narrow_review_header_keeps_workspace_and_tool_fields() {
+        let line = fit_header(
+            &[
+                "very-long-target-name-for-review [PROD]".to_owned(),
+                "ws:default".to_owned(),
+                "terraform 1.9.0".to_owned(),
+                "./environments/production".to_owned(),
+            ],
+            50,
+        );
+        let value = line.to_string();
+
+        assert!(value.contains("ws:default"));
+        assert!(value.contains("terraform 1.9.0"));
+        assert!(value.contains("./"));
+    }
 }

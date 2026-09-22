@@ -313,11 +313,11 @@ def kill_child():
 try:
     if scenario in ("full_text", "user_output", "cli_args", "detailed"):
         wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
-        wait_new("1/", "plan_position")
+        wait_new("3/", "plan_position")
         exit_code = quit_with_enter()
     elif scenario == "filter_navigation":
         wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
-        wait_new("1/", "plan_position")
+        wait_new("3/", "plan_position")
         send_key(b"/")
         wait_new("/ ", "filter_input")
         send_text("api")
@@ -385,7 +385,7 @@ try:
         wait_new("Apply help", "apply_help")
         send_key(b"?")
         wait_new("Apply this reviewed plan?", "apply_help_closed")
-        send_key(b"c")
+        send_key(b"\t")
         wait_new("Execution directory", "apply_context")
         send_key(b"\x1b")
         wait_new("Apply this reviewed plan?", "apply_context_closed")

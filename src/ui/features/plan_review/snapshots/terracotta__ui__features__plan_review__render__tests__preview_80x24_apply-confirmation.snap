@@ -25,4 +25,4 @@ Pmain [PROD]  ws:default  terraform loading...  /repo/environm...roduction/main
     }                                                                          │
                                                                                │
 ◀︎═══════════════════════════════════════════════════════════════════───────────▶︎
-/ filter | ? help | q quit                                                  1/43
+/ filter | ? help | q quit                                                  3/43

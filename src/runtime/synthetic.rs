@@ -188,8 +188,15 @@ fn handle_synthetic_key(
         SessionState::Review(review) => synthetic_review_key(terminal, view, review, key),
         SessionState::ApplyConfirmation(confirmation) => {
             if confirmation_view.overlay().is_some() {
-                if matches!(key.code, KeyCode::Esc | KeyCode::Char('?')) {
-                    confirmation_view.close_overlay();
+                match key.code {
+                    KeyCode::Esc | KeyCode::Char('?') => confirmation_view.close_overlay(),
+                    KeyCode::Up | KeyCode::Char('k') => confirmation_view.scroll_overlay(-1),
+                    KeyCode::Down | KeyCode::Char('j') => confirmation_view.scroll_overlay(1),
+                    KeyCode::PageUp => confirmation_view.scroll_overlay(-8),
+                    KeyCode::PageDown => confirmation_view.scroll_overlay(8),
+                    KeyCode::Home => confirmation_view.overlay_top(),
+                    KeyCode::End => confirmation_view.overlay_bottom(),
+                    _ => {}
                 }
                 Ok(None)
             } else {
@@ -292,8 +299,15 @@ fn synthetic_review_key(
     key: KeyEvent,
 ) -> io::Result<Option<Action>> {
     if view.overlay().is_some() {
-        if matches!(key.code, KeyCode::Esc | KeyCode::Char('?')) {
-            view.close_overlay();
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('?') => view.close_overlay(),
+            KeyCode::Up | KeyCode::Char('k') => view.scroll_overlay(-1),
+            KeyCode::Down | KeyCode::Char('j') => view.scroll_overlay(1),
+            KeyCode::PageUp => view.scroll_overlay(-8),
+            KeyCode::PageDown => view.scroll_overlay(8),
+            KeyCode::Home => view.overlay_top(),
+            KeyCode::End => view.overlay_bottom(),
+            _ => {}
         }
         return Ok(None);
     }

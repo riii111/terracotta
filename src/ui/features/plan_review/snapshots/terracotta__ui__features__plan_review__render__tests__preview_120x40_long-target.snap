@@ -2,7 +2,7 @@
 source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
-very-long-target-name-for-review [PROD]  ws:default  terraform 1.9.0  ./environments/productio...-target-name-for-review
+very-long-target-name-for-review [PROD]  ws:default  terraform 1.9.0  ./environments/production...target-name-for-review
 Plan: +2 add  ~2 update  0 replace  -1 destroy
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ~ resource "terraform_data" "api" {                                                                                  ▲
@@ -41,4 +41,4 @@ Synthetic review text continues below so the viewport and scrollbar remain meani
 The same long body is intentionally reused across every review state and terminal size.                                │
 No Terraform process, provider, state file, or cloud credential is used by this fixture.                               │
 The review surface preserves Terraform order, attributes, output values, and diagnostics.                              ▼
-/ filter | a apply | ? help | q quit                                                                                2/43
+/ filter | a apply | ? help | q quit                                                                                4/43

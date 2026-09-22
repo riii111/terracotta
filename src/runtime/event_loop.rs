@@ -315,8 +315,15 @@ fn handle_key_event<B: Backend>(
 
     if state.apply_confirmation().is_some() {
         if confirmation_view.overlay().is_some() {
-            if matches!(key.code, KeyCode::Esc | KeyCode::Char('?')) {
-                confirmation_view.close_overlay();
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('?') => confirmation_view.close_overlay(),
+                KeyCode::Up | KeyCode::Char('k') => confirmation_view.scroll_overlay(-1),
+                KeyCode::Down | KeyCode::Char('j') => confirmation_view.scroll_overlay(1),
+                KeyCode::PageUp => confirmation_view.scroll_overlay(-8),
+                KeyCode::PageDown => confirmation_view.scroll_overlay(8),
+                KeyCode::Home => confirmation_view.overlay_top(),
+                KeyCode::End => confirmation_view.overlay_bottom(),
+                _ => {}
             }
             return Ok(None);
         }
@@ -346,8 +353,15 @@ fn handle_key_event<B: Backend>(
         return Ok(None);
     };
     if review_view.overlay().is_some() {
-        if matches!(key.code, KeyCode::Esc | KeyCode::Char('?')) {
-            review_view.close_overlay();
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('?') => review_view.close_overlay(),
+            KeyCode::Up | KeyCode::Char('k') => review_view.scroll_overlay(-1),
+            KeyCode::Down | KeyCode::Char('j') => review_view.scroll_overlay(1),
+            KeyCode::PageUp => review_view.scroll_overlay(-8),
+            KeyCode::PageDown => review_view.scroll_overlay(8),
+            KeyCode::Home => review_view.overlay_top(),
+            KeyCode::End => review_view.overlay_bottom(),
+            _ => {}
         }
         return Ok(None);
     }

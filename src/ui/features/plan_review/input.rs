@@ -153,7 +153,7 @@ pub(crate) fn apply_confirmation_key_to_input(key: KeyEvent) -> Option<ApplyConf
         (KeyCode::Char('?'), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
             Some(ApplyConfirmationInput::OpenHelp)
         }
-        (KeyCode::Char('c'), KeyModifiers::NONE) => Some(ApplyConfirmationInput::OpenContext),
+        (KeyCode::Tab, _) => Some(ApplyConfirmationInput::OpenContext),
         (KeyCode::Backspace, _) => Some(ApplyConfirmationInput::Backspace),
         (KeyCode::Up, _) => Some(ApplyConfirmationInput::ScrollUp),
         (KeyCode::Down, _) => Some(ApplyConfirmationInput::ScrollDown),
@@ -352,8 +352,12 @@ mod tests {
             Some(ApplyConfirmationInput::OpenHelp)
         );
         assert_eq!(
-            apply_confirmation_key_to_input(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE,)),
+            apply_confirmation_key_to_input(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE,)),
             Some(ApplyConfirmationInput::OpenContext)
+        );
+        assert_eq!(
+            apply_confirmation_key_to_input(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE,)),
+            Some(ApplyConfirmationInput::Character('c'))
         );
         assert_eq!(
             key_to_input(
