@@ -222,16 +222,12 @@ def wait_file(path, name, timeout=20):
     raise RuntimeError(f"missing {name}: {path!r}; head={bytes(output)[:4000]!r}")
 
 
-def diagnostic_and_plan_is_ordered(current):
-    markers = (
-        "Plan:",
-        "synthetic plan warning",
-        "terraform_data.api",
-    )
+def plan_status_is_above_plan_text(current):
+    markers = ("Plan:", "terraform_data.api")
     positions = [current.find(marker) for marker in markers]
     if any(position < 0 for position in positions):
         return False
-    return positions[1] < positions[0] < positions[2]
+    return positions[0] < positions[1]
 
 
 def wait_exit(timeout=20):
@@ -317,18 +313,37 @@ def kill_child():
 try:
     if scenario in ("full_text", "user_output", "cli_args", "detailed"):
         wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
+        wait_new("3/", "plan_position")
         exit_code = quit_with_enter()
     elif scenario == "filter_navigation":
         wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
+        wait_new("3/", "plan_position")
         send_key(b"/")
         wait_new("/ ", "filter_input")
         send_text("api")
         wait_new(" matches", "filter_matches")
         send_key(b"\r")
-        wait_new("n/N next/prev", "filter_confirmed")
-        for key in (b"a", b"y", b"q", b"\x03"):
-            send_key(key)
-            assert_screen_unchanged("confirmed_filter_action_blocked")
+        wait_new("y copy all", "filter_confirmed")
+        send_key(b"?")
+        wait_new("Help", "filter_help")
+        send_key(b"?")
+        wait_new("y copy all", "filter_help_closed")
+        send_key(b"c")
+        wait_new("Execution directory", "filter_context")
+        send_key(b"\x1b")
+        wait_new("y copy all", "filter_context_closed")
+        send_key(b"y")
+        wait_screen(
+            lambda current: "Copied." in current or "Copy failed." in current,
+            "filter_copy",
+            "copy notice after filtering",
+        )
+        send_key(b"a")
+        assert_screen_unchanged("plan_entry_apply_blocked")
+        send_key(b"q")
+        wait_new("Quit Terracotta?", "filter_quit_confirmation")
+        send_key(b"\x1b")
+        wait_new("y copy all", "filter_quit_cancelled")
         send_key(b"n")
         send_key(b"N")
         send_key(b"\x1b")
@@ -360,8 +375,20 @@ try:
         "apply_mapping",
     ):
         wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
+        send_key(b"?")
+        wait_new("Help", "plan_help")
+        send_key(b"?")
+        wait_new("a apply", "plan_help_closed")
         send_key(b"a")
         wait_new("Apply this reviewed plan?", "apply_confirmation")
+        send_key(b"?")
+        wait_new("Apply help", "apply_help")
+        send_key(b"?")
+        wait_new("Apply this reviewed plan?", "apply_help_closed")
+        send_key(b"\t")
+        wait_new("Execution directory", "apply_context")
+        send_key(b"\x1b")
+        wait_new("Apply this reviewed plan?", "apply_context_closed")
         send_text("yes")
         send_key(b"\r")
         wait_new("Applying...", "apply_started")
@@ -374,7 +401,11 @@ try:
             wait_new("v logs", "apply_logs_closed")
             send_key(b"v")
             wait_new("Applying saved plan...", "apply_logs_reopened")
-            wait_parts(["Apply complete", "endpoint ="], "apply_success", timeout=60)
+            wait_parts(
+                ["Apply complete", "endpoint =", "y yank result"],
+                "apply_success",
+                timeout=60,
+            )
             exit_code = quit_with_enter()
         elif scenario in ("apply_success", "apply_mapping"):
             wait_parts(["Apply complete", "endpoint ="], "apply_success")
@@ -423,15 +454,22 @@ try:
             send_key(b"\r")
             wait_new("Type yes to apply (exact match).", "apply_invalid_input")
             send_key(b"\x1b")
-        wait_new("terraform_data.api", "plan_restored")
+        wait_screen(
+            lambda current: (
+                "Type yes to apply (exact match)." not in current
+                and "Apply this reviewed plan?" not in current
+                and "terraform_data.api" in current
+            ),
+            "plan_restored",
+            "review screen after cancelling apply",
+        )
         exit_code = quit_with_enter()
     elif scenario == "diagnostic_success":
         wait_screen(
-            diagnostic_and_plan_is_ordered,
-            "diagnostic_and_plan",
+            plan_status_is_above_plan_text,
+            "plan_status_and_text",
             (
                 "Plan:",
-                "synthetic plan warning",
                 "terraform_data.api",
             ),
         )

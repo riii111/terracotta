@@ -25,6 +25,8 @@ pub(crate) enum PlanReviewInput {
     SearchCancel,
     SearchNext,
     SearchPrevious,
+    OpenHelp,
+    OpenContext,
     Apply,
     Copy,
     Quit,
@@ -53,6 +55,10 @@ pub(crate) fn key_to_input(
         (KeyCode::Esc, KeyModifiers::NONE) => Some(PlanReviewInput::SearchCancel),
         (KeyCode::Char('n'), KeyModifiers::NONE) => Some(PlanReviewInput::SearchNext),
         (KeyCode::Char('N'), KeyModifiers::NONE) => Some(PlanReviewInput::SearchPrevious),
+        (KeyCode::Char('?'), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+            Some(PlanReviewInput::OpenHelp)
+        }
+        (KeyCode::Char('c'), KeyModifiers::NONE) => Some(PlanReviewInput::OpenContext),
         (KeyCode::Char('y'), KeyModifiers::NONE) => Some(PlanReviewInput::Copy),
         (KeyCode::Char('a'), KeyModifiers::NONE) => Some(PlanReviewInput::Apply),
         (KeyCode::Char('q'), KeyModifiers::NONE) => Some(PlanReviewInput::Quit),
@@ -66,6 +72,13 @@ const fn confirmed_filter_key_to_input(key: KeyEvent) -> Option<PlanReviewInput>
         (KeyCode::Esc, KeyModifiers::NONE) => Some(PlanReviewInput::SearchCancel),
         (KeyCode::Char('n'), KeyModifiers::NONE) => Some(PlanReviewInput::SearchNext),
         (KeyCode::Char('N'), KeyModifiers::NONE) => Some(PlanReviewInput::SearchPrevious),
+        (KeyCode::Char('?'), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+            Some(PlanReviewInput::OpenHelp)
+        }
+        (KeyCode::Char('c'), KeyModifiers::NONE) => Some(PlanReviewInput::OpenContext),
+        (KeyCode::Char('y'), KeyModifiers::NONE) => Some(PlanReviewInput::Copy),
+        (KeyCode::Char('a'), KeyModifiers::NONE) => Some(PlanReviewInput::Apply),
+        (KeyCode::Char('q'), KeyModifiers::NONE) => Some(PlanReviewInput::Quit),
         _ => navigation_key_to_input(key),
     }
 }
@@ -126,6 +139,8 @@ pub(crate) enum ApplyConfirmationInput {
     Right,
     Home,
     End,
+    OpenHelp,
+    OpenContext,
     Confirm,
     Cancel,
 }
@@ -135,6 +150,10 @@ pub(crate) fn apply_confirmation_key_to_input(key: KeyEvent) -> Option<ApplyConf
     match (key.code, key.modifiers) {
         (KeyCode::Enter, _) => Some(ApplyConfirmationInput::Confirm),
         (KeyCode::Esc, _) => Some(ApplyConfirmationInput::Cancel),
+        (KeyCode::Char('?'), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+            Some(ApplyConfirmationInput::OpenHelp)
+        }
+        (KeyCode::Tab, _) => Some(ApplyConfirmationInput::OpenContext),
         (KeyCode::Backspace, _) => Some(ApplyConfirmationInput::Backspace),
         (KeyCode::Up, _) => Some(ApplyConfirmationInput::ScrollUp),
         (KeyCode::Down, _) => Some(ApplyConfirmationInput::ScrollDown),
@@ -271,15 +290,83 @@ mod tests {
     }
 
     #[test]
-    fn confirmed_filter_blocks_apply_copy_and_quit_keys() {
-        for key in [
-            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
-            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
-            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
-            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
-        ] {
-            assert_eq!(key_to_input(key, false, true), None);
+    fn confirmed_filter_keeps_full_plan_actions_available() {
+        assert_eq!(
+            key_to_input(
+                KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+                false,
+                true,
+            ),
+            Some(PlanReviewInput::Apply)
+        );
+        assert_eq!(
+            key_to_input(
+                KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+                false,
+                true,
+            ),
+            Some(PlanReviewInput::Copy)
+        );
+        assert_eq!(
+            key_to_input(
+                KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+                false,
+                true,
+            ),
+            Some(PlanReviewInput::Quit)
+        );
+        assert_eq!(
+            key_to_input(
+                KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                false,
+                true,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn help_and_context_keys_are_available_only_on_their_review_screens() {
+        for filter_confirmed in [false, true] {
+            assert_eq!(
+                key_to_input(
+                    KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT),
+                    false,
+                    filter_confirmed,
+                ),
+                Some(PlanReviewInput::OpenHelp)
+            );
+            assert_eq!(
+                key_to_input(
+                    KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
+                    false,
+                    filter_confirmed,
+                ),
+                Some(PlanReviewInput::OpenContext)
+            );
         }
+        assert_eq!(
+            apply_confirmation_key_to_input(
+                KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT,)
+            ),
+            Some(ApplyConfirmationInput::OpenHelp)
+        );
+        assert_eq!(
+            apply_confirmation_key_to_input(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE,)),
+            Some(ApplyConfirmationInput::OpenContext)
+        );
+        assert_eq!(
+            apply_confirmation_key_to_input(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE,)),
+            Some(ApplyConfirmationInput::Character('c'))
+        );
+        assert_eq!(
+            key_to_input(
+                KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+                true,
+                false,
+            ),
+            Some(PlanReviewInput::SearchChar('?'))
+        );
     }
 
     #[test]

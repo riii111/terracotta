@@ -2,26 +2,27 @@
 source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
-
- Terracotta | main
-
- ┌Plan────────────────────────────────────────────────────────────────────────┐
- │Plan: +2 add  ~2 update  0 replace  -1 destroy                              │
- │────────────────────────────────────────────────────────────────────────────│
- │  # terraform_data.api will be updated in-place                            ▲│
- │  ~ resource "terraform_data" "api" {                                      ┃│
- │      id       = "api-20260920"                                            ┃│
- │      ~ input  = "before" -> "after"                                       ┃│
- │      # (4 unchanged attributes hidden)                                    ┃│
- │    }                                                                      ││
- │                                                                           ││
- │  # terraform_data.worker must be replaced                                 ││
- │-/+ resource "terraform_data" "worker" {                                   ││
- │      ~ input = "worker-before" -> "worker-after" # forces replacement     ││
- │      - old_checksum = "sha256:0123456789abcdef0123456789abcdef0123456789ab││
- │      + new_checksum = (known after apply)                                 ││
- │    }                                                                      ││
- │                                                                           ││
- │◀︎════════════════════════════════════════════════════════════──────────────▶︎│
- └────────────────────────────────────────────────────────────────────────────┘
- ↑/↓/←/→ scroll | / filter | y copy plan | a apply | q quit
+main [PROD]  ws:default  terraform loading...  /repo/environme...production/main
+Plan: +2 add  ~2 update  0 replace  -1 destroy
+────────────────────────────────────────────────────────────────────────────────
+  # terraform_data.api will be updated in-place                                ▲
+  ~ resource "terraform_data" "api" {                                          ┃
+      id       = "api-20260920"                                                ┃
+      ~ input  = "before" -> "after"                                           ┃
+      # (4 unchanged attributes hidden)                                        ┃
+    }                                                                          ┃
+                                                                               ┃
+  # terraform_data.worker must be replaced                                     ┃
+-/+ resource "terraform_data" "worker" {                                       ┃
+      ~ input = "worker-before" -> "worker-after" # forces replacement         │
+      - old_checksum = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef│
+      + new_checksum = (known after apply)                                     │
+    }                                                                          │
+                                                                               │
+  # terraform_data.old will be destroyed                                       │
+  - resource "terraform_data" "old" {                                          │
+      id = "old-20260920"                                                      │
+    }                                                                          │
+                                                                               │
+◀︎═══════════════════════════════════════════════════════════════════───────────▶︎
+/ filter | ? help | q quit                                                  3/43

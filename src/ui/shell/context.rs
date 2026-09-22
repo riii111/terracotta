@@ -4,11 +4,66 @@ use ratatui::buffer::CellWidth;
 use ratatui::style::Style;
 use ratatui::text::Line;
 
+use crate::app::execution::{ExecutionContext, ExecutionContextValue};
+
 pub(crate) fn target(path: &Path) -> String {
     path.file_name().map_or_else(
         || path.display().to_string(),
         |name| name.to_string_lossy().into_owned(),
     )
+}
+
+pub(crate) fn relative_directory(path: &Path, launch_root: Option<&Path>) -> String {
+    launch_root
+        .and_then(|root| path.strip_prefix(root).ok())
+        .map_or_else(
+            || path.display().to_string(),
+            |relative| {
+                if relative.as_os_str().is_empty() {
+                    ".".to_owned()
+                } else {
+                    format!("./{}", relative.display())
+                }
+            },
+        )
+}
+
+pub(crate) fn context_lines(context: &ExecutionContext) -> Vec<Line<'static>> {
+    let workspace = match context.workspace() {
+        ExecutionContextValue::Known(value) => value.clone(),
+        ExecutionContextValue::Loading => "loading...".to_owned(),
+    };
+    let version = match context.tool_version() {
+        ExecutionContextValue::Known(value) => value.clone(),
+        ExecutionContextValue::Loading => "loading...".to_owned(),
+    };
+    let mut lines = vec![
+        Line::from("Execution directory"),
+        Line::from(format!("  {}", context.cwd_path().display())),
+        Line::from(format!("Workspace: {workspace}")),
+        Line::from(format!("Tool: {} {version}", context.tool_name())),
+        Line::from("Variable sources"),
+    ];
+    let sources = context.variable_sources();
+    for path in sources.automatic_files() {
+        lines.push(Line::from(format!("  auto: {}", path.display())));
+    }
+    for path in sources.explicit_files() {
+        lines.push(Line::from(format!("  -var-file: {}", path.display())));
+    }
+    if sources.has_var_argument() {
+        lines.push(Line::from("  -var: provided"));
+    }
+    for name in sources.environment_variables() {
+        lines.push(Line::from(format!("  {name}")));
+    }
+    if lines
+        .last()
+        .is_some_and(|line| line.to_string() == "Variable sources")
+    {
+        lines.push(Line::from("  none detected"));
+    }
+    lines
 }
 
 pub(crate) fn truncate_middle(value: &str, max_width: usize) -> String {

@@ -2,6 +2,12 @@
 source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
+repo  ws:default  terraform loading...  /repo
+Plan: +0 add  ~0 update  0 replace  -0 destroy
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 
 
@@ -27,13 +33,32 @@ expression: buffer_text(buffer)
 
 
 
- Terracotta | repo
 
- ┌Plan────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │Plan: +0 add  ~0 update  0 replace  -0 destroy                                                                                                              │
- │────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
- │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx                                                                                                            │
- │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx                                                                                                            │
- │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx                                                                                                            │
- └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- ↑/↓/←/→ scroll | / filter | y copy plan | a apply | q quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/ filter | ? help | q quit                                                                                                                                   1/3

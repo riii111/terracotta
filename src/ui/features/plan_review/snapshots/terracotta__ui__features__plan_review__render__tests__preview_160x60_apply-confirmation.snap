@@ -2,57 +2,63 @@
 source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
+main [PROD]  ws:default  terraform loading...  /repo/environments/production/main
+Plan: +2 add  ~2 update  0 replace  -1 destroy
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  # terraform_data.api will be updated in-place
+  ~ resource "terraform_data" "api" {
+      id       = "api-20260920"
+ main [PROD]  ws:default  terraform loading...  /repo/environments/production/main
+      # (4 unchanged attributes hidden)
+    }
+
+  # terraform_data.worker must be replaced
+-/+ resource "terraform_data" "worker" {
+      ~ input = "worker-before" -> "worker-after" # forces replacement
+      - old_checksum = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef"
+      + new_checksum = (known after apply)
+    }
+
+  # terraform_data.old will be destroyed
+  - resource "terraform_data" "old" {
+      id = "old-20260920"
+    }
+
+  # terraform_data.new will be created
+  + resource "terraform_data" "new" {   ┌──────────────────────────────────────────────────────────────────────────────┐
+      input = "new-value"               │                                                                              │
+      note  = "A deliberately long synth│ Apply this reviewed plan?                                                    │
+    }                                   │                                                                              │
+                                        │ Target: main [PROD]                                                          │
+Changes to Outputs:                     │ Workspace: default                                                           │
+  + endpoint = (known after apply)      │ Directory: /repo/environments/production/main                                │
+  ~ summary  = "old summary" -> "new sum│ Tool: terraform loading...                                                   │
+                                        │ Plan: +2 add  ~2 update  0 replace  -1 destroy                               │
+Warning: Value for "pending" is not know│                                                                              │
+                                        │ Type main to apply (exact match).                                            │
+Plan: 2 to add, 2 to change, 1 to destro│ > |                                                                          │
+                                        │                                                                              │
+Synthetic review text continues below so└──────────────────────────────────────────────────────────────────────────────┘
+The same long body is intentionally reusEnter confirm | Esc back | ? helpterminal size.
+No Terraform process, provider, state file, or cloud credential is used by this fixture.
+The review surface preserves Terraform order, attributes, output values, and diagnostics.
+Long lines remain unwrapped in the plan body; horizontal movement exposes the hidden suffix.
+Vertical movement exposes later lines in this synthetic plan body.
+
+End of synthetic plan body.
 
 
 
 
 
 
- Terracotta | main
 
- ┌Plan────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │Plan: +2 add  ~2 update  0 replace  -1 destroy                                                                                                              │
- │────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
- │  # terraform_data.api will be updated in-place                                                                                                             │
- │  ~ resource "terraform_data" "api" {                                                                                                                       │
- │      id       = "api-20260920"                                                                                                                             │
- │      ~ input  = "before" -> "after"                                                                                                                        │
- │      # (4 unchanged attributes hidden)                                                                                                                     │
- │    }                                                                                                                                                       │
- │                                                                                                                                                            │
- │  # terraform_data.worker must be replaced                                                                                                                  │
- │-/+ resource "terraform_data" "worker" {                                                                                                                    │
- │      ~ input = "worker-before" -> "worker-after" # forces replacement                                                                                      │
- │      - old_checksum = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef"                                                                            │
- │      + new_checksum = (known after apply)                                                                                                                  │
- │    }                                 ┌──────────────────────────────────────────────────────────────────────────────┐                                      │
- │                                      │                                                                              │                                      │
- │  # terraform_data.old will be destroy│ Apply this reviewed plan?                                                    │                                      │
- │  - resource "terraform_data" "old" { │                                                                              │                                      │
- │      id = "old-20260920"             │ Target: main [PROD]                                                          │                                      │
- │    }                                 │ Workspace: default                                                           │                                      │
- │                                      │ Directory: /repo/environments/production/main                                │                                      │
- │  # terraform_data.new will be created│ Tool: terraform loading...                                                   │                                      │
- │  + resource "terraform_data" "new" { │ Plan: +2 add  ~2 update  0 replace  -1 destroy                               │                                      │
- │      input = "new-value"             │                                                                              │                                      │
- │      note  = "A deliberately long syn│ Type main to apply (exact match).                                            │                                      │
- │    }                                 │ > |                                                                          │                                      │
- │                                      │                                                                              │                                      │
- │Changes to Outputs:                   └──────────────────────────────────────────────────────────────────────────────┘                                      │
- │  + endpoint = (known after apply)    Enter confirm | Esc back                                                                                              │
- │  ~ summary  = "old summary" -> "new summary with a deliberately long value for review"                                                                     │
- │                                                                                                                                                            │
- │Warning: Value for "pending" is not known until apply                                                                                                       │
- │                                                                                                                                                            │
- │Plan: 2 to add, 2 to change, 1 to destroy.                                                                                                                  │
- │                                                                                                                                                            │
- │Synthetic review text continues below so the viewport and scrollbar remain meaningful.                                                                      │
- │The same long body is intentionally reused across every review state and terminal size.                                                                     │
- │No Terraform process, provider, state file, or cloud credential is used by this fixture.                                                                    │
- │The review surface preserves Terraform order, attributes, output values, and diagnostics.                                                                   │
- │Long lines remain unwrapped in the plan body; horizontal movement exposes the hidden suffix.                                                                │
- │Vertical movement exposes later lines in this synthetic plan body.                                                                                          │
- │                                                                                                                                                            │
- │End of synthetic plan body.                                                                                                                                 │
- └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- ↑/↓/←/→ scroll | / filter | y copy plan | a apply | q quit
+
+
+
+
+
+
+
+
+/ filter | ? help | q quit                                                                                                                                  3/43
