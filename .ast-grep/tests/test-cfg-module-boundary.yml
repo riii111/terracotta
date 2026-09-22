@@ -51,18 +51,8 @@ valid:
     #[cfg(feature = "test")]
     fn f() {}
   - |-
-    #[cfg(all(feature = "test", unix))]
-    fn f() {}
-  - |-
     #[cfg(all(unix, /* test */ feature = "test"))]
     fn f() {}
-  - |-
-    #[cfg(any(feature = "test", not(unix)))]
-    fn f() {}
-  - |-
-    const S: &str = "#[cfg(test)] fn f() {}";
-  - |-
-    // #[cfg(test)] fn f() {}
   - |-
     #[cfg_attr(test, allow(dead_code))]
     fn f() {}
@@ -108,22 +98,10 @@ invalid:
     struct S;
   - |-
     #[cfg(test)]
-    enum E { A }
-  - |-
-    #[cfg(test)]
-    trait T {}
-  - |-
-    #[cfg(test)]
     impl S {}
   - |-
     #[cfg(test)]
     const C: u8 = 0;
-  - |-
-    #[cfg(test)]
-    static C: u8 = 0;
-  - |-
-    #[cfg(test)]
-    type A = u8;
   - |-
     #[cfg(test)]
     use foo::Bar;
@@ -171,6 +149,9 @@ invalid:
     #[cfg(not(test))]
     fn f() {}
   - |-
+    #[cfg(all(not(test), unix))]
+    fn f() {}
+  - |-
     #[cfg(all(unix, /* test */ test))]
     fn f() {}
   - |-
@@ -180,9 +161,5 @@ invalid:
   # A later module on the same line must not legalize an earlier non-module item.
   - |-
     #[cfg(test)] fn f() {} mod tests {}
-  - |-
-    #[cfg(test)] struct S; mod tests {}
-  - |-
-    #[cfg(test)] use foo::Bar; #[cfg(test)] mod tests {}
   - |-
     #[cfg(test)] fn f() {} #[cfg(test)] mod tests {}

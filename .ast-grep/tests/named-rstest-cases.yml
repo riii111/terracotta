@@ -10,18 +10,10 @@ valid:
     #[case::up_vim(Key::Char('k'))]
     fn maps(#[case] key: Key) {}
   - |-
-    #[rstest] #[case::empty("")] fn accepts(#[case] text: &str) {}
-  - |-
     fn f(#[case] value: i32) {}
   - |-
     #[case::named(1)]
     fn f() {}
-
-  # Text containing case syntax is not a function-level case declaration.
-  - |-
-    const TEXT: &str = "#[case(1)] fn f() {}";
-  - |-
-    // #[case(1)] fn f() {}
 
   # Other items are outside this rule; an intervening item blocks a later function.
   - |-

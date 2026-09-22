@@ -1,7 +1,12 @@
 id: test-cfg-module-boundary
 language: Rust
 severity: error
-message: Put the test condition on a mod tests declaration.
+message: Test-dependent cfg on this item violates the module-boundary rule.
+note: |-
+  Put test-only code under a mod tests entry with the needed positive test condition.
+  A not(test) branch is production code: keep it outside tests and reconsider switching
+  production implementations based on whether tests are being built.
+  Keep cross-crate test-support APIs separately feature-gated.
 files:
   - src/**/*.rs
   - tests/**/*.rs
