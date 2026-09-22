@@ -1,8 +1,4 @@
-use std::{
-    env,
-    io::{self, Write},
-    process::ExitCode,
-};
+use std::{env, ffi::OsString, process::ExitCode};
 
 use clap::{CommandFactory, Parser, Subcommand};
 
@@ -15,26 +11,21 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    Plan {
-        #[arg(long, value_name = "REF", hide = true)]
-        compare_ref: Option<String>,
-    },
+    /// Run Terraform, reviewing supported interactive plans.
+    Terraform,
+    /// Review a Terraform plan.
+    Plan,
+    /// Run Terraform apply.
+    Apply,
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
-    match cli.command {
-        Some(Command::Plan { compare_ref }) => match env::current_dir() {
-            Ok(root) => terracotta::run_plan(&root, compare_ref.as_deref()),
-            Err(error) => {
-                let _ = writeln!(
-                    io::stderr(),
-                    "failed to read the current directory: {error}"
-                );
-                ExitCode::from(1)
-            }
-        },
-        None => {
+    let arguments: Vec<OsString> = env::args_os().collect();
+    match arguments.get(1).and_then(|arg| arg.to_str()) {
+        Some("terraform") => terracotta::run_terraform(&arguments[2..]),
+        Some("plan" | "apply") => terracotta::run_terraform(&arguments[1..]),
+        _ => {
+            let _ = Cli::parse_from(arguments);
             if Cli::command().print_help().is_err() {
                 ExitCode::from(1)
             } else {

@@ -31,3 +31,8 @@ pub fn run_synthetic() -> std::io::Result<()> {
 pub fn run_synthetic_execution() -> std::io::Result<()> {
     runtime::run_synthetic_execution()
 }
+
+#[must_use]
+pub fn run_terraform(arguments: &[std::ffi::OsString]) -> ExitCode {
+    runtime::invocation::run(arguments)
+}

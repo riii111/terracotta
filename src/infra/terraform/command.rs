@@ -361,6 +361,106 @@ fn log_event(stream: EventStream, line: &[u8], received_at: Instant) -> Executio
     }
 }
 
+pub(crate) fn resolve_executable() -> io::Result<std::path::PathBuf> {
+    let current = std::env::current_exe()?;
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    for directory in std::env::split_paths(&path) {
+        let candidate = directory.join(if cfg!(windows) {
+            "terraform.exe"
+        } else {
+            "terraform"
+        });
+        if !is_executable(&candidate) {
+            continue;
+        }
+        let candidate = candidate.canonicalize()?;
+        if same_executable(&candidate, &current)? {
+            return Err(io::Error::other("terraform resolves to Terracotta itself"));
+        }
+        return Ok(candidate);
+    }
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        "terraform was not found in PATH",
+    ))
+}
+
+fn is_executable(path: &Path) -> bool {
+    let Ok(metadata) = path.metadata() else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(windows)]
+    {
+        true
+    }
+}
+
+fn same_executable(candidate: &Path, current: &Path) -> io::Result<bool> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let candidate = candidate.metadata()?;
+        let current = current.metadata()?;
+        Ok(candidate.dev() == current.dev() && candidate.ino() == current.ino())
+    }
+    #[cfg(windows)]
+    {
+        use std::{fs::File, os::windows::io::AsRawHandle};
+        use windows_sys::Win32::Storage::FileSystem::{
+            BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+        };
+
+        fn identity(path: &Path) -> io::Result<(u32, u32, u32)> {
+            let file = File::open(path)?;
+            let mut information = BY_HANDLE_FILE_INFORMATION::default();
+            // SAFETY: the handle stays open and information points to writable storage.
+            if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut information) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok((
+                information.dwVolumeSerialNumber,
+                information.nFileIndexHigh,
+                information.nFileIndexLow,
+            ))
+        }
+        Ok(identity(candidate)? == identity(current)?)
+    }
+}
+
+pub(crate) fn delegate(
+    executable: &Path,
+    arguments: &[OsString],
+) -> io::Result<std::process::ExitCode> {
+    let mut command = Command::new(executable);
+    command
+        .args(arguments)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        Err(command.exec())
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::ExitCodeExt;
+        let mut process = SystemRunningProcess::new(command.spawn()?);
+        let status = process.child.wait()?;
+        Ok(std::process::ExitCode::from_raw(
+            status.code().unwrap_or(1).cast_unsigned(),
+        ))
+    }
+}
+
 pub(super) fn run_command(
     root: &Path,
     command: TerraformCommand,

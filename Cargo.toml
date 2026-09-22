@@ -11,6 +11,7 @@ publish = false
 test-support = []
 
 [dependencies]
+hcl = { package = "hcl-rs", version = "0.19.8" }
 arboard = { version = "3.6.1", default-features = false }
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
@@ -21,10 +22,9 @@ serde_json = { version = "1", features = ["arbitrary_precision"] }
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_System_Console", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Threading"] }
 
 [dev-dependencies]
-hcl = { package = "hcl-rs", version = "0.19.8" }
 insta = "1"
 rstest = "0.26"
 
