@@ -911,4 +911,68 @@ mod tests {
             assert!(comparison.rows[0].has_unknown, "{name}");
         }
     }
+    #[test]
+    fn partially_unknown_sets_do_not_infer_element_identity_from_value_sorting() {
+        let kind = AttributeType::Set(Box::new(AttributeType::Object(BTreeMap::from([
+            ("name".to_owned(), AttributeType::String),
+            ("z_id".to_owned(), AttributeType::Number),
+        ]))));
+        let before = json!({"items": []});
+        let left = unknown(
+            update(
+                before.clone(),
+                json!({"items": [{"z_id": 1}, {"name": "x", "z_id": 2}]}),
+            ),
+            json!({"items": [{"name": true}, {}]}),
+        );
+        let cases = [
+            (
+                "crossed unknowns can resolve to the same set",
+                json!({"items": [{"name": "x", "z_id": 1}, {"z_id": 2}]}),
+                json!({"items": [{}, {"name": true}]}),
+                DifferenceReason::Unknown,
+            ),
+            (
+                "known identity excludes every candidate",
+                json!({"items": [{"name": "x", "z_id": 3}, {"z_id": 2}]}),
+                json!({"items": [{}, {"name": true}]}),
+                DifferenceReason::Value,
+            ),
+        ];
+        for (name, after, markers, expected) in cases {
+            let right = unknown(update(before.clone(), after), markers);
+
+            let comparison = compared(
+                vec![Some(left.clone()), Some(right)],
+                Some(&schemas(kind.clone())),
+            );
+
+            assert_eq!(comparison.rows[0].difference, Some(expected), "{name}");
+        }
+    }
+    #[test]
+    fn known_set_membership_differences_remain_value_differences() {
+        let cases = [
+            ("empty left", json!([]), json!(["new"])),
+            ("empty right", json!(["new"]), json!([])),
+            ("additional known member", json!(["a"]), json!(["a", "b"])),
+        ];
+        for (name, left, right) in cases {
+            let left = update(json!({"items": ["old"]}), json!({"items": left}));
+            let right = update(json!({"items": ["old"]}), json!({"items": right}));
+
+            let comparison = compared(
+                vec![Some(left), Some(right)],
+                Some(&schemas(AttributeType::Set(Box::new(
+                    AttributeType::String,
+                )))),
+            );
+
+            assert_eq!(
+                comparison.rows[0].difference,
+                Some(DifferenceReason::Value),
+                "{name}"
+            );
+        }
+    }
 }

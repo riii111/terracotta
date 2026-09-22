@@ -261,7 +261,8 @@ fn compare_values(left: &Value, right: &Value) -> ValueComparison {
             }
             result
         }
-        (Value::Sequence(left), Value::Sequence(right)) | (Value::Set(left), Value::Set(right)) => {
+        (Value::Set(left), Value::Set(right)) => compare_sets(left, right),
+        (Value::Sequence(left), Value::Sequence(right)) => {
             let mut result = ValueComparison::default();
             for index in 0..left.len().max(right.len()) {
                 result.include(compare_values(
@@ -287,6 +288,37 @@ fn compare_values(left: &Value, right: &Value) -> ValueComparison {
             different: true,
             uncertain: left.has_unknown() || right.has_unknown(),
         },
+    }
+}
+
+fn compare_sets(left: &[Value], right: &[Value]) -> ValueComparison {
+    let mut compatible_right = vec![false; right.len()];
+    let mut same_unknown_right = vec![false; right.len()];
+    let mut different = false;
+    let mut uncertain = false;
+    for left_value in left {
+        let mut compatible_left = false;
+        let mut same_unknown_left = false;
+        for (index, right_value) in right.iter().enumerate() {
+            let comparison = compare_values(left_value, right_value);
+            compatible_left |= !comparison.different;
+            compatible_right[index] |= !comparison.different;
+            same_unknown_left |= !comparison.uncertain;
+            same_unknown_right[index] |= !comparison.uncertain;
+        }
+        different |= !compatible_left;
+        uncertain |= !same_unknown_left && left_value.has_unknown();
+    }
+    different |= compatible_right.contains(&false);
+    uncertain |= right
+        .iter()
+        .zip(same_unknown_right)
+        .any(|(value, matched)| !matched && value.has_unknown());
+    // Unknown elements may converge to one member, so cardinality and sorted
+    // positions cannot prove a difference while every element has a candidate.
+    ValueComparison {
+        different,
+        uncertain: uncertain || !different,
     }
 }
 
