@@ -194,6 +194,15 @@ pub(crate) fn layout(area: Rect, searching: bool, state: &ReviewSessionState) ->
     layout_with_quit_confirmation(area, searching, state, false)
 }
 
+pub(crate) fn source_offset(review: &ReviewSessionState, line: usize) -> usize {
+    let content = prepare_content(review, false, "");
+    content
+        .sources
+        .iter()
+        .position(|source| source.is_some_and(|source| source.line_number == line))
+        .unwrap_or(0)
+}
+
 pub(crate) fn environment_layout(
     area: Rect,
     searching: bool,
@@ -947,6 +956,7 @@ fn render_dialog(
 
 pub(crate) fn render_environment(
     frame: &mut Frame<'_>,
+    area: Rect,
     state: &ReviewSessionState,
     view: &PlanReviewViewState,
     now: Instant,
@@ -958,6 +968,7 @@ pub(crate) fn render_environment(
         now,
         false,
         ReviewNavigation::Environments,
+        area,
     );
 }
 
@@ -975,6 +986,7 @@ pub(crate) fn render_with_quit_confirmation(
         now,
         quit_confirmation,
         ReviewNavigation::Standalone,
+        frame.area(),
     );
 }
 
@@ -989,8 +1001,8 @@ fn render_for_navigation(
     now: Instant,
     quit_confirmation: bool,
     navigation: ReviewNavigation,
+    area: Rect,
 ) {
-    let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         terminal_notice::render_wrapped(
             frame,
@@ -1564,7 +1576,7 @@ fn footer_items(
         items
     };
     if navigation == ReviewNavigation::Environments && !searching && !filtered {
-        items.insert(0, footer::hint(&["Esc"], "environments"));
+        items.insert(0, footer::hint(&["Esc"], "overview"));
     }
     items
 }
@@ -1599,7 +1611,7 @@ fn required_footer_items(
         ]
     };
     if navigation == ReviewNavigation::Environments && !searching && !filtered {
-        items.insert(0, footer::hint(&["Esc"], "environments"));
+        items.insert(0, footer::hint(&["Esc"], "overview"));
     }
     items
 }

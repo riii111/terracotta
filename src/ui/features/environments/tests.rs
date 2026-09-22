@@ -62,7 +62,10 @@ fn pending_running_ready_error_and_excluded_remain_distinct_at_supported_sizes()
     let state = partial_session();
     for size in [(80, 24), (120, 40), (160, 60)] {
         let mut view = EnvironmentView {
-            selected: 1,
+            selection: EnvironmentSelection {
+                column: 1,
+                raw: None,
+            },
             ..EnvironmentView::default()
         };
         let text = buffer_text(&render_to_buffer(size, |frame| view.render(frame, &state)));
@@ -74,7 +77,13 @@ fn pending_running_ready_error_and_excluded_remain_distinct_at_supported_sizes()
             "Excluded: HCP execution",
             "Missing required variable",
         ] {
-            assert!(text.contains(marker), "{size:?}: {marker}");
+            assert!(
+                text.split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .contains(marker),
+                "{size:?}: {marker}"
+            );
         }
         if size == (80, 24) {
             insta::assert_snapshot!("environment_acquisition", text);
@@ -148,12 +157,15 @@ fn ready_review_keeps_position_filter_counts_and_copy_notices() {
     for size in [(80, 24), (120, 40), (160, 60)] {
         let mut state = partial_session();
         let mut view = EnvironmentView {
-            raw: true,
+            selection: EnvironmentSelection {
+                column: 0,
+                raw: Some(0),
+            },
             ..EnvironmentView::default()
         };
 
         let text = buffer_text(&render_to_buffer(size, |frame| view.render(frame, &state)));
-        assert!(text.contains("Esc environments"), "{size:?}: {text}");
+        assert!(text.contains("Esc overview"), "{size:?}: {text}");
         assert!(text.contains("1/2"), "{size:?}: {text}");
         for (result, notice) in [
             (CopyResult::Written, "Copied."),
@@ -181,7 +193,7 @@ fn ready_review_keeps_position_filter_counts_and_copy_notices() {
 
             let text = buffer_text(&render_to_buffer(size, |frame| view.render(frame, &state)));
             assert!(text.contains(notice), "{size:?}: {text}");
-            assert!(text.contains("Esc environments"), "{size:?}: {text}");
+            assert!(text.contains("Esc overview"), "{size:?}: {text}");
         }
         let mut filtered = partial_session();
         filtered.update_review(
@@ -195,6 +207,8 @@ fn ready_review_keeps_position_filter_counts_and_copy_notices() {
         }));
         assert!(text.contains("No matches"), "{size:?}: {text}");
         assert!(text.contains("Esc clear"), "{size:?}: {text}");
-        assert!(!text.contains("Esc environments"), "{size:?}: {text}");
+        assert!(!text.contains("Esc overview"), "{size:?}: {text}");
     }
 }
+
+mod matrix;

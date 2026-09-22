@@ -2,27 +2,27 @@
 source: src/ui/features/environments/tests.rs
 expression: text
 ---
-Environment plans   Ready: 1/5
-  Ready      a-ready
-> Error      b-error
-  Running    c-running
-  Pending    d-pending
-  Excluded: HCP execution e-hcp
-
-
-
-
-
-
-
-
-
-
-
-
+0 Overview   1 a-ready  2 b-error  3 c-running  4 d-pending  5 e-hcp
+Ready: 1/5   Compared: a-ready   b-error: Error   c-running: Running
+d-pending: Pending   e-hcp: Excluded: HCP execution
+b-error: Error
+terraform   ws:default
+Directory: /synthetic/b-error
 Missing required variable
 Pass a variable before retrying.
+Address                         a-ready      b-error      c-running    why
+No matching resource changes. v opens the full plan.
 
 
 
-↑↓ select   Enter plan   r retry Error   q quit
+
+
+
+
+
+
+
+
+Total                           +0 ~0 -0     Error        Running
+                                0 replace
+Enter open diff   / filter   Space expand   ? help   q quit

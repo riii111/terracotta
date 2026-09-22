@@ -200,7 +200,7 @@ def wait_screen(predicate, name, description, timeout=20):
         if child_status() is not None:
             break
     raise RuntimeError(
-        f"missing {name}: {description!r}; head={bytes(output)[:4000]!r}; tail={bytes(output)[-1200:]!r}"
+        f"missing {name}: {description!r}; screen={screen.text()!r}; head={bytes(output)[:4000]!r}; tail={bytes(output)[-1200:]!r}"
     )
 
 
@@ -331,13 +331,13 @@ try:
             wait_new("terraform_data.api", "ready_review_while_running")
             send_key(b"a")
             send_key(b"\x1b")
-            wait_new("Environment plans", "back_to_environments")
+            wait_new("0 Overview", "back_to_environments")
             if scenario == "env_cancel":
                 wait_file(os.environ["TERRACOTTA_FAKE_PID_PATH"], "active_process")
                 send_key(b"q")
                 wait_new("Stop acquiring", "cancel_confirmation")
                 send_key(b"\x1b")
-                wait_new("Environment plans", "continue_acquisition")
+                wait_new("0 Overview", "continue_acquisition")
                 send_key(b"q")
                 wait_new("Stop acquiring", "cancel_again")
                 send_key(b"\r")
@@ -347,15 +347,75 @@ try:
                 wait_new("Ready: 2/2", "all_ready")
                 send_key(b"q")
                 exit_code = wait_exit()
+        elif scenario == "env_example":
+            wait_parts(["Ready: 2/3", "Error", "~ 20"], "example_comparison")
+            send_key(b"]")
+            send_key(b"r")
+            wait_parts(["Ready: 3/3", "~ 200"], "example_retry")
+            send_key(b"q")
+            exit_code = wait_exit()
+        elif scenario == "env_real":
+            wait_parts(["Ready: 1/3", "Running", "Compared: dev"], "real_partial_results")
+            send_key(b"v")
+            wait_new("terraform_data.api", "real_review_while_running")
+            send_key(b"\x1b")
+            wait_new("Total", "real_back_to_matrix")
+            open(os.environ["TERRACOTTA_REAL_PLAN_GATE"], "w").close()
+            wait_parts(["Ready: 2/3", "Error", "Compared: dev, stg"], "real_comparison_with_error")
+            send_key(b"]")
+            send_key(b"\r")
+            wait_new("required variable", "real_error_diagnostic")
+            send_key(b"\x1b")
+            wait_new("Total", "real_error_dialog_closed")
+            with open(os.path.join(root, "prod/retry.auto.tfvars"), "w") as repair:
+                repair.write('release = "new"\n')
+            send_key(b"r")
+            wait_parts(["Ready: 3/3", "prod: Ready"], "real_selected_retry_success")
+            send_key(b"v")
+            wait_parts(["terraform_data.api", "prod"], "real_retried_plan_review")
+            send_key(b"0")
+            wait_new("Total", "real_complete_comparison")
+            send_key(b"q")
+            exit_code = wait_exit()
+        elif scenario == "env_matrix":
+            wait_parts(["Ready: 3/3", "~ 200"], "matrix_ready")
+            send_key(b"/")
+            wait_new("Filter:", "matrix_filter")
+            send_text("[198]")
+            send_key(b"\r")
+            send_key(b" ")
+            send_key(b"j")
+            send_key(b"]")
+            send_key(b"\r")
+            wait_parts(["server[198]", "Esc overview"], "matrix_raw_member")
+            send_key(b"3")
+            wait_new("c-prod", "matrix_digit_environment")
+            send_key(b"\x1b")
+            wait_parts(["Filter: /[198]", "Total", "~200"], "restored_matrix_selection")
+            send_key(b"q")
+            exit_code = wait_exit()
+        elif scenario == "env_many":
+            wait_new("Ready: 12/12", "many_ready")
+            for _ in range(11):
+                send_key(b"]")
+            wait_new("env-11: Ready", "twelfth_column")
+            send_key(b"\r")
+            wait_parts(["terraform_data.api", "env-11"], "twelfth_environment")
+            send_key(b"[")
+            wait_new("env-10", "eleventh_environment")
+            send_key(b"0")
+            wait_new("env-11: Ready", "restored_last_column")
+            send_key(b"q")
+            exit_code = wait_exit()
         elif scenario == "env_show_failure":
             wait_parts(["Ready: 1/2", "Error"], "failed_environment")
-            send_key(b"j")
+            send_key(b"]")
             wait_parts(["show output could not be parsed", "synthetic plan warning"], "warning_and_failure")
             send_key(b"q")
             exit_code = wait_exit()
         elif scenario == "env_retry":
             wait_parts(["Ready: 1/2", "Error"], "failed_environment")
-            send_key(b"j")
+            send_key(b"]")
             wait_new("Missing required variable", "error_diagnostic")
             send_key(b"r")
             wait_new("Ready: 2/2", "retry_success")
@@ -365,7 +425,7 @@ try:
             expected = "Ready: 1/2" if scenario in ("env_init_failure", "env_excluded", "env_reinit_failure") else "Ready: 2/2"
             observe_current_or_wait(expected, "final_environment_results")
             if scenario in ("env_init_failure", "env_reinit_failure"):
-                send_key(b"j")
+                send_key(b"]")
                 observe_current_or_wait("Error", "failed_environment")
             if scenario == "env_detailed":
                 send_key(b"\r")

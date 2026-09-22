@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     io,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -695,8 +695,15 @@ fn resource_event(
 }
 
 fn run_synthetic_environments() -> io::Result<()> {
+    let names = if std::env::args().any(|argument| argument == "--many-environments") {
+        (0..12)
+            .map(|index| format!("env-{index:02}"))
+            .collect::<Vec<_>>()
+    } else {
+        ["dev", "prod", "stg"].map(str::to_owned).to_vec()
+    };
     let mut state = EnvironmentSession::new(
-        ["dev", "stg", "prod"]
+        names
             .into_iter()
             .map(|name| Environment {
                 tool: Tool::Terraform,
@@ -708,31 +715,34 @@ fn run_synthetic_environments() -> io::Result<()> {
             .collect(),
         true,
     );
-    let first = state.start_next().expect("first environment");
-    state.complete(
-        first,
-        PlanResult::Ready {
-            review: Box::new(
-                synthetic_review()
-                    .review()
-                    .clone()
-                    .with_apply_allowed(false)
-                    .with_apply_entry(false),
-            ),
-            changed: true,
-        },
-        Vec::new(),
-    );
-    let second = state.start_next().expect("second environment");
-    state.complete(
-        second,
-        PlanResult::Error("Missing required variable. Set it before retrying.".to_owned()),
-        Vec::new(),
-    );
-    state.start_next();
     let mut view = EnvironmentView::default();
+    let mut next = Instant::now() + Duration::from_millis(500);
+    let mut failed_once = false;
+    let mut running = state.start_next();
     ratatui::run(|terminal| {
         loop {
+            if Instant::now() >= next {
+                if let Some(key) = running.take() {
+                    let result = if key.index == 1 && !failed_once {
+                        failed_once = true;
+                        PlanResult::Error(
+                            "Synthetic missing variable. Press r to retry this environment."
+                                .to_owned(),
+                        )
+                    } else {
+                        PlanResult::Ready {
+                            review: Box::new(synthetic_environment_review(
+                                state.plans()[key.index].directory(),
+                                if key.index == 1 { 200 } else { 20 },
+                            )),
+                            changed: true,
+                        }
+                    };
+                    state.complete(key, result, Vec::new());
+                }
+                running = state.start_next();
+                next = Instant::now() + Duration::from_millis(750);
+            }
             terminal.draw(|frame| view.render(frame, &state))?;
             if !event::poll(Duration::from_millis(100))? {
                 continue;
@@ -752,6 +762,75 @@ fn run_synthetic_environments() -> io::Result<()> {
             }
         }
         Ok(())
+    })
+}
+
+fn synthetic_environment_review(directory: &Path, count: usize) -> PlanReview {
+    let changes: Vec<_> = (0..count)
+        .map(|index| {
+            synthetic_change(
+                &format!("terraform_data.server[{index}]"),
+                ResourceChangeKind::Update,
+                vec![PlanAction::Update],
+                "before",
+                "after",
+            )
+        })
+        .collect();
+    let mut lines = vec![
+        "Terraform will perform the following actions:".to_owned(),
+        String::new(),
+    ];
+    let mut blocks = vec![PlanBlock::new(0..2, PlanBlockKind::Common)];
+    for change in &changes {
+        let start = lines.len();
+        lines.extend([
+            format!("# {} will be updated in-place", change.address),
+            "~ input = before -> after".to_owned(),
+            String::new(),
+        ]);
+        blocks.push(PlanBlock::with_addresses(
+            start..lines.len(),
+            PlanBlockKind::Resource,
+            vec![change.address.clone()],
+        ));
+    }
+    PlanReview::new(
+        directory.to_owned(),
+        "default".to_owned(),
+        PlanDocument::with_blocks_and_line_kinds(lines.join("\n"), blocks, Vec::new()),
+        PlanMetadata::new(
+            changes
+                .iter()
+                .map(|change| change.address.clone())
+                .collect(),
+            Vec::new(),
+            0,
+            count,
+            0,
+            true,
+        ),
+        Vec::new(),
+    )
+    .with_apply_allowed(false)
+    .with_apply_entry(false)
+    .with_context(
+        ExecutionContext::loading(directory.display().to_string())
+            .with_workspace("default")
+            .with_tool_version(Tool::Terraform, "1.9.0"),
+    )
+    .with_plan(Plan {
+        value_addresses: BTreeSet::new(),
+        changes: Vec::new(),
+        resource_changes: changes,
+        summary: PlanSummary {
+            creates: 0,
+            updates: count,
+            replaces: 0,
+            deletes: 0,
+        },
+        unsupported_changes: Vec::new(),
+        output_changes: Vec::new(),
     })
 }
 

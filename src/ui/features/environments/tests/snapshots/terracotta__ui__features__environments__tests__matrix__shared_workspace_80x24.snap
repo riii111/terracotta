@@ -1,0 +1,28 @@
+---
+source: src/ui/features/environments/tests/matrix.rs
+expression: output
+---
+0 Overview   1 staging  2 staging
+Ready: 0/2   Compared: none   staging: Error   staging: Error
+staging: Error
+tofu   ws:staging
+Directory: /synthetic/prod
+Synthetic acquisition error
+Address                         staging             staging             why
+Waiting for environment plans.
+
+
+
+
+
+
+
+
+
+
+
+
+
+Total                           Error               Error
+
+Enter open diff   / filter   Space expand   ? help   q quit
