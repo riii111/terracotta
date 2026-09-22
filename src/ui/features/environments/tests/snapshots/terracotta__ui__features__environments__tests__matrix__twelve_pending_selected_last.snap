@@ -8,11 +8,11 @@ Pending   env-03: Pending   env-04: Pending   env-05: Pending   env-06: Pending
  env-07: Pending   env-08: Pending   env-09: Pending   env-10: Pending   env-11:
 Pending
 env-11: Pending
+terraform   ws:default
+Directory: /synthetic/env-11
 
 Address                         env-09       env-10       env-11       why
 Waiting for environment plans.
-
-
 
 
 

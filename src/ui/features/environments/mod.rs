@@ -99,6 +99,15 @@ impl EnvironmentView {
                 self.selection.column,
                 Box::new(Action::Copy(CopyTarget::Plan)),
             )),
+            OverviewInput::OpenContext => {
+                if let Some(plan) = state.plans().get(self.selection.column) {
+                    self.show_dialog(format!(
+                        "Context\n{}\n\n↑↓ scroll   Esc close",
+                        environments::context(plan)
+                    ));
+                }
+                None
+            }
             OverviewInput::OpenHelp => {
                 self.help();
                 None
@@ -187,9 +196,10 @@ impl EnvironmentView {
             self.selection.raw = None;
             self.selection.column = index;
             self.show_dialog(format!(
-                "{}: {}\n{}\n\nEsc close   r retries Error after closing",
+                "{}: {}\n{}\n{}\n\nEsc close   r retries Error after closing",
                 environments::name(plan),
                 environments::status(plan),
+                environments::context(plan),
                 if matches!(plan.state(), EnvironmentState::Error) {
                     plan.diagnostic().text().to_owned()
                 } else {
@@ -300,7 +310,7 @@ impl EnvironmentView {
     }
 
     fn help(&mut self) {
-        self.show_dialog("Help\n↑↓ / j k select row   ←→ select environment\nEnter open selected resource   Space expand/collapse group\n1-9 open resource in that environment   [ ] previous/next environment\n0 / s Overview   Esc return to the same row and column\n/ filter full addresses   v full plan from the top\nr retry selected Error environment\ny copy selected environment's full plan   c context in raw plan\nSame change compares patterns; unknown values remain unknown.\nCompared lists only Ready environments. Excluded environments are not retried.\nq quit (confirmation while acquiring)\n\n↑↓ scroll   ? / Esc close".to_owned());
+        self.show_dialog("Help\n↑↓ / j k select row   ←→ select environment\nEnter open selected resource   Space expand/collapse group\n1-9 open resource in that environment   [ ] previous/next environment\n0 / s Overview   Esc return to the same row and column\n/ filter full addresses   v full plan from the top\nr retry selected Error environment\ny copy selected environment's full plan   c full environment context\nSame change compares patterns; unknown values remain unknown.\nCompared lists only Ready environments. Excluded environments are not retried.\nq quit (confirmation while acquiring)\n\n↑↓ scroll   ? / Esc close".to_owned());
     }
 
     fn quit(&mut self, state: &EnvironmentSession) -> Option<EnvironmentInput> {

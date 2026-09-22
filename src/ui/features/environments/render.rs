@@ -71,9 +71,14 @@ impl EnvironmentView {
         } else {
             selected
         };
+        let context = Paragraph::new(format!("{status}\n{}", environments::context(plan)))
+            .wrap(Wrap { trim: false });
+        let context_height = u16::try_from(context.line_count(area.width.max(1)))
+            .unwrap_or(u16::MAX)
+            .min(area.height.saturating_sub(6));
         frame.render_widget(
-            Paragraph::new(status),
-            Rect::new(area.x, area.y, area.width, area.height.min(1)),
+            context,
+            Rect::new(area.x, area.y, area.width, context_height),
         );
         let detail = if matches!(plan.state(), EnvironmentState::Error) {
             plan.diagnostic().text().to_owned()
@@ -92,16 +97,22 @@ impl EnvironmentView {
         let detail_height = u16::try_from(detail_widget.line_count(area.width.max(1)))
             .unwrap_or(u16::MAX)
             .min(3)
-            .min(area.height.saturating_sub(7));
+            .min(area.height.saturating_sub(context_height + 6));
         frame.render_widget(
             detail_widget.style(theme::warning_style()),
-            Rect::new(area.x, area.y.saturating_add(1), area.width, detail_height),
+            Rect::new(
+                area.x,
+                area.y.saturating_add(context_height),
+                area.width,
+                detail_height,
+            ),
         );
         let body = Rect::new(
             area.x,
-            area.y.saturating_add(1 + detail_height),
+            area.y.saturating_add(context_height + detail_height),
             area.width,
-            area.height.saturating_sub(2 + detail_height),
+            area.height
+                .saturating_sub(context_height + 1 + detail_height),
         );
         matrix::render(frame, body, state, &mut self.matrix, self.selection.column);
         let footer = if self.matrix.searching() {

@@ -75,6 +75,15 @@ pub(crate) fn name(plan: &EnvironmentPlan) -> String {
         )
 }
 
+pub(crate) fn context(plan: &EnvironmentPlan) -> String {
+    format!(
+        "{}   ws:{}\nDirectory: {}",
+        plan.tool.display_name(),
+        plan.workspace().unwrap_or("unavailable"),
+        plan.directory().display()
+    )
+}
+
 pub(crate) const fn status(plan: &EnvironmentPlan) -> &'static str {
     match plan.state() {
         EnvironmentState::Pending => "Pending",

@@ -6,12 +6,12 @@ expression: text
 Ready: 1/5   Compared: a-ready   b-error: Error   c-running: Running
 d-pending: Pending   e-hcp: Excluded: HCP execution
 b-error: Error
+terraform   ws:default
+Directory: /synthetic/b-error
 Missing required variable
 Pass a variable before retrying.
 Address                         a-ready      b-error      c-running    why
 No matching resource changes. v opens the full plan.
-
-
 
 
 

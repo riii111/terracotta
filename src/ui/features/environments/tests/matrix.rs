@@ -369,3 +369,50 @@ fn raw_filter_escape_clears_the_query_before_returning_to_overview() {
     press(&mut view, &mut state, KeyCode::Esc);
     assert!(view.selection.raw.is_none());
 }
+
+#[rstest]
+#[case::small(80, 24)]
+#[case::narrow(40, 16)]
+fn shared_workspace_names_keep_retry_directory_and_tool_visible(
+    #[case] width: u16,
+    #[case] height: u16,
+) {
+    let mut state = EnvironmentSession::new(
+        ["dev", "prod"]
+            .map(|name| Environment {
+                tool: Tool::OpenTofu,
+                availability: EnvironmentAvailability::Available(EnvironmentIdentity {
+                    directory: PathBuf::from(format!("/synthetic/{name}")),
+                    workspace: "staging".to_owned(),
+                }),
+            })
+            .into_iter()
+            .collect(),
+        false,
+    );
+    for _ in 0..2 {
+        let key = state.start_next().unwrap();
+        state.complete(
+            key,
+            PlanResult::Error("Synthetic acquisition error".to_owned()),
+            Vec::new(),
+        );
+    }
+    let mut view = EnvironmentView::default();
+    press(&mut view, &mut state, KeyCode::Right);
+    let output = text(&mut view, &state, (width, height));
+
+    assert!(output.contains("/synthetic/prod"));
+    assert!(output.contains("ws:staging"));
+    assert!(output.contains("tofu"));
+    insta::assert_snapshot!(format!("shared_workspace_{width}x{height}"), output);
+    press(&mut view, &mut state, KeyCode::Char('c'));
+    assert!(text(&mut view, &state, (width, height)).contains("/synthetic/prod"));
+    press(&mut view, &mut state, KeyCode::Esc);
+    let input = view.handle_key(
+        KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE),
+        Size::new(width, height),
+        &state,
+    );
+    assert!(matches!(input, Some(EnvironmentInput::Retry(1))));
+}
