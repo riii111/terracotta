@@ -470,7 +470,10 @@ const fn overlay_title(overlay: OverviewOverlay) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, path::PathBuf};
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        path::PathBuf,
+    };
 
     use super::*;
     use crate::{
@@ -530,6 +533,7 @@ mod tests {
             Vec::new(),
         )
         .with_plan(Plan {
+            value_addresses: BTreeSet::new(),
             changes: Vec::new(),
             resource_changes: addresses.into_iter().map(change).collect(),
             summary: PlanSummary {

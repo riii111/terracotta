@@ -3,10 +3,11 @@
     reason = "detailed plan data is retained for Overview and dormant Git attribution"
 )]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Debug, Formatter};
 
 mod attribute_diff;
+pub(crate) mod comparison;
 mod grouping;
 #[expect(
     unused_imports,
@@ -229,6 +230,7 @@ impl std::fmt::Debug for OutputChange {
 pub(crate) struct Plan {
     pub(crate) changes: Vec<ResourceChange>,
     pub(crate) resource_changes: Vec<ResourceChange>,
+    pub(crate) value_addresses: BTreeSet<String>,
     pub(crate) summary: PlanSummary,
     pub(crate) unsupported_changes: Vec<UnsupportedChange>,
     pub(crate) output_changes: Vec<OutputChange>,
@@ -240,6 +242,7 @@ impl std::fmt::Debug for Plan {
             .debug_struct("Plan")
             .field("changes", &self.changes)
             .field("resource_changes", &self.resource_changes)
+            .field("value_addresses", &self.value_addresses)
             .field("summary", &self.summary)
             .field("unsupported_changes", &self.unsupported_changes)
             .field("output_changes", &self.output_changes)
@@ -253,6 +256,7 @@ impl Plan {
         Self {
             changes: Vec::new(),
             resource_changes: Vec::new(),
+            value_addresses: BTreeSet::new(),
             summary: PlanSummary {
                 creates: 0,
                 updates: 0,

@@ -7,7 +7,7 @@
 )]
 
 use serde_json::{Map, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::app::plan::{
     OutputChange, Plan, PlanAction, PlanSummary, PlanValue, ReplacePathSegment, ResourceChange,
@@ -94,10 +94,60 @@ pub(super) fn parse_plan_document(document: &Value) -> Result<Plan, PlanParseErr
     Ok(Plan {
         changes,
         resource_changes,
+        value_addresses: parse_value_addresses(root)?,
         summary,
         unsupported_changes,
         output_changes,
     })
+}
+
+fn parse_value_addresses(root: &Map<String, Value>) -> Result<BTreeSet<String>, PlanParseError> {
+    let mut addresses = BTreeSet::new();
+    let prior = optional_object(root, "prior_state")?
+        .map(|state| optional_object(state, "values"))
+        .transpose()?
+        .flatten();
+    for values in [prior, optional_object(root, "planned_values")?]
+        .into_iter()
+        .flatten()
+    {
+        if let Some(module) = optional_object(values, "root_module")? {
+            collect_value_addresses(module, &mut addresses)?;
+        }
+    }
+    Ok(addresses)
+}
+
+fn collect_value_addresses(
+    module: &Map<String, Value>,
+    addresses: &mut BTreeSet<String>,
+) -> Result<(), PlanParseError> {
+    for resource in optional_array(module, "resources")? {
+        let resource = resource
+            .as_object()
+            .ok_or(PlanParseError::InvalidField("values resource"))?;
+        addresses.insert(required_string(resource, "address")?.to_owned());
+    }
+    for child in optional_array(module, "child_modules")? {
+        let child = child
+            .as_object()
+            .ok_or(PlanParseError::InvalidField("values child module"))?;
+        collect_value_addresses(child, addresses)?;
+    }
+    Ok(())
+}
+
+fn optional_object<'a>(
+    object: &'a Map<String, Value>,
+    name: &'static str,
+) -> Result<Option<&'a Map<String, Value>>, PlanParseError> {
+    match object.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_object()
+            .map(Some)
+            .ok_or(PlanParseError::InvalidField(name)),
+    }
 }
 
 fn parse_format_version(root: &Map<String, Value>) -> Result<(), PlanParseError> {
@@ -1183,5 +1233,51 @@ mod tests {
             parse_plan_json(r#"{"resource_changes":[]}"#),
             Err(PlanParseError::MissingField("format_version"))
         );
+    }
+    mod presence {
+        use super::*;
+
+        #[test]
+        fn indexes_prior_and_planned_modules_without_retaining_values() {
+            let input = json!({
+                "format_version": "1.2",
+                "prior_state": {"values": {"root_module": {
+                    "resources": [{"address": "test_resource.prior", "values": {"token": "synthetic-secret"}}],
+                    "child_modules": [{"resources": [{"address": "module.child[0].test_resource.item"}]}]
+                }}},
+                "planned_values": {"root_module": {
+                    "resources": [{"address": "test_resource.planned"}],
+                    "child_modules": [{"child_modules": [{"resources": [{"address": "module.outer.module.inner.test_resource.item"}]}]}]
+                }}
+            });
+
+            let plan = parse_plan_document(&input).unwrap();
+
+            assert_eq!(
+                plan.value_addresses,
+                BTreeSet::from([
+                    "test_resource.prior".to_owned(),
+                    "test_resource.planned".to_owned(),
+                    "module.child[0].test_resource.item".to_owned(),
+                    "module.outer.module.inner.test_resource.item".to_owned(),
+                ])
+            );
+            assert!(plan.resource_changes.is_empty());
+            assert!(!format!("{plan:?}").contains("synthetic-secret"));
+        }
+
+        #[rstest::rstest]
+        #[case::invalid_prior(json!({"prior_state": "synthetic-secret"}))]
+        #[case::invalid_values(json!({"planned_values": []}))]
+        #[case::invalid_module(json!({"planned_values": {"root_module": false}}))]
+        #[case::invalid_children(json!({"planned_values": {"root_module": {"child_modules": [false]}}}))]
+        #[case::missing_address(json!({"planned_values": {"root_module": {"resources": [{"values": "synthetic-secret"}]}}}))]
+        fn rejects_broken_presence_data_without_exposing_values(#[case] mut input: Value) {
+            input["format_version"] = json!("1.2");
+
+            let error = parse_plan_document(&input).unwrap_err();
+
+            assert!(!format!("{error:?}").contains("synthetic-secret"));
+        }
     }
 }

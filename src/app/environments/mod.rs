@@ -7,6 +7,12 @@ use crate::app::{
     session::{self, Action, Effect, ReviewSessionState, SessionState},
 };
 
+#[expect(
+    dead_code,
+    reason = "comparison feeds the following environment Overview SBI"
+)]
+pub(crate) mod comparison;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct EnvironmentIdentity {
     pub(crate) directory: PathBuf,

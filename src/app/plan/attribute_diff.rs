@@ -494,7 +494,7 @@ fn same_plan_value(before: Option<&PlanValue>, after: Option<&PlanValue>) -> boo
     }
 }
 
-fn canonical_number(value: &str) -> Option<CanonicalNumber> {
+pub(super) fn canonical_number(value: &str) -> Option<CanonicalNumber> {
     let mut parser = NumberParser::new(value);
     let negative = parser.take_sign();
     let integer = parser.take_digits()?;
