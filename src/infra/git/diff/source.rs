@@ -1,7 +1,7 @@
 use std::{fs, path::Path};
 
 use crate::infra::CancellationToken;
-use crate::{app::tests::attribution::SourceSide, infra::terraform::tests::hcl::HclSourceFile};
+use crate::{app::attribution::SourceSide, infra::terraform::hcl::HclSourceFile};
 
 use super::{
     super::command::{GitCommandError, checked_git, parse_error},

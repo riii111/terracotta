@@ -439,7 +439,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::super::execution::ExecutionContext;
-    use super::super::review::tests::support::plan_document;
+    use super::super::review::test_support::plan_document;
     use super::*;
 
     fn review() -> PlanReview {

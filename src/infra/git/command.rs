@@ -309,7 +309,7 @@ fn join_readers(readers: &mut Vec<JoinHandle<io::Result<()>>>) -> io::Result<()>
     first_error.map_or(Ok(()), Err)
 }
 
-#[cfg(unix)]
+#[cfg(all(test, unix))]
 mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::{

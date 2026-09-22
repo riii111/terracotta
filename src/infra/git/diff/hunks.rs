@@ -6,10 +6,10 @@ use std::{
 use crate::infra::CancellationToken;
 use crate::{
     app::{
-        tests::attribution::SourceLineChange,
-        tests::attribution::{SourceRange, SourceSide},
+        attribution::SourceLineChange,
+        attribution::{SourceRange, SourceSide},
     },
-    infra::terraform::tests::hcl::HclSourceFile,
+    infra::terraform::hcl::HclSourceFile,
 };
 
 use super::{
@@ -294,6 +294,7 @@ fn add_line_change(
     ));
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
 

@@ -3,8 +3,8 @@ language: Rust
 severity: error
 message: Test-dependent cfg on this item violates the module-boundary rule.
 note: |-
-  Put test-only code under a mod tests entry with a direct positive test predicate.
-  A not(test) branch is production code: keep it outside tests and reconsider switching
+  Put test-only code in a module with a direct positive test predicate.
+  A not(test) branch is production code: keep it outside test-only modules and reconsider switching
   production implementations based on whether tests are being built.
   Keep cross-crate test-support APIs separately feature-gated.
 files:
@@ -61,10 +61,6 @@ rule:
           - matches: positive-test-cfg
           - precedes:
               kind: mod_item
-              has:
-                field: name
-                kind: identifier
-                regex: '^tests$'
               stopBy:
                 not:
                   matches: attribute-or-comment

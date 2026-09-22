@@ -89,7 +89,7 @@ mod tests {
     use crate::app::execution::{
         Diagnostic, DiagnosticSeverity, DiagnosticSource, EventStream, ResourceEventKind,
     };
-    use crate::infra::terraform::tests::support::{ProcessOutput, RunningProcess};
+    use crate::infra::terraform::test_support::{ProcessOutput, RunningProcess};
 
     struct FakeRunner {
         response: RefCell<Option<(ProcessStatus, ProcessOutput)>>,

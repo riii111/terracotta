@@ -9,6 +9,11 @@
 use std::collections::BTreeMap;
 use std::fmt::{Debug, Formatter};
 
+#[cfg(test)]
+mod attribute_diff;
+#[cfg(test)]
+mod path;
+
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum PlanValue {
     Null,
@@ -165,6 +170,3 @@ pub(crate) struct Plan {
     pub(crate) summary: PlanSummary,
     pub(crate) unsupported_changes: Vec<UnsupportedChange>,
 }
-
-#[cfg(test)]
-mod tests;

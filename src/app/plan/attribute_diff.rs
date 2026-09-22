@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::fmt::{Debug, Formatter, Write};
 
-use super::super::{PlanValue, ReplacePathSegment, ResourceChange, ResourceChangeKind};
+use super::{PlanValue, ReplacePathSegment, ResourceChange, ResourceChangeKind};
 
 const ABSENT_DISPLAY: &str = "<absent>";
 const SENSITIVE_DISPLAY: &str = "<sensitive>";
@@ -754,6 +754,7 @@ fn display_string(value: &str) -> String {
     displayed
 }
 
+#[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
 

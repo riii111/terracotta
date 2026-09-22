@@ -766,7 +766,7 @@ mod tests {
     };
     use crate::app::session::{self, Action, SessionState};
     use crate::ui::features::execution::ExecutionScroll;
-    use crate::ui::tests::support::{
+    use crate::ui::test_support::{
         assert_shell_frame_and_footer, buffer_text, render_to_buffer, write_buffer_captures,
     };
 

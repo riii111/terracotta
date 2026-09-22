@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::infra::CancellationToken;
-use crate::infra::terraform::tests::hcl::HclSourceFile;
+use crate::infra::terraform::hcl::HclSourceFile;
 
 use super::{
     command::{GitInterrupted, checked_git, nul_fields},
@@ -370,6 +370,7 @@ fn is_configuration_file(path: &Path) -> bool {
         })
 }
 
+#[cfg(test)]
 mod tests {
     use std::{
         process::Command,

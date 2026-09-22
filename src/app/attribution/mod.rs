@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use super::super::plan::{ResourceChange, ResourceChangeKind, ResourceMode};
+use super::plan::{ResourceChange, ResourceChangeKind, ResourceMode};
 mod source_location;
 
 pub(crate) use source_location::{
@@ -414,9 +414,8 @@ fn root_resource_address(address: &str) -> Option<ResourceAddress> {
     Some(ResourceAddress::new(resource_type, name))
 }
 
+#[cfg(test)]
 mod tests {
-    use crate::app::plan::PlanAction;
-
     use super::*;
 
     impl AnalysisIssue {
@@ -427,10 +426,13 @@ mod tests {
 
     fn change(address: &str, kind: ResourceChangeKind) -> ResourceChange {
         let actions = match kind {
-            ResourceChangeKind::Create => vec![PlanAction::Create],
-            ResourceChangeKind::Update => vec![PlanAction::Update],
-            ResourceChangeKind::Replace => vec![PlanAction::Delete, PlanAction::Create],
-            ResourceChangeKind::Delete => vec![PlanAction::Delete],
+            ResourceChangeKind::Create => vec![super::super::plan::PlanAction::Create],
+            ResourceChangeKind::Update => vec![super::super::plan::PlanAction::Update],
+            ResourceChangeKind::Replace => vec![
+                super::super::plan::PlanAction::Delete,
+                super::super::plan::PlanAction::Create,
+            ],
+            ResourceChangeKind::Delete => vec![super::super::plan::PlanAction::Delete],
         };
 
         ResourceChange {

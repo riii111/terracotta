@@ -1,8 +1,11 @@
 mod cancellation;
 pub(crate) mod clipboard;
-pub(crate) mod terraform;
+// Git comparison is paused in the full-text experience and retained for unit tests.
 #[cfg(test)]
-mod tests;
+pub(crate) mod git;
+#[cfg(test)]
+pub(crate) mod review;
+pub(crate) mod terraform;
 
 pub(crate) use cancellation::CancellationToken;
 pub(crate) use clipboard::SystemClipboard as ClipboardExecutor;
