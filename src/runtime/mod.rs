@@ -1,6 +1,6 @@
 use std::{
     ffi::OsString,
-    fmt,
+    fmt, fs,
     io::{self, IsTerminal, Write},
     panic::{self, AssertUnwindSafe},
     path::Path,
@@ -141,6 +141,16 @@ fn run_saved_plan_review(
     detailed_exitcode: bool,
 ) -> ExitCode {
     let changed = plan_run.changed;
+    let review_root = match fs::canonicalize(display_root) {
+        Ok(root) => root,
+        Err(error) => {
+            report_error(&format!(
+                "failed to resolve the Terraform execution directory before review: {error}"
+            ));
+            let _ = plan_run.saved_plan.cleanup();
+            return ExitCode::from(EXECUTION_FAILURE);
+        }
+    };
     let cancellation = CancellationToken::new();
     let (sender, receiver) = mpsc::channel();
     let saved_plan_slot = Arc::new(Mutex::new(Some(plan_run.saved_plan)));
@@ -178,7 +188,7 @@ fn run_saved_plan_review(
         handle: None,
     };
     let mut clipboard = ClipboardExecutor::new();
-    let context = ExecutionContext::loading(display_root.display().to_string());
+    let context = ExecutionContext::loading(review_root.display().to_string());
     let effects = event_loop::RuntimeEffects {
         root: launch_root,
         display_root,

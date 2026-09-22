@@ -67,6 +67,7 @@ Plan: 0 to add, 1 to change, 0 to destroy.
         invocations: PathBuf,
         plan_path_record: PathBuf,
         pid_record: PathBuf,
+        signal_log: PathBuf,
         show_json: PathBuf,
         show_text: PathBuf,
         env_log: PathBuf,
@@ -85,6 +86,7 @@ Plan: 0 to add, 1 to change, 0 to destroy.
             let invocations = directory.join("invocations");
             let plan_path_record = directory.join("plan-path");
             let pid_record = directory.join("terraform-pid");
+            let signal_log = directory.join("signals");
             let show_json = directory.join("show.json");
             let show_text = directory.join("show.txt");
             let env_log = directory.join("environment");
@@ -92,6 +94,7 @@ Plan: 0 to add, 1 to change, 0 to destroy.
             fs::write(&show_text, PLAN_TEXT).expect("fake show text should be written");
             fs::write(&invocations, "").expect("invocation log should be created");
             fs::write(&env_log, "").expect("environment log should be created");
+            fs::write(&signal_log, "").expect("signal log should be created");
             let terraform = bin.join("terraform");
             fs::write(&terraform, FAKE_TERRAFORM).expect("fake Terraform should be written");
             fs::set_permissions(&terraform, fs::Permissions::from_mode(0o755))
@@ -104,6 +107,7 @@ Plan: 0 to add, 1 to change, 0 to destroy.
                 invocations,
                 plan_path_record,
                 pid_record,
+                signal_log,
                 show_json,
                 show_text,
                 env_log,
@@ -152,6 +156,7 @@ Plan: 0 to add, 1 to change, 0 to destroy.
                 .env("TERRACOTTA_FAKE_INVOCATIONS", &self.invocations)
                 .env("TERRACOTTA_FAKE_PLAN_PATH", &self.plan_path_record)
                 .env("TERRACOTTA_FAKE_PID_PATH", &self.pid_record)
+                .env("TERRACOTTA_FAKE_SIGNAL_LOG", &self.signal_log)
                 .env("TERRACOTTA_FAKE_SHOW_JSON", &self.show_json)
                 .env("TERRACOTTA_FAKE_SHOW_TEXT", &self.show_text)
                 .env("TERRACOTTA_FAKE_ENV_LOG", &self.env_log)
@@ -211,6 +216,13 @@ Plan: 0 to add, 1 to change, 0 to destroy.
                 .lines()
                 .map(str::to_owned)
                 .collect()
+        }
+
+        fn signal_count(&self) -> usize {
+            fs::read_to_string(&self.signal_log)
+                .expect("signal log should be readable")
+                .lines()
+                .count()
         }
     }
 
@@ -533,6 +545,7 @@ Plan: 0 to add, 1 to change, 0 to destroy.
         result.observed("terraform_started");
         result.observed("interrupt_requested");
         fixture.assert_saved_plan_removed();
+        assert_eq!(fixture.signal_count(), 1);
         assert_child_reaped(&fixture.pid_record);
     }
 

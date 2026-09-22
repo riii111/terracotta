@@ -468,6 +468,7 @@ pub(crate) fn run_passthrough(
 
 #[cfg(unix)]
 fn run_passthrough_unix(mut command: Command) -> io::Result<ProcessStatus> {
+    use std::os::unix::process::CommandExt;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     static INTERRUPTED: AtomicBool = AtomicBool::new(false);
@@ -476,6 +477,16 @@ fn run_passthrough_unix(mut command: Command) -> io::Result<ProcessStatus> {
         INTERRUPTED.store(true, Ordering::Relaxed);
     }
 
+    // SAFETY: `setpgid` is async-signal-safe and runs in the child before `exec`.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setpgid(0, 0) == -1 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        });
+    }
     // SAFETY: the handler only performs an atomic store and is restored after the child exits.
     let previous = unsafe {
         libc::signal(
@@ -500,8 +511,8 @@ fn run_passthrough_unix(mut command: Command) -> io::Result<ProcessStatus> {
             if INTERRUPTED.swap(false, Ordering::Relaxed) {
                 let pid = i32::try_from(child.id())
                     .map_err(|_| io::Error::other("child PID is too large"))?;
-                // SAFETY: the PID belongs to the child we just spawned.
-                let _ = unsafe { libc::kill(pid, libc::SIGINT) };
+                // SAFETY: the negative PID addresses the child process group created above.
+                let _ = unsafe { libc::kill(-pid, libc::SIGINT) };
             }
             if let Some(status) = child.try_wait()? {
                 break Ok(process_status(status));

@@ -40,7 +40,7 @@ case "$1" in
     printf '%s\n' "$$" > "$TERRACOTTA_FAKE_PID_PATH"
     : > "$plan_path"
     if [ "${TERRACOTTA_FAKE_MODE:-success}" = interrupt ]; then
-      exec python3 -c 'import signal,sys,time; signal.signal(signal.SIGINT, lambda *_: (time.sleep(1), sys.exit(130))); time.sleep(30)'
+      exec python3 -c 'import os,signal,sys,time; signal.signal(signal.SIGINT, lambda *_: (open(os.environ["TERRACOTTA_FAKE_SIGNAL_LOG"], "a").write("SIGINT\n"), time.sleep(1), sys.exit(130))); time.sleep(30)'
     fi
     if [ "${TERRACOTTA_FAKE_MODE:-success}" = failure ]; then
       printf '%s\n' '{"type":"diagnostic","diagnostic":{"severity":"error","summary":"synthetic plan failure","detail":"fake Terraform failed"}}'

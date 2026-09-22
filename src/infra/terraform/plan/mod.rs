@@ -113,11 +113,12 @@ pub(crate) fn saved_plan_for_plan(
             .strip_prefix("--")
             .or_else(|| argument.strip_prefix('-'))
             .unwrap_or_default();
-        if let Some(path) = option.strip_prefix("out=") {
-            let path = resolve_output_path(execution_root, path);
+        if let Some(value) = option.strip_prefix("out=") {
+            let path = resolve_output_path(execution_root, value);
             arguments[index] = OsString::from(format!("-out={}", path.display()));
             output_path = Some(path);
-            break;
+            index += 1;
+            continue;
         }
         if option == "out" {
             let value = arguments.get(index + 1).ok_or_else(|| {
@@ -127,7 +128,8 @@ pub(crate) fn saved_plan_for_plan(
             arguments[index] = OsString::from("-out");
             path.as_os_str().clone_into(&mut arguments[index + 1]);
             output_path = Some(path);
-            break;
+            index += 2;
+            continue;
         }
         index += 1;
     }
@@ -682,6 +684,44 @@ mod tests {
             .expect("user-owned plan cleanup should be a no-op");
         assert!(expected.exists());
         fs::remove_file(expected).expect("user-owned plan should be removed by the test");
+        fs::remove_dir(root).expect("output root should be removed");
+    }
+
+    #[test]
+    fn last_output_path_wins_across_environment_and_explicit_arguments() {
+        let root = env::temp_dir().join(format!(
+            "terracotta-repeated-plan-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        fs::create_dir(&root).expect("output root should be created");
+        let environment_path = root.join("environment.tfplan");
+        let explicit_path = root.join("explicit.tfplan");
+        let (saved_plan, arguments) = saved_plan_for_plan(
+            &root,
+            &[
+                OsString::from(format!("-out={}", environment_path.display())),
+                OsString::from("-out"),
+                OsString::from("explicit.tfplan"),
+            ],
+        )
+        .expect("repeated output paths should be accepted");
+
+        assert_eq!(saved_plan.path(), explicit_path);
+        assert_eq!(
+            argument_strings(&arguments),
+            vec![
+                format!("-out={}", environment_path.display()),
+                "-out".to_owned(),
+                explicit_path.display().to_string(),
+            ]
+        );
+        saved_plan
+            .cleanup()
+            .expect("user-owned plan cleanup should be a no-op");
         fs::remove_dir(root).expect("output root should be removed");
     }
 
