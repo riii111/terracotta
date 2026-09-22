@@ -16,6 +16,7 @@ Review Terraform's familiar diff and apply the exact plan you reviewed. The UI a
 - **Plan review**: Full plan display, scrolling, and keyword filtering
 - **Saved plan apply**: Target directory and workspace confirmation, with no replanning
 - **Apply progress**: Resource status and its log stay visible together; `Previous` shows local successful history
+- **Change overview**: Group repeated resource changes, filter by full address, and jump back to the matching raw plan block
 - **Clipboard**: Copy the full plan or apply results
 
 ## Usage
@@ -55,3 +56,10 @@ The review UI opens for interactive local `plan` and `apply` invocations,
 including supported options and the selected tool's `TF_CLI_ARGS*`. CI, redirected
 streams, HCP configurations, and unsupported options are delegated unchanged.
 Terracotta does not run `init` implicitly.
+
+In the review screen, press `s` to open the single-environment change overview.
+Use `↑`/`↓` or `j`/`k` to select a row, `Space` to expand repeated changes,
+`Enter` to open the corresponding raw plan block, and `/` to filter full
+addresses. `Esc` returns to the same overview selection, while `v` opens the
+full plan from its first line. Overview filtering changes display only; apply
+and copy always use the complete reviewed plan.

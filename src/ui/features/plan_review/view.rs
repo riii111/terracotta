@@ -1,5 +1,7 @@
 use ratatui::{layout::Rect, style::Style, text::Line};
 
+use crate::ui::features::overview::OverviewViewState;
+
 use super::PlanReviewInput;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +53,7 @@ pub(crate) struct PlanReviewViewState {
     selected: Option<usize>,
     overlay: Option<PlanReviewOverlay>,
     overlay_scroll: u16,
+    overview: OverviewViewState,
 }
 
 impl PlanReviewViewState {
@@ -149,7 +152,8 @@ impl PlanReviewViewState {
             | PlanReviewInput::SearchConfirm
             | PlanReviewInput::Apply
             | PlanReviewInput::Copy
-            | PlanReviewInput::Quit => None,
+            | PlanReviewInput::Quit
+            | PlanReviewInput::OpenOverview => None,
         }
     }
 
@@ -200,6 +204,20 @@ impl PlanReviewViewState {
 
     pub(crate) const fn overlay_scroll(&self) -> u16 {
         self.overlay_scroll
+    }
+
+    pub(crate) const fn overview(&self) -> &OverviewViewState {
+        &self.overview
+    }
+
+    pub(crate) const fn overview_mut(&mut self) -> &mut OverviewViewState {
+        &mut self.overview
+    }
+
+    pub(crate) fn jump_to_line(&mut self, line: usize, max_vertical: u16) {
+        self.vertical = u16::try_from(line).unwrap_or(u16::MAX).min(max_vertical);
+        self.horizontal = 0;
+        self.selected = None;
     }
 
     pub(crate) const fn scroll_overlay(&mut self, delta: i16) {

@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     io,
     path::PathBuf,
     time::{Duration, Instant},
@@ -9,20 +10,23 @@ use ratatui::DefaultTerminal;
 
 use crate::{
     app::{
-        copy::CopyResult,
+        copy::{CopyResult, CopyTarget},
         execution::{
             ApplyStatus, EventStream, ExecutionAction, ExecutionContext, ExecutionEvent,
             ExecutionEventKind, ExecutionLogLine, ExecutionPhase, ExecutionState,
             ExecutionTargetSpec, ExecutionTargetState, ResourceAction, ResourceEvent,
             ResourceEventKind, Tool,
         },
-        plan::PlanAction,
+        plan::{
+            Plan, PlanAction, PlanSummary, PlanValue, ResourceChange, ResourceChangeKind,
+            ResourceMode,
+        },
         review::{PlanBlock, PlanBlockKind, PlanDocument, PlanLineKind, PlanMetadata, PlanReview},
         session::{Action, ApplyConfirmationState, Effect, ReviewSessionState, SessionState},
     },
     ui::{
         QuitConfirmationInput,
-        features::{execution, plan_review},
+        features::{execution, overview, plan_review},
         quit_confirmation_key_to_input,
     },
 };
@@ -214,10 +218,15 @@ fn handle_synthetic_key(
         SessionState::Apply(execution) => {
             synthetic_execution_key(terminal, execution, execution_view, key)
         }
+        SessionState::Overview(_) => synthetic_overview_key(terminal, state, view, key),
         SessionState::Execution(_) => Ok(None),
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "the synthetic plan keeps its complete screen fixture in one readable example"
+)]
 fn synthetic_review() -> ReviewSessionState {
     let plan = PlanReview::new(
         PathBuf::from("/workspace/infra/prod"),
@@ -227,14 +236,23 @@ fn synthetic_review() -> ReviewSessionState {
                 .to_owned(),
             vec![
                 PlanBlock::new(0..2, PlanBlockKind::Common),
-                PlanBlock::new(
+                PlanBlock::with_addresses(
                     2..7,
                     PlanBlockKind::Resource,
+                    vec!["terraform_data.example".to_owned()],
                 ),
                 PlanBlock::new(7..8, PlanBlockKind::Common),
-                PlanBlock::new(8..12, PlanBlockKind::Resource),
+                PlanBlock::with_addresses(
+                    8..12,
+                    PlanBlockKind::Resource,
+                    vec!["terraform_data.cache".to_owned()],
+                ),
                 PlanBlock::new(12..13, PlanBlockKind::Common),
-                PlanBlock::new(13..15, PlanBlockKind::Resource),
+                PlanBlock::with_addresses(
+                    13..15,
+                    PlanBlockKind::Resource,
+                    vec!["terraform_data.old".to_owned()],
+                ),
                 PlanBlock::new(15..17, PlanBlockKind::Common),
             ],
             vec![
@@ -272,6 +290,40 @@ fn synthetic_review() -> ReviewSessionState {
         .with_apply_targets(synthetic_apply_targets()),
         Vec::new(),
     )
+    .with_plan(Plan {
+        changes: Vec::new(),
+        resource_changes: vec![
+            synthetic_change(
+                "terraform_data.example",
+                ResourceChangeKind::Update,
+                vec![PlanAction::Update],
+                "before",
+                "after",
+            ),
+            synthetic_change(
+                "terraform_data.cache",
+                ResourceChangeKind::Create,
+                vec![PlanAction::Create],
+                "",
+                "cache",
+            ),
+            synthetic_change(
+                "terraform_data.old",
+                ResourceChangeKind::Delete,
+                vec![PlanAction::Delete],
+                "old",
+                "",
+            ),
+        ],
+        summary: PlanSummary {
+            creates: 1,
+            updates: 1,
+            replaces: 0,
+            deletes: 1,
+        },
+        unsupported_changes: Vec::new(),
+        output_changes: Vec::new(),
+    })
     .with_context(
         ExecutionContext::loading("/workspace/infra/prod")
             .with_launch_root("/workspace")
@@ -279,6 +331,39 @@ fn synthetic_review() -> ReviewSessionState {
             .with_tool_version(Tool::Terraform, "1.9.0"),
     );
     ReviewSessionState::new(plan)
+}
+
+fn synthetic_change(
+    address: &str,
+    kind: ResourceChangeKind,
+    actions: Vec<PlanAction>,
+    before: &str,
+    after: &str,
+) -> ResourceChange {
+    ResourceChange {
+        address: address.to_owned(),
+        provider: None,
+        resource_type: Some("terraform_data".to_owned()),
+        resource_name: Some(address.rsplit('.').next().unwrap_or(address).to_owned()),
+        mode: ResourceMode::Managed,
+        actions,
+        kind,
+        before: Some(PlanValue::Object(BTreeMap::from([(
+            "input".to_owned(),
+            PlanValue::String(before.to_owned()),
+        )]))),
+        after: Some(PlanValue::Object(BTreeMap::from([(
+            "input".to_owned(),
+            PlanValue::String(after.to_owned()),
+        )]))),
+        before_sensitive: None,
+        after_sensitive: None,
+        after_unknown: None,
+        replace_paths: None,
+        action_reason: None,
+        previous_address: None,
+        importing: None,
+    }
 }
 
 fn render_synthetic(
@@ -299,6 +384,9 @@ fn render_synthetic(
         ),
         SessionState::ApplyConfirmation(confirmation) => {
             plan_review::render_apply_confirmation(frame, confirmation, confirmation_view);
+        }
+        SessionState::Overview(overview_state) => {
+            overview::render(frame, overview_state, view.overview(), Instant::now());
         }
         SessionState::Apply(execution) | SessionState::Execution(execution) => {
             execution::render_execution_with_quit_confirmation(
@@ -339,6 +427,20 @@ fn synthetic_review_key(
         ) {
             Some(plan_review::PlanReviewInput::Quit) => Some(Action::Quit),
             Some(plan_review::PlanReviewInput::Apply) => Some(Action::OpenApplyConfirmation),
+            Some(plan_review::PlanReviewInput::OpenOverview) => {
+                let content = overview::OverviewContent::from_review(
+                    review.review(),
+                    view.overview().filter(),
+                    view.overview().expanded(),
+                );
+                view.overview_mut().reconcile(u16::MAX, content.rows.len());
+                Some(Action::OpenOverview)
+            }
+            Some(plan_review::PlanReviewInput::SearchCancel)
+                if review.review().search_query().is_empty() && review.is_from_overview() =>
+            {
+                Some(Action::ReturnToOverview)
+            }
             Some(input) => {
                 let size = terminal.size()?;
                 let layout = plan_review::layout(
@@ -359,6 +461,83 @@ fn synthetic_review_key(
             None => None,
         },
     )
+}
+
+fn synthetic_overview_key(
+    terminal: &DefaultTerminal,
+    state: &SessionState,
+    view: &mut plan_review::PlanReviewViewState,
+    key: KeyEvent,
+) -> io::Result<Option<Action>> {
+    let SessionState::Overview(overview_state) = state else {
+        return Ok(None);
+    };
+    if view.overview().overlay().is_some() {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('?') => view.overview_mut().close_overlay(),
+            KeyCode::Up | KeyCode::Char('k') => view.overview_mut().scroll_overlay(-1),
+            KeyCode::Down | KeyCode::Char('j') => view.overview_mut().scroll_overlay(1),
+            KeyCode::PageUp => view.overview_mut().scroll_overlay(-8),
+            KeyCode::PageDown => view.overview_mut().scroll_overlay(8),
+            KeyCode::Home => view.overview_mut().overlay_top(),
+            KeyCode::End => view.overview_mut().overlay_bottom(),
+            _ => {}
+        }
+        return Ok(None);
+    }
+    let size = terminal.size()?;
+    let layout = overview::layout(
+        ratatui::layout::Rect::new(0, 0, size.width, size.height),
+        overview_state,
+        view.overview(),
+    );
+    let content = overview::OverviewContent::from_review(
+        overview_state.review(),
+        view.overview().filter(),
+        view.overview().expanded(),
+    );
+    let Some(input) = overview::key_to_input(
+        key,
+        view.overview().searching(),
+        !view.overview().filter().is_empty(),
+    ) else {
+        return Ok(None);
+    };
+    let command = view
+        .overview_mut()
+        .apply(input, layout.body(), layout.max_vertical(), &content);
+    let Some(command) = command else {
+        return Ok(None);
+    };
+    match command {
+        overview::OverviewCommand::Open(address) => {
+            let line = address
+                .as_deref()
+                .and_then(|address| {
+                    overview_state
+                        .review()
+                        .document()
+                        .block_for_address(address)
+                })
+                .map_or(0, |block| block.lines().start);
+            let mut review = overview_state.review().clone();
+            review.set_search_query(String::new());
+            let temporary = ReviewSessionState::new_from_overview(review);
+            let raw_layout = plan_review::layout(
+                ratatui::layout::Rect::new(0, 0, size.width, size.height),
+                false,
+                &temporary,
+            );
+            view.jump_to_line(line, raw_layout.max_vertical());
+            Ok(Some(Action::OpenReviewFromOverview { address }))
+        }
+        overview::OverviewCommand::ViewPlan | overview::OverviewCommand::Back => {
+            view.jump_to_line(0, u16::MAX);
+            Ok(Some(Action::OpenReviewFromOverview { address: None }))
+        }
+        overview::OverviewCommand::Copy => Ok(Some(Action::Copy(CopyTarget::Plan))),
+        overview::OverviewCommand::Quit => Ok(Some(Action::Quit)),
+    }
 }
 
 fn synthetic_execution_key(

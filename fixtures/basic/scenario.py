@@ -110,10 +110,12 @@ def demo():
             return build.returncode
         executable = "terracotta.exe" if os.name == "nt" else "terracotta"
         install_demo_terraform_wrapper(directory, environment)
+        interactive_environment = environment.copy()
+        interactive_environment.pop("TF_IN_AUTOMATION", None)
         print("[3/3] Opening plan review...", file=sys.stderr, flush=True)
         return subprocess.run(
             [str(target / "debug" / executable), "plan"],
-            cwd=directory, env=environment,
+            cwd=directory, env=interactive_environment,
         ).returncode
     finally:
         clean(directory)

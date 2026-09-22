@@ -27,6 +27,7 @@ pub(crate) enum PlanReviewInput {
     SearchPrevious,
     OpenHelp,
     OpenContext,
+    OpenOverview,
     Apply,
     Copy,
     Quit,
@@ -59,6 +60,7 @@ pub(crate) fn key_to_input(
             Some(PlanReviewInput::OpenHelp)
         }
         (KeyCode::Char('c'), KeyModifiers::NONE) => Some(PlanReviewInput::OpenContext),
+        (KeyCode::Char('s'), KeyModifiers::NONE) => Some(PlanReviewInput::OpenOverview),
         (KeyCode::Char('y'), KeyModifiers::NONE) => Some(PlanReviewInput::Copy),
         (KeyCode::Char('a'), KeyModifiers::NONE) => Some(PlanReviewInput::Apply),
         (KeyCode::Char('q'), KeyModifiers::NONE) => Some(PlanReviewInput::Quit),
@@ -78,6 +80,7 @@ const fn confirmed_filter_key_to_input(key: KeyEvent) -> Option<PlanReviewInput>
         (KeyCode::Char('c'), KeyModifiers::NONE) => Some(PlanReviewInput::OpenContext),
         (KeyCode::Char('y'), KeyModifiers::NONE) => Some(PlanReviewInput::Copy),
         (KeyCode::Char('a'), KeyModifiers::NONE) => Some(PlanReviewInput::Apply),
+        (KeyCode::Char('s'), KeyModifiers::NONE) => Some(PlanReviewInput::OpenOverview),
         (KeyCode::Char('q'), KeyModifiers::NONE) => Some(PlanReviewInput::Quit),
         _ => navigation_key_to_input(key),
     }
