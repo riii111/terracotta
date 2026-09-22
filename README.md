@@ -27,11 +27,8 @@ terracotta plan
 
 `init → plan → review → apply (optional)`
 
-`terracotta terraform <arguments>` passes Terraform commands through; `terracotta plan`
-and `terracotta apply` are shortcuts. Terraform help and version flags belong after
-`terraform`, while `terracotta --help` and `terracotta --version` describe Terracotta.
+`terracotta terraform <arguments>` runs Terraform commands. `terracotta plan` and
+`terracotta apply` are shortcuts.
 
-Currently, the review UI accepts only an interactive `plan` without options.
-Commands with options, `apply`, CI, redirected streams, and HCP configurations run
-Terraform directly with the original arguments and environment. HCP configurations
-that only store state remotely are also passed through.
+The review UI opens for an interactive `plan` without options. With options,
+`apply`, CI, redirected streams, or HCP configurations, Terraform runs directly.

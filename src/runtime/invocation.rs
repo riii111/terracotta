@@ -40,25 +40,43 @@ pub(crate) fn run(arguments: &[OsString]) -> ExitCode {
 
 fn execute(arguments: &[OsString]) -> io::Result<ExitCode> {
     let executable = terraform::resolve_executable()?;
+    if let Some(directory) = review_directory(arguments) {
+        return Ok(super::run_plan(&directory, None));
+    }
+    terraform::delegate(&executable, arguments)
+}
+
+fn review_directory(arguments: &[OsString]) -> Option<PathBuf> {
     let terminals = [
         io::stdin().is_terminal(),
         io::stdout().is_terminal(),
         io::stderr().is_terminal(),
     ];
-    if interactive(terminals, env::var_os("CI").as_deref(), env::var_os("TF_IN_AUTOMATION").as_deref())
-        && let Ok(root) = env::current_dir()
-        && let Some(invocation) = parse(arguments, &root, |name| env::var_os(name))
-        && invocation.review_candidate()
-        // SBI01-02 will connect effective options and apply to the managed execution path.
-        && invocation.subcommand == Subcommand::Plan
-        && invocation.global_arguments.is_empty()
-        && invocation.effective_arguments.is_empty()
-        && configuration::execution_location(&invocation.directory, env::var_os("TF_DATA_DIR").as_deref())
-            .is_ok_and(|location| location == ExecutionLocation::Local)
-    {
-        return Ok(super::run_plan(&invocation.directory, None));
+    if !interactive(
+        terminals,
+        env::var_os("CI").as_deref(),
+        env::var_os("TF_IN_AUTOMATION").as_deref(),
+    ) {
+        return None;
     }
-    terraform::delegate(&executable, arguments)
+
+    let root = env::current_dir().ok()?;
+    let invocation = parse(arguments, &root, |name| env::var_os(name))?;
+    // SBI01-02 will connect effective options and apply to the managed execution path.
+    if !invocation.review_candidate()
+        || invocation.subcommand != Subcommand::Plan
+        || !invocation.global_arguments.is_empty()
+        || !invocation.effective_arguments.is_empty()
+    {
+        return None;
+    }
+
+    let location = configuration::execution_location(
+        &invocation.directory,
+        env::var_os("TF_DATA_DIR").as_deref(),
+    )
+    .ok()?;
+    (location == ExecutionLocation::Local).then_some(invocation.directory)
 }
 
 fn interactive(terminals: [bool; 3], ci: Option<&OsStr>, automation: Option<&OsStr>) -> bool {
