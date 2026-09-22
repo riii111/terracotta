@@ -29,7 +29,7 @@ pub(crate) struct PlanGrouping {
 }
 
 pub(crate) struct GroupingCandidate {
-    pub(crate) display_address: String,
+    display_address: String,
     pub(crate) key: GroupingKey,
 }
 

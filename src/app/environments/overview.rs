@@ -11,7 +11,10 @@ use super::{
     },
 };
 use crate::app::{
-    plan::grouping::{GroupingCandidate, GroupingKey, grouping_candidate},
+    plan::{
+        grouping::{GroupingCandidate, GroupingKey, grouping_candidate},
+        path::normalize_resource_addresses,
+    },
     session::ReviewSessionState,
 };
 
@@ -67,33 +70,29 @@ pub(crate) fn environment_overview(plans: &[EnvironmentPlan]) -> EnvironmentOver
         })
         .collect();
     let mut rows = Vec::new();
-    let mut groups = BTreeMap::<GroupingKey, CandidateGroup>::new();
+    let mut groups = BTreeMap::<GroupingKey, Vec<ComparisonRow>>::new();
     for row in comparison.rows {
         if let Some(candidate) = shared_candidate(&row, &candidates) {
-            groups
-                .entry(candidate.key.clone())
-                .or_insert_with(|| CandidateGroup {
-                    display_address: candidate.display_address.clone(),
-                    children: Vec::new(),
-                })
-                .children
-                .push(row);
+            groups.entry(candidate.key.clone()).or_default().push(row);
         } else {
             rows.push(OverviewRow::Individual(row));
         }
     }
-    for (key, mut candidate) in groups {
-        candidate.children.sort_by(|a, b| a.address.cmp(&b.address));
-        let cells = group_cells(&candidate.children, plans.len());
+    for (key, mut children) in groups {
+        children.sort_by(|a, b| a.address.cmp(&b.address));
+        let cells = group_cells(&children, plans.len());
         if is_common_group(&cells) {
+            let address =
+                normalize_resource_addresses(children.iter().map(|row| row.address.as_str()))
+                    .expect("grouping candidates share a normalized address");
             rows.push(OverviewRow::Group(OverviewGroup {
                 id: GroupId(key),
-                display_address: candidate.display_address,
+                display_address: address.display().to_owned(),
                 cells,
-                children: candidate.children,
+                children,
             }));
         } else {
-            rows.extend(candidate.children.into_iter().map(OverviewRow::Individual));
+            rows.extend(children.into_iter().map(OverviewRow::Individual));
         }
     }
     rows.sort_by(|left, right| row_order(left).cmp(&row_order(right)));
@@ -101,11 +100,6 @@ pub(crate) fn environment_overview(plans: &[EnvironmentPlan]) -> EnvironmentOver
         scope: comparison.scope,
         rows,
     }
-}
-
-struct CandidateGroup {
-    display_address: String,
-    children: Vec<ComparisonRow>,
 }
 
 fn shared_candidate<'a>(
@@ -335,6 +329,35 @@ mod tests {
                 line: Some(0)
             })
         );
+        assert_partition(&session, &overview);
+    }
+
+    #[rstest]
+    #[case::unkeyed_and_keyed(
+        "test_resource.item",
+        ["test_resource.item[0]", "test_resource.item[1]"],
+        "test_resource.item[*]"
+    )]
+    #[case::module_and_resource_keys(
+        r#"module.app["dev"].test_resource.item"#,
+        ["module.app.test_resource.item[0]", "module.app.test_resource.item[1]"],
+        "module.app[*].test_resource.item[*]"
+    )]
+    fn group_display_retains_key_positions_from_every_member(
+        #[case] left: &str,
+        #[case] right: [&str; 2],
+        #[case] display: &str,
+    ) {
+        let session = ready_session([
+            vec![change(left, "new")],
+            right.map(|address| change(address, "new")).to_vec(),
+        ]);
+
+        let overview = environment_overview(session.plans());
+
+        let group = only_group(&overview);
+        assert_eq!(group.display_address, display);
+        assert_eq!(member_counts(group), [1, 2]);
         assert_partition(&session, &overview);
     }
 
