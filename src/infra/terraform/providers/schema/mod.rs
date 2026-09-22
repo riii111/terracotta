@@ -154,7 +154,7 @@ fn parse_nested_type(value: &Value) -> Result<AttributeType, PlanParseError> {
         .ok_or(PlanParseError::InvalidField(
             "schema nested type nesting_mode",
         ))? {
-        "single" => Ok(object),
+        "single" | "group" => Ok(object),
         "list" => Ok(AttributeType::List(Box::new(object))),
         "set" => Ok(AttributeType::Set(Box::new(object))),
         "map" => Ok(AttributeType::Map(Box::new(object))),
@@ -278,6 +278,12 @@ mod tests {
                                             "nesting_mode": "list",
                                             "attributes": {"name": {"type": "string"}}
                                         }
+                                    },
+                                    "framework_group": {
+                                        "nested_type": {
+                                            "nesting_mode": "group",
+                                            "attributes": {"name": {"type": "string"}}
+                                        }
                                     }
                                 },
                                 "block_types": {
@@ -303,6 +309,7 @@ mod tests {
         assert!(resource.attributes["labels"].is_simple_map());
         assert!(!resource.attributes["nested"].is_simple_map());
         assert!(!resource.attributes["framework_nested"].is_simple_map());
+        assert!(!resource.attributes["framework_group"].is_simple_map());
         assert!(matches!(
             resource.block_types["settings"],
             AttributeType::Object(_)
