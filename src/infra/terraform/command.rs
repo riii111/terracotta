@@ -120,6 +120,7 @@ impl ProcessOutput {
     }
 
     #[must_use]
+    #[cfg(test)]
     pub(super) fn stdout(&self) -> &[u8] {
         &self.stdout
     }
@@ -555,25 +556,6 @@ pub(super) fn run_command_with_events(
         runner,
         event_sink,
         false,
-    )
-}
-
-pub(super) fn run_command_with_text_events(
-    root: &Path,
-    command: TerraformCommand,
-    arguments: &[OsString],
-    cancellation: &CancellationToken,
-    runner: &dyn ProcessRunner,
-    event_sink: Option<&mut dyn FnMut(ExecutionEvent)>,
-) -> Result<ProcessResult, TerraformExecutionError> {
-    run_command_with_parser(
-        root,
-        command,
-        arguments,
-        cancellation,
-        runner,
-        event_sink,
-        true,
     )
 }
 

@@ -1,5 +1,6 @@
 use serde_json::{Map, Value};
 
+use crate::app::execution::ExecutionTargetSpec;
 use crate::app::plan::{PlanAction, PlanResource};
 use crate::app::review::PlanMetadata;
 
@@ -25,6 +26,7 @@ pub(super) fn parse_metadata(
     let mut changes = 0;
     let mut replacements = 0;
     let mut deletions = 0;
+    let mut apply_targets = Vec::new();
     for resource in resources {
         let resource = resource
             .as_object()
@@ -33,6 +35,12 @@ pub(super) fn parse_metadata(
         let change = required_object(resource, "change")?;
         let actions = super::json::parse_actions(change, "resource change actions")?;
         let plan_resource = PlanResource { address, actions };
+        if is_apply_target(resource, change, &plan_resource.actions) {
+            apply_targets.push(ExecutionTargetSpec {
+                address: plan_resource.address.clone(),
+                actions: plan_resource.actions.clone(),
+            });
+        }
         match plan_resource.actions.as_slice() {
             [PlanAction::Create] => additions += 1,
             [PlanAction::Update] => changes += 1,
@@ -51,6 +59,7 @@ pub(super) fn parse_metadata(
         .and_then(Value::as_object)
         .map(|outputs| outputs.keys().cloned().collect())
         .unwrap_or_default();
+    let sensitive_values = sensitive_values(root, resources);
     let errored = root.get("errored").and_then(Value::as_bool) == Some(true);
     let applyable = !errored
         && root
@@ -66,7 +75,108 @@ pub(super) fn parse_metadata(
         deletions,
         applyable,
     )
-    .with_resource_changes(resource_changes, replacements))
+    .with_resource_changes(resource_changes, replacements)
+    .with_apply_targets(apply_targets)
+    .with_sensitive_values(sensitive_values))
+}
+
+fn is_apply_target(
+    resource: &Map<String, Value>,
+    change: &Map<String, Value>,
+    actions: &[PlanAction],
+) -> bool {
+    if resource
+        .get("previous_address")
+        .is_some_and(|address| !address.is_null())
+        || change
+            .get("importing")
+            .is_some_and(|importing| !importing.is_null())
+    {
+        return false;
+    }
+    matches!(
+        actions,
+        [PlanAction::Create | PlanAction::Update | PlanAction::Delete]
+            | [PlanAction::Create, PlanAction::Delete]
+            | [PlanAction::Delete, PlanAction::Create]
+    )
+}
+
+fn sensitive_values(root: &Map<String, Value>, resources: &[Value]) -> Vec<String> {
+    let mut values = Vec::new();
+    for resource in resources.iter().filter_map(Value::as_object) {
+        let Some(change) = resource.get("change").and_then(Value::as_object) else {
+            continue;
+        };
+        for (value_field, mask_field) in
+            [("before", "before_sensitive"), ("after", "after_sensitive")]
+        {
+            if let (Some(value), Some(mask)) = (change.get(value_field), change.get(mask_field)) {
+                collect_masked_values(value, mask, &mut values);
+            }
+        }
+    }
+    if let Some(outputs) = root.get("output_changes").and_then(Value::as_object) {
+        for output in outputs.values().filter_map(Value::as_object) {
+            if output.get("sensitive") == Some(&Value::Bool(true))
+                && let Some(value) = output.get("value").or_else(|| output.get("after"))
+            {
+                collect_scalar_values(value, &mut values);
+            }
+            if let (Some(value), Some(mask)) = (output.get("after"), output.get("after_sensitive"))
+            {
+                collect_masked_values(value, mask, &mut values);
+            }
+        }
+    }
+    values.retain(|value| !value.is_empty());
+    values.sort();
+    values.dedup();
+    values
+}
+
+fn collect_masked_values(value: &Value, mask: &Value, values: &mut Vec<String>) {
+    match mask {
+        Value::Bool(true) => collect_scalar_values(value, values),
+        Value::Object(mask) => {
+            let Some(value) = value.as_object() else {
+                return;
+            };
+            for (key, mask) in mask {
+                if let Some(value) = value.get(key) {
+                    collect_masked_values(value, mask, values);
+                }
+            }
+        }
+        Value::Array(mask) => {
+            let Some(value) = value.as_array() else {
+                return;
+            };
+            for (value, mask) in value.iter().zip(mask) {
+                collect_masked_values(value, mask, values);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_scalar_values(value: &Value, values: &mut Vec<String>) {
+    match value {
+        Value::String(value) => values.push(value.clone()),
+        Value::Number(value) => values.push(value.to_string()),
+        Value::Bool(value) => values.push(value.to_string()),
+        Value::Array(values_array) => {
+            for value in values_array {
+                collect_scalar_values(value, values);
+            }
+        }
+        Value::Object(values_object) => {
+            for value in values_object.values() {
+                collect_scalar_values(value, values);
+            }
+        }
+        Value::Null => {}
+    }
 }
 
 fn parse_format_version(root: &Map<String, Value>) -> Result<(), PlanParseError> {
@@ -241,5 +351,54 @@ mod tests {
             parse_metadata(document.to_string().as_bytes(), true).expect("metadata should parse");
 
         assert!(!metadata.has_changes());
+    }
+
+    #[test]
+    fn extracts_apply_targets_and_sensitive_scalars_without_debug_leaks() {
+        let document = json!({
+            "format_version": "1.0",
+            "applyable": true,
+            "resource_changes": [
+                {
+                    "address": "terraform_data.api",
+                    "change": {
+                        "actions": ["update"],
+                        "before": {"token": "old-secret"},
+                        "before_sensitive": {"token": true},
+                        "after": {"token": "new-secret"},
+                        "after_sensitive": {"token": true}
+                    }
+                },
+                {
+                    "address": "terraform_data.imported",
+                    "change": {
+                        "actions": ["create"],
+                        "importing": {"id": "import-id"}
+                    }
+                },
+                {
+                    "address": "terraform_data.moved",
+                    "previous_address": "terraform_data.old",
+                    "change": {"actions": ["create"]}
+                }
+            ],
+            "output_changes": {
+                "endpoint": {"sensitive": true, "value": "output-secret"}
+            }
+        });
+
+        let metadata =
+            parse_metadata(document.to_string().as_bytes(), true).expect("metadata should parse");
+
+        assert_eq!(metadata.apply_targets().len(), 1);
+        assert_eq!(metadata.apply_targets()[0].address, "terraform_data.api");
+        assert_eq!(
+            metadata.sensitive_values(),
+            ["new-secret", "old-secret", "output-secret"]
+        );
+        let debug = format!("{metadata:?}");
+        assert!(!debug.contains("old-secret"));
+        assert!(!debug.contains("new-secret"));
+        assert!(!debug.contains("output-secret"));
     }
 }

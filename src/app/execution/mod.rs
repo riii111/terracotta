@@ -10,9 +10,14 @@ pub(crate) use context::{ExecutionContext, ExecutionContextValue, VariableSource
 pub(crate) use event::{
     Diagnostic, DiagnosticPoint, DiagnosticPosition, DiagnosticSeverity, DiagnosticSource,
     EventStream, ExecutionEvent, ExecutionEventKind, ExecutionLogLine, ExecutionPhase,
-    ExecutionSummary, ProcessExitStatus, ProcessTermination, ResourceEvent, ResourceEventKind,
+    ExecutionSummary, ExecutionTargetSpec, ProcessExitStatus, ProcessTermination, ResourceEvent,
+    ResourceEventKind,
 };
-pub(crate) use progress::ExecutionProgress;
+#[expect(
+    unused_imports,
+    reason = "execution target types are consumed by the SBI03-03 execution UI"
+)]
+pub(crate) use progress::{ExecutionProgress, ExecutionTargetState, ExecutionTargetStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ExecutionStage {
@@ -107,19 +112,45 @@ impl ExecutionState {
     }
 
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn applying(started_at: Instant, context: ExecutionContext) -> Self {
         Self::at_stage(started_at, context, ExecutionStage::Applying)
     }
 
     #[must_use]
+    pub(crate) fn applying_with_targets(
+        started_at: Instant,
+        context: ExecutionContext,
+        targets: Vec<ExecutionTargetSpec>,
+        sensitive_values: Vec<String>,
+    ) -> Self {
+        Self::at_stage_with_progress(
+            started_at,
+            context,
+            ExecutionStage::Applying,
+            ExecutionProgress::new(targets, sensitive_values),
+        )
+    }
+
+    #[must_use]
     fn at_stage(started_at: Instant, context: ExecutionContext, stage: ExecutionStage) -> Self {
+        Self::at_stage_with_progress(started_at, context, stage, ExecutionProgress::default())
+    }
+
+    #[must_use]
+    const fn at_stage_with_progress(
+        started_at: Instant,
+        context: ExecutionContext,
+        stage: ExecutionStage,
+        progress: ExecutionProgress,
+    ) -> Self {
         Self {
             stage,
             active_phase: stage,
             context,
             started_at,
             finished_at: None,
-            progress: ExecutionProgress::default(),
+            progress,
             cancellation_requested: false,
             failure_message: None,
             copy_notice: None,
@@ -174,6 +205,7 @@ impl ExecutionState {
                 severity: DiagnosticSeverity::Error,
                 summary: message,
                 detail: None,
+                address: None,
                 position: None,
                 source: DiagnosticSource::Terraform,
             }),
@@ -205,6 +237,7 @@ impl ExecutionState {
                     severity: DiagnosticSeverity::Error,
                     summary: message,
                     detail: None,
+                    address: None,
                     position: None,
                     source: DiagnosticSource::Terraform,
                 }),
@@ -227,6 +260,7 @@ impl ExecutionState {
                 },
                 interrupted: status == ApplyStatus::Interrupted,
             });
+        self.progress.finish(termination);
         self.result = Some(ExecutionResult {
             phase: ExecutionStage::Applying,
             termination,
@@ -241,6 +275,7 @@ impl ExecutionState {
             copy::CopyTarget::Diagnostic => Some(copy::diagnostic_effect(
                 self.progress.diagnostics(),
                 self.failure_message.as_deref(),
+                self.progress.sensitive_values(),
             )),
             copy::CopyTarget::Execution if self.result().is_some() => {
                 Some(copy::execution_effect(self))
@@ -530,6 +565,7 @@ mod tests {
                 severity: DiagnosticSeverity::Warning,
                 summary: "Provider warning".to_owned(),
                 detail: Some("Warning detail".to_owned()),
+                address: None,
                 position: None,
                 source: DiagnosticSource::Terraform,
             }),
@@ -540,6 +576,7 @@ mod tests {
                 severity: DiagnosticSeverity::Error,
                 summary: "Invalid configuration".to_owned(),
                 detail: None,
+                address: None,
                 position: None,
                 source: DiagnosticSource::Terraform,
             }),
@@ -601,6 +638,7 @@ mod tests {
                 severity: DiagnosticSeverity::Error,
                 summary: "Late error".to_owned(),
                 detail: None,
+                address: None,
                 position: None,
                 source: DiagnosticSource::Terraform,
             }),

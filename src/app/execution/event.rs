@@ -1,6 +1,8 @@
 use std::fmt::{Debug, Formatter};
 use std::time::Instant;
 
+use crate::app::plan::PlanAction;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EventStream {
     Stdout,
@@ -34,6 +36,22 @@ pub(crate) struct ResourceEvent {
     pub(crate) address: String,
     pub(crate) kind: ResourceEventKind,
     pub(crate) message: Option<String>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct ExecutionTargetSpec {
+    pub(crate) address: String,
+    pub(crate) actions: Vec<PlanAction>,
+}
+
+impl Debug for ExecutionTargetSpec {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ExecutionTargetSpec")
+            .field("address", &self.address)
+            .field("actions", &self.actions)
+            .finish()
+    }
 }
 
 impl Debug for ResourceEvent {
@@ -108,6 +126,7 @@ pub(crate) struct Diagnostic {
     pub(crate) severity: DiagnosticSeverity,
     pub(crate) summary: String,
     pub(crate) detail: Option<String>,
+    pub(crate) address: Option<String>,
     pub(crate) position: Option<DiagnosticPosition>,
     pub(crate) source: DiagnosticSource,
 }
@@ -119,6 +138,7 @@ impl Debug for Diagnostic {
             .field("severity", &self.severity)
             .field("summary", &"<redacted>")
             .field("detail", &self.detail.as_ref().map(|_| "<redacted>"))
+            .field("address", &self.address)
             .field("position", &self.position)
             .field("source", &self.source)
             .finish()

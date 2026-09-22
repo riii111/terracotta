@@ -76,7 +76,7 @@ impl TerraformEventParser {
 
 fn parse_json_event(stream: EventStream, value: &Value) -> ExecutionEventKind {
     let Some(object) = value.as_object() else {
-        return ExecutionEventKind::Diagnostic(unknown_event_diagnostic(stream, None, None));
+        return ExecutionEventKind::Diagnostic(unknown_event_diagnostic(stream, None, None, None));
     };
     let event_type = object
         .get("type")
@@ -86,12 +86,16 @@ fn parse_json_event(stream: EventStream, value: &Value) -> ExecutionEventKind {
         .get("@message")
         .and_then(Value::as_str)
         .map(str::to_owned);
+    let severity = object
+        .get("@level")
+        .and_then(Value::as_str)
+        .map(diagnostic_severity);
 
     match event_type.as_deref() {
         Some("diagnostic") => parse_diagnostic(object).map_or_else(
             || {
                 ExecutionEventKind::Diagnostic(unknown_event_diagnostic(
-                    stream, event_type, message,
+                    stream, event_type, message, severity,
                 ))
             },
             ExecutionEventKind::Diagnostic,
@@ -99,7 +103,7 @@ fn parse_json_event(stream: EventStream, value: &Value) -> ExecutionEventKind {
         Some("change_summary" | "summary") => parse_summary(object, message.clone()).map_or_else(
             || {
                 ExecutionEventKind::Diagnostic(unknown_event_diagnostic(
-                    stream, event_type, message,
+                    stream, event_type, message, severity,
                 ))
             },
             ExecutionEventKind::Summary,
@@ -130,6 +134,7 @@ fn parse_json_event(stream: EventStream, value: &Value) -> ExecutionEventKind {
                         stream,
                         Some(event_type.to_owned()),
                         message.clone(),
+                        severity,
                     ))
                 },
                 |(kind, address)| {
@@ -140,7 +145,9 @@ fn parse_json_event(stream: EventStream, value: &Value) -> ExecutionEventKind {
                     })
                 },
             ),
-        None => ExecutionEventKind::Diagnostic(unknown_event_diagnostic(stream, None, message)),
+        None => ExecutionEventKind::Diagnostic(unknown_event_diagnostic(
+            stream, None, message, severity,
+        )),
     }
 }
 
@@ -233,6 +240,11 @@ fn parse_diagnostic(object: &Map<String, Value>) -> Option<Diagnostic> {
             .map_or(DiagnosticSeverity::Unknown, diagnostic_severity),
         summary,
         detail,
+        address: diagnostic
+            .get("address")
+            .and_then(Value::as_str)
+            .or_else(|| object.get("address").and_then(Value::as_str))
+            .map(str::to_owned),
         position: diagnostic.get("range").and_then(parse_position),
         source: DiagnosticSource::Terraform,
     })
@@ -268,9 +280,10 @@ fn parse_point(value: &Value) -> Option<DiagnosticPoint> {
 
 const fn non_json_diagnostic(stream: EventStream, text: String) -> Diagnostic {
     Diagnostic {
-        severity: DiagnosticSeverity::Error,
+        severity: DiagnosticSeverity::Unknown,
         summary: text,
         detail: None,
+        address: None,
         position: None,
         source: DiagnosticSource::NonJson { stream },
     }
@@ -280,13 +293,15 @@ fn unknown_event_diagnostic(
     stream: EventStream,
     event_type: Option<String>,
     message: Option<String>,
+    severity: Option<DiagnosticSeverity>,
 ) -> Diagnostic {
     Diagnostic {
-        severity: DiagnosticSeverity::Error,
+        severity: severity.unwrap_or(DiagnosticSeverity::Unknown),
         summary: message.unwrap_or_else(|| "Unknown Terraform event".to_owned()),
         detail: event_type
             .as_deref()
             .map(|event_type| format!("Event type: {event_type}")),
+        address: None,
         position: None,
         source: DiagnosticSource::UnknownEvent { stream, event_type },
     }
@@ -364,6 +379,7 @@ mod tests {
         assert!(matches!(
             stderr_events[0].kind,
             ExecutionEventKind::Diagnostic(Diagnostic {
+                severity: DiagnosticSeverity::Unknown,
                 source: DiagnosticSource::NonJson {
                     stream: EventStream::Stderr
                 },
@@ -426,6 +442,7 @@ mod tests {
                 "severity": "error",
                 "summary": "Invalid value",
                 "detail": "The value is not valid.",
+                "address": "terraform_data.api",
                 "range": {
                     "filename": "main.tf",
                     "start": {"line": 4, "column": 2, "byte": 20},
@@ -463,6 +480,7 @@ mod tests {
             diagnostic.detail.as_deref(),
             Some("The value is not valid.")
         );
+        assert_eq!(diagnostic.address.as_deref(), Some("terraform_data.api"));
         assert_eq!(
             diagnostic
                 .position
@@ -564,6 +582,12 @@ mod tests {
                     stream: EventStream::Stdout,
                     event_type: case.expected_event_type.map(str::to_owned),
                 },
+                "case: {}",
+                case.name
+            );
+            assert_eq!(
+                diagnostic.severity,
+                DiagnosticSeverity::Unknown,
                 "case: {}",
                 case.name
             );

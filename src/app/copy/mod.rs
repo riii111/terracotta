@@ -78,7 +78,7 @@ impl Debug for CopyEffect {
 
 #[must_use]
 pub(crate) fn plan_effect(review: &PlanReview) -> CopyEffect {
-    let mut text = diagnostic_text(review.diagnostics());
+    let mut text = diagnostic_text(review.diagnostics(), review.metadata().sensitive_values());
     if !text.is_empty() && !review.document().text().is_empty() {
         text.push('\n');
     }
@@ -87,11 +87,18 @@ pub(crate) fn plan_effect(review: &PlanReview) -> CopyEffect {
 }
 
 #[must_use]
-pub(crate) fn diagnostic_effect(diagnostics: &[Diagnostic], fallback: Option<&str>) -> CopyEffect {
+pub(crate) fn diagnostic_effect(
+    diagnostics: &[Diagnostic],
+    fallback: Option<&str>,
+    sensitive_values: &[String],
+) -> CopyEffect {
     let text = if diagnostics.is_empty() {
-        fallback.unwrap_or("Diagnostic unavailable.").to_owned()
+        sanitize_text(
+            fallback.unwrap_or("Diagnostic unavailable."),
+            sensitive_values,
+        )
     } else {
-        diagnostic_text(diagnostics)
+        diagnostic_text(diagnostics, sensitive_values)
     };
     CopyEffect::new(CopyTarget::Diagnostic, text)
 }
@@ -118,21 +125,35 @@ pub(crate) fn execution_effect(state: &ExecutionState) -> CopyEffect {
                 .iter()
                 .any(|line| line.text.lines().any(|text| text == summary))
         {
-            sections.push(summary.to_owned());
+            sections.push(sanitize_text(summary, state.progress().sensitive_values()));
         }
         sections.extend(log.iter().map(|line| line.text.clone()));
     }
     CopyEffect::new(CopyTarget::Execution, sections.join("\n"))
 }
 
-fn diagnostic_text(diagnostics: &[Diagnostic]) -> String {
+pub(crate) fn sanitize_text(text: &str, sensitive_values: &[String]) -> String {
+    let mut values = sensitive_values
+        .iter()
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    values.sort_by_key(|value| std::cmp::Reverse(value.len()));
+    values.dedup();
+
+    values.into_iter().fold(text.to_owned(), |text, value| {
+        text.replace(value, "(sensitive value)")
+    })
+}
+
+fn diagnostic_text(diagnostics: &[Diagnostic], sensitive_values: &[String]) -> String {
     diagnostics
         .iter()
         .map(|diagnostic| {
-            diagnostic.detail.as_ref().map_or_else(
+            let text = diagnostic.detail.as_ref().map_or_else(
                 || diagnostic.summary.clone(),
                 |detail| format!("{}\n{detail}", diagnostic.summary),
-            )
+            );
+            sanitize_text(&text, sensitive_values)
         })
         .collect::<Vec<_>>()
         .join("\n\n")
@@ -165,6 +186,7 @@ mod tests {
                 severity: DiagnosticSeverity::Warning,
                 summary: "Provider warning".to_owned(),
                 detail: None,
+                address: None,
                 position: None,
                 source: DiagnosticSource::Terraform,
             }],
@@ -222,6 +244,7 @@ mod tests {
                 severity: DiagnosticSeverity::Warning,
                 summary: "Provider warning".to_owned(),
                 detail: Some("warning detail".to_owned()),
+                address: None,
                 position: None,
                 source: DiagnosticSource::Terraform,
             }],
