@@ -7,12 +7,7 @@ use crate::app::{
     session::{self, Action, Effect, ReviewSessionState, SessionState},
 };
 
-#[expect(
-    dead_code,
-    reason = "comparison feeds the following environment Overview SBI"
-)]
 pub(crate) mod comparison;
-#[expect(dead_code, reason = "display groups feed the SBI05-05 matrix UI")]
 pub(crate) mod overview;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,6 +71,8 @@ pub(crate) struct EnvironmentSession {
     plans: Vec<EnvironmentPlan>,
     detailed_exitcode: bool,
     interrupted: bool,
+    overview: overview::EnvironmentOverview,
+    revision: u64,
 }
 
 impl Environment {
@@ -89,6 +86,8 @@ impl EnvironmentSession {
         let mut plans: Vec<_> = environments.into_iter().map(EnvironmentPlan::new).collect();
         plans.sort_by(|a, b| a.directory.cmp(&b.directory));
         Self {
+            overview: overview::environment_overview(&plans),
+            revision: 0,
             plans,
             detailed_exitcode,
             interrupted: false,
@@ -97,6 +96,14 @@ impl EnvironmentSession {
 
     pub(crate) fn plans(&self) -> &[EnvironmentPlan] {
         &self.plans
+    }
+
+    pub(crate) const fn overview(&self) -> &overview::EnvironmentOverview {
+        &self.overview
+    }
+
+    pub(crate) const fn revision(&self) -> u64 {
+        self.revision
     }
 
     pub(crate) fn start_next(&mut self) -> Option<RunKey> {
@@ -131,6 +138,7 @@ impl EnvironmentSession {
         plan.state = EnvironmentState::Pending;
         plan.diagnostics.clear();
         plan.failure = None;
+        self.refresh_overview();
         true
     }
 
@@ -169,6 +177,7 @@ impl EnvironmentSession {
             }
             PlanResult::ExcludedHcp => EnvironmentState::ExcludedHcp,
         };
+        self.refresh_overview();
         true
     }
 
@@ -225,6 +234,10 @@ impl EnvironmentSession {
         } else {
             0
         }
+    }
+    fn refresh_overview(&mut self) {
+        self.overview = overview::environment_overview(&self.plans);
+        self.revision += 1;
     }
 }
 

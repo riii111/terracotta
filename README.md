@@ -17,6 +17,7 @@ Review Terraform's familiar diff and apply the exact plan you reviewed. The UI a
 - **Saved plan apply**: Target directory and workspace confirmation, with no replanning
 - **Apply progress**: Resource status and its log stay visible together; `Previous` shows local successful history
 - **Change overview**: Group repeated resource changes, filter by full address, and jump back to the matching raw plan block
+- **Environment comparison**: Compare plans across detected child directories, with partial results and retry for failed environments
 - **Clipboard**: Copy the full plan or apply results
 
 ## Usage
@@ -70,9 +71,21 @@ configuration. HCP candidates are excluded and invalid configurations are
 reported. Local environments run one at a time in path order, using their current
 workspace. Each environment initializes noninteractively when needed; missing
 variables or initialization failures appear as `Error` while other plans continue.
-Select an environment with `↑`/`↓`, press `Enter` to review a ready plan, and use
-`Esc` to return. Press `r` to retry the selected `Error`, or `q` to stop acquisition
-and discard the temporary plans. This mode supports plan review only.
+The initial Overview shows resource rows and environment columns. Use `↑`/`↓`
+to select a row, `←`/`→` to select an environment, and `Space` to expand a group.
+`Enter` opens that resource's original plan; `1`–`9` open it in the corresponding
+environment. Use `[`/`]` to reach any environment, including the tenth and later.
+`Esc`, `0`, or `s` returns to Overview with its selection and expansion preserved.
+`/` filters complete resource addresses; totals always cover the full plans.
+
+Cells show `+`, `~`, `-`, `-/+`, or `+/-`; `.` means unchanged, a blank means absent,
+and `?` means unavailable. Group counts describe a shared change pattern, not
+one-to-one instance correspondence or resolved unknown values. `Compared` names
+the Ready environments when acquisition is incomplete; excluded HCP environments
+remain visible with their reason. Columns scroll horizontally as you select them.
+
+Press `r` to retry only the selected `Error`, or `q` to stop acquisition and discard
+the temporary plans. Multiple-environment apply is not supported.
 
 This discovery path rejects `-out`, `-generate-config-out`, and a shared
 `TF_DATA_DIR` before running commands. Relative `-var-file` paths resolve from the

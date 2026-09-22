@@ -1,4 +1,5 @@
 mod input;
+pub(crate) mod matrix;
 mod render;
 mod view;
 

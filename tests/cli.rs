@@ -38,6 +38,7 @@ mod pty_tests {
 
     mod environment_plans {
         use super::*;
+        use std::fmt::Write;
 
         fn fixture(names: &[&str]) -> Fixture {
             let fixture = Fixture::new();
@@ -163,6 +164,44 @@ mod pty_tests {
                 );
                 assert_clean(&fixture, &result);
             }
+        }
+
+        #[rstest]
+        #[case::small(80, 24)]
+        #[case::medium(120, 40)]
+        #[case::large(160, 60)]
+        #[case::narrow(40, 16)]
+        fn matrix_filters_two_hundred_members_and_restores_the_selected_cell(
+            #[case] columns: u16,
+            #[case] rows: u16,
+        ) {
+            let fixture = fixture(&["a-dev", "b-stg", "c-prod"]);
+            let changes: Vec<_> = (0..200).map(|index| serde_json::json!({
+                "address": format!("terraform_data.server[{index}]"),
+                "change": {"actions": ["update"], "before": {"input": "old"}, "after": {"input": "new"}}
+            })).collect();
+            fs::write(&fixture.show_json, serde_json::json!({"format_version": "1.0", "applyable": true, "resource_changes": changes}).to_string()).unwrap();
+            let text = (0..200).fold(String::new(), |mut text, index| { let _ = write!(text, "  # terraform_data.server[{index}] will be updated in-place\n  ~ resource \"terraform_data\" \"server\" {{\n    ~ input = \"old\" -> \"new\"\n  }}\n\n"); text });
+            fs::write(&fixture.show_text, format!("Terraform will perform the following actions:\n\n{text}Plan: 0 to add, 200 to change, 0 to destroy.\n")).unwrap();
+
+            let result = fixture.run("env_matrix", columns, rows);
+
+            assert_eq!(result.exit_code, 0);
+            result.observed("restored_matrix_selection");
+            assert_clean(&fixture, &result);
+        }
+
+        #[test]
+        fn matrix_reaches_twelfth_environment_by_columns_and_raw_tabs() {
+            let names: Vec<_> = (0..12).map(|index| format!("env-{index:02}")).collect();
+            let fixture = fixture(&names.iter().map(String::as_str).collect::<Vec<_>>());
+
+            let result = fixture.run("env_many", 80, 24);
+
+            assert_eq!(result.exit_code, 0);
+            result.observed("twelfth_environment");
+            result.observed("eleventh_environment");
+            assert_clean(&fixture, &result);
         }
 
         #[test]

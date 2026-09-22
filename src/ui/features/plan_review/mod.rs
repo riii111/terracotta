@@ -9,6 +9,6 @@ pub(crate) use input::{
 };
 pub(crate) use render::{
     apply_confirmation_layout, environment_layout, layout, layout_with_quit_confirmation,
-    render_apply_confirmation, render_environment, render_with_quit_confirmation,
+    render_apply_confirmation, render_environment, render_with_quit_confirmation, source_offset,
 };
 pub(crate) use view::{PlanReviewMatch, PlanReviewOverlay, PlanReviewViewState};
