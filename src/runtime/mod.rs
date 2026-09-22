@@ -508,15 +508,13 @@ fn spawn_review_worker(
             ) {
                 Ok(review) => {
                     let review = if let Some(history) = worker_history.as_ref() {
-                        let previous_durations = review
+                        let keys: Vec<_> = review
                             .metadata()
                             .apply_targets()
                             .iter()
-                            .map(|target| {
-                                HistoryKey::for_target(review.context(), target)
-                                    .and_then(|key| history.load(&key))
-                            })
+                            .map(|target| HistoryKey::for_target(review.context(), target))
                             .collect();
+                        let previous_durations = history.load_many(&keys);
                         review.with_previous_durations(previous_durations)
                     } else {
                         review

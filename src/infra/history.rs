@@ -34,13 +34,23 @@ impl HistoryStore {
         platform_directory().map(Self::new)
     }
 
-    pub(crate) fn load(&self, key: &HistoryKey) -> Option<Duration> {
-        if !self.root.is_dir() {
-            return None;
+    pub(crate) fn load_many(&self, keys: &[Option<HistoryKey>]) -> Vec<Option<Duration>> {
+        let mut durations = vec![None; keys.len()];
+        if !self.root.is_dir() || keys.iter().all(Option::is_none) {
+            return durations;
         }
-        let lock = self.lock_file().ok()?;
-        lock_history(&lock).ok()?;
-        read_duration(&self.record_path(key))
+        let Ok(lock) = self.lock_file() else {
+            return durations;
+        };
+        if lock_history(&lock).is_err() {
+            return durations;
+        }
+        for (index, key) in keys.iter().enumerate() {
+            if let Some(key) = key {
+                durations[index] = read_duration(&self.record_path(key));
+            }
+        }
+        durations
     }
 
     pub(crate) fn record(&self, successes: &[SuccessfulTarget]) -> io::Result<()> {
@@ -279,6 +289,14 @@ mod tests {
         }
     }
 
+    fn load(store: &HistoryStore, key: &HistoryKey) -> Option<Duration> {
+        store
+            .load_many(&[Some(key.clone())])
+            .into_iter()
+            .next()
+            .flatten()
+    }
+
     #[test]
     fn stores_versioned_owner_only_json_and_reads_the_duration() {
         let root = temporary_root("round-trip");
@@ -289,11 +307,15 @@ mod tests {
             .record(&[success(key.clone(), 1234)])
             .expect("history should be written");
 
-        assert_eq!(store.load(&key), Some(Duration::from_millis(1234)));
+        assert_eq!(load(&store, &key), Some(Duration::from_millis(1234)));
+        assert_eq!(
+            store.load_many(&[Some(key.clone()), None]),
+            [Some(Duration::from_millis(1234)), None]
+        );
         store
             .record(&[success(key.clone(), 5678)])
             .expect("newer history should replace the prior record");
-        assert_eq!(store.load(&key), Some(Duration::from_millis(5678)));
+        assert_eq!(load(&store, &key), Some(Duration::from_millis(5678)));
         let path = root.join(format!("{}.json", key.file_stem()));
         let document: Value = serde_json::from_slice(&fs::read(&path).expect("record exists"))
             .expect("record should be JSON");
@@ -333,7 +355,7 @@ mod tests {
         fs::write(root.join(format!("{}.json", key.file_stem())), b"{not-json")
             .expect("corrupt history should be written");
 
-        assert_eq!(store.load(&key), None);
+        assert_eq!(load(&store, &key), None);
         fs::remove_dir_all(root).expect("test history should be removed");
     }
 
@@ -358,7 +380,7 @@ mod tests {
         let store = HistoryStore::new((*root).clone());
         for index in 0..8 {
             let key = key(&format!("terraform_data.target_{index}"), Tool::Terraform);
-            assert_eq!(store.load(&key), Some(Duration::from_millis(index)));
+            assert_eq!(load(&store, &key), Some(Duration::from_millis(index)));
         }
         fs::remove_dir_all(&*root).expect("test history should be removed");
     }
