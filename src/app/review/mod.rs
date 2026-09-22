@@ -2,6 +2,7 @@ use std::{
     fmt::{Debug, Formatter},
     ops::Range,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use super::{
@@ -333,6 +334,7 @@ pub(crate) struct PlanReview {
     search_query: String,
     apply_allowed: bool,
     apply_entry: bool,
+    previous_durations: Vec<Option<Duration>>,
 }
 
 impl PlanReview {
@@ -356,6 +358,7 @@ impl PlanReview {
             search_query: String::new(),
             apply_allowed: true,
             apply_entry: false,
+            previous_durations: Vec::new(),
         }
     }
 
@@ -372,6 +375,15 @@ impl PlanReview {
     }
 
     #[must_use]
+    pub(crate) fn with_previous_durations(
+        mut self,
+        previous_durations: Vec<Option<Duration>>,
+    ) -> Self {
+        self.previous_durations = previous_durations;
+        self
+    }
+
+    #[must_use]
     pub(crate) const fn apply_allowed(&self) -> bool {
         self.apply_allowed
     }
@@ -379,6 +391,11 @@ impl PlanReview {
     #[must_use]
     pub(crate) const fn apply_entry(&self) -> bool {
         self.apply_entry
+    }
+
+    #[must_use]
+    pub(crate) fn previous_durations(&self) -> &[Option<Duration>] {
+        &self.previous_durations
     }
 
     #[must_use]

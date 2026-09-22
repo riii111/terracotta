@@ -1808,6 +1808,7 @@ dependencies = [
  "ratatui",
  "rstest",
  "serde_json",
+ "sha2",
  "windows-sys 0.61.2",
 ]
 

@@ -165,6 +165,11 @@ impl ExecutionContext {
     }
 
     #[must_use]
+    pub(crate) const fn tool(&self) -> Tool {
+        self.tool
+    }
+
+    #[must_use]
     pub(crate) const fn tool_version(&self) -> &ExecutionContextValue {
         &self.tool_version
     }

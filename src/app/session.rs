@@ -3,7 +3,10 @@ use std::time::{Duration, Instant};
 
 use super::{
     copy::{self, CopyEffect, CopyNotice, CopyResult, CopyTarget},
-    execution::{ApplyStatus, ExecutionAction, ExecutionEvent, ExecutionStage, ExecutionState},
+    execution::{
+        ApplyStatus, ExecutionAction, ExecutionEvent, ExecutionStage, ExecutionState,
+        SuccessfulTarget,
+    },
     review::{PlanMetadata, PlanReview, PlanReviewMessage},
 };
 
@@ -144,6 +147,7 @@ pub(crate) enum Action {
 pub(crate) enum Effect {
     CancelExecution,
     StartApply,
+    PersistHistory(Vec<SuccessfulTarget>),
     WriteClipboard(CopyEffect),
     Finish(SessionOutcome),
 }
@@ -153,6 +157,7 @@ impl Debug for Effect {
         match self {
             Self::CancelExecution => formatter.write_str("CancelExecution"),
             Self::StartApply => formatter.write_str("StartApply"),
+            Self::PersistHistory(_) => formatter.write_str("PersistHistory(<redacted>)"),
             Self::WriteClipboard(effect) => formatter
                 .debug_tuple("WriteClipboard")
                 .field(&effect.target())
@@ -309,11 +314,12 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
             if input != confirmation.review.confirmation_input() {
                 return None;
             }
-            *state = SessionState::Apply(Box::new(ExecutionState::applying_with_targets(
+            *state = SessionState::Apply(Box::new(ExecutionState::applying_with_previous(
                 now,
                 confirmation.review.context().clone(),
                 confirmation.review.metadata().apply_targets().to_vec(),
                 confirmation.review.metadata().sensitive_values().to_vec(),
+                confirmation.review.previous_durations(),
             )));
             Some(Effect::StartApply)
         }
@@ -333,14 +339,14 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
                 return None;
             };
             execution.finish_apply(status, summary_line, None, now);
-            None
+            Some(Effect::PersistHistory(execution.successful_history()))
         }
         Action::ApplyFailed { message } => {
             let SessionState::Apply(execution) = state else {
                 return None;
             };
             execution.finish_apply(ApplyStatus::Failed, None, Some(message), now);
-            None
+            Some(Effect::PersistHistory(execution.successful_history()))
         }
         Action::WorkerDisconnected => match state {
             SessionState::Execution(execution) if execution.cancellation_requested() => Some(
@@ -359,7 +365,7 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
                     Some("Apply worker disconnected.".to_owned()),
                     now,
                 );
-                None
+                Some(Effect::PersistHistory(execution.successful_history()))
             }
             SessionState::Review(_)
             | SessionState::ApplyConfirmation(_)
