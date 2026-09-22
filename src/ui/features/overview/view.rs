@@ -45,7 +45,10 @@ impl OverviewContent {
                 .members
                 .iter()
                 .enumerate()
-                .filter(|(_, member)| query.is_empty() || member.address.contains(query))
+                .filter(|(_, member)| {
+                    member.kind != ResourceChangeKind::NoOp
+                        && (query.is_empty() || member.address.contains(query))
+                })
                 .map(|(index, _)| index)
                 .collect::<Vec<_>>();
             if matching.is_empty() {
@@ -132,8 +135,8 @@ impl OverviewViewState {
             return self.apply_search(input, content.rows.len());
         }
         match input {
-            OverviewInput::Up => self.move_selection(-1, body, max_vertical, content.rows.len()),
-            OverviewInput::Down => self.move_selection(1, body, max_vertical, content.rows.len()),
+            OverviewInput::Up => self.move_selection(-1, body, max_vertical, content),
+            OverviewInput::Down => self.move_selection(1, body, max_vertical, content),
             OverviewInput::PageUp => {
                 self.vertical = self.vertical.saturating_sub(body.height.max(1));
                 None
@@ -270,8 +273,9 @@ impl OverviewViewState {
         direction: i8,
         body: Rect,
         max_vertical: u16,
-        row_count: usize,
+        content: &OverviewContent,
     ) -> Option<OverviewCommand> {
+        let row_count = content.rows.len();
         if row_count == 0 {
             return None;
         }
@@ -282,11 +286,12 @@ impl OverviewViewState {
             (None, true) => row_count - 1,
         };
         self.selected = Some(next);
+        let row_line = 1 + usize::from(content.unsupported > 0) + next;
         let bottom = usize::from(self.vertical) + usize::from(body.height.max(1));
-        if next < usize::from(self.vertical) {
-            self.vertical = u16::try_from(next).unwrap_or(u16::MAX);
-        } else if next >= bottom {
-            self.vertical = u16::try_from(next + 1 - usize::from(body.height.max(1)))
+        if row_line < usize::from(self.vertical) {
+            self.vertical = u16::try_from(row_line).unwrap_or(u16::MAX);
+        } else if row_line >= bottom {
+            self.vertical = u16::try_from(row_line + 1 - usize::from(body.height.max(1)))
                 .unwrap_or(u16::MAX)
                 .min(max_vertical);
         }
@@ -433,9 +438,31 @@ mod tests {
             previous_address: None,
             importing: None,
         };
+        let no_op = ResourceChange {
+            address: "terraform_data.unchanged".to_owned(),
+            provider: None,
+            resource_type: None,
+            resource_name: None,
+            mode: ResourceMode::Managed,
+            actions: vec![PlanAction::NoOp],
+            kind: ResourceChangeKind::NoOp,
+            before: None,
+            after: None,
+            before_sensitive: None,
+            after_sensitive: None,
+            after_unknown: None,
+            replace_paths: None,
+            action_reason: None,
+            previous_address: None,
+            importing: None,
+        };
         review = review.with_plan(Plan {
             changes: Vec::new(),
-            resource_changes: vec![change("aws_instance.web[0]"), change("aws_instance.web[1]")],
+            resource_changes: vec![
+                change("aws_instance.web[0]"),
+                change("aws_instance.web[1]"),
+                no_op,
+            ],
             summary: PlanSummary {
                 creates: 0,
                 updates: 2,
@@ -453,7 +480,35 @@ mod tests {
         let content = OverviewContent::from_review(&review(), "[1]", &BTreeSet::new());
 
         assert_eq!(content.repeated, 2);
+        assert_eq!(content.rows.len(), 1);
         assert_eq!(content.rows[0].count, 1);
         assert_eq!(content.rows[0].address, "aws_instance.web[1]");
+    }
+
+    #[test]
+    fn selection_scroll_accounts_for_overview_header_and_notice() {
+        let content = OverviewContent {
+            rows: (0..6)
+                .map(|index| OverviewRow {
+                    group_index: index,
+                    member_index: Some(index),
+                    address: format!("resource.{index}"),
+                    display_address: format!("resource.{index}"),
+                    action: "~".to_owned(),
+                    count: 1,
+                })
+                .collect(),
+            repeated: 0,
+            unsupported: 1,
+        };
+        let mut view = OverviewViewState::default();
+        let body = Rect::new(0, 0, 40, 5);
+
+        for _ in 0..6 {
+            view.apply(OverviewInput::Down, body, 3, &content);
+        }
+
+        assert_eq!(view.selected(), Some(5));
+        assert_eq!(view.scroll(), 3);
     }
 }

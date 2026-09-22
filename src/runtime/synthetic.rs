@@ -436,9 +436,7 @@ fn synthetic_review_key(
                 view.overview_mut().reconcile(u16::MAX, content.rows.len());
                 Some(Action::OpenOverview)
             }
-            Some(plan_review::PlanReviewInput::SearchCancel)
-                if review.review().search_query().is_empty() && review.is_from_overview() =>
-            {
+            Some(plan_review::PlanReviewInput::SearchCancel) if review.is_from_overview() => {
                 Some(Action::ReturnToOverview)
             }
             Some(input) => {
