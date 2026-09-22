@@ -8,7 +8,7 @@ use std::fmt::{Debug, Formatter};
 
 mod attribute_diff;
 pub(crate) mod comparison;
-mod grouping;
+pub(crate) mod grouping;
 #[expect(
     unused_imports,
     reason = "grouping result types are the app contract for the Overview SBI"

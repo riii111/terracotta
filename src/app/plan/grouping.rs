@@ -28,6 +28,18 @@ pub(crate) struct PlanGrouping {
     pub(crate) repeated: usize,
 }
 
+pub(crate) struct GroupingCandidate {
+    display_address: String,
+    pub(crate) key: GroupingKey,
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct GroupingKey {
+    normalized_address: String,
+    actions: Vec<PlanAction>,
+    attributes: Vec<AttributeSignature>,
+}
+
 pub(crate) fn group_resource_changes(
     changes: &[ResourceChange],
     schemas: Option<&ProviderSchemas>,
@@ -95,44 +107,7 @@ pub(crate) fn group_resource_changes(
     }
 }
 
-struct LocatedGroup {
-    position: usize,
-    group: ChangeGroup,
-}
-
-fn single_group(change: &ResourceChange) -> ChangeGroup {
-    ChangeGroup {
-        display_address: change.address.clone(),
-        members: vec![change.clone()],
-    }
-}
-
-struct Candidate<'a> {
-    position: usize,
-    display_address: String,
-    change: &'a ResourceChange,
-}
-
-struct GroupingCandidate {
-    display_address: String,
-    key: GroupingKey,
-}
-
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct GroupingKey {
-    normalized_address: String,
-    actions: Vec<PlanAction>,
-    attributes: Vec<AttributeSignature>,
-}
-
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct AttributeSignature {
-    path: Vec<AttributePathSegment>,
-    before: GroupingValue,
-    after: GroupingValue,
-}
-
-fn grouping_candidate(
+pub(crate) fn grouping_candidate(
     change: &ResourceChange,
     schemas: Option<&ProviderSchemas>,
 ) -> Option<GroupingCandidate> {
@@ -172,6 +147,31 @@ fn grouping_candidate(
             attributes,
         },
     })
+}
+
+struct LocatedGroup {
+    position: usize,
+    group: ChangeGroup,
+}
+
+fn single_group(change: &ResourceChange) -> ChangeGroup {
+    ChangeGroup {
+        display_address: change.address.clone(),
+        members: vec![change.clone()],
+    }
+}
+
+struct Candidate<'a> {
+    position: usize,
+    display_address: String,
+    change: &'a ResourceChange,
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct AttributeSignature {
+    path: Vec<AttributePathSegment>,
+    before: GroupingValue,
+    after: GroupingValue,
 }
 
 fn is_comparable_attribute(

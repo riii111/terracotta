@@ -22,24 +22,49 @@ impl NormalizedResourceAddress {
 
 #[must_use]
 pub(crate) fn normalize_resource_address(address: &str) -> Option<NormalizedResourceAddress> {
-    let components = parse_address_components(address)?;
-    let mut normalized = String::new();
-    let mut display = String::new();
+    normalize_resource_addresses([address])
+}
 
-    for component in components {
-        match component {
-            AddressComponent::Name(name) => {
-                if !normalized.is_empty() {
-                    normalized.push('.');
-                    display.push('.');
-                }
-                normalized.push_str(&name);
-                display.push_str(&name);
+pub(crate) fn normalize_resource_addresses<'a>(
+    addresses: impl IntoIterator<Item = &'a str>,
+) -> Option<NormalizedResourceAddress> {
+    let mut merged: Vec<(String, usize)> = Vec::new();
+    for address in addresses {
+        let mut parts: Vec<(String, usize)> = Vec::new();
+        for component in parse_address_components(address)? {
+            match component {
+                AddressComponent::Name(name) => parts.push((name, 0)),
+                AddressComponent::InstanceKey => parts.last_mut()?.1 += 1,
             }
-            AddressComponent::InstanceKey => display.push_str("[*]"),
+        }
+        if merged.is_empty() {
+            merged = parts;
+            continue;
+        }
+        if merged.len() != parts.len() {
+            return None;
+        }
+        for ((name, keys), (other_name, other_keys)) in merged.iter_mut().zip(parts) {
+            if *name != other_name {
+                return None;
+            }
+            *keys = (*keys).max(other_keys);
         }
     }
-
+    if merged.is_empty() {
+        return None;
+    }
+    let mut normalized = String::new();
+    let mut display = String::new();
+    for (name, keys) in merged {
+        if !normalized.is_empty() {
+            normalized.push('.');
+            display.push('.');
+        }
+        normalized.push_str(&name);
+        display.push_str(&name);
+        display.push_str(&"[*]".repeat(keys));
+    }
     Some(NormalizedResourceAddress {
         normalized,
         display,
