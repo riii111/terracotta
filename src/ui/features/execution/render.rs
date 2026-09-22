@@ -14,7 +14,7 @@ use crate::app::{
 };
 use crate::ui::primitives::atoms::{scrollbar, separator};
 use crate::ui::primitives::molecules::terminal_notice;
-use crate::ui::shell::{footer, header, layout as shell_layout};
+use crate::ui::shell::{context::truncate_middle, footer, header, layout as shell_layout};
 use crate::ui::theme;
 
 use super::ExecutionViewState;
@@ -24,6 +24,7 @@ const MIN_WIDTH: u16 = 32;
 const STATUS_HEIGHT: u16 = 3;
 const COMPACT_STATUS_HEIGHT: u16 = 4;
 const APPLY_STATUS_HEIGHT: u16 = 2;
+const TARGET_ADDRESS_WIDTH: usize = 24;
 struct PreparedContent<'a> {
     lines: Vec<Line<'a>>,
     max_width: usize,
@@ -199,9 +200,24 @@ fn render_target_panel(
     );
     frame.render_widget(
         Paragraph::new(if show_previous {
-            "  Resource  Status      Action       Elapsed  Previous"
+            format!(
+                "  {:<width$}  {:<10} {:<10} {:>7}  {:>7}",
+                "Resource",
+                "Status",
+                "Action",
+                "Elapsed",
+                "Previous",
+                width = TARGET_ADDRESS_WIDTH,
+            )
         } else {
-            "  Resource  Status      Action       Elapsed"
+            format!(
+                "  {:<width$}  {:<10} {:<10} {:>7}",
+                "Resource",
+                "Status",
+                "Action",
+                "Elapsed",
+                width = TARGET_ADDRESS_WIDTH,
+            )
         })
         .style(theme::secondary_style()),
         Rect::new(body.x, body.y.saturating_sub(1), body.width, 1),
@@ -907,19 +923,14 @@ fn target_line(
     let elapsed = target
         .elapsed_at(now)
         .map_or_else(|| "--".to_owned(), format_elapsed);
+    let address = truncate_middle(target.address(), TARGET_ADDRESS_WIDTH);
     let text = if show_previous {
         let previous = target
             .previous()
             .map_or_else(|| "--".to_owned(), format_elapsed);
-        format!(
-            "{marker}{}  {status:<10} {action:<10} {elapsed:>7}  {previous:>7}",
-            target.address()
-        )
+        format!("{marker}{address:<24}  {status:<10} {action:<10} {elapsed:>7}  {previous:>7}")
     } else {
-        format!(
-            "{marker}{}  {status:<10} {action:<10} {elapsed:>7}",
-            target.address()
-        )
+        format!("{marker}{address:<24}  {status:<10} {action:<10} {elapsed:>7}")
     };
     let style = if selected == Some(index) {
         theme::accent_style().add_modifier(ratatui::style::Modifier::BOLD)

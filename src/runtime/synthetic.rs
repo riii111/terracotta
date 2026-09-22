@@ -13,7 +13,8 @@ use crate::{
         execution::{
             ApplyStatus, EventStream, ExecutionAction, ExecutionContext, ExecutionEvent,
             ExecutionEventKind, ExecutionLogLine, ExecutionPhase, ExecutionState,
-            ExecutionTargetSpec, ResourceAction, ResourceEvent, ResourceEventKind, Tool,
+            ExecutionTargetSpec, ExecutionTargetState, ResourceAction, ResourceEvent,
+            ResourceEventKind, Tool,
         },
         plan::PlanAction,
         review::{PlanBlock, PlanBlockKind, PlanDocument, PlanLineKind, PlanMetadata, PlanReview},
@@ -545,6 +546,11 @@ pub(super) fn run_synthetic_execution() -> io::Result<()> {
                 view.select_result_target(
                     &state.progress().display_target_indices(true),
                     state.progress().first_failed_index(),
+                    state
+                        .progress()
+                        .first_failed_index()
+                        .and_then(|index| state.progress().targets().get(index))
+                        .and_then(ExecutionTargetState::first_error_line),
                     true,
                 );
                 complete_apply_at = None;
@@ -565,6 +571,11 @@ pub(super) fn run_synthetic_execution() -> io::Result<()> {
                         view.select_result_target(
                             &state.progress().display_target_indices(true),
                             state.progress().first_failed_index(),
+                            state
+                                .progress()
+                                .first_failed_index()
+                                .and_then(|index| state.progress().targets().get(index))
+                                .and_then(ExecutionTargetState::first_error_line),
                             false,
                         );
                         complete_apply_at = None;

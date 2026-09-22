@@ -12,7 +12,9 @@ use ratatui::{DefaultTerminal, Terminal, backend::Backend, layout::Rect};
 use crate::{
     app::{
         copy::{CopyEffect, CopyResult, CopyTarget},
-        execution::{ExecutionContextValue, ExecutionStage, ExecutionState, Tool},
+        execution::{
+            ExecutionContextValue, ExecutionStage, ExecutionState, ExecutionTargetState, Tool,
+        },
         review::PlanReviewMessage,
         session::{self, Action, Effect, SessionOutcome, SessionState},
     },
@@ -613,6 +615,11 @@ pub(super) fn update_session(
             execution_view.select_result_target(
                 &apply.progress().display_target_indices(true),
                 apply.progress().first_failed_index(),
+                apply
+                    .progress()
+                    .first_failed_index()
+                    .and_then(|index| apply.progress().targets().get(index))
+                    .and_then(ExecutionTargetState::first_error_line),
                 apply.stage() == ExecutionStage::ApplySucceeded,
             );
         }

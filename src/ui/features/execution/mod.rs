@@ -129,7 +129,7 @@ impl ExecutionViewState {
         if self.logs_open {
             self.close_logs();
         } else {
-            self.open_logs();
+            self.logs_open = true;
         }
     }
 
@@ -141,13 +141,16 @@ impl ExecutionViewState {
         &mut self,
         targets: &[usize],
         first_failed: Option<usize>,
+        first_failed_error_line: Option<usize>,
         successful: bool,
     ) {
         self.selected_target =
             first_failed.or_else(|| successful.then(|| targets.first().copied()).flatten());
         self.logs_open = first_failed.is_some();
         self.vertical = if first_failed.is_some() {
-            VerticalScroll::Manual(0)
+            VerticalScroll::Manual(
+                u16::try_from(first_failed_error_line.unwrap_or(0)).unwrap_or(u16::MAX),
+            )
         } else {
             VerticalScroll::Initial
         };
@@ -325,16 +328,16 @@ mod tests {
     fn result_selection_prioritizes_bound_failures_and_falls_back_to_all_logs() {
         let mut view = ExecutionViewState::default();
 
-        view.select_result_target(&[2, 1, 0], Some(1), false);
+        view.select_result_target(&[2, 1, 0], Some(1), Some(7), false);
         assert_eq!(view.selected_target(), Some(1));
         assert!(view.logs_open());
-        assert_eq!(view.vertical_offset(8, 20), 0);
+        assert_eq!(view.vertical_offset(8, 20), 7);
 
-        view.select_result_target(&[1, 0], None, false);
+        view.select_result_target(&[1, 0], None, None, false);
         assert_eq!(view.selected_target(), None);
         assert!(!view.logs_open());
 
-        view.select_result_target(&[2, 0], None, true);
+        view.select_result_target(&[2, 0], None, None, true);
         assert_eq!(view.selected_target(), Some(2));
     }
 }

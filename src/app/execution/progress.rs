@@ -34,6 +34,7 @@ pub(crate) struct ExecutionTargetState {
     status: ExecutionTargetStatus,
     completed_stages: usize,
     log_ids: Vec<usize>,
+    first_error_line: Option<usize>,
     started_at: Option<Instant>,
     duration: Option<Duration>,
     previous: Option<Duration>,
@@ -47,6 +48,7 @@ impl Debug for ExecutionTargetState {
             .field("status", &self.status)
             .field("completed_stages", &self.completed_stages)
             .field("log_ids", &self.log_ids)
+            .field("first_error_line", &self.first_error_line)
             .field("started_at", &self.started_at)
             .field("duration", &self.duration)
             .field("previous", &self.previous)
@@ -78,6 +80,11 @@ impl ExecutionTargetState {
     #[must_use]
     pub(crate) fn log_ids(&self) -> &[usize] {
         &self.log_ids
+    }
+
+    #[must_use]
+    pub(crate) const fn first_error_line(&self) -> Option<usize> {
+        self.first_error_line
     }
 
     #[must_use]
@@ -157,6 +164,7 @@ impl ExecutionProgress {
                     status: ExecutionTargetStatus::Pending,
                     completed_stages: 0,
                     log_ids: Vec::new(),
+                    first_error_line: None,
                     started_at: None,
                     duration: None,
                     previous: previous_durations.get(index).copied().flatten(),
@@ -185,6 +193,12 @@ impl ExecutionProgress {
                 self.append_log(line.stream, &line.text, None);
             }
             ExecutionEventKind::Resource(resource) => {
+                if (resource.kind == ResourceEventKind::ApplyErrored
+                    || resource.kind == ResourceEventKind::ProvisionErrored)
+                    && let Some(target) = self.target_index(&resource.address)
+                {
+                    self.mark_target_error_line(target);
+                }
                 if let Some(message) = &resource.message {
                     self.append_log(
                         EventStream::Stdout,
@@ -201,6 +215,14 @@ impl ExecutionProgress {
                     self.first_error_line = Some(rendered_line_count(&self.log));
                 }
                 let address = diagnostic.address.clone();
+                let target = address
+                    .as_deref()
+                    .and_then(|address| self.target_index(address));
+                if diagnostic.severity == super::event::DiagnosticSeverity::Error
+                    && let Some(target) = target
+                {
+                    self.mark_target_error_line(target);
+                }
                 let summary =
                     super::super::copy::sanitize_text(&diagnostic.summary, &self.sensitive_values);
                 let detail = diagnostic.detail.as_ref().map(|detail| {
@@ -209,17 +231,9 @@ impl ExecutionProgress {
                 let text = detail
                     .as_ref()
                     .map_or_else(|| summary.clone(), |detail| format!("{summary}\n{detail}"));
-                self.append_log(
-                    EventStream::Stderr,
-                    &text,
-                    address
-                        .as_deref()
-                        .and_then(|address| self.target_index(address)),
-                );
+                self.append_log(EventStream::Stderr, &text, target);
                 if diagnostic.severity == super::event::DiagnosticSeverity::Error
-                    && let Some(target) = address
-                        .as_deref()
-                        .and_then(|address| self.target_index(address))
+                    && let Some(target) = target
                 {
                     self.targets[target].status = ExecutionTargetStatus::Failed;
                 }
@@ -361,6 +375,19 @@ impl ExecutionProgress {
         if let Some(target) = target {
             self.targets[target].log_ids.push(log_id);
         }
+    }
+
+    fn mark_target_error_line(&mut self, target: usize) {
+        if self.targets[target].first_error_line.is_some() {
+            return;
+        }
+        let line = self.targets[target]
+            .log_ids
+            .iter()
+            .filter_map(|id| self.log.get(*id))
+            .map(|line| line.text.lines().count())
+            .sum();
+        self.targets[target].first_error_line = Some(line);
     }
 
     fn record_resource(&mut self, received_at: Instant, resource: &ResourceEvent) {
@@ -867,6 +894,7 @@ mod tests {
             ExecutionTargetStatus::Failed
         );
         assert_eq!(progress.targets()[0].log_ids(), &[0]);
+        assert_eq!(progress.targets()[0].first_error_line(), Some(0));
         assert_eq!(
             progress.log()[0].text,
             "Request (sensitive value) failed\ndetail"

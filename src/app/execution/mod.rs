@@ -15,10 +15,6 @@ pub(crate) use event::{
     ResourceEvent, ResourceEventKind, SensitiveValue,
 };
 pub(crate) use history::{HistoryKey, SuccessfulTarget};
-#[expect(
-    unused_imports,
-    reason = "execution target types are consumed by the SBI03-03 execution UI"
-)]
 pub(crate) use progress::{ExecutionProgress, ExecutionTargetState, ExecutionTargetStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
