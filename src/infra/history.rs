@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use crate::app::execution::{HistoryKey, SuccessfulTarget};
 
 const HISTORY_VERSION: u64 = 1;
-const HISTORY_LOCK_WAIT: Duration = Duration::from_secs(1);
+const HISTORY_LOCK_WAIT: Duration = Duration::from_secs(5);
 const HISTORY_LOCK_RETRY: Duration = Duration::from_millis(10);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
