@@ -63,3 +63,10 @@ Use `↑`/`↓` or `j`/`k` to select a row, `Space` to expand repeated changes,
 addresses. `Esc` returns to the same overview selection, while `v` opens the
 full plan from its first line. Overview filtering changes display only; apply
 and copy always use the complete reviewed plan.
+
+When an interactive `plan` starts in a directory without configuration files,
+Terracotta inspects its immediate child directories for backend or cloud
+configuration. HCP candidates are excluded and invalid configurations are
+reported. Multi-environment plan execution is not available yet; run from an
+individual environment directory to review its plan. This discovery path rejects
+`-out`, `-generate-config-out`, and a shared `TF_DATA_DIR` before running commands.

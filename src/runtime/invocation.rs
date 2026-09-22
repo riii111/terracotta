@@ -7,10 +7,15 @@ use std::{
     process::ExitCode,
 };
 
-use crate::app::execution::{Tool, VariableSources};
+use crate::app::{
+    environments::{Environment, EnvironmentAvailability},
+    execution::{Tool, VariableSources},
+};
+use crate::infra::CancellationToken;
 use crate::infra::terraform::{
     self,
     configuration::{self, ExecutionLocation},
+    discovery,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -37,6 +42,13 @@ pub(crate) struct Invocation {
     detailed_exitcode: bool,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum Entry {
+    Delegate,
+    Single,
+    Multiple,
+}
+
 pub(crate) fn run(tool: Tool, arguments: &[OsString]) -> ExitCode {
     match execute(tool, arguments) {
         Ok(exit) => exit,
@@ -52,24 +64,87 @@ fn execute(tool: Tool, arguments: &[OsString]) -> io::Result<ExitCode> {
     let Some(root) = env::current_dir().ok() else {
         return terraform::delegate(&executable, arguments);
     };
-    let Some(invocation) = review_invocation(tool, arguments, &root) else {
+    let Some(mut invocation) = review_invocation(tool, arguments, &root) else {
         return terraform::delegate(&executable, arguments);
     };
-    if !matches!(
-        configuration::execution_location_for_tool(
-            &invocation.directory,
-            tool,
-            env::var_os("TF_DATA_DIR").as_deref(),
-        ),
-        Ok(ExecutionLocation::Local)
-    ) {
-        return terraform::delegate(&executable, arguments);
+    match select_entry(&mut invocation, env::var_os("TF_DATA_DIR").as_deref())? {
+        Entry::Delegate => return terraform::delegate(&executable, arguments),
+        Entry::Single => {}
+        Entry::Multiple => {
+            let environments = discovery::discover(
+                invocation.directory(),
+                tool,
+                &CancellationToken::new(),
+                &terraform::SystemProcessRunner,
+            )?;
+            return report_discovery(&environments);
+        }
     }
     let variable_sources = invocation.variable_sources()?;
     Ok(super::run_invocation(
         &executable,
         &invocation,
         variable_sources,
+    ))
+}
+
+fn select_entry(invocation: &mut Invocation, data_dir: Option<&OsStr>) -> io::Result<Entry> {
+    let Ok(has_configuration) =
+        configuration::has_configuration(invocation.directory(), invocation.tool())
+    else {
+        return Ok(Entry::Delegate);
+    };
+    if invocation.is_apply() || has_configuration {
+        return Ok(
+            if matches!(
+                configuration::execution_location_for_tool(
+                    invocation.directory(),
+                    invocation.tool(),
+                    data_dir
+                ),
+                Ok(ExecutionLocation::Local)
+            ) {
+                Entry::Single
+            } else {
+                Entry::Delegate
+            },
+        );
+    }
+    invocation.prepare_multiple(data_dir)?;
+    Ok(Entry::Multiple)
+}
+
+fn report_discovery(environments: &[Environment]) -> io::Result<ExitCode> {
+    if environments.is_empty() {
+        return Err(io::Error::other(
+            "No environment candidates: no immediate child directory has a backend or cloud block.",
+        ));
+    }
+    for environment in environments {
+        let message = match &environment.availability {
+            EnvironmentAvailability::Available(identity) => format!(
+                "{}: {} workspace {}",
+                identity.directory.display(),
+                environment.tool.display_name(),
+                identity.workspace,
+            ),
+            EnvironmentAvailability::ExcludedHcp { directory } => {
+                format!("{}: Excluded: HCP execution", directory.display())
+            }
+            EnvironmentAvailability::Error { directory, message } => {
+                format!("{}: Error: {message}", directory.display())
+            }
+        };
+        super::report_error(&message);
+    }
+    if !environments.iter().any(Environment::is_available) {
+        return Err(io::Error::other(
+            "No executable environments: all candidates are excluded or have errors.",
+        ));
+    }
+    // SBI05-02 owns init/plan execution and will consume these discovered targets.
+    Err(io::Error::other(
+        "Multiple-environment plan execution is not available yet. Run plan from an individual environment directory.",
     ))
 }
 
@@ -296,6 +371,49 @@ impl Invocation {
 
     pub(crate) const fn is_apply(&self) -> bool {
         matches!(self.subcommand, Subcommand::Apply)
+    }
+
+    fn prepare_multiple(&mut self, data_dir: Option<&OsStr>) -> io::Result<()> {
+        if data_dir.is_some_and(|value| !value.is_empty()) {
+            return Err(io::Error::other(
+                "TF_DATA_DIR is not supported for multiple environments; use each environment's own data directory.",
+            ));
+        }
+        let root = fs::canonicalize(&self.directory)?;
+        let mut index = 0;
+        while index < self.effective_arguments.len() {
+            let argument = &self.effective_arguments[index];
+            let name = option_name(argument)
+                .expect("options were classified before environment selection");
+            let raw = argument.to_string_lossy();
+            let inline = raw.split_once('=');
+            if matches!(name.as_str(), "out" | "generate-config-out") {
+                return Err(io::Error::other(format!(
+                    "-{name} is not supported for multiple environments."
+                )));
+            }
+            if name == "var-file" {
+                if let Some((flag, value)) = inline {
+                    let mut resolved = OsString::from(format!("{flag}="));
+                    resolved.push(root.join(value));
+                    self.effective_arguments[index] = resolved;
+                } else {
+                    index += 1;
+                    self.effective_arguments[index] =
+                        root.join(&self.effective_arguments[index]).into_os_string();
+                }
+            } else if inline.is_none()
+                && matches!(
+                    name.as_str(),
+                    "var" | "target" | "replace" | "parallelism" | "lock-timeout"
+                )
+            {
+                index += 1;
+            }
+            index += 1;
+        }
+        self.directory = root;
+        Ok(())
     }
 
     fn variable_sources(&self) -> io::Result<VariableSources> {
@@ -735,4 +853,6 @@ mod tests {
             );
         }
     }
+
+    mod environments;
 }

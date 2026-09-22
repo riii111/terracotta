@@ -1,4 +1,8 @@
-use std::{ffi::OsStr, fs, io, path::Path};
+use std::{
+    ffi::OsStr,
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 use crate::app::execution::Tool;
 use hcl::Body;
@@ -10,42 +14,42 @@ pub(crate) enum ExecutionLocation {
     HcpCandidate,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Configuration {
+    pub(crate) has_backend: bool,
+    pub(crate) execution_location: ExecutionLocation,
+}
+
+pub(crate) fn has_configuration(root: &Path, tool: Tool) -> io::Result<bool> {
+    Ok(!configuration_files(root, tool)?.is_empty())
+}
+
 pub(crate) fn execution_location_for_tool(
     root: &Path,
     tool: Tool,
     data_dir: Option<&OsStr>,
 ) -> io::Result<ExecutionLocation> {
-    let mut hcp = false;
-    for path in configuration_files(root, tool)? {
-        let Some(name) = path.file_name().and_then(OsStr::to_str) else {
-            return Err(invalid_configuration());
-        };
-        if name.starts_with('.') || name.ends_with('~') || name.starts_with('#') {
-            continue;
-        }
-        if name.ends_with(".tf.json") || (tool == Tool::OpenTofu && name.ends_with(".tofu.json")) {
-            let source = fs::read_to_string(&path)?;
-            let value: Value =
-                serde_json::from_str(&source).map_err(|_| invalid_configuration())?;
-            hcp |= json_hcp(&value)?;
-        } else if path.extension().is_some_and(|extension| {
-            extension == "tf" || (tool == Tool::OpenTofu && extension == "tofu")
-        }) {
-            let source = fs::read_to_string(&path)?;
-            let body: Body = hcl::from_str(&source).map_err(|_| invalid_configuration())?;
-            hcp |= body
-                .blocks()
-                .filter(|block| block.identifier() == "terraform")
-                .any(|block| {
-                    block.body.blocks().any(|block| {
-                        block.identifier() == "cloud"
-                            || (block.identifier() == "backend"
-                                && block
-                                    .labels()
-                                    .first()
-                                    .is_some_and(|label| label.as_str() == "remote"))
-                    })
-                });
+    Ok(read_configuration(root, tool, data_dir)?.execution_location)
+}
+
+pub(crate) fn read_configuration(
+    root: &Path,
+    tool: Tool,
+    data_dir: Option<&OsStr>,
+) -> io::Result<Configuration> {
+    let mut configuration = Configuration {
+        has_backend: false,
+        execution_location: ExecutionLocation::Local,
+    };
+    let mut paths = configuration_files(root, tool)?;
+    paths.sort_by_key(|path| is_override_file(path));
+    for path in paths {
+        let source = read_source_configuration(&path)?;
+        if source.has_backend {
+            if configuration.has_backend && !is_override_file(&path) {
+                return Err(invalid_configuration());
+            }
+            configuration = source;
         }
     }
     let data_dir = data_dir
@@ -61,27 +65,34 @@ pub(crate) fn execution_location_for_tool(
                     .get("type")
                     .and_then(Value::as_str)
                     .ok_or_else(invalid_configuration)?;
-                hcp |= matches!(kind, "remote" | "cloud");
+                if matches!(kind, "remote" | "cloud") {
+                    configuration.execution_location = ExecutionLocation::HcpCandidate;
+                }
             }
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error),
     }
-    Ok(if hcp {
-        ExecutionLocation::HcpCandidate
-    } else {
-        ExecutionLocation::Local
-    })
+    Ok(configuration)
 }
 
 #[expect(
     clippy::case_sensitive_file_extension_comparisons,
     reason = "Terraform and OpenTofu only recognize their lowercase configuration extensions"
 )]
-fn configuration_files(root: &Path, tool: Tool) -> io::Result<Vec<std::path::PathBuf>> {
+fn configuration_files(root: &Path, tool: Tool) -> io::Result<Vec<PathBuf>> {
     let mut paths = fs::read_dir(root)?
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<Result<Vec<_>, _>>()?;
+    paths.retain(|path| {
+        !path.is_dir()
+            && path
+                .file_name()
+                .and_then(OsStr::to_str)
+                .is_some_and(|name| {
+                    !name.starts_with('.') && !name.starts_with('#') && !name.ends_with('~')
+                })
+    });
     paths.sort();
     if tool == Tool::Terraform {
         return Ok(paths
@@ -121,35 +132,116 @@ fn configuration_files(root: &Path, tool: Tool) -> io::Result<Vec<std::path::Pat
         .collect())
 }
 
-fn json_hcp(value: &Value) -> io::Result<bool> {
-    let object = value.as_object().ok_or_else(invalid_configuration)?;
-    let Some(terraform) = object.get("terraform") else {
-        return Ok(false);
+fn read_source_configuration(path: &Path) -> io::Result<Configuration> {
+    let source = fs::read_to_string(path)?;
+    let mut configuration = Configuration {
+        has_backend: false,
+        execution_location: ExecutionLocation::Local,
     };
-    match terraform {
-        Value::Array(blocks) => blocks
-            .iter()
-            .try_fold(false, |found, block| Ok(found | json_terraform_hcp(block)?)),
-        _ => json_terraform_hcp(terraform),
+    if path
+        .extension()
+        .is_some_and(|extension| extension == "json")
+    {
+        let value: Value = serde_json::from_str(&source).map_err(|_| invalid_configuration())?;
+        read_json_configuration(&value, &mut configuration)?;
+    } else {
+        let body: Body = hcl::from_str(&source).map_err(|_| invalid_configuration())?;
+        read_hcl_configuration(&body, &mut configuration)?;
     }
+    Ok(configuration)
 }
 
-fn json_terraform_hcp(value: &Value) -> io::Result<bool> {
-    let object = value.as_object().ok_or_else(invalid_configuration)?;
-    if object.contains_key("cloud") {
-        return Ok(true);
+fn read_hcl_configuration(body: &Body, configuration: &mut Configuration) -> io::Result<()> {
+    for terraform in body
+        .blocks()
+        .filter(|block| block.identifier() == "terraform")
+    {
+        if !terraform.labels().is_empty() {
+            return Err(invalid_configuration());
+        }
+        for block in terraform.body.blocks() {
+            match block.identifier() {
+                "backend" => {
+                    if block.labels().len() != 1 {
+                        return Err(invalid_configuration());
+                    }
+                    record_backend(configuration, block.labels()[0].as_str())?;
+                }
+                "cloud" => {
+                    if !block.labels().is_empty() {
+                        return Err(invalid_configuration());
+                    }
+                    record_backend(configuration, "cloud")?;
+                }
+                _ => {}
+            }
+        }
     }
-    match object.get("backend") {
-        None => Ok(false),
-        Some(Value::Object(backends)) => Ok(backends.contains_key("remote")),
-        Some(Value::Array(backends)) => backends.iter().try_fold(false, |found, backend| {
-            Ok(found
-                | backend
-                    .as_object()
-                    .ok_or_else(invalid_configuration)?
-                    .contains_key("remote"))
-        }),
-        _ => Err(invalid_configuration()),
+    Ok(())
+}
+
+fn read_json_configuration(value: &Value, configuration: &mut Configuration) -> io::Result<()> {
+    let object = value.as_object().ok_or_else(invalid_configuration)?;
+    if let Some(terraform) = object.get("terraform") {
+        for_json_block(terraform, |block| {
+            if let Some(cloud) = block.get("cloud") {
+                for_json_block(cloud, |_| record_backend(configuration, "cloud"))?;
+            }
+            if let Some(backend) = block.get("backend") {
+                if backend.as_array().is_some_and(Vec::is_empty) {
+                    return Err(invalid_configuration());
+                }
+                for_json_block(backend, |backends| {
+                    if backends.is_empty() {
+                        return Err(invalid_configuration());
+                    }
+                    for (kind, body) in backends {
+                        for_json_block(body, |_| record_backend(configuration, kind))?;
+                    }
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+fn record_backend(configuration: &mut Configuration, kind: &str) -> io::Result<()> {
+    if configuration.has_backend {
+        return Err(invalid_configuration());
+    }
+    configuration.has_backend = true;
+    configuration.execution_location = if matches!(kind, "remote" | "cloud") {
+        ExecutionLocation::HcpCandidate
+    } else {
+        ExecutionLocation::Local
+    };
+    Ok(())
+}
+
+fn is_override_file(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(OsStr::to_str) else {
+        return false;
+    };
+    let name = name.strip_suffix(".json").unwrap_or(name);
+    let stem = name
+        .strip_suffix(".tf")
+        .or_else(|| name.strip_suffix(".tofu"));
+    stem.is_some_and(|stem| stem == "override" || stem.ends_with("_override"))
+}
+
+fn for_json_block(
+    value: &Value,
+    mut read: impl FnMut(&serde_json::Map<String, Value>) -> io::Result<()>,
+) -> io::Result<()> {
+    if let Some(blocks) = value.as_array() {
+        for block in blocks {
+            read(block.as_object().ok_or_else(invalid_configuration)?)?;
+        }
+        Ok(())
+    } else {
+        read(value.as_object().ok_or_else(invalid_configuration)?)
     }
 }
 
@@ -164,10 +256,7 @@ fn invalid_configuration() -> io::Error {
 mod tests {
     use super::*;
     use rstest::rstest;
-    use std::{
-        path::PathBuf,
-        sync::atomic::{AtomicU64, Ordering},
-    };
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
     struct Fixture(PathBuf);
@@ -226,6 +315,8 @@ mod tests {
     #[case::hcl("main.tf", "terraform {")]
     #[case::json("main.tf.json", "{")]
     #[case::json_shape("main.tf.json", r#"{"terraform":true}"#)]
+    #[case::json_backend_missing_label("main.tf.json", r#"{"terraform":{"backend":{}}}"#)]
+    #[case::json_backend_missing_label_array("main.tf.json", r#"{"terraform":{"backend":[]}}"#)]
     fn broken_configuration_is_indeterminate(#[case] name: &str, #[case] source: &str) {
         let fixture = Fixture::new(name, source);
         assert!(execution_location(&fixture.0, None).is_err());
@@ -280,6 +371,76 @@ mod tests {
         assert_eq!(
             execution_location_for_tool(&fixture.0, Tool::OpenTofu, None).unwrap(),
             ExecutionLocation::HcpCandidate
+        );
+    }
+    #[rstest]
+    #[case::hcl("main.tf", "terraform {\n backend \"local\" {}\n backend \"s3\" {}\n}")]
+    #[case::json("main.tf.json", r#"{"terraform":{"backend":{"local":[{},{}]}}}"#)]
+    #[case::cloud("main.tf.json", r#"{"terraform":{"cloud":[{},{}]}}"#)]
+    #[case::conflicting("main.tf.json", r#"{"terraform":{"cloud":{},"backend":{"local":{}}}}"#)]
+    fn multiple_backend_or_cloud_blocks_are_invalid(#[case] name: &str, #[case] source: &str) {
+        let fixture = Fixture::new(name, source);
+
+        assert!(execution_location(&fixture.0, None).is_err());
+    }
+
+    #[test]
+    fn multiple_normal_files_cannot_define_backends() {
+        let fixture = Fixture::new("main.tf", "terraform {\n backend \"local\" {}\n}");
+        fs::write(
+            fixture.0.join("second.tf.json"),
+            r#"{"terraform":{"backend":{"local":{}}}}"#,
+        )
+        .unwrap();
+
+        assert!(execution_location(&fixture.0, None).is_err());
+    }
+
+    #[rstest]
+    #[case::terraform_hcl(
+        Tool::Terraform,
+        "override.tf",
+        "terraform {\n backend \"local\" {}\n}"
+    )]
+    #[case::terraform_json(
+        Tool::Terraform,
+        "a_override.tf.json",
+        r#"{"terraform":{"backend":{"local":{}}}}"#
+    )]
+    #[case::tofu_hcl(
+        Tool::OpenTofu,
+        "override.tofu",
+        "terraform {\n backend \"local\" {}\n}"
+    )]
+    #[case::tofu_json(
+        Tool::OpenTofu,
+        "a_override.tofu.json",
+        r#"{"terraform":{"backend":{"local":{}}}}"#
+    )]
+    fn override_files_replace_the_normal_backend_after_loading_normal_files(
+        #[case] tool: Tool,
+        #[case] name: &str,
+        #[case] source: &str,
+    ) {
+        let fixture = Fixture::new("z.tf", "terraform {\n cloud {}\n}");
+        fs::write(fixture.0.join(name), source).unwrap();
+
+        assert_eq!(
+            execution_location_for_tool(&fixture.0, tool, None).unwrap(),
+            ExecutionLocation::Local
+        );
+    }
+
+    #[rstest]
+    #[case::cloud(r#"{"terraform":{"cloud":[]}}"#)]
+    #[case::backend(r#"{"terraform":{"backend":{"local":[]}}}"#)]
+    fn empty_labeled_block_arrays_do_not_declare_a_backend(#[case] source: &str) {
+        let fixture = Fixture::new("main.tf.json", source);
+
+        assert!(
+            !read_configuration(&fixture.0, Tool::Terraform, None)
+                .unwrap()
+                .has_backend
         );
     }
 }

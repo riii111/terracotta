@@ -2,6 +2,7 @@
 #[cfg(test)]
 pub(crate) mod attribution;
 pub(crate) mod copy;
+pub(crate) mod environments;
 pub(crate) mod execution;
 pub(crate) mod plan;
 pub(crate) mod review;
