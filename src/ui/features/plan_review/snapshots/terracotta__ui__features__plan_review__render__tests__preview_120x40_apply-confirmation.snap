@@ -2,39 +2,43 @@
 source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
-
-
-
-
- Terracotta | main
-
- ┌Plan────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │Plan: +2 add  ~2 update  0 replace  -1 destroy                                                                      │
- │────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
- │  # terraform_data.api will be updated in-place                                                                    ▲│
- │  ~ resource "terraform_data" "api" {                                                                              ┃│
- │      id       = "api-20260920"                                                                                    ┃│
- │      ~ input  = "before" -> "after"                                                                               ┃│
- │      # (4 unchang┌──────────────────────────────────────────────────────────────────────────────┐                 ┃│
- │    }             │                                                                              │                 ┃│
- │                  │ Apply this reviewed plan?                                                    │                 ┃│
- │  # terraform_data│                                                                              │                 ┃│
- │-/+ resource "terr│ Target: main [PROD]                                                          │                 ┃│
- │      ~ input = "w│ Workspace: default                                                           │                 ┃│
- │      - old_checks│ Directory: /repo/environments/production/main                                │                 ┃│
- │      + new_checks│ Tool: terraform loading...                                                   │                 ┃│
- │    }             │ Plan: +2 add  ~2 update  0 replace  -1 destroy                               │                 ┃│
- │                  │                                                                              │                 ┃│
- │  # terraform_data│ Type main to apply (exact match).                                            │                 ┃│
- │  - resource "terr│ > |                                                                          │                 ││
- │      id = "old-20│                                                                              │                 ││
- │    }             └──────────────────────────────────────────────────────────────────────────────┘                 ││
- │                  Enter confirm | Esc back                                                                         ││
- │  # terraform_data.new will be created                                                                             ││
- │  + resource "terraform_data" "new" {                                                                              ││
- │      input = "new-value"                                                                                          ││
- │      note  = "A deliberately long synthetic value keeps horizontal scrolling visible"                             ││
- │    }                                                                                                              ││
- │                                                                                                                   ▼│
- └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- ↑/↓/←/→ scroll | / filter | y copy plan | a apply | q quit
+main [PROD]  ws:default  terraform loading...  /repo/environments/production/main
+Plan: +2 add  ~2 update  0 replace  -1 destroy
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  # terraform_data.api will be updated in-place                                                                        ▲
+ main [PROD]  ws:default  terraform loading...  /repo/environments/production/main                                     ┃
+      id       = "api-20260920"                                                                                        ┃
+      ~ input  = "before" -> "after"                                                                                   ┃
+      # (4 unchanged attributes hidden)                                                                                ┃
+    }                                                                                                                  ┃
+                                                                                                                       ┃
+  # terraform_data.worker must be replaced                                                                             ┃
+-/+ resource "terraform_data" "worker" {                                                                               ┃
+      ~ input = "worker-before" -> "worker-after" # forces replacement                                                 ┃
+      - old_checksum┌──────────────────────────────────────────────────────────────────────────────┐                   ┃
+      + new_checksum│                                                                              │                   ┃
+    }               │ Apply this reviewed plan?                                                    │                   ┃
+                    │                                                                              │                   ┃
+  # terraform_data.o│ Target: main [PROD]                                                          │                   ┃
+  - resource "terraf│ Workspace: default                                                           │                   ┃
+      id = "old-2026│ Directory: /repo/environments/production/main                                │                   ┃
+    }               │ Tool: terraform loading...                                                   │                   ┃
+                    │ Plan: +2 add  ~2 update  0 replace  -1 destroy                               │                   ┃
+  # terraform_data.n│                                                                              │                   ┃
+  + resource "terraf│ Type main to apply (exact match).                                            │                   ┃
+      input = "new-v│ > |                                                                          │                   ┃
+      note  = "A del│                                                                              │                   ┃
+    }               └──────────────────────────────────────────────────────────────────────────────┘                   ┃
+                    Enter confirm | Esc back | ? help                                                                  ┃
+Changes to Outputs:                                                                                                    ┃
+  + endpoint = (known after apply)                                                                                     ┃
+  ~ summary  = "old summary" -> "new summary with a deliberately long value for review"                                ┃
+                                                                                                                       ┃
+Warning: Value for "pending" is not known until apply                                                                  ┃
+                                                                                                                       ┃
+Plan: 2 to add, 2 to change, 1 to destroy.                                                                             │
+                                                                                                                       │
+Synthetic review text continues below so the viewport and scrollbar remain meaningful.                                 │
+The same long body is intentionally reused across every review state and terminal size.                                │
+No Terraform process, provider, state file, or cloud credential is used by this fixture.                               ▼
+/ filter | ? help | q quit                                                                                          1/43

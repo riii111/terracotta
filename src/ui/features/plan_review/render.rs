@@ -18,10 +18,13 @@ use crate::ui::primitives::{
     atoms::{scrollbar, separator},
     molecules::terminal_notice,
 };
-use crate::ui::shell::{footer, header, layout as shell_layout};
+use crate::ui::shell::{context, footer, header, layout as shell_layout};
 use crate::ui::theme;
 
-use super::{ApplyConfirmationViewState, PlanReviewMatch, PlanReviewViewState};
+use super::{
+    ApplyConfirmationViewState, ConfirmationOverlay, PlanReviewMatch, PlanReviewOverlay,
+    PlanReviewViewState,
+};
 
 const MIN_WIDTH: u16 = 24;
 const MIN_HEIGHT: u16 = 6;
@@ -216,35 +219,53 @@ fn layout_with_content(
     copy_notice: Option<CopyNotice>,
     quit_confirmation: bool,
 ) -> PlanReviewLayout {
-    let panel_width = shell_layout::centered_width(area);
+    let panel_width = area.width;
     let content_metrics = content.metrics();
-    let applyable = state.review().apply_allowed() && state.review().metadata().applyable();
+    let applyable = state.review().apply_entry()
+        && state.review().apply_allowed()
+        && state.review().metadata().applyable();
     let filter_visible = filter_active(searching, state);
     let showing = filter_footer_status(
         state.review().search_query(),
         content.matches.len(),
         panel_width,
     );
-    let footer_status = copy_notice
-        .map(|notice| {
-            (
-                notice.message().to_owned(),
-                if matches!(notice, CopyNotice::Failed) {
-                    theme::error_style()
+    let footer_status = if quit_confirmation {
+        None
+    } else {
+        copy_notice
+            .map(|notice| {
+                (
+                    notice.message().to_owned(),
+                    if matches!(notice, CopyNotice::Failed) {
+                        theme::error_style()
+                    } else {
+                        theme::accent_style()
+                    },
+                )
+            })
+            .or_else(|| {
+                if filter_visible {
+                    showing.as_ref().map(|message| {
+                        (
+                            review_footer_status_text(
+                                message,
+                                &position_status(
+                                    0,
+                                    state.review().document().text().split('\n').count(),
+                                ),
+                            ),
+                            theme::secondary_style(),
+                        )
+                    })
                 } else {
-                    theme::accent_style()
-                },
-            )
-        })
-        .or_else(|| {
-            if filter_visible && !quit_confirmation {
-                showing
-                    .as_ref()
-                    .map(|message| (message.clone(), theme::secondary_style()))
-            } else {
-                None
-            }
-        });
+                    Some((
+                        position_status(0, base_metrics.line_count),
+                        theme::secondary_style(),
+                    ))
+                }
+            })
+    };
     let footer_message = footer_status.as_ref().map(|(message, _)| message.as_str());
     let normal_footer_lines = footer::layout_with_notice(
         footer_items(searching, applyable, content.matches.len(), filter_visible),
@@ -256,16 +277,7 @@ fn layout_with_content(
         panel_width,
         footer_message,
     );
-    let inner_width = panel_width.saturating_sub(2);
-    let body_height = shell_layout::required_body_height(
-        base_metrics.line_count,
-        base_metrics.max_width,
-        inner_width,
-    );
     let fixed_status_height: u16 = 2;
-    let content_height = 2u16
-        .saturating_add(fixed_status_height)
-        .saturating_add(body_height);
     let footer_height = common_footer_height(
         applyable,
         content.matches.len(),
@@ -275,9 +287,6 @@ fn layout_with_content(
     );
     let frame_footer_lines = footer::pad_lines(normal_footer_lines, footer_height);
     let frame_required = footer::pad_lines(normal_required, footer_height);
-    let requested_height =
-        shell_layout::required_height(content_height, &frame_footer_lines, &frame_required);
-    let panel = shell_layout::centered_area(area, requested_height);
     let footer_lines = if quit_confirmation {
         footer::pad_lines(
             footer::quit_confirmation_lines(panel_width, copy_notice.map(CopyNotice::message)),
@@ -294,7 +303,7 @@ fn layout_with_content(
     } else {
         frame_required
     };
-    let shell = shell_layout::layout(panel, footer_lines, required, 1);
+    let shell = shell_layout::full_width_layout(area, footer_lines, required);
     let inner = shell.content_inner();
     let status = Rect::new(inner.x, inner.y, inner.width, 1);
     let separator = Rect::new(inner.x, inner.y.saturating_add(1), inner.width, 1);
@@ -433,6 +442,9 @@ pub(crate) fn render_apply_confirmation(
     clear_dim(frame, layout.header());
     clear_dim(frame, layout.frame());
     clear_dim(frame, layout.footer());
+    if let Some(overlay) = view.overlay() {
+        render_confirmation_overlay(frame, area, state.review(), overlay);
+    }
 }
 
 #[expect(
@@ -456,9 +468,11 @@ pub(crate) fn apply_confirmation_layout(
     let footer_items = vec![
         footer::hint(&["Enter"], "confirm"),
         footer::hint(&["Esc"], "back"),
+        footer::hint(&["?"], "help"),
     ];
     let footer_lines = footer::layout(footer_items.clone(), frame_width);
-    let footer_required_width = footer_items.iter().map(Line::width).sum::<usize>() + 3;
+    let footer_required_width = footer_items.iter().map(Line::width).sum::<usize>()
+        + footer_items.len().saturating_sub(1) * 3;
     let footer_fits = footer_lines.len() == 1
         && footer_lines
             .first()
@@ -590,7 +604,7 @@ fn confirmation_lines(state: &ApplyConfirmationState) -> Vec<Line<'static>> {
         Line::from(vec![
             Span::styled("Directory: ", theme::secondary_style()),
             Span::styled(
-                relative_directory(context.cwd_path(), context.launch_root_path()),
+                context::relative_directory(context.cwd_path(), context.launch_root_path()),
                 theme::body_style(),
             ),
         ]),
@@ -683,21 +697,6 @@ fn source_name(path: &std::path::Path) -> String {
     )
 }
 
-fn relative_directory(path: &std::path::Path, launch_root: Option<&std::path::Path>) -> String {
-    launch_root
-        .and_then(|root| path.strip_prefix(root).ok())
-        .map_or_else(
-            || path.display().to_string(),
-            |relative| {
-                if relative.as_os_str().is_empty() {
-                    ".".to_owned()
-                } else {
-                    format!("./{}", relative.display())
-                }
-            },
-        )
-}
-
 fn tool_version(context: &ExecutionContext) -> String {
     let version = match context.tool_version() {
         ExecutionContextValue::Known(version) => version.as_str(),
@@ -737,6 +736,145 @@ fn confirmation_input_scroll(view: &ApplyConfirmationViewState, width: u16) -> u
     let cursor = view.cursor().min(view.input().len());
     let cursor_width = 2 + Line::from(view.input()[..cursor].to_owned()).width();
     u16::try_from(cursor_width.saturating_sub(width.saturating_sub(1))).unwrap_or(u16::MAX)
+}
+
+fn render_overlay(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    review: &PlanReview,
+    view: &PlanReviewViewState,
+) {
+    let Some(overlay) = view.overlay() else {
+        return;
+    };
+    let lines = match overlay {
+        PlanReviewOverlay::Help => plan_help_lines(review, view),
+        PlanReviewOverlay::Context => context::context_lines(review.context()),
+    };
+    render_dialog(frame, area, overlay_title(overlay), lines);
+}
+
+fn render_confirmation_overlay(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    review: &PlanReview,
+    overlay: ConfirmationOverlay,
+) {
+    let lines = match overlay {
+        ConfirmationOverlay::Help => vec![
+            footer::hint(&["Enter"], "confirm"),
+            footer::hint(&["Esc"], "back"),
+            footer::hint(&["↑", "↓", "PgUp", "PgDn"], "scroll confirmation"),
+            footer::hint(&["←", "→"], "move input"),
+            footer::hint(&["Home", "End"], "input start/end"),
+            footer::hint(&["Backspace"], "delete input"),
+            footer::hint(&["c"], "context"),
+            footer::hint(&["?", "Esc"], "close help"),
+        ],
+        ConfirmationOverlay::Context => context::context_lines(review.context()),
+    };
+    render_dialog(frame, area, confirmation_overlay_title(overlay), lines);
+}
+
+fn plan_help_lines(review: &PlanReview, view: &PlanReviewViewState) -> Vec<Line<'static>> {
+    let filter_action = if review.search_query().is_empty() {
+        footer::hint(&["/"], "filter")
+    } else {
+        footer::hint(&["/"], "edit filter")
+    };
+    let mut lines = vec![
+        footer::hint(&["↑", "↓", "j", "k"], "scroll"),
+        footer::hint(&["←", "→", "h", "l"], "horizontal scroll"),
+        footer::hint(&["PgUp", "PgDn", "Home", "End"], "page/top/bottom"),
+        filter_action,
+        footer::hint(&["y"], "copy full plan"),
+        footer::hint(&["c"], "context"),
+        footer::hint(&["q"], "quit"),
+    ];
+    if !review.search_query().is_empty() {
+        lines.insert(0, footer::hint(&["Esc"], "clear filter"));
+        lines.insert(6, footer::hint(&["n", "N"], "next/previous match"));
+    }
+    if review.apply_entry() && review.apply_allowed() && review.metadata().applyable() {
+        lines.insert(5, footer::hint(&["a"], "apply full plan"));
+    }
+    if view.searching() {
+        lines = vec![
+            footer::hint(&["Enter"], "confirm filter"),
+            footer::hint(&["Esc"], "cancel filter"),
+        ];
+    }
+    lines.push(footer::hint(&["?", "Esc"], "close help"));
+    lines
+}
+
+const fn overlay_title(overlay: PlanReviewOverlay) -> &'static str {
+    match overlay {
+        PlanReviewOverlay::Help => "Help",
+        PlanReviewOverlay::Context => "Context",
+    }
+}
+
+const fn confirmation_overlay_title(overlay: ConfirmationOverlay) -> &'static str {
+    match overlay {
+        ConfirmationOverlay::Help => "Apply help",
+        ConfirmationOverlay::Context => "Context",
+    }
+}
+
+fn render_dialog(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    title: &'static str,
+    lines: Vec<Line<'static>>,
+) {
+    let width = area.width.saturating_sub(4).min(96);
+    let height = u16::try_from(lines.len())
+        .unwrap_or(u16::MAX)
+        .saturating_add(4)
+        .min(area.height.saturating_sub(2));
+    if width < 12 || height < 4 {
+        terminal_notice::render_wrapped(frame, area, "Terminal too small. Resize or press Esc.");
+        return;
+    }
+    let dialog = Rect::new(
+        area.x + area.width.saturating_sub(width) / 2,
+        area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
+    frame.render_widget(Clear, dialog);
+    let block = Block::new()
+        .borders(Borders::ALL)
+        .border_style(theme::frame_style())
+        .style(theme::body_style())
+        .title(title);
+    let inner = block.inner(dialog);
+    frame.render_widget(block, dialog);
+    let footer_area = Rect::new(
+        inner.x,
+        inner.bottom().saturating_sub(1),
+        inner.width,
+        u16::from(inner.height > 0),
+    );
+    let content_area = Rect::new(
+        inner.x,
+        inner.y,
+        inner.width,
+        inner.height.saturating_sub(1),
+    );
+    frame.render_widget(
+        Paragraph::new(lines)
+            .style(theme::body_style())
+            .wrap(Wrap { trim: false }),
+        content_area,
+    );
+    footer::render(
+        frame,
+        footer_area,
+        &[footer::hint(&["?", "Esc"], "close")],
+        None,
+    );
 }
 
 #[expect(
@@ -788,12 +926,11 @@ pub(crate) fn render_with_quit_confirmation(
         return;
     }
     header::render_review(frame, layout.shell.header(), state.review());
-    let title = if filter_active(view.searching(), state) {
-        Line::from("Plan | Filter")
-    } else {
-        Line::from("Plan")
-    };
-    let inner = shell_layout::render_content_block_line(frame, layout.shell.content(), title);
+    frame.render_widget(
+        Block::new().style(theme::body_style()),
+        layout.shell.content(),
+    );
+    let inner = layout.shell.content_inner();
     debug_assert_eq!(inner, layout.shell.content_inner());
 
     render_status(frame, &layout, state, view);
@@ -849,15 +986,28 @@ pub(crate) fn render_with_quit_confirmation(
             usize::from(horizontal),
         );
     }
+    let footer_status = if quit_confirmation || state.copy_notice_at(now).is_some() {
+        layout.footer_status.clone()
+    } else {
+        Some((
+            review_footer_status(
+                state,
+                view,
+                content.matches.len(),
+                layout.shell.footer().width,
+            ),
+            theme::secondary_style(),
+        ))
+    };
     footer::render(
         frame,
         layout.shell.footer(),
         layout.shell.footer_lines(),
-        layout
-            .footer_status
+        footer_status
             .as_ref()
             .map(|(message, style)| (message.as_str(), *style)),
     );
+    render_overlay(frame, area, state.review(), view);
 }
 
 fn prepare_content<'a>(
@@ -1191,6 +1341,8 @@ fn filter_status_line(
     (line, horizontal)
 }
 
+const FILTER_STATUS_WIDTH: usize = 10;
+
 fn filter_footer_status(query: &str, match_count: usize, width: u16) -> Option<String> {
     if query.is_empty() {
         return None;
@@ -1204,6 +1356,35 @@ fn filter_footer_status(query: &str, match_count: usize, width: u16) -> Option<S
     } else {
         None
     }
+}
+
+fn position_status(position: u16, total: usize) -> String {
+    let total = total.max(1);
+    let position = usize::from(position).saturating_add(1).min(total);
+    format!(
+        "{position:>width$}/{total}",
+        width = total.to_string().len()
+    )
+}
+
+fn review_footer_status(
+    state: &ReviewSessionState,
+    view: &PlanReviewViewState,
+    visible_line_count: usize,
+    width: u16,
+) -> String {
+    let position = position_status(
+        view.scroll().0,
+        state.review().document().text().split('\n').count(),
+    );
+    filter_footer_status(state.review().search_query(), visible_line_count, width).map_or_else(
+        || position.clone(),
+        |message| review_footer_status_text(&message, &position),
+    )
+}
+
+fn review_footer_status_text(message: &str, position: &str) -> String {
+    format!("{message:<FILTER_STATUS_WIDTH$}  {position}")
 }
 
 fn search_query_line(view: &PlanReviewViewState) -> Option<(Line<'static>, (usize, usize))> {
@@ -1249,7 +1430,7 @@ fn horizontal_offset(start: usize, end: usize, line_width: usize, width: u16) ->
 fn footer_items(
     searching: bool,
     applyable: bool,
-    match_count: usize,
+    _match_count: usize,
     filtered: bool,
 ) -> Vec<Line<'static>> {
     if searching {
@@ -1258,25 +1439,21 @@ fn footer_items(
             footer::hint(&["Esc"], "cancel"),
         ]
     } else if filtered {
-        let mut items = vec![footer::hint(&["Esc"], "clear")];
-        items.extend([
-            footer::hint(&["/"], "edit"),
-            footer::hint(&["↑", "↓", "←", "→"], "scroll"),
-        ]);
-        if match_count >= 2 {
-            items.push(footer::hint(&["n/N"], "next/prev"));
+        let mut items = vec![
+            footer::hint(&["Esc"], "clear / edit"),
+            footer::hint(&["y"], "copy all"),
+        ];
+        if applyable {
+            items.push(footer::hint(&["a"], "apply all"));
         }
+        items.extend([footer::hint(&["?"], "help"), footer::hint(&["q"], "quit")]);
         items
     } else {
-        let mut items = vec![
-            footer::hint(&["↑", "↓", "←", "→"], "scroll"),
-            footer::hint(&["/"], "filter"),
-            footer::hint(&["y"], "copy plan"),
-        ];
+        let mut items = vec![footer::hint(&["/"], "filter")];
         if applyable {
             items.push(footer::hint(&["a"], "apply"));
         }
-        items.push(footer::hint(&["q"], "quit"));
+        items.extend([footer::hint(&["?"], "help"), footer::hint(&["q"], "quit")]);
         items
     }
 }
@@ -1292,19 +1469,20 @@ fn required_footer_items(
             footer::hint(&["Esc"], "cancel"),
         ]
     } else if filtered {
-        let mut items = vec![footer::hint(&["Esc"], "clear")];
-        items.extend([
-            footer::hint(&["/"], "edit"),
-            footer::hint(&["↑", "↓", "←", "→"], "scroll"),
-        ]);
+        let mut items = vec![
+            footer::hint(&["Esc"], "clear / edit"),
+            footer::hint(&["y"], "copy all"),
+            footer::hint(&["?"], "help"),
+            footer::hint(&["q"], "quit"),
+        ];
         if match_count >= 2 {
-            items.push(footer::hint(&["n/N"], "next/prev"));
+            items.insert(1, footer::hint(&["n/N"], "next/prev"));
         }
         items
     } else {
         vec![
-            footer::hint(&["↑", "↓"], "scroll"),
-            footer::hint(&["y"], "copy plan"),
+            footer::hint(&["/"], "filter"),
+            footer::hint(&["?"], "help"),
             footer::hint(&["q"], "quit"),
         ]
     }
@@ -1332,7 +1510,9 @@ mod tests {
 
     use crate::app::{
         copy::{CopyResult, CopyTarget},
-        execution::{Diagnostic, DiagnosticSource, ExecutionContext, ExecutionState},
+        execution::{
+            Diagnostic, DiagnosticSource, ExecutionContext, ExecutionState, VariableSources,
+        },
         review::{
             PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata, test_support::plan_document,
         },
@@ -1341,8 +1521,7 @@ mod tests {
     use crate::ui::{
         features::plan_review::{ApplyConfirmationInput, PlanReviewInput, key_to_input},
         test_support::{
-            assert_shell_frame_and_footer, buffer_terminal_capture, buffer_text, render_to_buffer,
-            write_buffer_captures,
+            buffer_terminal_capture, buffer_text, render_to_buffer, write_buffer_captures,
         },
     };
 
@@ -1600,6 +1779,136 @@ End of synthetic plan body."#;
 
             snapshot(&format!("preview_{width}x{height}_normal"), &buffer);
         }
+    }
+
+    #[test]
+    fn renders_an_empty_plan_snapshot() {
+        let plan = PlanReview::new(
+            PathBuf::from("/repo/environments/staging/empty"),
+            "default".to_owned(),
+            PlanDocument::with_blocks(String::new(), Vec::new()),
+            PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
+            Vec::new(),
+        );
+        let state = review_state(plan);
+        let buffer = render_to_buffer((120, 40), |frame| {
+            render(
+                frame,
+                &state,
+                &PlanReviewViewState::default(),
+                Instant::now(),
+            );
+        });
+
+        snapshot("preview_120x40_empty", &buffer);
+    }
+
+    #[test]
+    fn renders_long_target_header_and_preserves_position_for_overlays() {
+        let plan = review().with_apply_entry(true).with_context(
+            ExecutionContext::loading(
+                "/repo/environments/production/very-long-target-name-for-review",
+            )
+            .with_launch_root("/repo")
+            .with_workspace("default")
+            .with_tool_version("terraform", "1.9.0")
+            .with_variable_sources(VariableSources::new(
+                vec![PathBuf::from("/repo/environments/production/common.tfvars")],
+                vec![PathBuf::from("/repo/secrets/production.tfvars")],
+                true,
+                vec!["TF_VAR_region".to_owned(), "TF_VAR_account".to_owned()],
+            )),
+        );
+        let state = review_state(plan);
+        let area = Rect::new(0, 0, 120, 40);
+        let layout = layout(area, false, &state);
+        let mut view = PlanReviewViewState::default();
+        view.apply_with_matches(
+            PlanReviewInput::Down,
+            layout.body(),
+            layout.max_vertical(),
+            layout.max_horizontal(),
+            "",
+            layout.matches(),
+        );
+        let position = view.scroll();
+        let normal = render_to_buffer((area.width, area.height), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        snapshot("preview_120x40_long-target", &normal);
+        view.apply_with_matches(
+            PlanReviewInput::OpenHelp,
+            layout.body(),
+            layout.max_vertical(),
+            layout.max_horizontal(),
+            "",
+            layout.matches(),
+        );
+        let help = render_to_buffer((area.width, area.height), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        let help_text = buffer_text(&help);
+        assert!(help_text.contains("Help"));
+        assert!(help_text.contains("a apply full plan"));
+        assert!(help_text.contains("y copy full plan"));
+        assert!(!help_text.contains("s overview"));
+        assert_eq!(view.scroll(), position);
+
+        view.close_overlay();
+        view.apply_with_matches(
+            PlanReviewInput::OpenContext,
+            layout.body(),
+            layout.max_vertical(),
+            layout.max_horizontal(),
+            "",
+            layout.matches(),
+        );
+        let context = render_to_buffer((area.width, area.height), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        let context_text = buffer_text(&context);
+        let compact_context = context_text.replace('\n', "");
+        assert!(context_text.contains("very-long-target-name-for-review [PROD]"));
+        assert!(context_text.contains("ws:default"));
+        assert!(context_text.contains("terraform 1.9.0"));
+        assert!(
+            compact_context
+                .contains("/repo/environments/production/very-long-target-name-for-review")
+        );
+        assert!(context_text.contains("Execution directory"));
+        assert!(compact_context.contains("/repo/secrets/production.tfvars"));
+        assert!(context_text.contains("TF_VAR_region"));
+        assert_eq!(view.scroll(), position);
+    }
+
+    #[test]
+    fn renders_apply_help_and_context_with_only_confirmation_actions() {
+        let plan = review().with_context(
+            ExecutionContext::loading("/repo/environments/production/main")
+                .with_launch_root("/repo")
+                .with_workspace("default")
+                .with_tool_version("terraform", "1.9.0"),
+        );
+        let state = confirmation_state(plan);
+        let mut view = ApplyConfirmationViewState::default();
+        assert_eq!(view.apply(ApplyConfirmationInput::OpenHelp, "main"), None);
+        let help = render_to_buffer((120, 40), |frame| {
+            render_apply_confirmation(frame, &state, &view);
+        });
+        let help_text = buffer_text(&help);
+        assert!(help_text.contains("Apply help"));
+        assert!(help_text.contains("Enter confirm"));
+
+        view.close_overlay();
+        assert_eq!(
+            view.apply(ApplyConfirmationInput::OpenContext, "main"),
+            None
+        );
+        let context = render_to_buffer((120, 40), |frame| {
+            render_apply_confirmation(frame, &state, &view);
+        });
+        assert!(buffer_text(&context).contains("Execution directory"));
+        assert!(buffer_text(&context).contains("/repo/environments/production/main"));
     }
 
     #[test]
@@ -1958,7 +2267,7 @@ End of synthetic plan body."#;
                 None,
             );
 
-            assert!(footer.len() >= 2);
+            assert!(!footer.is_empty());
             assert_eq!(waiting.body(), normal.body());
             assert_eq!(waiting.max_vertical(), normal.max_vertical());
             assert_eq!(waiting.max_horizontal(), normal.max_horizontal());
@@ -2027,12 +2336,9 @@ End of synthetic plan body."#;
                 render(frame, &state, &view, Instant::now());
             });
 
-            assert_shell_frame_and_footer(
-                &buffer,
-                layout.shell.content(),
-                layout.shell.footer(),
-                "q quit",
-            );
+            assert_eq!(layout.shell.content().bottom(), layout.shell.footer().y);
+            assert!(layout.shell.content().height >= 2);
+            assert!(buffer_text(&buffer).contains("q quit"));
             let text = buffer_text(&buffer);
             assert!(!text.contains("Terraform will perform the following actions:"));
             assert!(layout.vertical_scrollbar());
@@ -2263,10 +2569,10 @@ End of synthetic plan body."#;
                 render(frame, &state, &view, Instant::now());
             });
 
-            assert!(buffer_text(&buffer).contains("/terraform_data "));
+            assert!(buffer_text(&buffer).contains("/terraform_data"));
             assert_text_segment_uses_style(
                 &buffer,
-                "/terraform_data ",
+                "/terraform_data",
                 0,
                 1,
                 Color::Rgb(0xf4, 0x9e, 0x4c),
@@ -2275,7 +2581,7 @@ End of synthetic plan body."#;
             );
             assert_text_segment_uses_style(
                 &buffer,
-                "/terraform_data ",
+                "/terraform_data",
                 1,
                 SEARCH_TERM.chars().count(),
                 Color::Rgb(0xe9, 0xdb, 0xdb),
@@ -2284,7 +2590,7 @@ End of synthetic plan body."#;
             );
             assert_text_segment_uses_style(
                 &buffer,
-                "/terraform_data ",
+                "/terraform_data",
                 1 + SEARCH_TERM.chars().count(),
                 1,
                 Color::Rgb(0x11, 0x14, 0x19),
@@ -2446,15 +2752,13 @@ End of synthetic plan body."#;
             });
             let (normal, selected) = search_match_style_counts(&first, SEARCH_TERM);
             assert_eq!(selected, 1, "normal={normal}");
-            assert_eq!(normal + selected, 4);
+            assert_eq!(normal + selected, 6);
             let footer = buffer_text(&first);
             assert!(footer.contains("Esc clear"));
-            assert!(footer.contains("n/N next/prev"));
-            assert!(footer.contains("↑/↓/←/→ scroll"));
             assert!(footer.contains("/ edit"));
             assert!(!footer.contains("a apply"));
             assert!(!footer.contains("y yank"));
-            assert!(!footer.contains("q quit"));
+            assert!(footer.contains("q quit"));
 
             view.apply_with_matches(
                 PlanReviewInput::SearchNext,
@@ -2533,8 +2837,8 @@ End of synthetic plan body."#;
                     layout
                         .footer_status
                         .as_ref()
-                        .map(|status| status.0.as_str()),
-                    Some(expected_label.as_str()),
+                        .map(|status| status.0.starts_with(&expected_label)),
+                    Some(true),
                     "case: {}",
                     case.name
                 );
@@ -2547,18 +2851,12 @@ End of synthetic plan body."#;
                     );
                 });
                 let text = buffer_text(&buffer);
-                assert!(text.contains("Esc clear"), "case: {}", case.name);
-                assert!(text.contains("↑/↓/←/→ scroll"), "case: {}", case.name);
+                assert!(text.contains("clear"), "case: {}", case.name);
                 assert!(text.contains("/ edit"), "case: {}", case.name);
-                assert_eq!(
-                    text.contains("n/N next/prev"),
-                    case.expected_matches >= 2,
-                    "case: {}",
-                    case.name
-                );
-                assert!(!text.contains("y yank"), "case: {}", case.name);
+                assert!(text.contains("y copy all"), "case: {}", case.name);
+                assert!(text.contains("? help"), "case: {}", case.name);
                 assert!(!text.contains("a apply"), "case: {}", case.name);
-                assert!(!text.contains("q quit"), "case: {}", case.name);
+                assert!(text.contains("q quit"), "case: {}", case.name);
             }
         }
 
@@ -2582,9 +2880,9 @@ End of synthetic plan body."#;
                 });
                 let text = buffer_text(&buffer);
                 assert!(text.contains("Esc clear"), "query: {query}");
-                assert!(text.contains("↑/↓/←/→ scroll"), "query: {query}");
                 assert!(text.contains("/ edit"), "query: {query}");
-                assert!(!text.contains("n/N next/prev"), "query: {query}");
+                assert!(text.contains("copy all"), "query: {query}");
+                assert!(text.contains("? help"), "query: {query}");
             }
         }
 
@@ -2604,7 +2902,7 @@ End of synthetic plan body."#;
             });
             let input_text = buffer_text(&input_buffer);
             write_buffer_captures("ux02-filter-input", &input_buffer);
-            assert!(input_text.contains("Plan | Filter"));
+            assert!(!input_text.contains("Plan | Filter"));
             assert!(input_text.contains("Filter: /"));
             assert!(!input_text.contains(" matches"));
             assert!(!input_text.contains("Filter changes display only"));
@@ -2623,7 +2921,7 @@ End of synthetic plan body."#;
             });
             let confirmed_text = buffer_text(&confirmed_buffer);
             write_buffer_captures("ux02-filter-confirmed", &confirmed_buffer);
-            assert!(confirmed_text.contains("Plan | Filter"));
+            assert!(!confirmed_text.contains("Plan | Filter"));
             assert!(confirmed_text.contains("Filter: /worker"));
             assert!(confirmed_text.contains("4 matches"));
             assert!(!confirmed_text.contains("Filter changes display only"));
@@ -2639,7 +2937,7 @@ End of synthetic plan body."#;
                 );
             });
             let cleared_text = buffer_text(&cleared_buffer);
-            assert!(cleared_text.contains("┌Plan"));
+            assert!(!cleared_text.contains("┌Plan"));
             assert!(!cleared_text.contains("Plan | Filter"));
             assert!(!cleared_text.contains(" matches"));
             assert!(!cleared_text.contains("Scope: full plan"));
@@ -2779,7 +3077,7 @@ End of synthetic plan body."#;
             let text = buffer_text(&buffer);
             write_buffer_captures("ux02-filter-long-query", &buffer);
 
-            assert!(text.contains("┌Plan | Filter"));
+            assert!(!text.contains("┌Plan | Filter"));
             assert!(text.contains("/long-query-long-query-"));
             assert!(!text.contains("Plan | Filter: long-query"));
         }
@@ -2983,15 +3281,15 @@ End of synthetic plan body."#;
         #[test]
         fn relative_directory_uses_the_launch_root_and_shows_dot_for_the_root() {
             assert_eq!(
-                relative_directory(Path::new("/repo"), Some(Path::new("/repo"))),
+                context::relative_directory(Path::new("/repo"), Some(Path::new("/repo"))),
                 "."
             );
             assert_eq!(
-                relative_directory(Path::new("/repo/infra"), Some(Path::new("/repo"))),
+                context::relative_directory(Path::new("/repo/infra"), Some(Path::new("/repo")),),
                 "./infra"
             );
             assert_eq!(
-                relative_directory(Path::new("/other"), Some(Path::new("/repo"))),
+                context::relative_directory(Path::new("/other"), Some(Path::new("/repo"))),
                 "/other"
             );
         }
@@ -3120,7 +3418,7 @@ End of synthetic plan body."#;
             });
             let text = buffer_text(&buffer);
             let lines = text.lines().collect::<Vec<_>>();
-            assert!(lines[usize::from(layout.header().y)].contains("Terracotta |"));
+            assert!(lines[usize::from(layout.header().y)].contains("main [PROD]"));
             assert!(!lines[usize::from(layout.header().y)].contains("Terminal too small"));
             assert!(lines[usize::from(layout.notice().y)].contains("Terminal too small"));
         }
@@ -3231,35 +3529,6 @@ End of synthetic plan body."#;
             }
         }
 
-        fn assert_frame_unchanged(before: &Buffer, after: &Buffer, area: Rect) {
-            for x in area.x..area.right() {
-                assert_eq!(
-                    before.cell((x, area.y)).expect("top frame cell"),
-                    after.cell((x, area.y)).expect("top frame cell")
-                );
-                assert_eq!(
-                    before
-                        .cell((x, area.bottom() - 1))
-                        .expect("bottom frame cell"),
-                    after
-                        .cell((x, area.bottom() - 1))
-                        .expect("bottom frame cell")
-                );
-            }
-            for y in area.y..area.bottom() {
-                assert_eq!(
-                    before.cell((area.x, y)).expect("left frame cell"),
-                    after.cell((area.x, y)).expect("left frame cell")
-                );
-                assert_eq!(
-                    before
-                        .cell((area.right() - 1, y))
-                        .expect("right frame cell"),
-                    after.cell((area.right() - 1, y)).expect("right frame cell")
-                );
-            }
-        }
-
         fn assert_flash_body_cells(before: &Buffer, after: &Buffer, body: Rect) {
             let mut flashed_cells = 0;
             for y in body.y..body.bottom() {
@@ -3334,7 +3603,7 @@ End of synthetic plan body."#;
                     true,
                 );
             });
-            assert!(buffer_text(&narrow).contains("Quit? Enter exit / Esc cancel"));
+            assert!(buffer_text(&narrow).contains("Quit? [Enter] quit [Esc] cancel"));
         }
 
         #[test]
@@ -3394,7 +3663,6 @@ End of synthetic plan body."#;
                 Color::Reset,
                 Modifier::empty(),
             );
-            assert_frame_unchanged(&before, &flash, layout.shell.content());
             assert_area_unchanged(&before, &flash, layout.status());
             assert_area_unchanged(&before, &flash, layout.separator());
             assert_area_unchanged(
@@ -3561,7 +3829,7 @@ End of synthetic plan body."#;
 
             assert!(!footer_text.contains("a apply"), "{footer_text}");
             assert!(footer_text.contains("/ filter"), "{footer_text}");
-            assert!(footer_text.contains("y copy plan"), "{footer_text}");
+            assert!(!footer_text.contains("y copy plan"), "{footer_text}");
             assert!(footer_text.contains("q quit"), "{footer_text}");
         }
 

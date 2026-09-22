@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crossterm::event::{self, Event, KeyEvent};
+use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use ratatui::{DefaultTerminal, Terminal, backend::Backend, layout::Rect};
 
 use crate::{
@@ -314,6 +314,12 @@ fn handle_key_event<B: Backend>(
     }
 
     if state.apply_confirmation().is_some() {
+        if confirmation_view.overlay().is_some() {
+            if matches!(key.code, KeyCode::Esc | KeyCode::Char('?')) {
+                confirmation_view.close_overlay();
+            }
+            return Ok(None);
+        }
         let confirmation = state
             .apply_confirmation()
             .expect("confirmation state should still be available");
@@ -339,6 +345,12 @@ fn handle_key_event<B: Backend>(
     let Some(review) = state.review() else {
         return Ok(None);
     };
+    if review_view.overlay().is_some() {
+        if matches!(key.code, KeyCode::Esc | KeyCode::Char('?')) {
+            review_view.close_overlay();
+        }
+        return Ok(None);
+    }
     Ok(
         match plan_review::key_to_input(
             key,
@@ -1706,7 +1718,11 @@ mod tests {
     }
 
     #[test]
-    fn confirmed_filter_blocks_dangerous_keys_until_escape_clears_it() {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the input matrix documents every confirmed-filter action"
+    )]
+    fn confirmed_filter_keeps_full_plan_actions_available() {
         let now = Instant::now();
         let mut plan = PlanReview::new(
             PathBuf::from("/project"),
@@ -1722,25 +1738,54 @@ mod tests {
         let mut review_view = plan_review::PlanReviewViewState::default();
         let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
 
-        for key in [
-            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
-            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
-            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
-            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
-        ] {
-            assert_eq!(
-                handle_key_event(
-                    &terminal,
-                    &state,
-                    &mut execution_view,
-                    &mut review_view,
-                    &mut confirmation_view,
-                    key,
-                )
-                .expect("confirmed filter key should be handled"),
-                None
-            );
-        }
+        assert!(matches!(
+            handle_key_event(
+                &terminal,
+                &state,
+                &mut execution_view,
+                &mut review_view,
+                &mut confirmation_view,
+                KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+            )
+            .expect("apply key should be handled"),
+            Some(Action::OpenApplyConfirmation)
+        ));
+        assert!(matches!(
+            handle_key_event(
+                &terminal,
+                &state,
+                &mut execution_view,
+                &mut review_view,
+                &mut confirmation_view,
+                KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+            )
+            .expect("copy key should be handled"),
+            Some(Action::Copy(CopyTarget::Plan))
+        ));
+        assert!(matches!(
+            handle_key_event(
+                &terminal,
+                &state,
+                &mut execution_view,
+                &mut review_view,
+                &mut confirmation_view,
+                KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            )
+            .expect("quit key should be handled"),
+            Some(Action::Quit)
+        ));
+        assert_eq!(
+            handle_key_event(
+                &terminal,
+                &state,
+                &mut execution_view,
+                &mut review_view,
+                &mut confirmation_view,
+                KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+            )
+            .expect("control-c should be handled"),
+            None
+        );
 
         let clear = handle_key_event(
             &terminal,

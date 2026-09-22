@@ -12,6 +12,7 @@ pub(crate) struct ShellLayout {
     content: Rect,
     footer: Rect,
     footer_lines: Vec<Line<'static>>,
+    bordered_content: bool,
 }
 
 impl ShellLayout {
@@ -24,7 +25,11 @@ impl ShellLayout {
     }
 
     pub(crate) fn content_inner(&self) -> Rect {
-        Block::new().borders(Borders::ALL).inner(self.content)
+        if self.bordered_content {
+            Block::new().borders(Borders::ALL).inner(self.content)
+        } else {
+            self.content
+        }
     }
 
     pub(crate) const fn footer(&self) -> Rect {
@@ -78,6 +83,48 @@ pub(crate) fn layout(
         content,
         footer,
         footer_lines,
+        bordered_content: true,
+    }
+}
+
+pub(crate) fn full_width_layout(
+    area: Rect,
+    footer_lines: Vec<Line<'static>>,
+    required_footer_lines: Vec<Line<'static>>,
+) -> ShellLayout {
+    let header_height = u16::from(area.height > 0);
+    let header = Rect::new(area.x, area.y, area.width, header_height);
+    let after_header_y = area.y.saturating_add(header_height);
+    let after_header_height = area.height.saturating_sub(header_height);
+    let full_footer_height = u16::try_from(footer_lines.len()).unwrap_or(u16::MAX).max(1);
+    let required_footer_height = u16::try_from(required_footer_lines.len())
+        .unwrap_or(u16::MAX)
+        .max(1);
+    let footer_height = full_footer_height.min(after_header_height).max(1);
+    let footer_height = if after_header_height >= required_footer_height {
+        footer_height
+    } else {
+        required_footer_height.min(after_header_height)
+    };
+    let (footer_lines, footer_height) = if after_header_height >= full_footer_height {
+        (footer_lines, footer_height)
+    } else {
+        (required_footer_lines, footer_height)
+    };
+    let content_height = after_header_height.saturating_sub(footer_height);
+    let content = Rect::new(area.x, after_header_y, area.width, content_height);
+    let footer = Rect::new(
+        area.x,
+        after_header_y.saturating_add(content_height),
+        area.width,
+        footer_height,
+    );
+    ShellLayout {
+        header,
+        content,
+        footer,
+        footer_lines,
+        bordered_content: false,
     }
 }
 
@@ -187,6 +234,20 @@ mod tests {
         );
 
         assert_eq!(layout.footer_lines()[0].to_string(), "required");
+    }
+
+    #[test]
+    fn full_width_layout_keeps_the_content_unbordered_and_uses_one_header_row() {
+        let area = Rect::new(3, 4, 80, 20);
+        let layout =
+            full_width_layout(area, vec![Line::from("full")], vec![Line::from("required")]);
+
+        assert_eq!(layout.header(), Rect::new(3, 4, 80, 1));
+        assert_eq!(layout.content().x, area.x);
+        assert_eq!(layout.content().width, area.width);
+        assert_eq!(layout.content_inner(), layout.content());
+        assert_eq!(layout.content().bottom(), layout.footer().y);
+        assert_eq!(layout.footer().bottom(), area.bottom());
     }
 
     #[test]

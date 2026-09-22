@@ -7,6 +7,13 @@ pub(crate) struct ApplyConfirmationViewState {
     input: String,
     cursor: usize,
     scroll: u16,
+    overlay: Option<ConfirmationOverlay>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConfirmationOverlay {
+    Help,
+    Context,
 }
 
 impl ApplyConfirmationViewState {
@@ -78,6 +85,14 @@ impl ApplyConfirmationViewState {
                 self.scroll = self.scroll.saturating_add(5);
                 None
             }
+            ApplyConfirmationInput::OpenHelp => {
+                self.overlay = Some(ConfirmationOverlay::Help);
+                None
+            }
+            ApplyConfirmationInput::OpenContext => {
+                self.overlay = Some(ConfirmationOverlay::Context);
+                None
+            }
             ApplyConfirmationInput::Confirm => None,
         }
     }
@@ -94,10 +109,19 @@ impl ApplyConfirmationViewState {
         self.scroll
     }
 
+    pub(crate) const fn overlay(&self) -> Option<ConfirmationOverlay> {
+        self.overlay
+    }
+
+    pub(crate) const fn close_overlay(&mut self) {
+        self.overlay = None;
+    }
+
     fn reset(&mut self) {
         self.input.clear();
         self.cursor = 0;
         self.scroll = 0;
+        self.overlay = None;
     }
 }
 

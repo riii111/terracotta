@@ -186,11 +186,20 @@ fn handle_synthetic_key(
 ) -> io::Result<Option<Action>> {
     match state {
         SessionState::Review(review) => synthetic_review_key(terminal, view, review, key),
-        SessionState::ApplyConfirmation(confirmation) => Ok(synthetic_confirmation_key(
-            confirmation_view,
-            confirmation,
-            key,
-        )),
+        SessionState::ApplyConfirmation(confirmation) => {
+            if confirmation_view.overlay().is_some() {
+                if matches!(key.code, KeyCode::Esc | KeyCode::Char('?')) {
+                    confirmation_view.close_overlay();
+                }
+                Ok(None)
+            } else {
+                Ok(synthetic_confirmation_key(
+                    confirmation_view,
+                    confirmation,
+                    key,
+                ))
+            }
+        }
         SessionState::Apply(execution) => {
             synthetic_execution_key(terminal, execution, execution_view, key)
         }
@@ -199,8 +208,8 @@ fn handle_synthetic_key(
 }
 
 fn synthetic_review() -> ReviewSessionState {
-    ReviewSessionState::new(PlanReview::new(
-        PathBuf::from("infra/prod"),
+    let plan = PlanReview::new(
+        PathBuf::from("/workspace/infra/prod"),
         "default".to_owned(),
         PlanDocument::with_blocks_and_line_kinds(
             "Terraform will perform the following actions:\n\n  # terraform_data.example will be updated in-place\n  ~ resource \"terraform_data.example\" {\n      ~ input = \"before\" -> \"after\"\n      note = \"searchable synthetic value\"\n    }\n\nPlan: 0 to add, 1 to change, 0 to destroy.\n"
@@ -235,7 +244,14 @@ fn synthetic_review() -> ReviewSessionState {
             true,
         ),
         Vec::new(),
-    ))
+    )
+    .with_context(
+        ExecutionContext::loading("/workspace/infra/prod")
+            .with_launch_root("/workspace")
+            .with_workspace("default")
+            .with_tool_version("terraform", "1.9.0"),
+    );
+    ReviewSessionState::new(plan)
 }
 
 fn render_synthetic(
@@ -275,6 +291,12 @@ fn synthetic_review_key(
     review: &ReviewSessionState,
     key: KeyEvent,
 ) -> io::Result<Option<Action>> {
+    if view.overlay().is_some() {
+        if matches!(key.code, KeyCode::Esc | KeyCode::Char('?')) {
+            view.close_overlay();
+        }
+        return Ok(None);
+    }
     Ok(
         match plan_review::key_to_input(
             key,

@@ -3,6 +3,12 @@ use ratatui::{layout::Rect, style::Style, text::Line};
 use super::PlanReviewInput;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlanReviewOverlay {
+    Help,
+    Context,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PlanReviewMatch {
     line: usize,
     start: u16,
@@ -43,6 +49,7 @@ pub(crate) struct PlanReviewViewState {
     horizontal: u16,
     search: Option<SearchInputState>,
     selected: Option<usize>,
+    overlay: Option<PlanReviewOverlay>,
 }
 
 impl PlanReviewViewState {
@@ -122,6 +129,14 @@ impl PlanReviewViewState {
                 self.move_selection(-1, body, max_vertical, max_horizontal, matches);
                 None
             }
+            PlanReviewInput::OpenHelp => {
+                self.overlay = Some(PlanReviewOverlay::Help);
+                None
+            }
+            PlanReviewInput::OpenContext => {
+                self.overlay = Some(PlanReviewOverlay::Context);
+                None
+            }
             PlanReviewInput::SearchChar(_)
             | PlanReviewInput::SearchBackspace
             | PlanReviewInput::SearchLeft
@@ -174,6 +189,14 @@ impl PlanReviewViewState {
 
     pub(crate) const fn scroll(&self) -> (u16, u16) {
         (self.vertical, self.horizontal)
+    }
+
+    pub(crate) const fn overlay(&self) -> Option<PlanReviewOverlay> {
+        self.overlay
+    }
+
+    pub(crate) const fn close_overlay(&mut self) {
+        self.overlay = None;
     }
 
     fn apply_search_input(
@@ -793,5 +816,55 @@ mod tests {
         }
 
         assert_eq!(view.scroll(), (MAX_VERTICAL, MAX_HORIZONTAL));
+    }
+
+    #[test]
+    fn overlays_preserve_scroll_and_close_without_changing_selection() {
+        let matches = [PlanReviewMatch::new(4, 0, 3)];
+        let mut view = PlanReviewViewState::default();
+        view.apply_with_matches(
+            PlanReviewInput::Bottom,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "",
+            &matches,
+        );
+        view.apply_with_matches(
+            PlanReviewInput::SearchConfirm,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "",
+            &matches,
+        );
+        let position = view.scroll();
+        let selected = view.selected();
+
+        view.apply_with_matches(
+            PlanReviewInput::OpenHelp,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "",
+            &matches,
+        );
+        assert_eq!(view.overlay(), Some(PlanReviewOverlay::Help));
+        assert_eq!(view.scroll(), position);
+        assert_eq!(view.selected(), selected);
+        view.close_overlay();
+        assert_eq!(view.overlay(), None);
+
+        view.apply_with_matches(
+            PlanReviewInput::OpenContext,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "",
+            &matches,
+        );
+        assert_eq!(view.overlay(), Some(PlanReviewOverlay::Context));
+        assert_eq!(view.scroll(), position);
+        assert_eq!(view.selected(), selected);
     }
 }

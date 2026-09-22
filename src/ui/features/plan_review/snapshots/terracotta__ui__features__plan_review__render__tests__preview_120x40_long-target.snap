@@ -2,12 +2,11 @@
 source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
-main [PROD]  ws:default  terraform loading...  /repo/environments/production/main
-Filter: /terraform_data
+very-long-target-name-for-review [PROD]  ws:default  terraform 1.9.0  ./environments/productio...-target-name-for-review
+Plan: +2 add  ~2 update  0 replace  -1 destroy
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  # terraform_data.api will be updated in-place                                                                        ▲
-  ~ resource "terraform_data" "api" {                                                                                  ┃
-      id       = "api-20260920"                                                                                        ┃
+  ~ resource "terraform_data" "api" {                                                                                  ▲
+      id       = "api-20260920"                                                                                        │
       ~ input  = "before" -> "after"                                                                                   ┃
       # (4 unchanged attributes hidden)                                                                                ┃
     }                                                                                                                  ┃
@@ -30,15 +29,16 @@ Filter: /terraform_data
       note  = "A deliberately long synthetic value keeps horizontal scrolling visible"                                 ┃
     }                                                                                                                  ┃
                                                                                                                        ┃
+Changes to Outputs:                                                                                                    ┃
+  + endpoint = (known after apply)                                                                                     ┃
+  ~ summary  = "old summary" -> "new summary with a deliberately long value for review"                                ┃
                                                                                                                        ┃
 Warning: Value for "pending" is not known until apply                                                                  ┃
                                                                                                                        ┃
 Plan: 2 to add, 2 to change, 1 to destroy.                                                                             ┃
                                                                                                                        ┃
-Synthetic review text continues below so the viewport and scrollbar remain meaningful.                                 ┃
-The same long body is intentionally reused across every review state and terminal size.                                ┃
-No Terraform process, provider, state file, or cloud credential is used by this fixture.                               ┃
-The review surface preserves Terraform order, attributes, output values, and diagnostics.                              │
-Long lines remain unwrapped in the plan body; horizontal movement exposes the hidden suffix.                           │
-Vertical movement exposes later lines in this synthetic plan body.                                                     ▼
-Enter confirm | Esc cancel                                                                             8 matches    1/43
+Synthetic review text continues below so the viewport and scrollbar remain meaningful.                                 │
+The same long body is intentionally reused across every review state and terminal size.                                │
+No Terraform process, provider, state file, or cloud credential is used by this fixture.                               │
+The review surface preserves Terraform order, attributes, output values, and diagnostics.                              ▼
+/ filter | a apply | ? help | q quit                                                                                2/43
