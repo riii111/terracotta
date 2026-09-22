@@ -12,6 +12,8 @@ use crate::app::{
     reason = "comparison feeds the following environment Overview SBI"
 )]
 pub(crate) mod comparison;
+#[expect(dead_code, reason = "display groups feed the SBI05-05 matrix UI")]
+pub(crate) mod overview;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct EnvironmentIdentity {
