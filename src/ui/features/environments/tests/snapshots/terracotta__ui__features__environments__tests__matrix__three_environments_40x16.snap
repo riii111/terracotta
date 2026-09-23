@@ -14,7 +14,7 @@ Same change across envs
   …orm_data.server[*] ~ 20
 Total                 +0 ~21 -0
                       0 replace
-
-
 ────────────────────────────────────────
-Enter open resource  ? help  q quit
+↑↓ row  ←→ env
+Enter preview  v full plan
+/ filter  Space expand  ? help  q quit

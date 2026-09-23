@@ -15,6 +15,6 @@ To│ compared.                      │ │
   │ Excluded environments are not  ┃ │
   │ retried.                       ▼ │
   │ ↑/↓/PgUp/PgDn scroll             │
-  │ ?/Esc close                      │
-  └──────────────────────────────────┘
-Enter open resource  ? help  q quit
+↑↓│ ?/Esc close                      │
+En└──────────────────────────────────┘
+/ filter  Space expand  ? help  q quit

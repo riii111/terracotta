@@ -7,7 +7,7 @@ Re┌Help───────────────────────�
 d-│ Current: Overview                                                      ▲ │
 ──│ ↑ / ↓ / j / k        select a resource row                             ┃ │──
 a-│ ← / → / [ / ]        select an environment                             ┃ │
-  │ Enter                open selected resource in raw plan                ┃ │
+  │ Enter / Esc          show / hide preview; Esc returns from full plan   ┃ │
 Ad│ 1–9                  open selected resource in the numbered            ┃ │
 No│                      environment                                       ┃ │
 To│ Space                expand or collapse a group                        ┃ │
@@ -23,6 +23,6 @@ To│ Space                expand or collapse a group                        ┃
   │ q                    quit; confirms first while acquiring              │ │
   │                                                                        │ │
   │ Matrix legend                                                          ▼ │
-  │ ↑/↓/PgUp/PgDn scroll | ?/Esc close                                       │
-──└──────────────────────────────────────────────────────────────────────────┘──
-Enter open selected resource in raw plan  / filter  Space expand  ? help  q quit
+──│ ↑/↓/PgUp/PgDn scroll | ?/Esc close                                       │──
+↑↓└──────────────────────────────────────────────────────────────────────────┘
+/ filter  Space expand  ? help  q quit

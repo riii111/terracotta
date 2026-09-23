@@ -1,4 +1,4 @@
-use super::{EnvironmentDialog, EnvironmentView};
+use super::{CellPreview, EnvironmentDialog, EnvironmentView};
 use crate::{
     app::environments::{EnvironmentPlan, EnvironmentSession, EnvironmentState},
     ui::{
@@ -14,6 +14,9 @@ use ratatui::{
     widgets::{Clear, Paragraph, Wrap},
 };
 use std::time::Instant;
+
+const MIN_MATRIX_HEIGHT: u16 = 5;
+const MIN_PREVIEW_HEIGHT: u16 = 3;
 
 impl EnvironmentView {
     pub(crate) fn render(&mut self, frame: &mut Frame<'_>, state: &EnvironmentSession) {
@@ -97,40 +100,66 @@ impl EnvironmentView {
                 detail_height,
             ),
         );
-        let body = Rect::new(
-            area.x,
-            area.y.saturating_add(context_height + detail_height),
-            area.width,
-            area.height
-                .saturating_sub(context_height + 1 + detail_height + u16::from(show_boundaries)),
-        );
-        matrix::render(frame, body, state, &mut self.matrix, self.selection.column);
-        let footer = if self.matrix.searching() {
-            "Enter confirm   Esc cancel"
-        } else if area.width < 45 {
-            "Enter open resource  ? help  q quit"
-        } else if area.width < 56 {
-            "Enter open selected resource  ? help"
-        } else if area.width < 80 {
-            "Enter open selected resource in raw plan  ? help  q quit"
+        let regular_footer =
+            overview_footer(area.width, self.preview_open, self.matrix.searching());
+        let regular_footer_height = line_count(&regular_footer);
+        let panel_height = self
+            .preview_open
+            .then(|| {
+                let preview_space_height = area
+                    .height
+                    .saturating_sub(context_height + detail_height + regular_footer_height);
+                available_preview_height(preview_space_height)
+            })
+            .flatten();
+        let show_preview = panel_height.is_some();
+        let footer = if self.preview_open && !show_preview {
+            preview_unavailable_footer(area.width, self.matrix.searching())
         } else {
-            "Enter open selected resource in raw plan  / filter  Space expand  ? help  q quit"
+            regular_footer
         };
-        if show_boundaries {
-            frame.render_widget(
-                separator::render(area.width),
-                Rect::new(area.x, area.bottom().saturating_sub(2), area.width, 1),
+        let footer_height = line_count(&footer);
+        let footer_separator_height = u16::from(show_boundaries && !show_preview);
+        let matrix_height = area.height.saturating_sub(
+            context_height
+                + detail_height
+                + footer_height
+                + footer_separator_height
+                + panel_height.unwrap_or(0),
+        );
+        let matrix_y = area.y.saturating_add(context_height + detail_height);
+        matrix::render(
+            frame,
+            Rect::new(area.x, matrix_y, area.width, matrix_height),
+            state,
+            &mut self.matrix,
+            self.selection.column,
+        );
+        if let Some(panel_height) = panel_height {
+            let preview = self.selected_cell_preview(state);
+            render_cell_preview(
+                frame,
+                Rect::new(
+                    area.x,
+                    matrix_y.saturating_add(matrix_height),
+                    area.width,
+                    panel_height,
+                ),
+                &preview,
             );
         }
-        frame.render_widget(
-            Paragraph::new(footer),
-            Rect::new(
-                area.x,
-                area.bottom().saturating_sub(1),
-                area.width,
-                area.height.min(1),
-            ),
-        );
+        if footer_separator_height > 0 {
+            frame.render_widget(
+                separator::render(area.width),
+                Rect::new(
+                    area.x,
+                    area.bottom().saturating_sub(footer_height + 1),
+                    area.width,
+                    1,
+                ),
+            );
+        }
+        render_footer(frame, area, &footer);
     }
 
     fn has_room_for_boundaries(&self, area: Rect, state: &EnvironmentSession) -> bool {
@@ -230,7 +259,10 @@ fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
                 vec![
                     help_dialog::HelpAction::new("↑ / ↓ / j / k", "select a resource row"),
                     help_dialog::HelpAction::new("← / → / [ / ]", "select an environment"),
-                    help_dialog::HelpAction::new("Enter", "open selected resource in raw plan"),
+                    help_dialog::HelpAction::new(
+                        "Enter / Esc",
+                        "show / hide preview; Esc returns from full plan",
+                    ),
                     help_dialog::HelpAction::new(
                         "1–9",
                         "open selected resource in the numbered environment",
@@ -280,5 +312,96 @@ fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
             ),
         ],
         scroll,
+    );
+}
+
+fn available_preview_height(content_height: u16) -> Option<u16> {
+    let available = content_height.checked_sub(MIN_MATRIX_HEIGHT)?;
+    let preferred = content_height.saturating_sub(content_height.saturating_mul(2) / 5);
+    (available >= MIN_PREVIEW_HEIGHT).then_some(available.min(preferred.max(MIN_PREVIEW_HEIGHT)))
+}
+
+fn overview_footer(width: u16, preview_open: bool, searching: bool) -> Vec<String> {
+    if searching {
+        return vec!["Enter confirm  Esc cancel".to_owned()];
+    }
+    let movement = "↑↓ row  ←→ env";
+    let action = if preview_open {
+        "Esc close preview  v full plan"
+    } else {
+        "Enter preview  v full plan"
+    };
+    let other = "/ filter  Space expand  ? help  q quit";
+    if width >= 120 {
+        vec![format!("{movement}  {action}  {other}")]
+    } else if width >= 56 {
+        vec![format!("{movement}  {action}"), other.to_owned()]
+    } else {
+        vec![movement.to_owned(), action.to_owned(), other.to_owned()]
+    }
+}
+
+fn preview_unavailable_footer(width: u16, searching: bool) -> Vec<String> {
+    if searching {
+        return vec![
+            "Preview needs more room".to_owned(),
+            "Enter confirm  Esc cancel".to_owned(),
+        ];
+    }
+    if width >= 56 {
+        vec![
+            "↑↓ row  ←→ env  Preview needs more room".to_owned(),
+            "v full plan  ? help  q quit".to_owned(),
+        ]
+    } else {
+        vec![
+            "↑↓ row  ←→ env".to_owned(),
+            "Preview unavailable; resize terminal".to_owned(),
+            "v full plan  ? help  q quit".to_owned(),
+        ]
+    }
+}
+
+fn line_count(lines: &[String]) -> u16 {
+    u16::try_from(lines.len()).unwrap_or(u16::MAX)
+}
+
+fn render_footer(frame: &mut Frame<'_>, area: Rect, lines: &[String]) {
+    let start = area.bottom().saturating_sub(line_count(lines));
+    for (index, line) in lines.iter().enumerate() {
+        let y = start.saturating_add(u16::try_from(index).unwrap_or(u16::MAX));
+        frame.render_widget(
+            Paragraph::new(line.as_str()),
+            Rect::new(area.x, y, area.width, 1),
+        );
+    }
+}
+
+fn render_cell_preview(frame: &mut Frame<'_>, area: Rect, preview: &CellPreview) {
+    frame.render_widget(
+        separator::render(area.width),
+        Rect::new(area.x, area.y, area.width, 1),
+    );
+    if area.height < MIN_PREVIEW_HEIGHT {
+        return;
+    }
+    frame.render_widget(
+        Paragraph::new(preview.title.as_str()).style(theme::accent_style()),
+        Rect::new(area.x, area.y.saturating_add(1), area.width, 1),
+    );
+    frame.render_widget(
+        Paragraph::new(preview.text.as_str())
+            .wrap(Wrap { trim: false })
+            .style(if preview.is_raw {
+                theme::body_style()
+            } else {
+                theme::warning_style()
+            }),
+        Rect::new(
+            area.x,
+            area.y.saturating_add(2),
+            area.width,
+            area.height.saturating_sub(2),
+        ),
     );
 }

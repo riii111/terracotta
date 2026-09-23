@@ -9,12 +9,12 @@ d-│ ↑ / ↓ / j / k   select a       ┃ │
 HC│                 resource row   │ │
 a-│ ← / → / [ / ]   select an      │ │
   │                 environment    │ │
-Ad│ Enter           open selected  │ │
-No│                 resource in    │ │th
-To│                 raw plan       │ │
-  │ 1–9             open selected  │ │
-  │                 resource in    ▼ │
+Ad│ Enter / Esc     show / hide    │ │
+No│                 preview; Esc   │ │th
+To│                 returns from   │ │
+  │                 full plan      │ │
+  │ 1–9             open selected  ▼ │
   │ ↑/↓/PgUp/PgDn scroll             │
-  │ ?/Esc close                      │
-  └──────────────────────────────────┘
-Enter open resource  ? help  q quit
+↑↓│ ?/Esc close                      │
+En└──────────────────────────────────┘
+/ filter  Space expand  ? help  q quit

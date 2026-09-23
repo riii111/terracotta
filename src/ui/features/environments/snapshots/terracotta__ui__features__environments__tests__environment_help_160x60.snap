@@ -25,7 +25,7 @@ Total       +0 ~0 -0  Error     Running     Pending     Excluded
                                           │ Current: Overview                                                      ▲ │
                                           │ ↑ / ↓ / j / k        select a resource row                             ┃ │
                                           │ ← / → / [ / ]        select an environment                             ┃ │
-                                          │ Enter                open selected resource in raw plan                ┃ │
+                                          │ Enter / Esc          show / hide preview; Esc returns from full plan   ┃ │
                                           │ 1–9                  open selected resource in the numbered            ┃ │
                                           │                      environment                                       ┃ │
                                           │ Space                expand or collapse a group                        ┃ │
@@ -61,4 +61,4 @@ Total       +0 ~0 -0  Error     Running     Pending     Excluded
 
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-Enter open selected resource in raw plan  / filter  Space expand  ? help  q quit
+↑↓ row  ←→ env  Enter preview  v full plan  / filter  Space expand  ? help  q quit
