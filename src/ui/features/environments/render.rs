@@ -19,14 +19,30 @@ impl EnvironmentView {
     pub(crate) fn render(&mut self, frame: &mut Frame<'_>, state: &EnvironmentSession) {
         self.sync(state);
         let area = frame.area();
+        let visible_environments = self.visible_environments(state.plans().len());
         let show_boundaries =
             self.selection.raw.is_none() && self.has_room_for_boundaries(area, state);
-        let layout = environments::layout(area, state, self.notice.as_deref(), show_boundaries);
-        environments::render_tabs(frame, layout.tabs, state, &self.selection);
+        let layout = environments::layout(
+            area,
+            state,
+            self.notice.as_deref(),
+            self.selected_environments.is_some(),
+            show_boundaries,
+        );
+        environments::render_tabs(
+            frame,
+            layout.tabs,
+            state,
+            &self.selection,
+            &visible_environments,
+        );
         frame.render_widget(
-            Paragraph::new(environments::summary(state))
-                .wrap(Wrap { trim: false })
-                .style(theme::secondary_style()),
+            Paragraph::new(environments::summary(
+                state,
+                self.selected_environments.is_some(),
+            ))
+            .wrap(Wrap { trim: false })
+            .style(theme::secondary_style()),
             layout.summary,
         );
         if let Some(notice) = &self.notice {
@@ -66,6 +82,8 @@ impl EnvironmentView {
                 }
                 EnvironmentDialog::Message(text) => self.render_dialog(frame, text),
             }
+        } else if let Some(dialog) = &self.filter_dialog {
+            dialog.render(frame, frame.area(), state.plans());
         }
     }
 
@@ -131,7 +149,13 @@ impl EnvironmentView {
         let Some(plan) = state.plans().get(self.selection.column) else {
             return false;
         };
-        let shell = environments::layout(area, state, self.notice.as_deref(), false);
+        let shell = environments::layout(
+            area,
+            state,
+            self.notice.as_deref(),
+            self.selected_environments.is_some(),
+            false,
+        );
         let context = overview_context(self, plan);
         let detail = overview_detail(plan);
         let (context_height, detail_height) = section_heights(shell.body, &context, &detail);
@@ -188,20 +212,25 @@ fn overview_footer(width: u16, searching: bool, expanded: Option<bool>) -> Strin
             "Space expand"
         }
     });
+    let filter_hint = "e env filter";
     match (width, toggle) {
-        (..45, Some(toggle)) => format!("Enter open  {toggle}  q quit"),
-        (..45, None) => "Enter open resource  ? help  q quit".to_owned(),
-        (45..56, Some(toggle)) => format!("Enter open  {toggle}  ? help"),
-        (45..56, None) => "Enter open selected resource  ? help".to_owned(),
-        (56..64, Some(toggle)) => format!("Enter open  / filter  {toggle}  ? help"),
-        (56..64, None) => "Enter open selected resource in raw plan  ? help".to_owned(),
-        (64..80, Some(toggle)) => format!("Enter open selected  / filter  {toggle}  ? help"),
-        (64..80, None) => "Enter open selected resource in raw plan  ? help  q quit".to_owned(),
+        (..45, Some(toggle)) => format!("Enter open  {toggle}  e filter"),
+        (..45, None) => "Enter open  e env filter  q quit".to_owned(),
+        (45..56, Some(toggle)) => format!("Enter open  {toggle}  e filter  ? help"),
+        (45..56, None) => "Enter open selected  e env filter  ? help".to_owned(),
+        (56..64, Some(toggle)) => format!("Enter open  / filter  {toggle}  e filter"),
+        (56..64, None) => "Enter open selected  / filter  e filter".to_owned(),
+        (64..80, Some(toggle)) => {
+            format!("Enter open selected  / filter  {toggle}  {filter_hint}  ? help")
+        }
+        (64..80, None) => {
+            format!("Enter open selected raw plan  / filter  {filter_hint}  ? help")
+        }
         (_, Some(toggle)) => {
-            format!("Enter open selected  / filter  {toggle}  ? help  q quit")
+            format!("Enter open selected  / filter  {toggle}  {filter_hint}  ? help  q quit")
         }
         (_, None) => {
-            "Enter open selected resource in raw plan  / filter  ? help  q quit".to_owned()
+            format!("Enter open selected raw plan  / filter  {filter_hint}  ? help  q quit")
         }
     }
 }
@@ -263,6 +292,7 @@ fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
                         "expand or collapse only on [+]/[-] group rows",
                     ),
                     help_dialog::HelpAction::new("/", "filter full addresses"),
+                    help_dialog::HelpAction::new("e", "filter compared environments"),
                 ],
             ),
             help_dialog::HelpSection::new(

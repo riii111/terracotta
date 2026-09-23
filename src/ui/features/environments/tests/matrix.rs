@@ -297,7 +297,7 @@ fn short_terminal_keeps_environment_actions_without_boundary_rows() {
     let mut view = EnvironmentView::default();
     let rendered = text(&mut view, &state, (40, 14));
 
-    assert!(rendered.contains("Enter open resource  ? help  q quit"));
+    assert!(rendered.contains("Enter open  e env filter  q quit"));
     assert!(!rendered.contains(&"─".repeat(40)));
 }
 
@@ -554,6 +554,125 @@ fn raw_filter_escape_clears_the_query_before_returning_to_overview() {
     );
     press(&mut view, &mut state, KeyCode::Esc);
     assert!(view.selection.raw.is_none());
+}
+
+#[test]
+fn environment_filter_updates_comparison_columns_and_preserves_global_ready_progress() {
+    let mut state = session(&["dev", "prod", "stg"]);
+    complete(
+        &mut state,
+        vec![change("terraform_data.api", ResourceChangeKind::Update)],
+    );
+    complete(
+        &mut state,
+        vec![change("terraform_data.api", ResourceChangeKind::Update)],
+    );
+    complete(
+        &mut state,
+        vec![change("terraform_data.api", ResourceChangeKind::Create)],
+    );
+    let mut view = EnvironmentView::default();
+
+    press(&mut view, &mut state, KeyCode::Char('e'));
+    press(&mut view, &mut state, KeyCode::Down);
+    press(&mut view, &mut state, KeyCode::Down);
+    press(&mut view, &mut state, KeyCode::Char(' '));
+    press(&mut view, &mut state, KeyCode::Enter);
+
+    let output = text(&mut view, &state, (80, 24));
+    assert!(output.contains("Ready: 3/3   [Env filter ON]"), "{output}");
+    assert!(
+        output.contains("Same change across selected envs"),
+        "{output}"
+    );
+    assert!(output.contains("1 dev  2 prod"), "{output}");
+    assert!(!output.contains("3 stg"), "{output}");
+    assert!(!output.contains("Compared:"), "{output}");
+}
+
+#[test]
+fn environment_filter_escape_discards_unapplied_toggles() {
+    let mut state = session(&["dev", "prod"]);
+    complete(
+        &mut state,
+        vec![change("terraform_data.api", ResourceChangeKind::Update)],
+    );
+    complete(
+        &mut state,
+        vec![change("terraform_data.api", ResourceChangeKind::Update)],
+    );
+    let mut view = EnvironmentView::default();
+
+    press(&mut view, &mut state, KeyCode::Char('e'));
+    press(&mut view, &mut state, KeyCode::Char(' '));
+    press(&mut view, &mut state, KeyCode::Esc);
+
+    let output = text(&mut view, &state, (80, 24));
+    assert!(!output.contains("[Env filter ON]"), "{output}");
+    assert!(output.contains("1 dev  2 prod"), "{output}");
+}
+
+#[test]
+fn filtered_numbered_tabs_open_the_environment_with_the_visible_number() {
+    let names = (0..10)
+        .map(|index| format!("env-{index:02}"))
+        .collect::<Vec<_>>();
+    let mut state = session(&names.iter().map(String::as_str).collect::<Vec<_>>());
+    for _ in 0..10 {
+        complete(
+            &mut state,
+            vec![change("terraform_data.api", ResourceChangeKind::Update)],
+        );
+    }
+    let mut view = EnvironmentView::default();
+
+    press(&mut view, &mut state, KeyCode::Char('e'));
+    for index in 0..10 {
+        if index != 2 && index != 9 {
+            press(&mut view, &mut state, KeyCode::Char(' '));
+        }
+        if index < 9 {
+            press(&mut view, &mut state, KeyCode::Down);
+        }
+    }
+    press(&mut view, &mut state, KeyCode::Enter);
+
+    let output = text(&mut view, &state, (120, 40));
+    assert!(output.contains("1 env-02  2 env-09"), "{output}");
+    assert!(!output.contains("env-00"), "{output}");
+    press(&mut view, &mut state, KeyCode::Char('3'));
+    assert!(view.selection.raw.is_none());
+    press(&mut view, &mut state, KeyCode::Char('2'));
+    assert_eq!(view.selection.raw, Some(9));
+}
+
+#[test]
+fn filter_can_narrow_a_three_environment_matrix_to_one_selected_environment() {
+    let mut state = session(&["dev", "prod", "stg"]);
+    for kind in [
+        ResourceChangeKind::Update,
+        ResourceChangeKind::Update,
+        ResourceChangeKind::Create,
+    ] {
+        complete(&mut state, vec![change("terraform_data.api", kind)]);
+    }
+    let mut view = EnvironmentView::default();
+
+    press(&mut view, &mut state, KeyCode::Char('e'));
+    press(&mut view, &mut state, KeyCode::Char(' '));
+    press(&mut view, &mut state, KeyCode::Down);
+    press(&mut view, &mut state, KeyCode::Down);
+    press(&mut view, &mut state, KeyCode::Char(' '));
+    press(&mut view, &mut state, KeyCode::Enter);
+
+    let output = text(&mut view, &state, (80, 24));
+    assert!(output.contains("Ready: 3/3   [Env filter ON]"), "{output}");
+    assert!(output.contains("1 prod"), "{output}");
+    assert!(!output.contains("1 dev"), "{output}");
+    assert!(!output.contains("2 stg"), "{output}");
+    assert_eq!(view.selection.column, 1);
+    press(&mut view, &mut state, KeyCode::Enter);
+    assert_eq!(view.selection.raw, Some(1));
 }
 
 #[rstest]

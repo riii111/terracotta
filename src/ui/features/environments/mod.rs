@@ -1,3 +1,4 @@
+mod filter;
 mod render;
 
 use std::ops::ControlFlow;
@@ -20,16 +21,19 @@ use crate::{
         shell::environments::{self, EnvironmentSelection},
     },
 };
+use filter::{EnvironmentFilterDialog, EnvironmentFilterResult};
 
 #[derive(Default)]
 pub(crate) struct EnvironmentView {
     selection: EnvironmentSelection,
+    selected_environments: Option<Vec<usize>>,
     matrix: MatrixView,
     confirming_quit: bool,
     reviews: Vec<PlanReviewViewState>,
     notice: Option<String>,
     dialog: Option<EnvironmentDialog>,
     dialog_scroll: u16,
+    filter_dialog: Option<EnvironmentFilterDialog>,
 }
 
 enum EnvironmentDialog {
@@ -54,9 +58,12 @@ impl EnvironmentView {
         self.sync(state);
         let key = normalize_key(key);
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            if self.filter_dialog.is_some() {
+                return None;
+            }
             if self.selection.raw.is_none() && self.matrix.searching() {
                 self.matrix
-                    .apply(OverviewInput::SearchCancel, state, self.selection.column);
+                    .apply(OverviewInput::SearchCancel, self.selection.column);
                 return None;
             }
             return Some(EnvironmentInput::Interrupt);
@@ -70,6 +77,9 @@ impl EnvironmentView {
                 }
                 _ => None,
             };
+        }
+        if self.filter_dialog.is_some() {
+            return self.handle_filter_dialog_key(key, size, state);
         }
         if self.dialog.is_some() {
             match key.code {
@@ -117,8 +127,17 @@ impl EnvironmentView {
                 self.help();
                 None
             }
+            OverviewInput::OpenEnvironmentFilter => {
+                self.filter_dialog = Some(EnvironmentFilterDialog::new(
+                    state.plans(),
+                    self.selected_environments.as_deref(),
+                    self.selection.column,
+                    size,
+                ));
+                None
+            }
             _ => {
-                self.matrix.apply(input, state, self.selection.column);
+                self.matrix.apply(input, self.selection.column);
                 None
             }
         }
@@ -127,7 +146,50 @@ impl EnvironmentView {
     fn sync(&mut self, state: &EnvironmentSession) {
         self.reviews
             .resize_with(state.plans().len(), PlanReviewViewState::default);
-        self.matrix.sync(state, self.selection.column);
+        let indexes = self.visible_environments(state.plans().len());
+        self.matrix.sync(state, &indexes, self.selection.column);
+    }
+
+    fn handle_filter_dialog_key(
+        &mut self,
+        key: KeyEvent,
+        size: Size,
+        state: &EnvironmentSession,
+    ) -> Option<EnvironmentInput> {
+        let result = self
+            .filter_dialog
+            .as_mut()?
+            .handle_key(key, size, state.plans());
+        match result {
+            Some(EnvironmentFilterResult::Apply(selected)) => {
+                self.filter_dialog = None;
+                let all = selected.len() == state.plans().len()
+                    && selected.iter().copied().eq(0..state.plans().len());
+                self.selected_environments = (!all).then_some(selected);
+                if self
+                    .selected_environments
+                    .as_ref()
+                    .is_some_and(|indexes| !indexes.contains(&self.selection.column))
+                {
+                    self.selection.column = self
+                        .selected_environments
+                        .as_ref()
+                        .and_then(|indexes| indexes.first().copied())
+                        .unwrap_or(0);
+                }
+                self.notice = None;
+                self.sync(state);
+            }
+            Some(EnvironmentFilterResult::Cancel) => self.filter_dialog = None,
+            None => {}
+        }
+        None
+    }
+
+    fn visible_environments(&self, count: usize) -> Vec<usize> {
+        self.selected_environments
+            .clone()
+            .unwrap_or_else(|| (0..count).collect())
     }
 
     fn navigation(
@@ -141,10 +203,11 @@ impl EnvironmentView {
             | (KeyCode::Tab, KeyModifiers::SHIFT) => Some(-1),
             _ => None,
         };
+        let visible = self.visible_environments(state.plans().len());
         if self.selection.raw.is_some()
             && let Some(delta) = tab_delta
         {
-            let index = self.selection.adjacent(delta, state.plans().len());
+            let index = adjacent_environment(self.selection.active(), delta, &visible);
             return ControlFlow::Break(self.open(state, index, false));
         }
 
@@ -167,8 +230,8 @@ impl EnvironmentView {
                 let KeyCode::Char(digit) = key.code else {
                     unreachable!()
                 };
-                let index = digit as usize - '1' as usize;
-                if index < state.plans().len() {
+                let visible_index = digit as usize - '1' as usize;
+                if let Some(index) = visible.get(visible_index).copied() {
                     return ControlFlow::Break(self.open(state, index, false));
                 }
             }
@@ -180,7 +243,7 @@ impl EnvironmentView {
                 } else {
                     1
                 };
-                let index = self.selection.adjacent(delta, state.plans().len());
+                let index = adjacent_environment(self.selection.active(), delta, &visible);
                 if self.selection.raw.is_some() {
                     return ControlFlow::Break(self.open(state, index, false));
                 }
@@ -308,6 +371,7 @@ impl EnvironmentView {
             Rect::new(0, 0, size.width, size.height),
             state,
             self.notice.as_deref(),
+            self.selected_environments.is_some(),
             false,
         )
         .body;
@@ -341,6 +405,21 @@ impl EnvironmentView {
             Some(EnvironmentInput::Quit)
         }
     }
+}
+
+fn adjacent_environment(active: usize, delta: isize, visible: &[usize]) -> usize {
+    let position = visible
+        .iter()
+        .position(|index| *index == active)
+        .unwrap_or(0);
+    visible
+        .get(
+            position
+                .saturating_add_signed(delta)
+                .min(visible.len().saturating_sub(1)),
+        )
+        .copied()
+        .unwrap_or(0)
 }
 
 #[cfg(test)]

@@ -2,8 +2,9 @@ use std::collections::BTreeSet;
 
 use crate::app::environments::{
     EnvironmentSession,
+    comparison::EnvironmentSelection,
     comparison::{CellState, ComparisonRow, DifferenceReason, SourceReference},
-    overview::{EnvironmentOverview, GroupId, OverviewRow},
+    overview::{EnvironmentOverview, GroupId, OverviewRow, environment_overview_for_selection},
 };
 use crate::ui::features::overview::OverviewInput;
 use crate::ui::text_input;
@@ -43,15 +44,31 @@ pub(crate) struct MatrixView {
     pub(super) first_column: usize,
     pub(super) expanded: BTreeSet<GroupId>,
     pub(super) filter: String,
+    pub(super) overview: Option<EnvironmentOverview>,
+    pub(super) environments: Vec<usize>,
     search: Option<Search>,
     revision: Option<u64>,
 }
 
 impl MatrixView {
-    pub(crate) fn sync(&mut self, state: &EnvironmentSession, environment: usize) {
-        if self.revision != Some(state.revision()) {
+    pub(crate) fn sync(
+        &mut self,
+        state: &EnvironmentSession,
+        environments: &[usize],
+        environment: usize,
+    ) {
+        if self.revision != Some(state.revision()) || self.environments != environments {
             let anchor = self.anchor(environment);
-            self.rebuild(state.overview(), anchor.as_ref());
+            self.overview = Some(if environments.len() == state.plans().len() {
+                state.overview().clone()
+            } else {
+                let selection =
+                    EnvironmentSelection::new(Some(environments.to_vec()), state.plans().len())
+                        .expect("visible environment indexes form a valid selection");
+                environment_overview_for_selection(state.plans(), &selection)
+            });
+            self.environments = environments.to_vec();
+            self.rebuild(anchor.as_ref());
             self.revision = Some(state.revision());
         }
     }
@@ -74,17 +91,23 @@ impl MatrixView {
     }
 
     pub(crate) fn cell(&self, environment: usize) -> Option<&MatrixCell> {
-        self.rows.get(self.selected)?.cells.get(environment)
+        let column = self
+            .environments
+            .iter()
+            .position(|index| *index == environment)?;
+        self.rows.get(self.selected)?.cells.get(column)
     }
 
-    pub(crate) fn apply(
-        &mut self,
-        input: OverviewInput,
-        state: &EnvironmentSession,
-        environment: usize,
-    ) {
+    pub(crate) fn selected_column(&self, environment: usize) -> usize {
+        self.environments
+            .iter()
+            .position(|index| *index == environment)
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn apply(&mut self, input: OverviewInput, environment: usize) {
         if self.searching() {
-            self.edit_search(input, state);
+            self.edit_search(input);
             return;
         }
         match input {
@@ -108,7 +131,7 @@ impl MatrixView {
                     if !self.expanded.remove(&group) {
                         self.expanded.insert(group);
                     }
-                    self.rebuild(state.overview(), anchor.as_ref());
+                    self.rebuild(anchor.as_ref());
                 }
             }
             OverviewInput::SearchStart => {
@@ -120,7 +143,8 @@ impl MatrixView {
             }
             OverviewInput::SearchCancel => {
                 self.filter.clear();
-                self.rebuild(state.overview(), self.anchor(environment).as_ref());
+                let anchor = self.anchor(environment);
+                self.rebuild(anchor.as_ref());
             }
             _ => {}
         }
@@ -128,9 +152,13 @@ impl MatrixView {
 
     fn anchor(&self, environment: usize) -> Option<Anchor> {
         let row = self.rows.get(self.selected)?;
+        let column = self
+            .environments
+            .iter()
+            .position(|index| *index == environment);
         let address = row
             .cells
-            .get(environment)
+            .get(column?)
             .and_then(|cell| cell.members.first())
             .or_else(|| row.cells.iter().find_map(|cell| cell.members.first()))
             .unwrap_or(&row.address)
@@ -141,7 +169,13 @@ impl MatrixView {
         })
     }
 
-    fn rebuild(&mut self, overview: &EnvironmentOverview, anchor: Option<&Anchor>) {
+    fn rebuild(&mut self, anchor: Option<&Anchor>) {
+        let Some(overview) = &self.overview else {
+            self.rows.clear();
+            self.selected = 0;
+            self.vertical = 0;
+            return;
+        };
         self.rows = rows(overview, &self.filter, &self.expanded);
         let selected = anchor.and_then(|anchor| {
             if let Some(group) = &anchor.group
@@ -178,7 +212,7 @@ impl MatrixView {
         }
     }
 
-    fn edit_search(&mut self, input: OverviewInput, state: &EnvironmentSession) {
+    fn edit_search(&mut self, input: OverviewInput) {
         let search = self.search.as_mut().expect("active search");
         match input {
             OverviewInput::SearchConfirm => {
@@ -188,7 +222,7 @@ impl MatrixView {
             OverviewInput::SearchCancel => {
                 let search = self.search.take().expect("active search");
                 self.filter = search.previous;
-                self.rebuild(state.overview(), search.anchor.as_ref());
+                self.rebuild(search.anchor.as_ref());
                 return;
             }
             OverviewInput::SearchChar(character) => {
@@ -213,7 +247,7 @@ impl MatrixView {
             OverviewInput::SearchEnd => search.cursor = self.filter.len(),
             _ => return,
         }
-        self.rebuild(state.overview(), None);
+        self.rebuild(None);
     }
 }
 

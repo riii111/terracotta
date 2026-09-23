@@ -12,17 +12,17 @@ Ad│ 1–9                  open selected resource in the numbered            �
 No│                      environment                                       ┃ │
 To│ Space                expand or collapse only on [+]/[-] group rows     ┃ │
   │ /                    filter full addresses                             ┃ │
+  │ e                    filter compared environments                      ┃ │
   │                                                                        ┃ │
   │ Other                                                                  ┃ │
-  │ PgUp / PgDn          move one page                                     ┃ │
-  │ Home / End           go to the first or last row                       ┃ │
+  │ PgUp / PgDn          move one page                                     │ │
+  │ Home / End           go to the first or last row                       │ │
   │ v                    show the full plan from the top                   │ │
   │ y                    copy the selected environment's plan              │ │
   │ c                    show environment context                          │ │
   │ r                    retry a selected Error environment                │ │
   │ q                    quit; confirms first while acquiring              │ │
-  │                                                                        │ │
-  │ Matrix legend                                                          ▼ │
+  │                                                                        ▼ │
   │ ↑/↓/PgUp/PgDn scroll | ?/Esc close                                       │
 ──└──────────────────────────────────────────────────────────────────────────┘──
-Enter open selected resource in raw plan  / filter  ? help  q quit
+Enter open selected raw plan  / filter  e env filter  ? help  q quit

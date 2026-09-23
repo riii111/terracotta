@@ -186,7 +186,9 @@ fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
         if (width, height) == (80, 24) {
             assert!(text.contains("1–9"));
             assert!(
-                text.contains("Enter open selected resource in raw plan  / filter  ? help  q quit")
+                text.contains(
+                    "Enter open selected raw plan  / filter  e env filter  ? help  q quit"
+                )
             );
             assert!(text.contains("only on [+]/[-] group rows"));
         }
@@ -534,6 +536,73 @@ fn small_terminals_keep_cancel_and_quit_operable() {
             ),
             Some(EnvironmentInput::Interrupt)
         ));
+    }
+}
+
+#[test]
+fn environment_filter_dialog_shows_names_and_acquisition_states_without_prod_tags() {
+    let state = partial_session();
+    let dialog = EnvironmentFilterDialog::new(state.plans(), None, 0, Size::new(120, 40));
+    let text = buffer_text(&render_to_buffer((120, 40), |frame| {
+        dialog.render(frame, frame.area(), state.plans());
+    }));
+
+    for marker in [
+        "a-ready",
+        "b-error",
+        "c-running",
+        "d-pending",
+        "e-hcp",
+        "Ready",
+        "Error",
+        "Running",
+        "Pending",
+        "Excluded",
+    ] {
+        assert!(text.contains(marker), "missing {marker:?}:\n{text}");
+    }
+    assert!(!text.contains("Excluded: HCP execution"), "{text}");
+    assert!(!text.contains("[PROD]"), "{text}");
+}
+
+#[test]
+fn active_environment_filter_keeps_global_progress_without_listing_environments() {
+    let state = partial_session();
+    let mut view = EnvironmentView::default();
+    let size = Size::new(80, 24);
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    for _ in 0..4 {
+        view.handle_key(
+            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+            size,
+            &state,
+        );
+        view.handle_key(
+            KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+            size,
+            &state,
+        );
+    }
+    view.handle_key(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    let text = buffer_text(&render_to_buffer((80, 24), |frame| {
+        view.render(frame, &state);
+    }));
+    let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    for marker in ["Ready: 1/5", "[Env filter ON]"] {
+        assert!(compact.contains(marker), "missing {marker:?}:\n{text}");
+    }
+    assert!(!compact.contains("Compared:"), "{text}");
+    for name in ["b-error", "c-running", "d-pending", "e-hcp"] {
+        assert!(!compact.contains(name), "{text}");
     }
 }
 

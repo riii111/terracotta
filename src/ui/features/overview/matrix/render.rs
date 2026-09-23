@@ -40,23 +40,25 @@ pub(crate) fn render(
         return;
     }
     let address_width = address_width(area, view);
+    let selected_column = view.selected_column(selected_environment);
     let column_widths = column_widths(state, view);
     let column_budget =
         usize::from(area.width).saturating_sub(address_width + WHY_WIDTH + COLUMN_GAP);
-    let columns = visible_columns(view, &column_widths, column_budget, selected_environment);
+    let columns = visible_columns(view, &column_widths, column_budget, selected_column);
 
     let mut header = vec![Span::styled("Address", theme::secondary_style())];
     header.push(Span::raw(" ".repeat(address_width.saturating_sub(7))));
     for &(index, column_width) in &columns {
-        let label = if index == selected_environment {
-            format!("> {}", name(&state.plans()[index]))
+        let environment = view.environments[index];
+        let label = if index == selected_column {
+            format!("> {}", name(&state.plans()[environment]))
         } else {
-            name(&state.plans()[index])
+            name(&state.plans()[environment])
         };
         let (label, padding) = fit_parts(&label, column_width - COLUMN_GAP, false);
         header.push(Span::styled(
             label,
-            if index == selected_environment {
+            if index == selected_column {
                 theme::search_match_style()
             } else {
                 theme::secondary_style()
@@ -72,43 +74,82 @@ pub(crate) fn render(
         Rect::new(area.x, area.y, area.width, 1),
     );
 
-    let partial = !matches!(state.overview().scope, ComparisonScope::All { .. });
+    render_content(
+        frame,
+        area,
+        state,
+        view,
+        &columns,
+        address_width,
+        selected_column,
+    );
+}
+
+fn render_content(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &EnvironmentSession,
+    view: &mut MatrixView,
+    columns: &[(usize, usize)],
+    address_width: usize,
+    selected_column: usize,
+) {
+    let filtered = view.environments.len() != state.plans().len();
+    let partial = view
+        .overview
+        .as_ref()
+        .is_none_or(|overview| !matches!(overview.scope, ComparisonScope::All { .. }));
     let mut lines = Vec::new();
     let mut row_lines = Vec::new();
     let mut section = None;
     for (index, row) in view.rows.iter().enumerate() {
         if !row.child && section != Some(row.difference.is_some()) {
             section = Some(row.difference.is_some());
-            let title = if row.difference.is_some() {
+            let title = if filtered && partial {
+                if row.difference.is_some() {
+                    "Differs across selected envs (Ready only)"
+                } else {
+                    "Same change across selected envs (Ready only)"
+                }
+            } else if filtered {
+                if row.difference.is_some() {
+                    "Differs across selected envs"
+                } else {
+                    "Same change across selected envs"
+                }
+            } else if partial && row.difference.is_some() {
+                "Differs across envs (Ready only)"
+            } else if partial {
+                "Same change across envs (Ready only)"
+            } else if row.difference.is_some() {
                 "Differs across envs"
             } else {
                 "Same change across envs"
             };
-            lines.push(Line::styled(
-                format!("{title}{}", if partial { " (Ready only)" } else { "" }),
-                theme::accent_style(),
-            ));
+            lines.push(Line::styled(title, theme::accent_style()));
         }
         row_lines.push(lines.len());
         lines.push(row_line(
             row,
             index == view.selected,
             view,
-            &columns,
+            columns,
             address_width,
-            selected_environment,
+            selected_column,
         ));
     }
     if lines.is_empty() {
-        lines.push(Line::from(
-            if matches!(state.overview().scope, ComparisonScope::Waiting) {
-                "Waiting for environment plans."
-            } else {
-                "No matching resource changes. v opens the full plan."
-            },
-        ));
+        let waiting = view
+            .overview
+            .as_ref()
+            .is_none_or(|overview| matches!(overview.scope, ComparisonScope::Waiting));
+        lines.push(Line::from(if waiting {
+            "Waiting for environment plans."
+        } else {
+            "No matching resource changes. v opens the full plan."
+        }));
     }
-    lines.extend(total_lines(state, &columns, address_width));
+    lines.extend(total_lines(state, view, columns, address_width));
     let body = Rect::new(
         area.x,
         area.y + 1,
@@ -153,16 +194,16 @@ fn address_width(area: Rect, view: &MatrixView) -> usize {
 }
 
 fn column_widths(state: &EnvironmentSession, view: &MatrixView) -> Vec<usize> {
-    state
-        .plans()
+    view.environments
         .iter()
         .enumerate()
-        .map(|(index, plan)| {
+        .map(|(column, environment)| {
+            let plan = &state.plans()[*environment];
             let (first_total, second_total) = total_text(plan);
             let widest_cell = view
                 .rows
                 .iter()
-                .map(|row| Line::from(cell_text(&row.cells[index], row.group.is_some())).width())
+                .map(|row| Line::from(cell_text(&row.cells[column], row.group.is_some())).width())
                 .max()
                 .unwrap_or(0);
             (Line::from(name(plan).as_str()).width() + 2)
@@ -258,6 +299,7 @@ fn total_text(plan: &EnvironmentPlan) -> (String, String) {
 
 fn total_lines(
     state: &EnvironmentSession,
+    view: &MatrixView,
     columns: &[(usize, usize)],
     address_width: usize,
 ) -> [Line<'static>; 2] {
@@ -272,7 +314,8 @@ fn total_lines(
             theme::accent_style(),
         )];
         for &(index, column_width) in columns {
-            let totals = total_text(&state.plans()[index]);
+            let environment = view.environments[index];
+            let totals = total_text(&state.plans()[environment]);
             let text = if total_line == 0 { totals.0 } else { totals.1 };
             spans.push(Span::styled(
                 fit(&text, column_width - COLUMN_GAP, false),
