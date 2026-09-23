@@ -252,6 +252,12 @@ fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
                 "Comparison",
                 vec![
                     help_dialog::HelpAction::note("Same changes compare patterns."),
+                    help_dialog::HelpAction::note("blank: resource not in this environment."),
+                    help_dialog::HelpAction::note(".: resource present, with no change."),
+                    help_dialog::HelpAction::note("?: environment plan not fetched yet."),
+                    help_dialog::HelpAction::note(
+                        "why: missing = present in only some environments.",
+                    ),
                     help_dialog::HelpAction::note("Unknown values remain unknown."),
                     help_dialog::HelpAction::note("Only Ready environments are compared."),
                     help_dialog::HelpAction::note("Excluded environments are not retried."),
