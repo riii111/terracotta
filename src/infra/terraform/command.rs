@@ -1124,7 +1124,7 @@ mod tests {
     }
 
     #[test]
-    fn text_parser_preserves_chunked_long_lines_and_empty_lines() {
+    fn text_parser_preserves_chunked_long_lines_empty_lines_and_final_fragment() {
         let now = Instant::now();
         let mut parser = TextLineParser::default();
         let long_line = "x".repeat(100_000);
@@ -1134,30 +1134,20 @@ mod tests {
         for chunk in input.chunks(8 * 1024) {
             events.extend(parser.push(EventStream::Stdout, chunk, now));
         }
+
+        assert!(
+            events
+                .iter()
+                .filter_map(log_text)
+                .all(|(_, text)| text != "未完了")
+        );
+
         events.extend(parser.finish(EventStream::Stdout, now));
 
         let lines = events.iter().filter_map(log_text).map(|(_, text)| text);
         assert_eq!(
             lines.collect::<Vec<_>>(),
             vec![long_line.as_str(), "", "続き", "未完了"]
-        );
-    }
-
-    #[test]
-    fn text_parser_flushes_a_final_line_without_newline() {
-        let now = Instant::now();
-        let mut parser = TextLineParser::default();
-
-        assert!(
-            parser
-                .push(EventStream::Stdout, b"final line", now)
-                .is_empty()
-        );
-        let remainder = parser.finish(EventStream::Stdout, now);
-
-        assert_eq!(
-            log_text(&remainder[0]),
-            Some((EventStream::Stdout, "final line"))
         );
     }
 

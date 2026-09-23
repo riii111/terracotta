@@ -159,6 +159,7 @@ fn collect_scalar_values(value: &Value, values: &mut Vec<SensitiveValue>) {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
     use serde_json::json;
 
     use super::super::{PlanParseError, json};
@@ -258,37 +259,36 @@ mod tests {
         assert!(metadata.has_changes());
     }
 
-    #[test]
-    fn nonstandard_only_resource_changes_remain_changes_without_four_category_counts() {
-        for resource in [
-            json!({
-                "address": "terraform_data.imported",
-                "change": {"actions": ["create"], "importing": {"id": "example"}}
-            }),
-            json!({
-                "address": "terraform_data.moved",
-                "previous_address": "terraform_data.previous",
-                "change": {"actions": ["no-op"]}
-            }),
-            json!({
-                "address": "terraform_data.read",
-                "change": {"actions": ["read"]}
-            }),
-        ] {
-            let document = json!({
-                "format_version": "1.0",
-                "applyable": true,
-                "resource_changes": [resource]
-            });
-            let metadata = parse_metadata(document.to_string().as_bytes(), true)
-                .expect("metadata should parse");
+    #[rstest]
+    #[case::import(json!({
+        "address": "terraform_data.imported",
+        "change": {"actions": ["create"], "importing": {"id": "example"}}
+    }))]
+    #[case::moved_resource(json!({
+        "address": "terraform_data.moved",
+        "previous_address": "terraform_data.previous",
+        "change": {"actions": ["no-op"]}
+    }))]
+    #[case::read(json!({
+        "address": "terraform_data.read",
+        "change": {"actions": ["read"]}
+    }))]
+    fn nonstandard_only_resource_changes_remain_changes_without_four_category_counts(
+        #[case] resource: serde_json::Value,
+    ) {
+        let document = json!({
+            "format_version": "1.0",
+            "applyable": true,
+            "resource_changes": [resource]
+        });
+        let metadata =
+            parse_metadata(document.to_string().as_bytes(), true).expect("metadata should parse");
 
-            assert!(metadata.has_changes());
-            assert_eq!(metadata.additions(), 0);
-            assert_eq!(metadata.changes(), 0);
-            assert_eq!(metadata.replacements(), 0);
-            assert_eq!(metadata.deletions(), 0);
-        }
+        assert!(metadata.has_changes());
+        assert_eq!(metadata.additions(), 0);
+        assert_eq!(metadata.changes(), 0);
+        assert_eq!(metadata.replacements(), 0);
+        assert_eq!(metadata.deletions(), 0);
     }
 
     #[test]
