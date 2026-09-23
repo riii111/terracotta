@@ -29,12 +29,6 @@ pub(crate) enum EnvironmentAvailability {
     Error { directory: PathBuf, message: String },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct RunKey {
-    pub(crate) index: usize,
-    generation: u64,
-}
-
 #[derive(Debug)]
 pub(crate) enum EnvironmentState {
     Pending,
@@ -53,7 +47,6 @@ pub(crate) struct EnvironmentPlan {
     directory: PathBuf,
     identity: Option<EnvironmentIdentity>,
     state: EnvironmentState,
-    generation: u64,
     diagnostics: Vec<Diagnostic>,
     failure: Option<String>,
 }
@@ -106,7 +99,7 @@ impl EnvironmentSession {
         self.revision
     }
 
-    pub(crate) fn start_next(&mut self) -> Option<RunKey> {
+    pub(crate) fn start_next(&mut self) -> Option<usize> {
         if self.interrupted
             || self
                 .plans
@@ -121,10 +114,7 @@ impl EnvironmentSession {
             .enumerate()
             .find(|(_, plan)| matches!(plan.state, EnvironmentState::Pending))?;
         plan.state = EnvironmentState::Running;
-        Some(RunKey {
-            index,
-            generation: plan.generation,
-        })
+        Some(index)
     }
 
     pub(crate) fn retry(&mut self, index: usize) -> bool {
@@ -134,7 +124,6 @@ impl EnvironmentSession {
         if self.interrupted || !matches!(plan.state, EnvironmentState::Error) {
             return false;
         }
-        plan.generation += 1;
         plan.state = EnvironmentState::Pending;
         plan.diagnostics.clear();
         plan.failure = None;
@@ -144,17 +133,14 @@ impl EnvironmentSession {
 
     pub(crate) fn complete(
         &mut self,
-        key: RunKey,
+        index: usize,
         result: PlanResult,
         diagnostics: Vec<Diagnostic>,
     ) -> bool {
-        let Some(plan) = self.plans.get_mut(key.index) else {
+        let Some(plan) = self.plans.get_mut(index) else {
             return false;
         };
-        if self.interrupted
-            || plan.generation != key.generation
-            || !matches!(plan.state, EnvironmentState::Running)
-        {
+        if self.interrupted || !matches!(plan.state, EnvironmentState::Running) {
             return false;
         }
         plan.diagnostics = diagnostics;
@@ -262,7 +248,6 @@ impl EnvironmentPlan {
             directory,
             identity,
             state,
-            generation: 0,
             diagnostics: Vec::new(),
             failure,
         }
@@ -352,13 +337,13 @@ mod tests {
                 .all(|plan| matches!(plan.state(), EnvironmentState::Pending))
         );
 
-        let first = state.start_next().unwrap();
-        assert_eq!(state.plans()[first.index].directory(), Path::new("a"));
+        let first_index = state.start_next().unwrap();
+        assert_eq!(state.plans()[first_index].directory(), Path::new("a"));
         assert!(state.start_next().is_none());
-        assert!(state.complete(first, ready(true), Vec::new()));
-        let next = state.start_next().unwrap();
+        assert!(state.complete(first_index, ready(true), Vec::new()));
+        let next_index = state.start_next().unwrap();
 
-        assert_eq!(state.plans()[next.index].directory(), Path::new("z"));
+        assert_eq!(state.plans()[next_index].directory(), Path::new("z"));
         assert!(state.plans()[0].review().is_some());
         assert!(matches!(
             state.plans()[1].state(),
@@ -367,7 +352,7 @@ mod tests {
     }
 
     #[test]
-    fn retries_only_error_and_rejects_old_and_duplicate_completions() {
+    fn retries_only_errors_and_rejects_duplicate_completions() {
         let mut state = EnvironmentSession::new(
             vec![
                 available("a"),
@@ -381,25 +366,24 @@ mod tests {
             ],
             true,
         );
-        let old = state.start_next().unwrap();
+        let index = state.start_next().unwrap();
         assert!(!state.retry(0));
-        state.complete(old, PlanResult::Error("failed".to_owned()), Vec::new());
+        assert!(state.complete(index, PlanResult::Error("failed".to_owned()), Vec::new()));
         assert!(state.retry(0));
         assert!(!state.retry(0));
         assert!(!state.retry(1));
         assert!(!state.retry(2));
         assert!(!state.retry(99));
-        let current = state.start_next().unwrap();
+        let retry_index = state.start_next().unwrap();
 
-        assert_ne!(old, current);
-        assert!(!state.complete(old, ready(true), Vec::new()));
-        assert!(state.complete(current, ready(false), Vec::new()));
+        assert!(state.complete(retry_index, ready(false), Vec::new()));
         assert!(!state.complete(
-            current,
+            retry_index,
             PlanResult::Error("duplicate".to_owned()),
             Vec::new()
         ));
         assert!(!state.retry(0));
+        assert!(!state.complete(99, ready(true), Vec::new()));
         assert_eq!(
             state.plans()[0].identity.as_ref().unwrap().workspace,
             "chosen"

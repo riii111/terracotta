@@ -722,8 +722,8 @@ fn run_synthetic_environments() -> io::Result<()> {
     ratatui::run(|terminal| {
         loop {
             if Instant::now() >= next {
-                if let Some(key) = running.take() {
-                    let result = if key.index == 1 && !failed_once {
+                if let Some(index) = running.take() {
+                    let result = if index == 1 && !failed_once {
                         failed_once = true;
                         PlanResult::Error(
                             "Synthetic missing variable. Press r to retry this environment."
@@ -732,13 +732,13 @@ fn run_synthetic_environments() -> io::Result<()> {
                     } else {
                         PlanResult::Ready {
                             review: Box::new(synthetic_environment_review(
-                                state.plans()[key.index].directory(),
-                                if key.index == 1 { 200 } else { 20 },
+                                state.plans()[index].directory(),
+                                if index == 1 { 200 } else { 20 },
                             )),
                             changed: true,
                         }
                     };
-                    state.complete(key, result, Vec::new());
+                    state.complete(index, result, Vec::new());
                 }
                 running = state.start_next();
                 next = Instant::now() + Duration::from_millis(750);

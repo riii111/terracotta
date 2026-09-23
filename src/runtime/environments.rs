@@ -4,7 +4,7 @@ use crossterm::event::{self, Event, KeyEventKind};
 
 use crate::{
     app::{
-        environments::{Environment, EnvironmentSession, PlanResult, RunKey},
+        environments::{Environment, EnvironmentSession, PlanResult},
         execution::{Diagnostic, ExecutionContext, Tool},
         session::{Action, Effect},
     },
@@ -21,7 +21,7 @@ use crate::{
 use super::{WorkerGuard, invocation::Invocation};
 
 struct Completion {
-    key: RunKey,
+    index: usize,
     result: PlanResult,
     diagnostics: Vec<Diagnostic>,
 }
@@ -56,11 +56,11 @@ pub(super) fn run(invocation: &Invocation, environments: Vec<Environment>) -> io
                 state.interrupt();
                 break;
             }
-            if let Some(key) = state.start_next()
+            if let Some(index) = state.start_next()
                 && let Err(error) =
-                    start_worker(invocation, &state, key, &mut plans, &mut worker, &sender)
+                    start_worker(invocation, &state, index, &mut plans, &mut worker, &sender)
             {
-                state.complete(key, PlanResult::Error(error.to_string()), Vec::new());
+                state.complete(index, PlanResult::Error(error.to_string()), Vec::new());
             }
             terminal.draw(|frame| view.render(frame, &state))?;
             if !event::poll(Duration::from_millis(50))? {
@@ -114,27 +114,27 @@ pub(super) fn run(invocation: &Invocation, environments: Vec<Environment>) -> io
 }
 
 fn accept_completion(state: &mut EnvironmentSession, completion: Completion) {
-    state.complete(completion.key, completion.result, completion.diagnostics);
+    state.complete(completion.index, completion.result, completion.diagnostics);
 }
 
 fn start_worker(
     invocation: &Invocation,
     state: &EnvironmentSession,
-    key: RunKey,
+    index: usize,
     plans: &mut [Option<terraform::SavedPlan>],
     worker: &mut WorkerGuard,
     sender: &mpsc::Sender<Completion>,
 ) -> io::Result<()> {
-    if let Some(old_plan) = plans[key.index].take() {
+    if let Some(old_plan) = plans[index].take() {
         old_plan.cleanup()?;
     }
-    let environment = &state.plans()[key.index];
+    let environment = &state.plans()[index];
     let root = environment.directory().to_owned();
     let tool = environment.tool;
     let (saved_plan, arguments) =
         terraform::saved_plan_for_plan(&root, &invocation.plan_arguments())?;
     let plan_path = saved_plan.path().to_owned();
-    plans[key.index] = Some(saved_plan);
+    plans[index] = Some(saved_plan);
     let cancellation = worker.cancellation.clone();
     let sender = sender.clone();
     let launch_root = invocation.directory().to_owned();
@@ -154,7 +154,7 @@ fn start_worker(
                 )
                 .unwrap_or_else(PlanResult::Error);
                 let _ = sender.send(Completion {
-                    key,
+                    index,
                     result,
                     diagnostics,
                 });
