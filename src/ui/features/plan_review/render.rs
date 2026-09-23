@@ -1046,7 +1046,7 @@ pub(crate) fn render_environment(
     frame: &mut Frame<'_>,
     area: Rect,
     state: &ReviewSessionState,
-    view: &PlanReviewViewState,
+    view: &mut PlanReviewViewState,
     now: Instant,
 ) {
     render_for_navigation(
@@ -1067,10 +1067,11 @@ pub(crate) fn render_with_quit_confirmation(
     now: Instant,
     quit_confirmation: bool,
 ) {
+    let mut view = view.clone();
     render_for_navigation(
         frame,
         state,
-        view,
+        &mut view,
         now,
         quit_confirmation,
         ReviewNavigation::Standalone,
@@ -1085,7 +1086,7 @@ pub(crate) fn render_with_quit_confirmation(
 fn render_for_navigation(
     frame: &mut Frame<'_>,
     state: &ReviewSessionState,
-    view: &PlanReviewViewState,
+    view: &mut PlanReviewViewState,
     now: Instant,
     quit_confirmation: bool,
     navigation: ReviewNavigation,
@@ -1127,6 +1128,7 @@ fn render_for_navigation(
         );
         return;
     }
+    view.reconcile_scroll(layout.max_vertical(), layout.max_horizontal());
     header::render_plan_review(frame, layout.shell.header(), state.review());
     frame.render_widget(
         Block::new().style(theme::body_style()),
@@ -3156,6 +3158,51 @@ End of synthetic plan body."#;
             );
             assert_eq!(view.selected(), None);
             assert_eq!(view.scroll(), (0, 0));
+        }
+
+        #[test]
+        fn selected_filter_match_does_not_block_manual_scrolling() {
+            let mut plan = review();
+            plan.set_search_query(SEARCH_TERM.to_owned());
+            let state = review_state(plan);
+            let area = Rect::new(0, 0, 80, 24);
+            let layout = layout(area, false, &state);
+            let mut view = PlanReviewViewState::default();
+            view.apply_with_matches(
+                PlanReviewInput::SearchStart,
+                layout.body(),
+                layout.max_vertical(),
+                layout.max_horizontal(),
+                SEARCH_TERM,
+                layout.matches(),
+            );
+            view.apply_with_matches(
+                PlanReviewInput::SearchConfirm,
+                layout.body(),
+                layout.max_vertical(),
+                layout.max_horizontal(),
+                SEARCH_TERM,
+                layout.matches(),
+            );
+            view.apply_with_matches(
+                PlanReviewInput::Bottom,
+                layout.body(),
+                layout.max_vertical(),
+                layout.max_horizontal(),
+                SEARCH_TERM,
+                layout.matches(),
+            );
+            assert!(layout.max_vertical() > 0);
+            assert_eq!(view.selected(), Some(0));
+            assert_eq!(view.scroll().0, layout.max_vertical());
+
+            let buffer = render_to_buffer((area.width, area.height), |frame| {
+                render(frame, &state, &view, Instant::now());
+            });
+            let text = buffer_text(&buffer);
+
+            assert!(text.contains("End of synthetic plan body."), "{text}");
+            assert_eq!(search_match_style_counts(&buffer, SEARCH_TERM).1, 0);
         }
 
         #[test]

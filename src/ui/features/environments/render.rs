@@ -48,7 +48,7 @@ impl EnvironmentView {
                 frame,
                 layout.body,
                 review,
-                &self.reviews[index],
+                &mut self.reviews[index],
                 Instant::now(),
             );
         } else {

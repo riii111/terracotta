@@ -57,6 +57,86 @@ fn partial_session() -> EnvironmentSession {
     state
 }
 
+fn overview_plan_session() -> EnvironmentSession {
+    use crate::app::{
+        plan::{Plan, PlanAction, ResourceChange, ResourceChangeKind, ResourceMode},
+        review::{PlanBlock, PlanBlockKind, PlanDocument, PlanLineKind},
+    };
+
+    let environments = ["a-ready", "b-ready"]
+        .into_iter()
+        .map(|name| Environment {
+            tool: Tool::Terraform,
+            availability: EnvironmentAvailability::Available(EnvironmentIdentity {
+                directory: PathBuf::from(format!("/synthetic/{name}")),
+                workspace: "default".to_owned(),
+            }),
+        })
+        .collect();
+    let mut state = EnvironmentSession::new(environments, false);
+    let mut lines = (0..45)
+        .map(|line| format!("PLAN LINE {line:02}"))
+        .collect::<Vec<_>>();
+    lines[20] = "PLAN LINE 20 # terraform_data.api will be updated in-place".to_owned();
+    let text = lines.join("\n");
+
+    for name in ["a-ready", "b-ready"] {
+        let work = state.start_next().expect("environment should start");
+        let document = PlanDocument::with_blocks_and_line_kinds(
+            text.clone(),
+            vec![
+                PlanBlock::new(0..20, PlanBlockKind::Common),
+                PlanBlock::with_addresses(
+                    20..21,
+                    PlanBlockKind::Resource,
+                    vec!["terraform_data.api".to_owned()],
+                ),
+                PlanBlock::new(21..45, PlanBlockKind::Common),
+            ],
+            vec![PlanLineKind::Body; 45],
+        );
+        let mut plan = Plan::empty();
+        plan.resource_changes.push(ResourceChange {
+            address: "terraform_data.api".to_owned(),
+            provider: None,
+            resource_type: Some("terraform_data".to_owned()),
+            resource_name: Some("api".to_owned()),
+            mode: ResourceMode::Managed,
+            actions: vec![PlanAction::Update],
+            kind: ResourceChangeKind::Update,
+            before: None,
+            after: None,
+            before_sensitive: None,
+            after_sensitive: None,
+            after_unknown: None,
+            replace_paths: None,
+            action_reason: None,
+            previous_address: None,
+            importing: None,
+        });
+        let review = PlanReview::new(
+            PathBuf::from(format!("/synthetic/{name}")),
+            "default".to_owned(),
+            document,
+            PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
+            Vec::new(),
+        )
+        .with_plan(plan)
+        .with_apply_allowed(false)
+        .with_apply_entry(false);
+        state.complete(
+            work,
+            PlanResult::Ready {
+                review: Box::new(review),
+                changed: true,
+            },
+            Vec::new(),
+        );
+    }
+
+    state
+}
+
 #[test]
 fn pending_running_ready_error_and_excluded_remain_distinct_at_supported_sizes() {
     let state = partial_session();
@@ -179,6 +259,146 @@ fn ready_review_remains_available_and_quit_requires_confirmation_while_acquiring
         ),
         Some(EnvironmentInput::Interrupt)
     ));
+}
+
+#[test]
+fn plan_scroll_resets_when_resize_makes_the_full_document_fit() {
+    let state = overview_plan_session();
+    let mut view = EnvironmentView::default();
+    let small = Size::new(80, 24);
+
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
+        small,
+        &state,
+    );
+    for _ in 0..10 {
+        view.handle_key(
+            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+            small,
+            &state,
+        );
+    }
+
+    let narrow = buffer_text(&render_to_buffer((80, 24), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(narrow.contains("PLAN LINE 10"), "{narrow}");
+    assert!(narrow.contains("Line 11/45"), "{narrow}");
+
+    let medium = buffer_text(&render_to_buffer((120, 40), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(medium.contains("PLAN LINE 10"), "{medium}");
+    assert!(medium.contains("Line 11/45"), "{medium}");
+
+    let wide = buffer_text(&render_to_buffer((160, 60), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(wide.contains("PLAN LINE 00"), "{wide}");
+    assert!(wide.contains("Line 1/45"), "{wide}");
+    assert_eq!(view.reviews[0].scroll().0, 0);
+}
+
+#[test]
+fn overview_round_trip_reopens_the_selected_plan_line_when_content_overflows() {
+    let state = overview_plan_session();
+
+    for size in [(80, 24), (120, 40), (160, 60)] {
+        let mut view = EnvironmentView::default();
+        let terminal = Size::new(size.0, size.1);
+        view.handle_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            terminal,
+            &state,
+        );
+        let opened = buffer_text(&render_to_buffer(size, |frame| view.render(frame, &state)));
+        assert!(opened.contains("PLAN LINE 20"), "{size:?}: {opened}");
+        let position = match size {
+            (80, 24) => "Line 21/45",
+            (120, 40) => "Line 13/45",
+            (160, 60) => "Line 1/45",
+            _ => unreachable!("the supported sizes are listed above"),
+        };
+        assert!(opened.contains(position), "{size:?}: {opened}");
+
+        view.handle_key(
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
+            terminal,
+            &state,
+        );
+        let overview = buffer_text(&render_to_buffer(size, |frame| view.render(frame, &state)));
+        assert!(
+            overview.contains("terraform_data.api"),
+            "{size:?}: {overview}"
+        );
+        view.handle_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            terminal,
+            &state,
+        );
+
+        let reopened = buffer_text(&render_to_buffer(size, |frame| view.render(frame, &state)));
+        assert!(reopened.contains("PLAN LINE 20"), "{size:?}: {reopened}");
+        assert!(reopened.contains(position), "{size:?}: {reopened}");
+    }
+}
+
+#[test]
+fn filtered_plan_position_tracks_the_visible_source_line_after_resize() {
+    let mut state = overview_plan_session();
+    let mut view = EnvironmentView::default();
+    let small = Size::new(80, 24);
+    view.handle_key(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        small,
+        &state,
+    );
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE),
+        small,
+        &state,
+    );
+    for character in "terraform_data.api".chars() {
+        if let Some(EnvironmentInput::Review(index, action)) = view.handle_key(
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+            small,
+            &state,
+        ) {
+            state.update_review(index, *action, std::time::Instant::now());
+        }
+    }
+    view.handle_key(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        small,
+        &state,
+    );
+
+    let filtered = buffer_text(&render_to_buffer((80, 24), |frame| {
+        view.render(frame, &state);
+    }));
+    let first_visible_line = usize::from(view.reviews[0].scroll().0) + 1;
+    assert!(filtered.contains("PLAN LINE 20"), "{filtered}");
+    assert!(
+        filtered.contains(&format!("Line {first_visible_line}/45")),
+        "{filtered}"
+    );
+
+    let medium = buffer_text(&render_to_buffer((120, 40), |frame| {
+        view.render(frame, &state);
+    }));
+    let first_visible_line = usize::from(view.reviews[0].scroll().0) + 1;
+    assert!(
+        medium.contains(&format!("Line {first_visible_line}/45")),
+        "{medium}"
+    );
+
+    let wide = buffer_text(&render_to_buffer((160, 60), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(wide.contains("PLAN LINE 00"), "{wide}");
+    assert!(wide.contains("Line 1/45"), "{wide}");
+    assert_eq!(view.reviews[0].scroll().0, 0);
 }
 
 #[test]
