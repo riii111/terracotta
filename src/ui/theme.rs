@@ -80,19 +80,10 @@ pub(crate) fn overview_total_muted_style() -> Style {
         .bg(Color::Rgb(0x30, 0x32, 0x2f))
 }
 
-pub(crate) fn overview_preview_title_style(focused: bool) -> Style {
+pub(crate) fn overview_preview_title_style() -> Style {
     Style::default()
-        .fg(if focused {
-            Color::Rgb(0xef, 0xae, 0x6d)
-        } else {
-            Color::Rgb(0xde, 0xd8, 0xd1)
-        })
+        .fg(Color::Rgb(0xde, 0xd8, 0xd1))
         .bg(Color::Rgb(0x30, 0x32, 0x2f))
-        .add_modifier(if focused {
-            Modifier::BOLD
-        } else {
-            Modifier::empty()
-        })
 }
 
 pub(crate) fn overview_warning_style() -> Style {

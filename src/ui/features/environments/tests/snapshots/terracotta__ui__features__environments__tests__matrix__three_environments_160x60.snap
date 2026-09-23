@@ -61,4 +61,4 @@ expression: rendered
 
 
 
-  ↑↓ scroll rows | ←→ select env | Enter preview | [ ] select env | / filter | e env filter | Space expand all | v full plan | ? help | q quit
+  ↑↓ scroll rows | ←→ select env | Enter preview | [ ] env | / filter | e env filter | Space expand all | v full plan | ? help | q quit

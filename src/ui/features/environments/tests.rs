@@ -189,8 +189,8 @@ fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
         }
         if (width, height) == (80, 24) {
             assert!(text.contains("1–9"));
-            assert!(text.contains("full plan preview"));
-            assert!(text.contains("switch input between matrix and preview"));
+            assert!(text.contains("open the selected environment's plan preview"));
+            assert!(!text.contains("Tab"));
             assert!(text.contains("expand all collapsed groups, or collapse all groups"));
             assert!(text.contains("filter compared environments"));
         }

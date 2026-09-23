@@ -15,6 +15,6 @@ Error   staging: Error
 
  blank: absent   .: unchanged
  ?: plan unavailable
- ↑↓ rows  ←→ env  Enter preview
+ ↑↓ rows  ←→ env  Enter preview  [ ] en
  / filter  e env filter  v plan
  ? help  q quit
