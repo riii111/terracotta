@@ -18,11 +18,11 @@ O│   select a row                   ┃ │u
  │ /                                │ │
  │   filter full addresses          │ │
  │ Space                            │ │
- │   expand or collapse a group     │ │
+ │   expand or collapse only on     │ │
+ │   [+]/[-] group rows             │ │
  │ v                                │ │
- │   show the full plan from the    │ │
- │   top                            ▼ │
+ │   show the full plan from the    ▼ │
  │ ↑/↓/k/j/PgUp/PgDn scroll           │
 ─│ ?/Esc close                        │─
-/└────────────────────────────────────┘d
-v full plan | ? help | q quit
+/└────────────────────────────────────┘
+? help | q quit

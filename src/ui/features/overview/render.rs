@@ -66,7 +66,11 @@ fn prepare(area: Rect, state: &OverviewSessionState, view: &OverviewViewState) -
     let content = OverviewContent::from_review(state.review(), view.filter(), view.expanded());
     let footer_message = state.copy_feedback().notice().map(CopyNotice::message);
     let full_footer = footer::layout_with_notice(
-        footer_items(view.searching(), !view.filter().is_empty()),
+        footer_items(
+            view.searching(),
+            !view.filter().is_empty(),
+            view.selected_group_expanded(&content),
+        ),
         area.width,
         footer_message,
     );
@@ -262,7 +266,7 @@ fn overview_lines(
     for (index, row) in content.rows.iter().enumerate() {
         let selected = view.selected() == Some(index);
         let marker = if selected { ">" } else { " " };
-        let indent = if row.member_index.is_some() { "  " } else { "" };
+        let indent = if row.child { "  " } else { "" };
         let expansion = if row.member_index.is_none() && row.count > 1 {
             if view.expanded().contains(&row.group_index) {
                 "[-]"
@@ -349,29 +353,46 @@ fn copy_flash_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
         .collect()
 }
 
-fn footer_items(searching: bool, filtered: bool) -> Vec<Line<'static>> {
+fn footer_items(searching: bool, filtered: bool, expanded: Option<bool>) -> Vec<Line<'static>> {
     if searching {
         vec![
             footer::hint(&["Enter"], "confirm"),
             footer::hint(&["Esc"], "cancel"),
         ]
     } else if filtered {
-        vec![
+        let mut items = vec![
             footer::hint(&["Esc"], "clear / edit"),
             footer::hint(&["Enter"], "open raw"),
+        ];
+        if let Some(expanded) = expanded {
+            items.push(footer::hint(
+                &["Space"],
+                if expanded { "collapse" } else { "expand" },
+            ));
+        }
+        items.extend([
             footer::hint(&["v"], "full plan"),
             footer::hint(&["?"], "help"),
             footer::hint(&["q"], "quit"),
-        ]
+        ]);
+        items
     } else {
-        vec![
+        let mut items = vec![
             footer::hint(&["/"], "filter"),
             footer::hint(&["Enter"], "open raw"),
-            footer::hint(&["Space"], "expand"),
+        ];
+        if let Some(expanded) = expanded {
+            items.push(footer::hint(
+                &["Space"],
+                if expanded { "collapse" } else { "expand" },
+            ));
+        }
+        items.extend([
             footer::hint(&["v"], "full plan"),
             footer::hint(&["?"], "help"),
             footer::hint(&["q"], "quit"),
-        ]
+        ]);
+        items
     }
 }
 
@@ -419,7 +440,10 @@ fn render_overlay(
                     vec![
                         help_dialog::HelpAction::new("Enter", "open the selected raw block"),
                         help_dialog::HelpAction::new("/", "filter full addresses"),
-                        help_dialog::HelpAction::new("Space", "expand or collapse a group"),
+                        help_dialog::HelpAction::new(
+                            "Space",
+                            "expand or collapse only on [+]/[-] group rows",
+                        ),
                         help_dialog::HelpAction::new("v", "show the full plan from the top"),
                     ],
                 ),
@@ -595,7 +619,77 @@ mod tests {
             render(frame, &state, &view, Instant::now());
         });
 
-        insta::assert_snapshot!(buffer_text(&buffer));
+        let text = buffer_text(&buffer);
+        assert!(!text.contains("Space expand"));
+        insta::assert_snapshot!(text);
+    }
+
+    #[test]
+    fn selected_group_footer_tracks_expansion_and_filtered_members() {
+        let state = OverviewSessionState::new(review());
+        let mut view = OverviewViewState::default();
+        let body = Rect::new(0, 0, 80, 12);
+        let content = OverviewContent::from_review(state.review(), "", view.expanded());
+
+        view.apply(OverviewInput::Down, body, 0, &content);
+        let collapsed = render_to_buffer((100, 24), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        let collapsed_text = buffer_text(&collapsed);
+        assert!(collapsed_text.contains("[+] terraform_data.server[*]"));
+        assert!(collapsed_text.contains("Space expand"));
+        let narrow_collapsed = render_to_buffer((40, 16), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        assert!(buffer_text(&narrow_collapsed).contains("Space expand"));
+
+        view.apply(OverviewInput::ToggleExpand, body, 0, &content);
+        let expanded_content = OverviewContent::from_review(state.review(), "", view.expanded());
+        let expanded = render_to_buffer((100, 24), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        let expanded_text = buffer_text(&expanded);
+        assert!(expanded_text.contains("[-] terraform_data.server[*]"));
+        assert!(expanded_text.contains("terraform_data.server[\"one\"]"));
+        assert!(expanded_text.contains("Space collapse"));
+        let narrow_expanded = render_to_buffer((40, 16), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        assert!(buffer_text(&narrow_expanded).contains("Space collapse"));
+
+        view.apply(OverviewInput::Down, body, 0, &expanded_content);
+        assert_eq!(view.selected_group_expanded(&expanded_content), None);
+        let child = render_to_buffer((100, 24), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        let child_text = buffer_text(&child);
+        assert!(!child_text.contains("Space expand"));
+        assert!(!child_text.contains("Space collapse"));
+        let expanded_groups = view.expanded().clone();
+        view.apply(OverviewInput::ToggleExpand, body, 0, &expanded_content);
+        assert_eq!(view.expanded(), &expanded_groups);
+
+        view.apply(OverviewInput::SearchStart, body, 0, &expanded_content);
+        for character in "one".chars() {
+            view.apply(
+                OverviewInput::SearchChar(character),
+                body,
+                0,
+                &expanded_content,
+            );
+        }
+        view.apply(OverviewInput::SearchConfirm, body, 0, &expanded_content);
+        let filtered_content =
+            OverviewContent::from_review(state.review(), view.filter(), view.expanded());
+        assert_eq!(filtered_content.rows.len(), 1);
+        assert_eq!(view.selected_group_expanded(&filtered_content), None);
+        let filtered = render_to_buffer((40, 16), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        let filtered_text = buffer_text(&filtered);
+        assert!(filtered_text.contains("server[\"one\"]"));
+        assert!(!filtered_text.contains("terraform_data.server[*]"));
+        assert!(!filtered_text.contains("Space expand"));
     }
 
     #[test]
@@ -620,6 +714,10 @@ mod tests {
             if width >= 80 {
                 assert!(
                     text.contains("open the selected raw block"),
+                    "{width}x{height}: {text}"
+                );
+                assert!(
+                    text.contains("only on [+]/[-] group rows"),
                     "{width}x{height}: {text}"
                 );
             }

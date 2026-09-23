@@ -18,8 +18,8 @@ T│   plan                           │ │
  │   numbered environment's raw     │ │
  │   plan                           │ │
  │ Space                            │ │
- │   toggle a selected [+]/[-]      │ │
- │   group row                      │ │
+ │   expand or collapse only on     │ │
+ │   [+]/[-] group rows             │ │
  │ /                                │ │
  │   filter full addresses          ▼ │
  │ ↑/↓/k/j/PgUp/PgDn scroll           │

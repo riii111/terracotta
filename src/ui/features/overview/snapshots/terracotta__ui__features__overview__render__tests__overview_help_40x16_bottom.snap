@@ -16,5 +16,5 @@ O│ y                                │ │u
  │   quit                           ▼ │
  │ ↑/↓/k/j/PgUp/PgDn scroll           │
 ─│ ?/Esc close                        │─
-/└────────────────────────────────────┘d
-v full plan | ? help | q quit
+/└────────────────────────────────────┘
+? help | q quit

@@ -105,17 +105,11 @@ impl EnvironmentView {
                 .saturating_sub(context_height + 1 + detail_height + u16::from(show_boundaries)),
         );
         matrix::render(frame, body, state, &mut self.matrix, self.selection.column);
-        let footer = if self.matrix.searching() {
-            "Enter confirm   Esc cancel"
-        } else if area.width < 45 {
-            "Enter open resource  ? help  q quit"
-        } else if area.width < 56 {
-            "Enter open selected resource  ? help"
-        } else if area.width < 80 {
-            "Enter open selected resource in raw plan  ? help  q quit"
-        } else {
-            "Enter open selected resource in raw plan  / filter  Space expand  ? help  q quit"
-        };
+        let footer = overview_footer(
+            area.width,
+            self.matrix.searching(),
+            self.matrix.selected_group_expanded(),
+        );
         if show_boundaries {
             frame.render_widget(
                 separator::render(area.width),
@@ -183,6 +177,35 @@ fn overview_context(view: &EnvironmentView, plan: &EnvironmentPlan) -> String {
     }
 }
 
+fn overview_footer(width: u16, searching: bool, expanded: Option<bool>) -> String {
+    if searching {
+        return "Enter confirm   Esc cancel".to_owned();
+    }
+    let toggle = expanded.map(|expanded| {
+        if expanded {
+            "Space collapse"
+        } else {
+            "Space expand"
+        }
+    });
+    match (width, toggle) {
+        (..45, Some(toggle)) => format!("Enter open  {toggle}  q quit"),
+        (..45, None) => "Enter open resource  ? help  q quit".to_owned(),
+        (45..56, Some(toggle)) => format!("Enter open  {toggle}  ? help"),
+        (45..56, None) => "Enter open selected resource  ? help".to_owned(),
+        (56..64, Some(toggle)) => format!("Enter open  / filter  {toggle}  ? help"),
+        (56..64, None) => "Enter open selected resource in raw plan  ? help".to_owned(),
+        (64..80, Some(toggle)) => format!("Enter open selected  / filter  {toggle}  ? help"),
+        (64..80, None) => "Enter open selected resource in raw plan  ? help  q quit".to_owned(),
+        (_, Some(toggle)) => {
+            format!("Enter open selected  / filter  {toggle}  ? help  q quit")
+        }
+        (_, None) => {
+            "Enter open selected resource in raw plan  / filter  ? help  q quit".to_owned()
+        }
+    }
+}
+
 fn overview_detail(plan: &EnvironmentPlan) -> String {
     if matches!(plan.state(), EnvironmentState::Error) {
         plan.diagnostic().text().to_owned()
@@ -238,7 +261,10 @@ fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
                         "1–9",
                         "open selected resource in the numbered environment's raw plan",
                     ),
-                    help_dialog::HelpAction::new("Space", "toggle a selected [+]/[-] group row"),
+                    help_dialog::HelpAction::new(
+                        "Space",
+                        "expand or collapse only on [+]/[-] group rows",
+                    ),
                     help_dialog::HelpAction::new("/", "filter full addresses"),
                 ],
             ),

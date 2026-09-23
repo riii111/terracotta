@@ -16,5 +16,5 @@ O│   select a row                   ┃ │u
  │ Enter                            ▼ │
  │ ↑/↓/k/j/PgUp/PgDn scroll           │
 ─│ ?/Esc close                        │─
-/└────────────────────────────────────┘d
-v full plan | ? help | q quit
+/└────────────────────────────────────┘
+? help | q quit

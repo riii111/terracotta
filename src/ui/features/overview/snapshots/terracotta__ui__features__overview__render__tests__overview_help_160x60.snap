@@ -22,26 +22,26 @@ Other changes: 1 output/import/move or unsupported change(s). Press v for the fu
 
 
 
-                                                      ┌Help─────────────────────────────────────────────┐
-                                                      │ Navigation                                      │
-                                                      │ ↑ / ↓ / j / k select a row                      │
-                                                      │ PgUp / PgDn   move one page                     │
-                                                      │ Home / End    go to the first or last row       │
-                                                      │                                                 │
-                                                      │ Review                                          │
-                                                      │ Enter         open the selected raw block       │
-                                                      │ /             filter full addresses             │
-                                                      │ Space         expand or collapse a group        │
-                                                      │ v             show the full plan from the top   │
-                                                      │                                                 │
-                                                      │ Actions                                         │
-                                                      │ y             copy the full plan                │
-                                                      │ c             show execution context            │
-                                                      │                                                 │
-                                                      │ Exit                                            │
-                                                      │ q             quit                              │
-                                                      │ ?/Esc close                                     │
-                                                      └─────────────────────────────────────────────────┘
+                                               ┌Help───────────────────────────────────────────────────────────┐
+                                               │ Navigation                                                    │
+                                               │ ↑ / ↓ / j / k select a row                                    │
+                                               │ PgUp / PgDn   move one page                                   │
+                                               │ Home / End    go to the first or last row                     │
+                                               │                                                               │
+                                               │ Review                                                        │
+                                               │ Enter         open the selected raw block                     │
+                                               │ /             filter full addresses                           │
+                                               │ Space         expand or collapse only on [+]/[-] group rows   │
+                                               │ v             show the full plan from the top                 │
+                                               │                                                               │
+                                               │ Actions                                                       │
+                                               │ y             copy the full plan                              │
+                                               │ c             show execution context                          │
+                                               │                                                               │
+                                               │ Exit                                                          │
+                                               │ q             quit                                            │
+                                               │ ?/Esc close                                                   │
+                                               └───────────────────────────────────────────────────────────────┘
 
 
 
@@ -61,4 +61,4 @@ Other changes: 1 output/import/move or unsupported change(s). Press v for the fu
 
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-/ filter | Enter open raw | Space expand | v full plan | ? help | q quit
+/ filter | Enter open raw | v full plan | ? help | q quit

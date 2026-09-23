@@ -11,7 +11,7 @@ a-ready · terra│ Current: Overview                                           
 Address     > a│ ← / → / [ / ]        select an environment                                            │
 No matching res│ Enter                open selected resource in the selected environment's raw plan    │
 Total       +0 │ 1–9                  open selected resource in the numbered environment's raw plan    │
-            0 r│ Space                toggle a selected [+]/[-] group row                              │
+            0 r│ Space                expand or collapse only on [+]/[-] group rows                    │
                │ /                    filter full addresses                                            │
                │                                                                                       │
                │ Other                                                                                 │
@@ -41,4 +41,4 @@ Total       +0 │ 1–9                  open selected resource in the numbered
 
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-Enter open selected resource in raw plan  / filter  Space expand  ? help  q quit
+Enter open selected resource in raw plan  / filter  ? help  q quit
