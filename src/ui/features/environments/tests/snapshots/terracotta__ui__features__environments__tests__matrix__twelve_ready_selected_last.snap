@@ -4,6 +4,7 @@ expression: "text(&mut view, &state, (80, 24))"
 ---
 0 Overview  ‹  7 env-06  8 env-07  9 env-08  10 env-09  11 env-10  12 env-11
 Ready: 12/12
+────────────────────────────────────────────────────────────────────────────────
 env-11: Ready
 terraform   ws:default
 Directory: /synthetic/env-11
@@ -21,8 +22,7 @@ Same change across envs
 
 
 
-
-
 Total                           +0 ~1 -0     +0 ~1 -0     +0 ~1 -0
                                 0 replace    0 replace    0 replace
+────────────────────────────────────────────────────────────────────────────────
 Enter open diff   / filter   Space expand   ? help   q quit

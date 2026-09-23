@@ -1,6 +1,5 @@
 ---
 source: src/ui/features/plan_review/render.rs
-assertion_line: 1901
 expression: buffer_text(buffer)
 ---
 main [PROD]  ws:default  terraform loading...  /repo/environme...production/main
@@ -14,7 +13,7 @@ Unique targets: +2┌Help──────────────────�
     }             │                                         │                  ┃
                   │Review                                   │                  ┃
   # terraform_data│/             filter the full plan       │                  ┃
--/+ resource "terr│                                         │                  ┃
+-/+ resource "terr│                                         │                  │
       ~ input = "w│Actions                                  │placement         │
       - old_checks│c             show execution context     │ef0123456789abcdef│
       + new_checks│                                         │                  │
@@ -24,6 +23,6 @@ Unique targets: +2┌Help──────────────────�
   - resource "terr│                                         │                  │
       id = "old-20│Exit                                     │                  │
     }             │q             quit                       │                  │
-                  │?/Esc close                              │                  │
-◀︎═════════════════└─────────────────────────────────────────┘═══════───────────▶︎
-/ filter | a apply | ? help | q quit | s overview                      Line 3/43
+◀︎═════════════════│?/Esc close                              │═══════───────────▶︎
+──────────────────└─────────────────────────────────────────┘───────────────────
+/ filter | a apply | ? help | q quit | y copy plan | s overview        Line 3/43

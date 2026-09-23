@@ -54,6 +54,10 @@ pub(crate) fn frame_style() -> Style {
     Style::default().fg(Color::Rgb(0x76, 0x7a, 0x84))
 }
 
+pub(crate) fn separator_style() -> Style {
+    Style::default().fg(Color::Rgb(0x85, 0x8b, 0x94))
+}
+
 pub(crate) fn scrollbar_thumb_style() -> Style {
     Style::default().fg(Color::Rgb(0xc0, 0xb8, 0xb0))
 }

@@ -11,7 +11,7 @@ use ratatui::{
 use crate::app::{copy::CopyNotice, review::PlanReview, session::OverviewSessionState};
 use crate::ui::{
     primitives::{
-        atoms::scrollbar,
+        atoms::{scrollbar, separator},
         molecules::{help_dialog, terminal_notice},
     },
     shell::{context, footer, header, layout as shell_layout},
@@ -138,10 +138,7 @@ pub(crate) fn render(
         layout.status(),
     );
     frame.render_widget(
-        Paragraph::new(Line::from(
-            "─".repeat(usize::from(layout.separator().width)),
-        ))
-        .style(theme::frame_style()),
+        separator::render(layout.separator().width),
         layout.separator(),
     );
 
@@ -182,6 +179,10 @@ pub(crate) fn render(
         layout.shell.footer(),
         layout.shell.footer_lines(),
         notice,
+    );
+    frame.render_widget(
+        separator::render(layout.shell.footer_separator().width),
+        layout.shell.footer_separator(),
     );
     render_overlay(frame, area, state.review(), view);
 }

@@ -4,6 +4,7 @@ expression: output
 ---
 0 Overview   1 staging  2 staging
 Ready: 0/2   Compared: none   staging: Error   staging: Error
+────────────────────────────────────────────────────────────────────────────────
 staging: Error
 tofu   ws:staging
 Directory: /synthetic/prod
@@ -21,8 +22,7 @@ Waiting for environment plans.
 
 
 
-
-
 Total                           Error               Error
 
+────────────────────────────────────────────────────────────────────────────────
 Enter open diff   / filter   Space expand   ? help   q quit

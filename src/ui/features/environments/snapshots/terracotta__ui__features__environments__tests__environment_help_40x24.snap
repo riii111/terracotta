@@ -7,13 +7,13 @@ Re┌Help───────────────────────�
 b-│Navigation                        │
 d-│↑ / ↓ / j / select a resource row │
 HC│k                                 │
-a-│                                  │
-te│← / → / [ / select an environment │
-Di│]                                 │
-  │                                  │
-Ad│PgUp / PgDn move one page         │
-No│                                  │th
-  │Home / End  go to the first or    │
+──│                                  │──
+a-│← / → / [ / select an environment │
+te│]                                 │
+Di│                                  │
+  │PgUp / PgDn move one page         │
+Ad│                                  │
+No│Home / End  go to the first or    │th
   │            last row              │
   │                                  │
   │Review                            │
@@ -22,7 +22,7 @@ No│                                  │th
   │                                  │
   │1–9         open the resource in  │
   │            that environment      │
-  │                                  │
-To│?/Esc close                       │
-  └──────────────────────────────────┘
+To│                                  │
+  │?/Esc close                       │
+──└──────────────────────────────────┘──
 Enter open  / filter  ? help  q quit

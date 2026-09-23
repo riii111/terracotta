@@ -13,7 +13,7 @@ Umain [PROD]  ws:default  terraform loading...  /repo/environm...roduction/main
  │                                                                            │┃
  │ Target: main [PROD]                                                        │┃
  │ Workspace: default                                                         │┃
--│ Directory: /repo/environments/production/main                              │┃
+-│ Directory: /repo/environments/production/main                              ││
  │ Tool: terraform loading...                                                 ││
  │ Plan: +2 add  ~2 update  0 replace  -1 destroy                             ││
  │                                                                            ││
@@ -23,6 +23,6 @@ Umain [PROD]  ws:default  terraform loading...  /repo/environm...roduction/main
  └────────────────────────────────────────────────────────────────────────────┘│
  Enter confirm | Esc back | ? help                                             │
     }                                                                          │
-                                                                               │
 ◀︎═══════════════════════════════════════════════════════════════════───────────▶︎
-/ filter | ? help | q quit | s overview                                Line 3/43
+────────────────────────────────────────────────────────────────────────────────
+/ filter | ? help | q quit | y copy plan | s overview                  Line 3/43

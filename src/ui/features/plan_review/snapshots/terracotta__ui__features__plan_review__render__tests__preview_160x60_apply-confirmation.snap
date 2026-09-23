@@ -60,5 +60,5 @@ End of synthetic plan body.
 
 
 
-
-/ filter | ? help | q quit | s overview                                                                                                                Line 3/43
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/ filter | ? help | q quit | y copy plan | s overview                                                                                                  Line 3/43

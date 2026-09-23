@@ -7,6 +7,7 @@ Ready: 0/12   Compared: none   env-00: Pending   env-01: Pending   env-02:
 Pending   env-03: Pending   env-04: Pending   env-05: Pending   env-06: Pending
  env-07: Pending   env-08: Pending   env-09: Pending   env-10: Pending   env-11:
 Pending
+────────────────────────────────────────────────────────────────────────────────
 env-11: Pending
 terraform   ws:default
 Directory: /synthetic/env-11
@@ -21,8 +22,7 @@ Waiting for environment plans.
 
 
 
-
-
 Total                           Pending      Pending      Pending
 
+────────────────────────────────────────────────────────────────────────────────
 Enter open diff   / filter   Space expand   ? help   q quit

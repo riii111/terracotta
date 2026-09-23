@@ -18,6 +18,7 @@ pub(crate) struct EnvironmentLayout {
     pub(crate) tabs: Rect,
     pub(crate) summary: Rect,
     pub(crate) notice: Rect,
+    pub(crate) header_separator: Rect,
     pub(crate) body: Rect,
 }
 
@@ -25,6 +26,7 @@ pub(crate) fn layout(
     area: Rect,
     state: &EnvironmentSession,
     notice: Option<&str>,
+    show_header_separator: bool,
 ) -> EnvironmentLayout {
     let tabs = Rect::new(area.x, area.y, area.width, area.height.min(1));
     let summary_height = wrapped_height(&summary(state), area.width).min(area.height / 3);
@@ -34,16 +36,23 @@ pub(crate) fn layout(
         .map_or(0, |text| wrapped_height(text, area.width))
         .min(remaining / 3);
     let notice = Rect::new(area.x, summary.bottom(), area.width, notice_height);
-    let body = Rect::new(
+    let header_separator = Rect::new(
         area.x,
         notice.bottom(),
         area.width,
-        area.bottom().saturating_sub(notice.bottom()),
+        u16::from(show_header_separator),
+    );
+    let body = Rect::new(
+        area.x,
+        header_separator.bottom(),
+        area.width,
+        area.bottom().saturating_sub(header_separator.bottom()),
     );
     EnvironmentLayout {
         tabs,
         summary,
         notice,
+        header_separator,
         body,
     }
 }

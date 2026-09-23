@@ -10,6 +10,7 @@ const HEADER_HEIGHT: u16 = 2;
 pub(crate) struct ShellLayout {
     header: Rect,
     content: Rect,
+    footer_separator: Rect,
     footer: Rect,
     footer_lines: Vec<Line<'static>>,
     bordered_content: bool,
@@ -34,6 +35,10 @@ impl ShellLayout {
 
     pub(crate) const fn footer(&self) -> Rect {
         self.footer
+    }
+
+    pub(crate) const fn footer_separator(&self) -> Rect {
+        self.footer_separator
     }
 
     pub(crate) fn footer_lines(&self) -> &[Line<'static>] {
@@ -81,6 +86,7 @@ pub(crate) fn layout(
     ShellLayout {
         header,
         content,
+        footer_separator: Rect::default(),
         footer,
         footer_lines,
         bordered_content: true,
@@ -100,28 +106,32 @@ pub(crate) fn full_width_layout(
     let required_footer_height = u16::try_from(required_footer_lines.len())
         .unwrap_or(u16::MAX)
         .max(1);
-    let footer_height = full_footer_height.min(after_header_height).max(1);
-    let footer_height = if after_header_height >= required_footer_height {
+    let separator_height = u16::from(after_header_height > required_footer_height);
+    let footer_space = after_header_height.saturating_sub(separator_height);
+    let footer_height = full_footer_height.min(footer_space).max(1);
+    let footer_height = if footer_space >= required_footer_height {
         footer_height
     } else {
-        required_footer_height.min(after_header_height)
+        required_footer_height.min(footer_space)
     };
-    let (footer_lines, footer_height) = if after_header_height >= full_footer_height {
+    let (footer_lines, footer_height) = if footer_space >= full_footer_height {
         (footer_lines, footer_height)
     } else {
         (required_footer_lines, footer_height)
     };
-    let content_height = after_header_height.saturating_sub(footer_height);
+    let content_height = footer_space.saturating_sub(footer_height);
     let content = Rect::new(area.x, after_header_y, area.width, content_height);
-    let footer = Rect::new(
+    let footer_separator = Rect::new(
         area.x,
         after_header_y.saturating_add(content_height),
         area.width,
-        footer_height,
+        separator_height,
     );
+    let footer = Rect::new(area.x, footer_separator.bottom(), area.width, footer_height);
     ShellLayout {
         header,
         content,
+        footer_separator,
         footer,
         footer_lines,
         bordered_content: false,
@@ -246,8 +256,23 @@ mod tests {
         assert_eq!(layout.content().x, area.x);
         assert_eq!(layout.content().width, area.width);
         assert_eq!(layout.content_inner(), layout.content());
-        assert_eq!(layout.content().bottom(), layout.footer().y);
+        assert_eq!(layout.content().bottom(), layout.footer_separator().y);
+        assert_eq!(layout.footer_separator().height, 1);
+        assert_eq!(layout.footer_separator().bottom(), layout.footer().y);
         assert_eq!(layout.footer().bottom(), area.bottom());
+    }
+
+    #[test]
+    fn full_width_layout_keeps_required_footer_lines_when_no_separator_fits() {
+        let layout = full_width_layout(
+            Rect::new(0, 0, 80, 3),
+            vec![Line::from("full 1"), Line::from("full 2")],
+            vec![Line::from("required 1"), Line::from("required 2")],
+        );
+
+        assert_eq!(layout.footer_separator().height, 0);
+        assert_eq!(layout.footer_lines().len(), 2);
+        assert_eq!(layout.footer().height, 2);
     }
 
     #[test]
