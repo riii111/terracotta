@@ -41,4 +41,4 @@ Plan: 2 to add, 2 to change, 1 to destroy.                                      
 Synthetic review text continues below so the viewport and scrollbar remain meaningful.                                 │
 The same long body is intentionally reused across every review state and terminal size.                                ▼
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-/ filter | ? help | q quit                                                                                          3/43
+/ filter | ? help | q quit | y copy plan                                                                            3/43

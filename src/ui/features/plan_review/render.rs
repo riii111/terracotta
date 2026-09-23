@@ -1574,6 +1574,7 @@ fn footer_items(
             items.push(footer::hint(&["a"], "apply"));
         }
         items.extend([footer::hint(&["?"], "help"), footer::hint(&["q"], "quit")]);
+        items.push(footer::hint(&["y"], "copy plan"));
         items
     };
     if navigation == ReviewNavigation::Environments && !searching && !filtered {
@@ -3979,8 +3980,49 @@ End of synthetic plan body."#;
 
             assert!(!footer_text.contains("a apply"), "{footer_text}");
             assert!(footer_text.contains("/ filter"), "{footer_text}");
-            assert!(!footer_text.contains("y copy plan"), "{footer_text}");
+            assert!(footer_text.contains("y copy plan"), "{footer_text}");
             assert!(footer_text.contains("q quit"), "{footer_text}");
+        }
+
+        #[test]
+        fn narrow_normal_footer_keeps_required_actions_and_position_together() {
+            let state = review_state(review_with_applyable(false));
+            let view = PlanReviewViewState::default();
+            let area = Rect::new(0, 0, 24, 24);
+            let layout = layout(area, false, &state);
+            let buffer = render_to_buffer((area.width, area.height), |frame| {
+                render(frame, &state, &view, Instant::now());
+            });
+            let footer = layout.shell.footer();
+            let footer_lines = (footer.y..footer.bottom())
+                .map(|y| {
+                    (footer.x..footer.right())
+                        .map(|x| {
+                            buffer
+                                .cell((x, y))
+                                .expect("footer cell")
+                                .symbol()
+                                .to_owned()
+                        })
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>();
+            let position = layout
+                .footer_status
+                .as_ref()
+                .expect("plan position")
+                .0
+                .as_str();
+
+            assert!(footer_lines.iter().any(|line| line.contains("/ filter")));
+            assert!(footer_lines.iter().any(|line| line.contains("? help")));
+            assert!(
+                footer_lines
+                    .iter()
+                    .any(|line| line.contains("q quit") && line.contains(position)),
+                "{footer_lines:?}"
+            );
+            assert!(!footer_lines.iter().any(|line| line.contains("a apply")));
         }
 
         #[test]

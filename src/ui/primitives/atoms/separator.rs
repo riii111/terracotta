@@ -21,7 +21,7 @@ mod tests {
 
         assert_eq!(
             terminal.backend().buffer().cell((0, 0)).unwrap().fg,
-            Color::Rgb(0x9a, 0xa0, 0xaa)
+            Color::Rgb(0x85, 0x8b, 0x94)
         );
     }
 }
