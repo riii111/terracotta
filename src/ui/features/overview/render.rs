@@ -610,22 +610,31 @@ mod tests {
             &content,
         );
 
-        let buffer = render_to_buffer((80, 24), |frame| {
-            render(frame, &state, &view, Instant::now());
-        });
-        let text = buffer_text(&buffer);
-        assert!(text.contains("Help"));
-        assert!(text.contains("Navigation"));
-        assert!(text.contains("open the selected raw block"));
-        assert_eq!(text.matches("close").count(), 1);
-        assert!(
-            buffer
-                .cell((0, 0))
-                .expect("dimmed background")
-                .modifier
-                .contains(ratatui::style::Modifier::DIM)
-        );
-        insta::assert_snapshot!("overview_help_80x24", text);
+        for (width, height) in [(40, 16), (40, 24), (80, 24), (120, 40), (160, 60)] {
+            let buffer = render_to_buffer((width, height), |frame| {
+                render(frame, &state, &view, Instant::now());
+            });
+            let text = buffer_text(&buffer);
+            assert!(text.contains("Help"), "{width}x{height}: {text}");
+            assert!(text.contains("Navigation"), "{width}x{height}: {text}");
+            if width >= 80 {
+                assert!(
+                    text.contains("open the selected raw block"),
+                    "{width}x{height}: {text}"
+                );
+            }
+            assert_eq!(text.matches("close").count(), 1, "{width}x{height}: {text}");
+            if (width, height) == (80, 24) {
+                assert!(
+                    buffer
+                        .cell((0, 0))
+                        .expect("dimmed background")
+                        .modifier
+                        .contains(ratatui::style::Modifier::DIM)
+                );
+            }
+            insta::assert_snapshot!(format!("overview_help_{width}x{height}"), text);
+        }
 
         view.overlay_bottom();
         let bottom = render_to_buffer((40, 16), |frame| {
@@ -635,5 +644,6 @@ mod tests {
         assert!(bottom_text.contains("Exit"));
         assert!(bottom_text.contains("quit"));
         assert_eq!(bottom_text.matches("close").count(), 1);
+        insta::assert_snapshot!("overview_help_40x16_bottom", bottom_text);
     }
 }

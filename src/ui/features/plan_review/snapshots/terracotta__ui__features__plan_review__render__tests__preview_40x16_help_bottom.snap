@@ -1,0 +1,20 @@
+---
+source: src/ui/features/plan_review/render.rs
+expression: buffer_text(buffer)
+---
+Target: main [PROD] Workspace: default
+U┌Help────────────────────────────────┐~
+─│ c                                ▲ │─
+ │   show execution context         │ │▲
+ │ y                                │ │┃
+ │   copy the full plan             │ │┃
+ │ a                                │ ││
+ │   apply the full plan            │ ││
+ │                                  ┃ ││
+ │ Exit                             ┃ ││
+ │ q                                ┃ ││
+-│   quit                           ▼ ││
+◀︎│ ↑/↓/k/j/PgUp/PgDn scroll           │▶︎
+─│ ?/Esc close                        │─
+s└────────────────────────────────────┘
+? help | q quit                    L3/43

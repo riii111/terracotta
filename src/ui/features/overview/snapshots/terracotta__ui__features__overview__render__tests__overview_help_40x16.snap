@@ -1,0 +1,20 @@
+---
+source: src/ui/features/overview/render.rs
+expression: text
+---
+infra  ws:default  ...ng...  /repo/infra
+O┌Help────────────────────────────────┐
+─│ Navigation                       ▲ │─
+ │ ↑ / ↓ / j / k                    ┃ │
+O│   select a row                   ┃ │u
+ │ PgUp / PgDn                      ┃ │
+ │   move one page                  │ │
+ │ Home / End                       │ │
+ │   go to the first or last row    │ │
+ │                                  │ │
+ │ Review                           │ │
+ │ Enter                            ▼ │
+ │ ↑/↓/k/j/PgUp/PgDn scroll           │
+─│ ?/Esc close                        │─
+/└────────────────────────────────────┘d
+v full plan | ? help | q quit

@@ -2193,26 +2193,48 @@ End of synthetic plan body."#;
         let mut view = PlanReviewViewState::default();
         view.apply_with_matches(PlanReviewInput::OpenHelp, Rect::default(), 0, 0, "", &[]);
 
-        let help = render_to_buffer((120, 40), |frame| {
-            render(frame, &state, &view, Instant::now());
-        });
-        let help_text = buffer_text(&help);
-        assert!(help_text.contains("Help"));
-        assert!(help_text.lines().any(|line| {
-            let words: Vec<_> = line.split_whitespace().collect();
-            words.contains(&"s") && words.contains(&"overview")
-        }));
-        assert!(help_text.contains("copy the full plan"));
-        assert!(help_text.contains("apply the full plan"));
-        assert!(!help_text.contains("clear filter"));
-        assert_eq!(help_text.matches("close").count(), 1);
-        assert!(
-            help.cell((0, 0))
-                .expect("dimmed background")
-                .modifier
-                .contains(Modifier::DIM)
-        );
-        snapshot("preview_120x40_help", &help);
+        for (width, height) in [(40, 16), (40, 24), (80, 24), (120, 40), (160, 60)] {
+            let help = render_to_buffer((width, height), |frame| {
+                render(frame, &state, &view, Instant::now());
+            });
+            let help_text = buffer_text(&help);
+            assert!(help_text.contains("Help"), "{width}x{height}: {help_text}");
+            assert!(
+                !help_text.contains("clear filter"),
+                "{width}x{height}: {help_text}"
+            );
+            assert_eq!(
+                help_text.matches("close").count(),
+                1,
+                "{width}x{height}: {help_text}"
+            );
+            if width >= 80 {
+                assert!(
+                    help_text.lines().any(|line| {
+                        let words: Vec<_> = line.split_whitespace().collect();
+                        words.contains(&"s") && words.contains(&"overview")
+                    }),
+                    "{width}x{height}: {help_text}"
+                );
+                assert!(
+                    help_text.contains("copy the full plan"),
+                    "{width}x{height}: {help_text}"
+                );
+                assert!(
+                    help_text.contains("apply the full plan"),
+                    "{width}x{height}: {help_text}"
+                );
+            }
+            if (width, height) == (120, 40) {
+                assert!(
+                    help.cell((0, 0))
+                        .expect("dimmed background")
+                        .modifier
+                        .contains(Modifier::DIM)
+                );
+            }
+            snapshot(&format!("preview_{width}x{height}_help"), &help);
+        }
 
         view.overlay_bottom();
         let bottom = render_to_buffer((80, 24), |frame| {
@@ -2223,6 +2245,15 @@ End of synthetic plan body."#;
         assert!(bottom_text.contains("quit"));
         assert_eq!(bottom_text.matches("close").count(), 1);
         snapshot("preview_80x24_help_bottom", &bottom);
+
+        let small_bottom = render_to_buffer((40, 16), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        let small_bottom_text = buffer_text(&small_bottom);
+        assert!(small_bottom_text.contains("Exit"));
+        assert!(small_bottom_text.contains("quit"));
+        assert_eq!(small_bottom_text.matches("close").count(), 1);
+        snapshot("preview_40x16_help_bottom", &small_bottom);
     }
 
     #[test]
@@ -2253,14 +2284,32 @@ End of synthetic plan body."#;
         let state = confirmation_state(plan);
         let mut view = ApplyConfirmationViewState::default();
         assert_eq!(view.apply(ApplyConfirmationInput::OpenHelp, "main"), None);
-        let help = render_to_buffer((120, 40), |frame| {
-            render_apply_confirmation(frame, &state, &view);
-        });
-        let help_text = buffer_text(&help);
-        assert!(help_text.contains("Apply help"));
-        assert!(help_text.contains("confirm apply"));
-        assert!(help_text.contains("show execution context"));
-        assert_eq!(help_text.matches("close").count(), 1);
+        for (width, height) in [(80, 24), (120, 40), (160, 60)] {
+            let help = render_to_buffer((width, height), |frame| {
+                render_apply_confirmation(frame, &state, &view);
+            });
+            let help_text = buffer_text(&help);
+            assert!(
+                help_text.contains("Apply help"),
+                "{width}x{height}: {help_text}"
+            );
+            assert_eq!(
+                help_text.matches("close").count(),
+                1,
+                "{width}x{height}: {help_text}"
+            );
+            if width >= 80 {
+                assert!(
+                    help_text.contains("confirm apply"),
+                    "{width}x{height}: {help_text}"
+                );
+                assert!(
+                    help_text.contains("show execution context"),
+                    "{width}x{height}: {help_text}"
+                );
+            }
+            snapshot(&format!("apply_confirmation_help_{width}x{height}"), &help);
+        }
 
         view.close_overlay();
         assert_eq!(
@@ -4419,7 +4468,7 @@ End of synthetic plan body."#;
         #[test]
         fn environment_help_shows_tab_navigation_at_supported_widths() {
             let sections = plan_help_sections(&review(), ReviewNavigation::Environments, false);
-            for size in [(80, 24), (40, 16)] {
+            for size in [(40, 16), (40, 24), (80, 24), (120, 40), (160, 60)] {
                 let text = buffer_text(&render_to_buffer(size, |frame| {
                     help_dialog::render(frame, frame.area(), "Help", &sections, 0);
                 }));

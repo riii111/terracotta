@@ -131,6 +131,20 @@ mod tests {
     }
 
     #[test]
+    fn search_keeps_vim_navigation_keys_as_query_text() {
+        for character in ['j', 'k'] {
+            assert_eq!(
+                key_to_input(
+                    KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+                    true,
+                    false,
+                ),
+                Some(OverviewInput::SearchChar(character))
+            );
+        }
+    }
+
+    #[test]
     fn escape_clears_filter_before_leaving_overview() {
         assert_eq!(
             key_to_input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), false, true),

@@ -12,11 +12,11 @@ use crate::ui::{
     theme,
 };
 
-const MAX_WIDTH: u16 = 76;
-const MAX_HEIGHT: u16 = 22;
 const MIN_WIDTH: u16 = 20;
 const MIN_HEIGHT: u16 = 6;
 const HORIZONTAL_PADDING: u16 = 1;
+const MIN_DESCRIPTION_WIDTH: u16 = 28;
+const STACKED_DESCRIPTION_INDENT: u16 = 2;
 
 pub(crate) struct HelpAction {
     keys: &'static str,
@@ -26,13 +26,6 @@ pub(crate) struct HelpAction {
 impl HelpAction {
     pub(crate) const fn new(keys: &'static str, description: &'static str) -> Self {
         Self { keys, description }
-    }
-
-    pub(crate) const fn note(description: &'static str) -> Self {
-        Self {
-            keys: "",
-            description,
-        }
     }
 }
 
@@ -58,6 +51,15 @@ struct ScrolledText {
     style: Style,
 }
 
+#[derive(Clone, Copy)]
+struct ActionLayout {
+    content_width: u16,
+    key_width: u16,
+    description_x: u16,
+    description_width: u16,
+    stacked: bool,
+}
+
 pub(crate) fn render(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -73,25 +75,21 @@ pub(crate) fn render(
 
     dim_background(frame, area);
 
-    let text_width = width.saturating_sub(6);
-    let key_width = key_column_width(sections, text_width);
-    let description_x = key_width.saturating_add(u16::from(key_width > 0));
-    let description_width = text_width.saturating_sub(description_x).max(1);
-    let content_width = text_width;
-    let content_height = content_height(sections, key_width, description_width, content_width);
+    let action_layout = action_layout(sections, width, area.width);
+    let content_height = content_height(sections, action_layout);
     let inner_width = width.saturating_sub(2);
     let footer_width = inner_width.saturating_sub(HORIZONTAL_PADDING.saturating_mul(2));
     let close_footer = footer::layout(vec![footer::hint(&["?", "Esc"], "close")], footer_width);
     let scroll_footer = footer::layout(
         vec![
-            footer::hint(&["↑", "↓", "PgUp", "PgDn"], "scroll"),
+            footer::hint(&["↑/↓/k/j", "PgUp/PgDn"], "scroll"),
             footer::hint(&["?", "Esc"], "close"),
         ],
         footer_width,
     );
-    let max_height = area.height.saturating_sub(2).min(MAX_HEIGHT);
+    let available_height = area.height.saturating_sub(2);
     let needs_scroll =
-        content_height.saturating_add(2 + close_footer.len()) > usize::from(max_height);
+        content_height.saturating_add(2 + close_footer.len()) > usize::from(available_height);
     let footer_lines = if needs_scroll {
         &scroll_footer
     } else {
@@ -102,7 +100,7 @@ pub(crate) fn render(
         .unwrap_or(u16::MAX)
         .saturating_add(2)
         .saturating_add(footer_height)
-        .min(max_height);
+        .min(available_height);
     let dialog = Rect::new(
         area.x + area.width.saturating_sub(width) / 2,
         area.y + area.height.saturating_sub(height) / 2,
@@ -121,7 +119,7 @@ pub(crate) fn render(
     let content = Rect::new(
         inner.x.saturating_add(HORIZONTAL_PADDING),
         inner.y,
-        text_width,
+        action_layout.content_width,
         inner.height.saturating_sub(footer_height),
     );
     let scrollbar_area = Rect::new(
@@ -138,15 +136,7 @@ pub(crate) fn render(
     );
     let max_scroll = content_height.saturating_sub(usize::from(content.height));
     let scroll = usize::from(scroll).min(max_scroll);
-    render_sections(
-        frame,
-        content,
-        sections,
-        key_width,
-        description_x,
-        description_width,
-        scroll,
-    );
+    render_sections(frame, content, sections, action_layout, scroll);
     if content.height > 0 {
         scrollbar::render_vertical(
             frame,
@@ -160,28 +150,70 @@ pub(crate) fn render(
 }
 
 fn dialog_width(area: Rect, sections: &[HelpSection]) -> u16 {
-    let max_key_width = sections
-        .iter()
-        .flat_map(|section| &section.actions)
-        .map(|action| Line::from(action.keys).width())
-        .max()
-        .unwrap_or_default();
-    let max_description_width = sections
-        .iter()
-        .flat_map(|section| &section.actions)
-        .map(|action| Line::from(action.description).width())
-        .max()
-        .unwrap_or_default();
-    let content_width = max_key_width
-        .saturating_add(usize::from(max_key_width > 0))
-        .saturating_add(max_description_width);
-    let natural_width = u16::try_from(content_width.saturating_add(6))
-        .unwrap_or(u16::MAX)
-        .max(MIN_WIDTH);
     area.width
-        .saturating_sub(4)
-        .min(MAX_WIDTH)
-        .min(natural_width)
+        .saturating_sub(2)
+        .min(required_dialog_width(sections))
+}
+
+fn action_layout(sections: &[HelpSection], dialog_width: u16, terminal_width: u16) -> ActionLayout {
+    let content_width = dialog_width.saturating_sub(6);
+    let key_width = key_column_width(sections);
+    let available_content_width = terminal_width.saturating_sub(8);
+    let stacked = key_width > 0
+        && available_content_width
+            < key_width
+                .saturating_add(1)
+                .saturating_add(MIN_DESCRIPTION_WIDTH);
+    let description_x = if stacked {
+        STACKED_DESCRIPTION_INDENT
+    } else {
+        key_width.saturating_add(u16::from(key_width > 0))
+    };
+    let description_width = content_width.saturating_sub(description_x).max(1);
+
+    ActionLayout {
+        content_width,
+        key_width,
+        description_x,
+        description_width,
+        stacked,
+    }
+}
+
+fn required_content_width(sections: &[HelpSection]) -> u16 {
+    let key_width = key_column_width(sections);
+    let description_width = max_description_width(sections);
+    let column_width = key_width
+        .saturating_add(u16::from(key_width > 0))
+        .saturating_add(description_width);
+    sections
+        .iter()
+        .flat_map(|section| &section.actions)
+        .map(|action| line_width(action.description))
+        .fold(column_width, u16::max)
+}
+
+fn key_column_width(sections: &[HelpSection]) -> u16 {
+    sections
+        .iter()
+        .flat_map(|section| &section.actions)
+        .filter(|action| !action.keys.is_empty())
+        .map(|action| line_width(action.keys))
+        .max()
+        .unwrap_or_default()
+}
+
+fn max_description_width(sections: &[HelpSection]) -> u16 {
+    sections
+        .iter()
+        .flat_map(|section| &section.actions)
+        .map(|action| line_width(action.description))
+        .max()
+        .unwrap_or_default()
+}
+
+fn line_width(text: &str) -> u16 {
+    u16::try_from(Line::from(text).width()).unwrap_or(u16::MAX)
 }
 
 fn dim_background(frame: &mut Frame<'_>, area: Rect) {
@@ -194,26 +226,13 @@ fn dim_background(frame: &mut Frame<'_>, area: Rect) {
     }
 }
 
-fn key_column_width(sections: &[HelpSection], inner_width: u16) -> u16 {
-    let max_key_width = sections
-        .iter()
-        .flat_map(|section| &section.actions)
-        .filter(|action| !action.keys.is_empty())
-        .map(|action| Line::from(action.keys).width())
-        .max()
-        .unwrap_or_default();
-    let key_limit = inner_width / 2;
-    u16::try_from(max_key_width)
-        .unwrap_or(u16::MAX)
-        .min(key_limit)
+fn required_dialog_width(sections: &[HelpSection]) -> u16 {
+    required_content_width(sections)
+        .saturating_add(6)
+        .max(MIN_WIDTH)
 }
 
-fn content_height(
-    sections: &[HelpSection],
-    key_width: u16,
-    description_width: u16,
-    content_width: u16,
-) -> usize {
+fn content_height(sections: &[HelpSection], layout: ActionLayout) -> usize {
     let mut height = 0;
     for (section_index, section) in sections.iter().enumerate() {
         if section_index > 0 {
@@ -221,23 +240,23 @@ fn content_height(
         }
         height += 1;
         for action in &section.actions {
-            let row_height = row_height(action, key_width, description_width, content_width);
+            let row_height = row_height(action, layout);
             height += row_height;
         }
     }
     height
 }
 
-fn row_height(
-    action: &HelpAction,
-    key_width: u16,
-    description_width: u16,
-    content_width: u16,
-) -> usize {
+fn row_height(action: &HelpAction, layout: ActionLayout) -> usize {
     if action.keys.is_empty() {
-        return wrapped_lines(action.description, content_width);
+        return wrapped_lines(action.description, layout.content_width);
     }
-    wrapped_lines(action.keys, key_width).max(wrapped_lines(action.description, description_width))
+    if layout.stacked {
+        return wrapped_lines(action.keys, layout.content_width)
+            .saturating_add(wrapped_lines(action.description, layout.description_width));
+    }
+    wrapped_lines(action.keys, layout.key_width)
+        .max(wrapped_lines(action.description, layout.description_width))
 }
 
 fn wrapped_lines(text: &str, width: u16) -> usize {
@@ -251,9 +270,7 @@ fn render_sections(
     frame: &mut Frame<'_>,
     viewport: Rect,
     sections: &[HelpSection],
-    key_width: u16,
-    description_x: u16,
-    description_width: u16,
+    layout: ActionLayout,
     scroll: usize,
 ) {
     let mut line = 0;
@@ -277,7 +294,7 @@ fn render_sections(
         line += 1;
 
         for action in &section.actions {
-            let height = row_height(action, key_width, description_width, viewport.width);
+            let height = row_height(action, layout);
             if action.keys.is_empty() {
                 render_scrolled_text(
                     frame,
@@ -287,7 +304,35 @@ fn render_sections(
                         height,
                         scroll,
                         x: viewport.x,
-                        width: viewport.width,
+                        width: layout.content_width,
+                        text: action.description,
+                        style: theme::body_style(),
+                    },
+                );
+            } else if layout.stacked {
+                let key_height = wrapped_lines(action.keys, layout.content_width);
+                render_scrolled_text(
+                    frame,
+                    viewport,
+                    ScrolledText {
+                        line,
+                        height: key_height,
+                        scroll,
+                        x: viewport.x,
+                        width: layout.content_width,
+                        text: action.keys,
+                        style: theme::accent_style(),
+                    },
+                );
+                render_scrolled_text(
+                    frame,
+                    viewport,
+                    ScrolledText {
+                        line: line.saturating_add(key_height),
+                        height: height.saturating_sub(key_height),
+                        scroll,
+                        x: viewport.x.saturating_add(layout.description_x),
+                        width: layout.description_width,
                         text: action.description,
                         style: theme::body_style(),
                     },
@@ -301,7 +346,7 @@ fn render_sections(
                         height,
                         scroll,
                         x: viewport.x,
-                        width: key_width,
+                        width: layout.key_width,
                         text: action.keys,
                         style: theme::accent_style(),
                     },
@@ -313,8 +358,8 @@ fn render_sections(
                         line,
                         height,
                         scroll,
-                        x: viewport.x.saturating_add(description_x),
-                        width: description_width,
+                        x: viewport.x.saturating_add(layout.description_x),
+                        width: layout.description_width,
                         text: action.description,
                         style: theme::body_style(),
                     },
@@ -357,14 +402,14 @@ fn render_scrolled_text(frame: &mut Frame<'_>, viewport: Rect, text: ScrolledTex
 
 #[cfg(test)]
 mod tests {
-    use super::{HelpAction, HelpSection, content_height, key_column_width, row_height};
+    use ratatui::layout::Rect;
 
-    #[test]
-    fn note_height_uses_its_full_content_width() {
-        let note = HelpAction::note("A short comparison note spans one row at full width.");
+    use crate::ui::test_support::{buffer_text, render_to_buffer};
 
-        assert_eq!(row_height(&note, 10, 20, 34), 2);
-    }
+    use super::{
+        ActionLayout, HelpAction, HelpSection, action_layout, content_height, dialog_width, render,
+        required_dialog_width,
+    };
 
     #[test]
     fn operation_rows_are_compact_and_sections_remain_separated() {
@@ -376,16 +421,79 @@ mod tests {
             HelpSection::new("Second", vec![HelpAction::new("c", "three")]),
         ];
 
-        assert_eq!(content_height(&sections, 1, 8, 10), 6);
+        let layout = ActionLayout {
+            content_width: 10,
+            key_width: 1,
+            description_x: 2,
+            description_width: 8,
+            stacked: false,
+        };
+        assert_eq!(content_height(&sections, layout), 6);
     }
 
     #[test]
-    fn navigation_shortcuts_stay_together_in_narrow_dialogs() {
+    fn narrow_dialogs_stack_keys_above_their_descriptions() {
         let sections = [HelpSection::new(
             "Navigation",
-            vec![HelpAction::new("↑ / ↓ / j / k", "scroll vertically")],
+            vec![HelpAction::new(
+                "Space",
+                "expand or collapse a selected [+]/[-] group row",
+            )],
         )];
 
-        assert_eq!(key_column_width(&sections, 30), 13);
+        let width = dialog_width(Rect::new(0, 0, 40, 16), &sections);
+        let layout = action_layout(&sections, width, 40);
+        assert!(layout.stacked);
+        assert!(required_dialog_width(&sections) > width);
+    }
+
+    #[test]
+    fn wide_dialogs_expand_to_fit_their_content_without_a_fixed_cap() {
+        let sections = [HelpSection::new(
+            "Comparison",
+            vec![HelpAction::new(
+                "Same changes",
+                "no differences detected between Ready plans; unknown values may differ",
+            )],
+        )];
+
+        let width = dialog_width(Rect::new(0, 0, 160, 60), &sections);
+        let layout = action_layout(&sections, width, 160);
+
+        assert!(width > 76);
+        assert_eq!(width, required_dialog_width(&sections));
+        assert!(!layout.stacked);
+    }
+
+    #[test]
+    fn help_rows_stack_when_narrow_and_return_to_columns_after_resize() {
+        let sections = [HelpSection::new(
+            "Overview",
+            vec![HelpAction::new(
+                "Space",
+                "toggle a selected [+]/[-] group row",
+            )],
+        )];
+
+        let narrow = buffer_text(&render_to_buffer((40, 24), |frame| {
+            render(frame, frame.area(), "Help", &sections, 0);
+        }));
+        let key_line = narrow
+            .lines()
+            .position(|line| line.contains("Space"))
+            .expect("key row should be visible");
+        let description_line = narrow
+            .lines()
+            .position(|line| line.contains("toggle a selected"))
+            .expect("description row should be visible");
+        assert!(description_line > key_line);
+
+        let wide = buffer_text(&render_to_buffer((120, 40), |frame| {
+            render(frame, frame.area(), "Help", &sections, 0);
+        }));
+        assert!(
+            wide.lines()
+                .any(|line| { line.contains("Space") && line.contains("toggle a selected") })
+        );
     }
 }
