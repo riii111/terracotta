@@ -250,17 +250,10 @@ fn truncate_target(value: &str, max_width: usize) -> String {
     }
     if let Some(prefix) = value.strip_suffix(PRODUCTION_SUFFIX) {
         let suffix_width = display_width(PRODUCTION_SUFFIX);
-        if max_width >= suffix_width.saturating_add(3) {
-            let prefix_width = max_width - suffix_width - 3;
-            return format!(
-                "{}...{PRODUCTION_SUFFIX}",
-                take_from_start(prefix, prefix_width)
-            );
-        }
         if max_width >= suffix_width {
             return format!(
                 "{}{PRODUCTION_SUFFIX}",
-                take_from_start(prefix, max_width - suffix_width)
+                truncate_middle(prefix, max_width - suffix_width)
             );
         }
     }
@@ -409,6 +402,7 @@ mod tests {
 
         assert!(value.starts_with("Target: "), "{value}");
         assert!(value.contains("[PROD]"), "{value}");
+        assert!(value.contains("view [PROD]"), "{value}");
         assert!(value.contains("Workspace:"), "{value}");
         assert!(value.contains("Tool: terraform"), "{value}");
         assert!(value.contains("Dir: ./"), "{value}");
@@ -451,6 +445,16 @@ mod tests {
         assert!(value.starts_with("Target: "), "{value}");
         assert!(value.contains("PROD"), "{value}");
         assert!(line.width() <= 24, "{value}");
+    }
+
+    #[test]
+    fn truncated_production_targets_keep_a_distinguishing_suffix() {
+        let first = truncate_target("very-long-target-name-alpha [PROD]", 20);
+        let second = truncate_target("very-long-target-name-bravo [PROD]", 20);
+
+        assert_ne!(first, second);
+        assert!(first.ends_with(PRODUCTION_SUFFIX), "{first}");
+        assert!(second.ends_with(PRODUCTION_SUFFIX), "{second}");
     }
 
     #[test]
