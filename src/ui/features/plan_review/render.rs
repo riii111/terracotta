@@ -320,6 +320,7 @@ fn layout_with_content(
             })
     };
     let footer_message = footer_status.as_ref().map(|(message, _)| message.as_str());
+    let available_footer_width = footer::available_width(panel_width, footer_message);
     let normal_footer_lines = footer::layout_with_notice(
         footer_items(
             searching,
@@ -327,6 +328,7 @@ fn layout_with_content(
             content.matches.len(),
             filter_visible,
             navigation,
+            available_footer_width,
         ),
         panel_width,
         footer_message,
@@ -416,9 +418,30 @@ fn common_footer_height(
         .into_iter()
         .flat_map(|notice| {
             [
-                footer_items(false, applyable, match_count, false, navigation),
-                footer_items(true, applyable, match_count, true, navigation),
-                footer_items(false, applyable, match_count.max(2), true, navigation),
+                footer_items(
+                    false,
+                    applyable,
+                    match_count,
+                    false,
+                    navigation,
+                    footer::available_width(width, notice),
+                ),
+                footer_items(
+                    true,
+                    applyable,
+                    match_count,
+                    true,
+                    navigation,
+                    footer::available_width(width, notice),
+                ),
+                footer_items(
+                    false,
+                    applyable,
+                    match_count.max(2),
+                    true,
+                    navigation,
+                    footer::available_width(width, notice),
+                ),
                 required_footer_items(false, match_count, false, navigation),
                 required_footer_items(true, match_count, true, navigation),
                 required_footer_items(false, match_count.max(2), true, navigation),
@@ -1616,6 +1639,7 @@ fn footer_items(
     _match_count: usize,
     filtered: bool,
     navigation: ReviewNavigation,
+    width: u16,
 ) -> Vec<Line<'static>> {
     let mut items = if searching {
         vec![
@@ -1638,13 +1662,28 @@ fn footer_items(
             items.push(footer::hint(&["a"], "apply"));
         }
         items.extend([footer::hint(&["?"], "help"), footer::hint(&["q"], "quit")]);
-        items.push(footer::hint(&["y"], "copy plan"));
+        let copy_plan = footer::hint(&["y"], "copy plan");
+        items.push(copy_plan.clone());
+        if navigation == ReviewNavigation::Standalone {
+            let overview = footer::hint(&["s"], "overview");
+            let mut preferred_order = items.clone();
+            preferred_order.push(overview.clone());
+            let overview_fits = footer::layout(preferred_order, width)
+                .iter()
+                .flat_map(|line| line.spans.iter())
+                .any(|span| span.content.contains("overview"));
+            if overview_fits {
+                items.push(overview);
+            } else {
+                items.pop();
+                items.push(overview);
+                items.push(copy_plan);
+            }
+        }
         items
     };
     if navigation == ReviewNavigation::Environments && !searching && !filtered {
         items.insert(0, footer::hint(&["Esc"], "overview"));
-    } else if navigation == ReviewNavigation::Standalone && !searching && !filtered {
-        items.push(footer::hint(&["s"], "overview"));
     }
     items
 }
@@ -2518,6 +2557,7 @@ End of synthetic plan body."#;
                     content.matches.len(),
                     false,
                     ReviewNavigation::Standalone,
+                    shell_layout::centered_width(area),
                 ),
                 shell_layout::centered_width(area),
                 None,
@@ -4144,7 +4184,14 @@ End of synthetic plan body."#;
         #[test]
         fn single_environment_footer_shows_overview_when_it_fits() {
             let wide = footer::layout_with_notice(
-                footer_items(false, true, 0, false, ReviewNavigation::Standalone),
+                footer_items(
+                    false,
+                    true,
+                    0,
+                    false,
+                    ReviewNavigation::Standalone,
+                    footer::available_width(80, Some("Line 1/43")),
+                ),
                 80,
                 Some("Line 1/43"),
             );
@@ -4157,7 +4204,14 @@ End of synthetic plan body."#;
             assert!(wide_text.contains("s overview"), "{wide_text}");
 
             let narrow = footer::layout_with_notice(
-                footer_items(false, true, 0, false, ReviewNavigation::Standalone),
+                footer_items(
+                    false,
+                    true,
+                    0,
+                    false,
+                    ReviewNavigation::Standalone,
+                    footer::available_width(24, Some("L1/43")),
+                ),
                 24,
                 Some("L1/43"),
             );
@@ -4172,6 +4226,58 @@ End of synthetic plan body."#;
             assert!(narrow_text.contains("? help"), "{narrow_text}");
             assert!(narrow_text.contains("q quit"), "{narrow_text}");
             assert!(!narrow_text.contains("s overview"), "{narrow_text}");
+        }
+
+        #[test]
+        fn standalone_footer_prioritizes_overview_at_38_columns() {
+            let state = review_state(review_with_applyable(true).with_apply_entry(true));
+            let view = PlanReviewViewState::default();
+            let area = Rect::new(0, 0, 38, 24);
+            let layout = layout(area, false, &state);
+            let buffer = render_to_buffer((area.width, area.height), |frame| {
+                render(frame, &state, &view, Instant::now());
+            });
+            let footer = layout.shell.footer();
+            let footer_lines = (footer.y..footer.bottom())
+                .map(|y| {
+                    (footer.x..footer.right())
+                        .map(|x| {
+                            buffer
+                                .cell((x, y))
+                                .expect("footer cell")
+                                .symbol()
+                                .to_owned()
+                        })
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>();
+            let position = layout
+                .footer_status
+                .as_ref()
+                .expect("plan position")
+                .0
+                .as_str();
+
+            assert!(
+                footer_lines.iter().any(|line| line.contains("/ filter")),
+                "{footer_lines:?}"
+            );
+            assert!(
+                footer_lines.iter().any(|line| line.contains("a apply")),
+                "{footer_lines:?}"
+            );
+            assert!(
+                footer_lines.iter().any(|line| line.contains("? help")),
+                "{footer_lines:?}"
+            );
+            assert!(
+                footer_lines
+                    .iter()
+                    .any(|line| line.contains("q quit") && line.contains("s overview")),
+                "{footer_lines:?}"
+            );
+            assert!(footer_lines.iter().any(|line| line.contains(position)));
+            assert!(!footer_lines.iter().any(|line| line.contains("y copy plan")));
         }
 
         #[test]
