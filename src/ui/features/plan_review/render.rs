@@ -1044,9 +1044,6 @@ fn render_for_navigation(
         Block::new().style(theme::body_style()),
         layout.shell.content(),
     );
-    let inner = layout.shell.content_inner();
-    debug_assert_eq!(inner, layout.shell.content_inner());
-
     render_status(frame, &layout, state, view);
 
     let content_metrics = content.metrics();

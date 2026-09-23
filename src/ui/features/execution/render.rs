@@ -8,7 +8,8 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use crate::app::{
     copy::CopyNotice,
     execution::{
-        EventStream, ExecutionResult, ExecutionStage, ExecutionState, ExecutionTargetStatus,
+        EventStream, ExecutionLogLine, ExecutionResult, ExecutionStage, ExecutionState,
+        ExecutionTargetStatus,
     },
     plan::PlanAction,
 };
@@ -829,20 +830,7 @@ pub(crate) fn execution_horizontal_scroll_position_with_view(
 }
 
 fn prepare_content(state: &ExecutionState) -> PreparedContent<'_> {
-    let log = state.progress().log();
-    let mut lines = Vec::new();
-    for line in log {
-        let style = if line.stream == EventStream::Stderr {
-            theme::warning_style()
-        } else {
-            theme::body_style()
-        };
-        lines.extend(
-            line.text
-                .lines()
-                .map(|text| Line::from(Span::styled(text, style))),
-        );
-    }
+    let mut lines = log_lines(state.progress().log());
     if lines.is_empty() {
         if finished_apply(state) {
             lines.push(Line::from(Span::styled(
@@ -875,19 +863,7 @@ fn prepare_selected_content(
                     .collect()
             },
         );
-    let mut lines = Vec::new();
-    for line in log {
-        let style = if line.stream == EventStream::Stderr {
-            theme::warning_style()
-        } else {
-            theme::body_style()
-        };
-        lines.extend(
-            line.text
-                .lines()
-                .map(|text| Line::from(Span::styled(text, style))),
-        );
-    }
+    let mut lines = log_lines(log);
     if lines.is_empty() {
         lines.push(Line::from(Span::styled(
             if finished_apply(state) {
@@ -902,6 +878,23 @@ fn prepare_selected_content(
     }
     let max_width = max_line_width(&lines);
     PreparedContent { lines, max_width }
+}
+
+fn log_lines<'a>(log: impl IntoIterator<Item = &'a ExecutionLogLine>) -> Vec<Line<'a>> {
+    let mut lines = Vec::new();
+    for line in log {
+        let style = if line.stream == EventStream::Stderr {
+            theme::warning_style()
+        } else {
+            theme::body_style()
+        };
+        lines.extend(
+            line.text
+                .lines()
+                .map(|text| Line::from(Span::styled(text, style))),
+        );
+    }
+    lines
 }
 
 fn target_line(

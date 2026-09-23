@@ -28,6 +28,11 @@ pub(crate) struct OverviewLayout {
     max_vertical: u16,
 }
 
+struct PreparedOverview {
+    layout: OverviewLayout,
+    lines: Vec<Line<'static>>,
+}
+
 impl OverviewLayout {
     pub(crate) const fn status(&self) -> Rect {
         self.status
@@ -51,6 +56,10 @@ pub(crate) fn layout(
     state: &OverviewSessionState,
     view: &OverviewViewState,
 ) -> OverviewLayout {
+    prepare(area, state, view).layout
+}
+
+fn prepare(area: Rect, state: &OverviewSessionState, view: &OverviewViewState) -> PreparedOverview {
     let content = OverviewContent::from_review(state.review(), view.filter(), view.expanded());
     let footer_message = state.copy_notice().map(CopyNotice::message);
     let full_footer = footer::layout_with_notice(
@@ -73,15 +82,19 @@ pub(crate) fn layout(
         inner.width,
         inner.height.saturating_sub(2),
     );
-    let line_count = overview_lines(&content, state.review(), view, body.width).len();
+    let lines = overview_lines(&content, state.review(), view, body.width);
+    let line_count = lines.len();
     let max_vertical =
         u16::try_from(line_count.saturating_sub(usize::from(body.height))).unwrap_or(u16::MAX);
-    OverviewLayout {
-        shell,
-        status,
-        separator,
-        body,
-        max_vertical,
+    PreparedOverview {
+        layout: OverviewLayout {
+            shell,
+            status,
+            separator,
+            body,
+            max_vertical,
+        },
+        lines,
     }
 }
 
@@ -100,7 +113,10 @@ pub(crate) fn render(
         );
         return;
     }
-    let layout = layout(area, state, view);
+    let PreparedOverview {
+        layout,
+        lines: prepared_lines,
+    } = prepare(area, state, view);
     if layout.body().width == 0 || layout.body().height == 0 {
         terminal_notice::render_wrapped(
             frame,
@@ -126,29 +142,24 @@ pub(crate) fn render(
         layout.separator(),
     );
 
-    let content = OverviewContent::from_review(state.review(), view.filter(), view.expanded());
     let lines = if state.copy_flash_active(now) {
-        copy_flash_lines(&overview_lines(
-            &content,
-            state.review(),
-            view,
-            layout.body().width,
-        ))
+        copy_flash_lines(prepared_lines)
     } else {
-        overview_lines(&content, state.review(), view, layout.body().width)
+        prepared_lines
     };
+    let line_count = lines.len();
     let vertical = view.scroll().min(layout.max_vertical());
     frame.render_widget(
-        Paragraph::new(lines.clone())
+        Paragraph::new(lines)
             .style(theme::body_style())
             .scroll((vertical, 0)),
         layout.body(),
     );
-    if lines.len() > usize::from(layout.body().height) {
+    if line_count > usize::from(layout.body().height) {
         scrollbar::render_vertical(
             frame,
             layout.body(),
-            lines.len(),
+            line_count,
             usize::from(layout.body().height),
             usize::from(vertical),
         );
@@ -327,9 +338,9 @@ fn truncate_address(value: &str, width: usize, reserved: usize) -> String {
     format!("...{suffix}")
 }
 
-fn copy_flash_lines(lines: &[Line<'static>]) -> Vec<Line<'static>> {
+fn copy_flash_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
     lines
-        .iter()
+        .into_iter()
         .map(|line| Line::from(Span::styled(line.to_string(), theme::copy_flash_style())))
         .collect()
 }
