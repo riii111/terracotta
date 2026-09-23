@@ -79,8 +79,21 @@ impl EnvironmentView {
             };
         }
         if self.dialog.is_some() {
+            let is_help = matches!(self.dialog, Some(EnvironmentDialog::Help));
             match key.code {
                 KeyCode::Esc | KeyCode::Char('?') => self.dialog = None,
+                KeyCode::Up | KeyCode::Char('k') if is_help => {
+                    self.dialog_scroll = self.dialog_scroll.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') if is_help => {
+                    self.dialog_scroll = self.dialog_scroll.saturating_add(1);
+                }
+                KeyCode::PageUp if is_help => {
+                    self.dialog_scroll = self.dialog_scroll.saturating_sub(4);
+                }
+                KeyCode::PageDown if is_help => {
+                    self.dialog_scroll = self.dialog_scroll.saturating_add(4);
+                }
                 KeyCode::Up | KeyCode::PageUp => {
                     self.dialog_scroll = self.dialog_scroll.saturating_sub(4);
                 }
@@ -395,6 +408,16 @@ impl EnvironmentView {
                 KeyCode::Esc | KeyCode::Char('?') => view.close_overlay(),
                 KeyCode::Up => view.scroll_overlay(-1),
                 KeyCode::Down => view.scroll_overlay(1),
+                KeyCode::Char('k')
+                    if view.overlay() == Some(plan_review::PlanReviewOverlay::Help) =>
+                {
+                    view.scroll_overlay(-1);
+                }
+                KeyCode::Char('j')
+                    if view.overlay() == Some(plan_review::PlanReviewOverlay::Help) =>
+                {
+                    view.scroll_overlay(1);
+                }
                 KeyCode::PageUp => view.scroll_overlay(-8),
                 KeyCode::PageDown => view.scroll_overlay(8),
                 _ => {}

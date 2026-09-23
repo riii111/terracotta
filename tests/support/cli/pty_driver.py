@@ -406,7 +406,7 @@ try:
             wait_new("Ready: 12/12", "many_ready")
             for _ in range(11):
                 send_key(b"]")
-            wait_new("env-11 · terraform", "twelfth_column")
+            wait_new("env-11", "twelfth_column")
             send_key(b"v")
             wait_parts(
                 ["terraform_data.api", "env-11", "Esc overview"], "twelfth_environment"
@@ -414,7 +414,7 @@ try:
             send_key(b"[")
             wait_new("env-10", "eleventh_environment")
             send_key(b"0")
-            wait_new("env-11 · terraform", "restored_last_column")
+            wait_new("env-11", "restored_last_column")
             send_key(b"q")
             exit_code = wait_exit()
         elif scenario == "env_show_failure":

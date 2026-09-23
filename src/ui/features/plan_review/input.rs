@@ -326,6 +326,23 @@ mod tests {
             apply_confirmation_key_to_input(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE,)),
             Some(ApplyConfirmationInput::Character('c'))
         );
+        for character in ['j', 'k'] {
+            assert_eq!(
+                key_to_input(
+                    KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+                    true,
+                    false,
+                ),
+                Some(PlanReviewInput::SearchChar(character))
+            );
+            assert_eq!(
+                apply_confirmation_key_to_input(KeyEvent::new(
+                    KeyCode::Char(character),
+                    KeyModifiers::NONE,
+                )),
+                Some(ApplyConfirmationInput::Character(character))
+            );
+        }
         assert_eq!(
             key_to_input(
                 KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),

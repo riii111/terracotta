@@ -45,32 +45,7 @@ pub(crate) fn render(
         usize::from(area.width).saturating_sub(address_width + WHY_WIDTH + COLUMN_GAP);
     let columns = visible_columns(view, &column_widths, column_budget, selected_environment);
 
-    let mut header = vec![Span::styled("Address", theme::secondary_style())];
-    header.push(Span::raw(" ".repeat(address_width.saturating_sub(7))));
-    for &(index, column_width) in &columns {
-        let label = if index == selected_environment {
-            format!("> {}", name(&state.plans()[index]))
-        } else {
-            name(&state.plans()[index])
-        };
-        let (label, padding) = fit_parts(&label, column_width - COLUMN_GAP, false);
-        header.push(Span::styled(
-            label,
-            if index == selected_environment {
-                theme::search_match_style()
-            } else {
-                theme::secondary_style()
-            },
-        ));
-        header.push(Span::raw(format!("{} ", " ".repeat(padding))));
-    }
-    header.push(Span::raw(" "));
-    header.push(Span::styled("why", theme::secondary_style()));
-    header.push(Span::raw(" ".repeat(WHY_WIDTH.saturating_sub(3))));
-    frame.render_widget(
-        Paragraph::new(Line::from(header)),
-        Rect::new(area.x, area.y, area.width, 1),
-    );
+    render_column_headers(frame, area, state, &columns, address_width);
 
     let partial = !matches!(state.overview().scope, ComparisonScope::All { .. });
     let mut lines = Vec::new();
@@ -78,6 +53,9 @@ pub(crate) fn render(
     let mut section = None;
     for (index, row) in view.rows.iter().enumerate() {
         if !row.child && section != Some(row.difference.is_some()) {
+            if section.is_some() {
+                lines.push(Line::default());
+            }
             section = Some(row.difference.is_some());
             let title = if row.difference.is_some() {
                 "Differs across envs"
@@ -108,13 +86,20 @@ pub(crate) fn render(
             },
         ));
     }
+    lines.push(Line::styled(
+        "─".repeat(usize::from(area.width)),
+        theme::separator_style(),
+    ));
     lines.extend(total_lines(state, &columns, address_width));
+    let legend = symbol_legend(area.width);
+    let legend_height = u16::try_from(legend.len()).unwrap_or(u16::MAX);
     let body = Rect::new(
         area.x,
-        area.y + 1,
+        area.y + 1 + legend_height,
         area.width,
-        area.height.saturating_sub(1),
+        area.height.saturating_sub(1 + legend_height),
     );
+    render_legend(frame, area, &legend);
     if let Some(&line) = row_lines.get(view.selected) {
         if line < view.vertical {
             view.vertical = line;
@@ -130,6 +115,44 @@ pub(crate) fn render(
         Paragraph::new(lines).scroll((u16::try_from(view.vertical).unwrap_or(u16::MAX), 0)),
         body,
     );
+}
+
+fn render_column_headers(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &EnvironmentSession,
+    columns: &[(usize, usize)],
+    address_width: usize,
+) {
+    let mut header = vec![Span::styled("Address", theme::secondary_style())];
+    header.push(Span::raw(" ".repeat(address_width.saturating_sub(7))));
+    for &(index, column_width) in columns {
+        let label = name(&state.plans()[index]);
+        let (label, padding) = fit_parts(&label, column_width - COLUMN_GAP, false);
+        header.push(Span::styled(label, theme::secondary_style()));
+        header.push(Span::raw(format!("{} ", " ".repeat(padding))));
+    }
+    header.push(Span::raw(" "));
+    header.push(Span::styled("why", theme::secondary_style()));
+    header.push(Span::raw(" ".repeat(WHY_WIDTH.saturating_sub(3))));
+    frame.render_widget(
+        Paragraph::new(Line::from(header)),
+        Rect::new(area.x, area.y, area.width, 1),
+    );
+}
+
+fn render_legend(frame: &mut Frame<'_>, area: Rect, legend: &[Line<'static>]) {
+    for (index, line) in legend.iter().cloned().enumerate() {
+        frame.render_widget(
+            Paragraph::new(line),
+            Rect::new(
+                area.x,
+                area.y + 1 + u16::try_from(index).unwrap_or(u16::MAX),
+                area.width,
+                1,
+            ),
+        );
+    }
 }
 
 fn address_width(area: Rect, view: &MatrixView) -> usize {
@@ -285,6 +308,20 @@ fn total_lines(
     lines
 }
 
+fn symbol_legend(width: u16) -> Vec<Line<'static>> {
+    if width < 50 {
+        vec![
+            Line::styled("blank: absent   .: unchanged", theme::secondary_style()),
+            Line::styled("?: plan unavailable", theme::secondary_style()),
+        ]
+    } else {
+        vec![Line::styled(
+            "blank: absent   .: unchanged   ?: plan unavailable",
+            theme::secondary_style(),
+        )]
+    }
+}
+
 fn row_line(
     row: &Row,
     selected: bool,
@@ -304,6 +341,11 @@ fn row_line(
                 "[+] "
             }
         });
+    let row_style = if selected {
+        theme::selected_row_style()
+    } else {
+        theme::body_style()
+    };
     let mut spans = vec![Span::styled(
         format!(
             "{marker} {} ",
@@ -313,7 +355,7 @@ fn row_line(
                 true
             )
         ),
-        theme::body_style(),
+        row_style,
     )];
     for &(index, column_width) in columns {
         let cell = &row.cells[index];
@@ -322,13 +364,16 @@ fn row_line(
             column_width - COLUMN_GAP,
             false,
         );
-        let style = if selected && index == selected_environment && !text.is_empty() {
-            theme::body_style().add_modifier(Modifier::REVERSED)
+        let selected_cell = selected && index == selected_environment;
+        let style = if selected_cell {
+            row_style.add_modifier(Modifier::REVERSED)
         } else {
-            theme::body_style()
+            row_style
         };
-        spans.push(Span::styled(text, style));
-        spans.push(Span::raw(format!("{} ", " ".repeat(padding))));
+        spans.push(Span::styled(
+            format!("{text}{} ", " ".repeat(padding)),
+            style,
+        ));
     }
     let reason = match row.difference {
         Some(DifferenceReason::Action) => "action",
@@ -338,10 +383,14 @@ fn row_line(
         Some(DifferenceReason::Value) => "value",
         None => "",
     };
-    spans.push(Span::raw(" "));
+    spans.push(Span::styled(" ", row_style));
     spans.push(Span::styled(
         fit(reason, WHY_WIDTH, false),
-        theme::secondary_style(),
+        if selected {
+            row_style
+        } else {
+            theme::secondary_style()
+        },
     ));
     Line::from(spans)
 }

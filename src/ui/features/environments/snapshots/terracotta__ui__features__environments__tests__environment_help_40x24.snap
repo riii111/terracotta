@@ -3,26 +3,26 @@ source: src/ui/features/environments/tests.rs
 expression: text
 ---
 0 Overview   1 a-ready  2 b-error  ›
-Re┌Help──────────────────────────────┐
-b-│ Current: Overview              ▲ │
-d-│ ↑ / ↓ / j / k   select a       ┃ │
-HC│                 resource row   ┃ │
-──│ ← / → / [ / ]   select an      ┃ │──
-a-│                 environment    ┃ │
-  │ Enter / Esc     show / hide    │ │
-Ad│                 preview; Esc   │ │
-No│                 returns from   │ │th
-To│                 full plan      │ │
-  │ 1–9             open selected  │ │
-  │                 resource in    │ │
-  │                 the numbered   │ │
-  │                 environment    │ │
-  │ Space           expand or      │ │
-  │                 collapse a     │ │
-  │                 group          │ │
-  │ /               filter full    │ │
-  │                 addresses      ▼ │
-──│ ↑/↓/PgUp/PgDn scroll             │──
-↑↓│ ?/Esc close                      │
-En└──────────────────────────────────┘
-/ filter  Space expand  ? help  q quit
+R┌Help────────────────────────────────┐
+b│ Current: Overview                ▲ │
+d│ ↑ / ↓ / j / k                    ┃ │
+H│   select a resource row          ┃ │
+─│ ← / → / [ / ]                    ┃ │─
+ │   select an environment          ┃ │
+ │ Enter / Esc                      │ │
+A│   show / hide preview; Esc       │ │
+b│   returns from full plan         │ │
+?│ 1–9                              │ │
+N│   open selected resource in the  │ │h
+─│   numbered environment           │ │─
+T│ Space                            │ │
+ │   expand or collapse only on     │ │
+ │   [+]/[-] group rows             │ │
+ │ /                                │ │
+ │   filter full addresses          │ │
+ │                                  │ │
+ │ Other                            ▼ │
+ │ ↑/↓/k/j/PgUp/PgDn scroll           │
+─│ ?/Esc close                        │─
+↑└────────────────────────────────────┘
+v plan  ? help  q quit

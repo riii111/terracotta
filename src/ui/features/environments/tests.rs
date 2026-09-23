@@ -182,10 +182,18 @@ fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
         let text = buffer_text(&buffer);
         assert!(text.contains("Help"), "{width}x{height}: {text}");
         assert!(text.contains("Current"), "{width}x{height}: {text}");
-        assert!(text.contains("scroll"), "{width}x{height}: {text}");
+        if height <= 24 {
+            assert!(text.contains("scroll"), "{width}x{height}: {text}");
+        } else {
+            assert!(!text.contains("scroll"), "{width}x{height}: {text}");
+            assert!(text.contains("Comparison"), "{width}x{height}: {text}");
+        }
         if (width, height) == (80, 24) {
             assert!(text.contains("1–9"));
             assert!(text.contains("show / hide preview"));
+            assert!(text.contains("↑↓ row"));
+            assert!(text.contains("Enter preview"));
+            assert!(text.contains("only on [+]/[-] group rows"));
         }
         assert_eq!(text.matches("close").count(), 1, "{width}x{height}: {text}");
         if width == 80 {
@@ -231,13 +239,33 @@ fn help_scroll_keys_do_not_reach_the_environment_overview() {
         size,
         &state,
     );
-    assert_eq!(view.dialog_scroll, 4);
+    assert_eq!(view.dialog_scroll, 1);
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    assert_eq!(view.dialog_scroll, 2);
     view.handle_key(
         KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
         size,
         &state,
     );
-    assert_eq!(view.dialog_scroll, 8);
+    assert_eq!(view.dialog_scroll, 6);
+    view.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), size, &state);
+    assert_eq!(view.dialog_scroll, 5);
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    assert_eq!(view.dialog_scroll, 4);
+    view.handle_key(
+        KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    assert_eq!(view.dialog_scroll, 0);
 
     view.handle_key(
         KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE),
@@ -281,6 +309,9 @@ fn help_explains_matrix_symbols_and_missing_rows() {
 
     for marker in [
         "Same changes",
+        "Comparison",
+        "Scope",
+        "Excluded",
         "Ready plans",
         "unknown",
         "values may differ",
@@ -290,9 +321,10 @@ fn help_explains_matrix_symbols_and_missing_rows() {
         "resource absent from this environment",
         ".",
         "resource present, with no change",
-        "action unknown or unsupported",
+        "action unknown",
         "why: missing",
         "some Ready plans",
+        "not retried",
     ] {
         assert!(compact.contains(marker), "{marker}: {text}");
     }
@@ -509,6 +541,40 @@ fn raw_environment_help_explains_tab_navigation_at_supported_widths() {
         assert!(compact.contains("previous"), "{width}x{height}: {text}");
         assert!(compact.contains("environment"), "{width}x{height}: {text}");
     }
+}
+
+#[test]
+fn raw_environment_help_scrolls_by_line_and_page_without_moving_the_plan() {
+    let state = partial_session();
+    let mut view = EnvironmentView::default();
+    let size = Size::new(80, 24);
+
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    let plan_scroll = view.reviews[0].scroll();
+
+    for (key, expected) in [
+        (KeyCode::Down, 1),
+        (KeyCode::Char('j'), 2),
+        (KeyCode::PageDown, 10),
+        (KeyCode::Up, 9),
+        (KeyCode::Char('k'), 8),
+        (KeyCode::PageUp, 0),
+    ] {
+        view.handle_key(KeyEvent::new(key, KeyModifiers::NONE), size, &state);
+        assert_eq!(view.reviews[0].overlay_scroll(), expected, "{key:?}");
+    }
+
+    assert_eq!(view.selection.raw, Some(0));
+    assert_eq!(view.reviews[0].scroll(), plan_scroll);
 }
 
 #[test]

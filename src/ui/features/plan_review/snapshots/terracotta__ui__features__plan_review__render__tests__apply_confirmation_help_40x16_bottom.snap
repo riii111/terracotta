@@ -1,0 +1,20 @@
+---
+source: src/ui/features/plan_review/render.rs
+expression: buffer_text(buffer)
+---
+Target: main [PROD] Workspace: default
+U┌Apply help──────────────────────────┐~
+─│                                  ▲ │─
+ │ Context                          │ │▲
+ │ Tab                              │ │┃
+ │   show execution context         │ │┃
+ │                                  │ ││
+ │ Apply                            │ ││
+ │ Enter                            ┃ ││
+ │   confirm apply                  ┃ ││
+ │ Esc                              ┃ ││
+-│   return to plan review          ▼ ││
+◀︎│ ↑/↓/k/j/PgUp/PgDn scroll           │▶︎
+─│ ?/Esc close                        │─
+s└────────────────────────────────────┘
+q quit                             L3/43

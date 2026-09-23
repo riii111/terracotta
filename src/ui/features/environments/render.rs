@@ -4,13 +4,14 @@ use crate::{
     ui::{
         features::{overview::matrix, plan_review},
         primitives::{atoms::separator, molecules::help_dialog},
-        shell::environments,
+        shell::{environments, footer},
         theme,
     },
 };
 use ratatui::{
     Frame,
     layout::Rect,
+    text::{Line, Span},
     widgets::{Clear, Paragraph, Wrap},
 };
 use std::time::Instant;
@@ -82,7 +83,7 @@ impl EnvironmentView {
         let Some(plan) = state.plans().get(self.selection.column) else {
             return;
         };
-        let context = overview_context(self, plan);
+        let context = overview_context(self);
         let detail = overview_detail(plan);
         let (context_height, detail_height) = section_heights(area, &context, &detail);
         frame.render_widget(
@@ -100,8 +101,12 @@ impl EnvironmentView {
                 detail_height,
             ),
         );
-        let regular_footer =
-            overview_footer(area.width, self.preview_open, self.matrix.searching());
+        let regular_footer = overview_footer(
+            area.width,
+            self.preview_open,
+            self.matrix.searching(),
+            self.matrix.selected_group_expanded(),
+        );
         let regular_footer_height = line_count(&regular_footer);
         let panel_height = self
             .preview_open
@@ -167,13 +172,23 @@ impl EnvironmentView {
             return false;
         };
         let shell = environments::layout(area, state, self.notice.as_deref(), false);
-        let context = overview_context(self, plan);
+        let context = overview_context(self);
         let detail = overview_detail(plan);
         let (context_height, detail_height) = section_heights(shell.body, &context, &detail);
+        let footer_height = u16::try_from(
+            overview_footer(
+                area.width,
+                self.preview_open,
+                self.matrix.searching(),
+                self.matrix.selected_group_expanded(),
+            )
+            .len(),
+        )
+        .unwrap_or(u16::MAX);
         let matrix_height = shell
             .body
             .height
-            .saturating_sub(context_height + 1 + detail_height);
+            .saturating_sub(context_height + footer_height + detail_height);
 
         matrix_height >= 9
     }
@@ -196,19 +211,11 @@ impl EnvironmentView {
     }
 }
 
-fn overview_context(view: &EnvironmentView, plan: &EnvironmentPlan) -> String {
-    let selection = format!(
-        "{} · {}",
-        environments::name(plan),
-        plan.tool.display_name()
-    );
+fn overview_context(view: &EnvironmentView) -> String {
     if view.matrix.searching() || view.matrix.filtered() {
-        format!(
-            "Filter: /{}   (display only)\n{selection}",
-            view.matrix.filter()
-        )
+        format!("Filter: /{}   (display only)", view.matrix.filter())
     } else {
-        selection
+        String::new()
     }
 }
 
@@ -267,7 +274,10 @@ fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
                         "1–9",
                         "open selected resource in the numbered environment",
                     ),
-                    help_dialog::HelpAction::new("Space", "expand or collapse a group"),
+                    help_dialog::HelpAction::new(
+                        "Space",
+                        "expand or collapse only on [+]/[-] group rows",
+                    ),
                     help_dialog::HelpAction::new("/", "filter full addresses"),
                 ],
             ),
@@ -286,10 +296,6 @@ fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
             help_dialog::HelpSection::new(
                 "Matrix legend",
                 vec![
-                    help_dialog::HelpAction::new(
-                        "Same changes",
-                        "no difference detected among Ready plans; unknown values may differ",
-                    ),
                     help_dialog::HelpAction::new("+ / ~ / -", "create / update / delete"),
                     help_dialog::HelpAction::new(
                         "+/- / -/+",
@@ -297,17 +303,23 @@ fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
                     ),
                     help_dialog::HelpAction::new("blank", "resource absent from this environment"),
                     help_dialog::HelpAction::new(".", "resource present, with no change"),
-                    help_dialog::HelpAction::new(
-                        "?",
-                        "plan unavailable; action unknown or unsupported",
-                    ),
+                    help_dialog::HelpAction::new("?", "plan unavailable; action unknown"),
                     help_dialog::HelpAction::new("read / move / import", "action shown by name"),
                     help_dialog::HelpAction::new(
                         "why: missing",
                         "resource present in only some Ready plans",
                     ),
-                    help_dialog::HelpAction::note("Only Ready environments are compared."),
-                    help_dialog::HelpAction::note("Excluded environments are not retried."),
+                ],
+            ),
+            help_dialog::HelpSection::new(
+                "Comparison",
+                vec![
+                    help_dialog::HelpAction::new(
+                        "Same changes",
+                        "no differences found in Ready plans; unknown values may differ",
+                    ),
+                    help_dialog::HelpAction::new("Scope", "only Ready environments are compared"),
+                    help_dialog::HelpAction::new("Excluded", "environments are not retried"),
                 ],
             ),
         ],
@@ -321,60 +333,181 @@ fn available_preview_height(content_height: u16) -> Option<u16> {
     (available >= MIN_PREVIEW_HEIGHT).then_some(available.min(preferred.max(MIN_PREVIEW_HEIGHT)))
 }
 
-fn overview_footer(width: u16, preview_open: bool, searching: bool) -> Vec<String> {
+fn overview_footer(
+    width: u16,
+    preview_open: bool,
+    searching: bool,
+    expanded: Option<bool>,
+) -> Vec<Line<'static>> {
     if searching {
-        return vec!["Enter confirm  Esc cancel".to_owned()];
+        return footer::layout(
+            vec![
+                footer::hint(&["Enter"], "confirm"),
+                footer::hint(&["Esc"], "cancel"),
+            ],
+            width,
+        );
     }
-    let movement = "↑↓ row  ←→ env";
-    let action = if preview_open {
-        "Esc close preview  v full plan"
+    if width < 45 {
+        return compact_overview_footer(preview_open, expanded);
+    }
+    let (preview_action, plan_action) = if width < 56 {
+        if preview_open {
+            ("close preview", "plan")
+        } else {
+            ("preview", "plan")
+        }
     } else {
-        "Enter preview  v full plan"
+        if preview_open {
+            ("close preview", "full plan")
+        } else {
+            ("preview", "full plan")
+        }
     };
-    let other = "/ filter  Space expand  ? help  q quit";
-    if width >= 120 {
-        vec![format!("{movement}  {action}  {other}")]
-    } else if width >= 56 {
-        vec![format!("{movement}  {action}"), other.to_owned()]
+    let mut items = vec![
+        footer::hint(&["↑↓"], "row"),
+        footer::hint(&["←→"], "env"),
+        footer::hint(
+            &[if preview_open { "Esc" } else { "Enter" }],
+            preview_action,
+        ),
+        footer::hint(&["/"], "filter"),
+    ];
+    if let Some(expanded) = expanded {
+        items.push(footer::hint(
+            &["Space"],
+            if expanded { "collapse" } else { "expand" },
+        ));
+    }
+    if preview_open || !(width < 45 && expanded == Some(true)) {
+        items.push(footer::hint(&["v"], plan_action));
+    }
+    items.extend([footer::hint(&["?"], "help"), footer::hint(&["q"], "quit")]);
+    footer::layout(items, width)
+}
+
+fn compact_overview_footer(preview_open: bool, expanded: Option<bool>) -> Vec<Line<'static>> {
+    let movement = [footer::hint(&["↑↓"], "row"), footer::hint(&["←→"], "env")];
+    if preview_open {
+        vec![
+            join_footer_items(
+                [
+                    movement[0].clone(),
+                    movement[1].clone(),
+                    footer::hint(&["Esc"], "close preview"),
+                ],
+                "  ",
+            ),
+            join_footer_items(
+                [
+                    footer::hint(&["v"], "plan"),
+                    footer::hint(&["/"], "filter"),
+                    footer::hint(&["?"], "help"),
+                    footer::hint(&["q"], "quit"),
+                ],
+                "  ",
+            ),
+        ]
     } else {
-        vec![movement.to_owned(), action.to_owned(), other.to_owned()]
+        let mut actions = Vec::new();
+        if let Some(expanded) = expanded {
+            actions.push(footer::hint(
+                &["Space"],
+                if expanded { "collapse" } else { "expand" },
+            ));
+        }
+        if expanded != Some(true) {
+            actions.push(footer::hint(&["v"], "plan"));
+        }
+        actions.extend([footer::hint(&["?"], "help"), footer::hint(&["q"], "quit")]);
+        vec![
+            join_footer_items(
+                [
+                    movement[0].clone(),
+                    movement[1].clone(),
+                    footer::hint(&["Enter"], "preview"),
+                    footer::hint(&["/"], "filter"),
+                ],
+                "  ",
+            ),
+            join_footer_items(actions, "  "),
+        ]
     }
 }
 
-fn preview_unavailable_footer(width: u16, searching: bool) -> Vec<String> {
+fn join_footer_items(
+    items: impl IntoIterator<Item = Line<'static>>,
+    separator: &'static str,
+) -> Line<'static> {
+    let mut line = Line::default();
+    for item in items {
+        if !line.spans.is_empty() {
+            line.push_span(Span::styled(separator, theme::footer_text_style()));
+        }
+        line.extend(item.spans);
+    }
+    line
+}
+
+fn preview_unavailable_footer(width: u16, searching: bool) -> Vec<Line<'static>> {
     if searching {
+        return footer::layout(
+            vec![
+                footer::hint(&["Enter"], "confirm"),
+                footer::hint(&["Esc"], "cancel"),
+                Line::from("Resize for preview"),
+            ],
+            width,
+        );
+    }
+    if width < 45 {
         return vec![
-            "Preview needs more room".to_owned(),
-            "Enter confirm  Esc cancel".to_owned(),
+            join_footer_items(
+                [footer::hint(&["↑↓"], "row"), footer::hint(&["←→"], "env")],
+                "  ",
+            ),
+            join_footer_items(
+                [
+                    Line::from("Resize for preview"),
+                    footer::hint(&["v"], "plan"),
+                    footer::hint(&["q"], "quit"),
+                ],
+                "  ",
+            ),
         ];
     }
-    if width >= 56 {
-        vec![
-            "↑↓ row  ←→ env  Preview needs more room".to_owned(),
-            "v full plan  ? help  q quit".to_owned(),
-        ]
+    let preview_message = if width >= 56 {
+        "Preview needs more room"
     } else {
+        "Resize for preview"
+    };
+    footer::layout(
         vec![
-            "↑↓ row  ←→ env".to_owned(),
-            "Preview unavailable; resize terminal".to_owned(),
-            "v full plan  ? help  q quit".to_owned(),
-        ]
-    }
+            footer::hint(&["↑↓"], "row"),
+            footer::hint(&["←→"], "env"),
+            Line::from(preview_message),
+            footer::hint(&["v"], if width < 56 { "plan" } else { "full plan" }),
+            footer::hint(&["q"], "quit"),
+            footer::hint(&["?"], "help"),
+        ],
+        width,
+    )
 }
 
-fn line_count(lines: &[String]) -> u16 {
+fn line_count(lines: &[Line<'static>]) -> u16 {
     u16::try_from(lines.len()).unwrap_or(u16::MAX)
 }
 
-fn render_footer(frame: &mut Frame<'_>, area: Rect, lines: &[String]) {
-    let start = area.bottom().saturating_sub(line_count(lines));
-    for (index, line) in lines.iter().enumerate() {
-        let y = start.saturating_add(u16::try_from(index).unwrap_or(u16::MAX));
-        frame.render_widget(
-            Paragraph::new(line.as_str()),
-            Rect::new(area.x, y, area.width, 1),
-        );
-    }
+fn render_footer(frame: &mut Frame<'_>, area: Rect, lines: &[Line<'static>]) {
+    frame.render_widget(
+        Paragraph::new(lines.to_owned()).style(theme::footer_text_style()),
+        Rect::new(
+            area.x,
+            area.bottom().saturating_sub(line_count(lines)),
+            area.width,
+            line_count(lines),
+        ),
+    );
 }
 
 fn render_cell_preview(frame: &mut Frame<'_>, area: Rect, preview: &CellPreview) {
