@@ -182,6 +182,43 @@ fn ready_review_remains_available_and_quit_requires_confirmation_while_acquiring
 }
 
 #[test]
+fn raw_environment_help_explains_tab_navigation_at_supported_widths() {
+    let state = partial_session();
+    let mut view = EnvironmentView::default();
+    let size = Size::new(80, 24);
+
+    view.handle_key(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    assert_eq!(view.selection.raw, Some(0));
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+
+    for (width, height) in [(80, 24), (40, 16)] {
+        let text = buffer_text(&render_to_buffer((width, height), |frame| {
+            view.render(frame, &state);
+        }));
+        let compact = text
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>();
+
+        assert!(compact.contains("Tab/"), "{width}x{height}: {text}");
+        assert!(compact.contains("Shift-Tab"), "{width}x{height}: {text}");
+        assert!(
+            compact.contains("next/previous"),
+            "{width}x{height}: {text}"
+        );
+        assert!(compact.contains("environment"), "{width}x{height}: {text}");
+    }
+}
+
+#[test]
 fn small_terminals_keep_cancel_and_quit_operable() {
     let state = partial_session();
     for size in [(0, 0), (1, 1), (16, 4), (40, 10)] {

@@ -914,12 +914,19 @@ fn plan_help_sections(
     navigation: ReviewNavigation,
     filter_confirmed: bool,
 ) -> Vec<help_dialog::HelpSection> {
-    let mut move_actions = vec![
+    let mut move_actions = Vec::new();
+    if navigation == ReviewNavigation::Environments {
+        move_actions.push(help_dialog::HelpAction::new(
+            "Tab / Shift-Tab",
+            "next / previous environment",
+        ));
+    }
+    move_actions.extend([
         help_dialog::HelpAction::new("↑ / ↓ / j / k", "scroll vertically"),
         help_dialog::HelpAction::new("← / → / h / l", "scroll horizontally"),
         help_dialog::HelpAction::new("PgUp / PgDn", "scroll one page"),
         help_dialog::HelpAction::new("Home / End", "go to the top or bottom"),
-    ];
+    ]);
     if navigation == ReviewNavigation::Standalone {
         move_actions.push(help_dialog::HelpAction::new("s", "overview"));
     } else {
@@ -4357,6 +4364,25 @@ End of synthetic plan body."#;
             );
             assert!(footer_lines.iter().any(|line| line.contains(position)));
             assert!(!footer_lines.iter().any(|line| line.contains("y copy plan")));
+        }
+
+        #[test]
+        fn environment_help_shows_tab_navigation_at_supported_widths() {
+            let sections = plan_help_sections(&review(), ReviewNavigation::Environments, false);
+            for size in [(80, 24), (40, 16)] {
+                let text = buffer_text(&render_to_buffer(size, |frame| {
+                    help_dialog::render(frame, frame.area(), "Help", &sections, 0);
+                }));
+                let compact = text
+                    .chars()
+                    .filter(|character| !character.is_whitespace())
+                    .collect::<String>();
+
+                assert!(compact.contains("Tab/"), "{size:?}: {text}");
+                assert!(compact.contains("Shift-Tab"), "{size:?}: {text}");
+                assert!(compact.contains("next/previous"), "{size:?}: {text}");
+                assert!(compact.contains("environment"), "{size:?}: {text}");
+            }
         }
 
         #[test]
