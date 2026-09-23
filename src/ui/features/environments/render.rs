@@ -272,7 +272,7 @@ fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
                     ),
                     help_dialog::HelpAction::new(
                         "1–9",
-                        "open selected resource in the numbered environment",
+                        "open selected resource in the numbered environment's raw plan",
                     ),
                     help_dialog::HelpAction::new(
                         "Space",

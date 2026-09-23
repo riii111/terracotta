@@ -414,7 +414,7 @@ try:
             send_key(b"[")
             wait_new("env-10", "eleventh_environment")
             send_key(b"0")
-            wait_new("env-11", "restored_last_column")
+            wait_new("blank: absent", "restored_last_column")
             send_key(b"q")
             exit_code = wait_exit()
         elif scenario == "env_show_failure":

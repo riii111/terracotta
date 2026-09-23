@@ -14,14 +14,14 @@ A│   show / hide preview; Esc       │ │
 b│   returns from full plan         │ │
 ?│ 1–9                              │ │
 N│   open selected resource in the  │ │h
-─│   numbered environment           │ │─
-T│ Space                            │ │
+─│   numbered environment's raw     │ │─
+T│   plan                           │ │
+ │ Space                            │ │
  │   expand or collapse only on     │ │
  │   [+]/[-] group rows             │ │
  │ /                                │ │
  │   filter full addresses          │ │
- │                                  │ │
- │ Other                            ▼ │
+ │                                  ▼ │
  │ ↑/↓/k/j/PgUp/PgDn scroll           │
 ─│ ?/Esc close                        │─
 ↑└────────────────────────────────────┘

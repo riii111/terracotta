@@ -20,7 +20,7 @@ Total       +0 ~0 -0  Error     Running     Pending     Excluded
                                    │ ↑ / ↓ / j / k        select a resource row                                            │
                                    │ ← / → / [ / ]        select an environment                                            │
                                    │ Enter / Esc          show / hide preview; Esc returns from full plan                  │
-                                   │ 1–9                  open selected resource in the numbered environment               │
+                                   │ 1–9                  open selected resource in the numbered environment's raw plan    │
                                    │ Space                expand or collapse only on [+]/[-] group rows                    │
                                    │ /                    filter full addresses                                            │
                                    │                                                                                       │
