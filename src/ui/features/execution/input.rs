@@ -260,7 +260,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_switches_focus_and_target_arrows_select_resources_while_running() {
+    fn focus_switches_target_selection_and_cancellation_remain_available_while_running() {
         assert_eq!(
             execution_key_to_input(
                 key(KeyCode::Tab, KeyModifiers::NONE),

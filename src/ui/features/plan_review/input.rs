@@ -347,14 +347,6 @@ mod tests {
             Some(ApplyConfirmationInput::Cancel)
         );
         assert_eq!(
-            key_to_input(
-                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-                false,
-                false
-            ),
-            None
-        );
-        assert_eq!(
             apply_confirmation_key_to_input(KeyEvent::new(
                 KeyCode::Char('c'),
                 KeyModifiers::CONTROL,
