@@ -197,7 +197,7 @@ impl EnvironmentView {
                         .map(|_| EnvironmentInput::Retry(index)),
                 );
             }
-            KeyCode::Char('?') => self.help(),
+            KeyCode::Char('?') if self.selection.raw.is_none() => self.help(),
             _ => return ControlFlow::Continue(()),
         }
         ControlFlow::Break(None)
