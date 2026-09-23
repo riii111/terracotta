@@ -10,7 +10,7 @@ a-│ ← / → / [ / ]        select an environment                            
   │ Enter                open selected resource in raw plan                ┃ │
 Ad│ 1–9                  open selected resource in the numbered            ┃ │
 No│                      environment                                       ┃ │
-To│ Space                expand or collapse a group                        ┃ │
+To│ Space                expand or collapse only on [+]/[-] group rows     ┃ │
   │ /                    filter full addresses                             ┃ │
   │                                                                        ┃ │
   │ Other                                                                  ┃ │
@@ -25,4 +25,4 @@ To│ Space                expand or collapse a group                        ┃
   │ Matrix legend                                                          ▼ │
   │ ↑/↓/PgUp/PgDn scroll | ?/Esc close                                       │
 ──└──────────────────────────────────────────────────────────────────────────┘──
-Enter open selected resource in raw plan  / filter  Space expand  ? help  q quit
+Enter open selected resource in raw plan  / filter  ? help  q quit

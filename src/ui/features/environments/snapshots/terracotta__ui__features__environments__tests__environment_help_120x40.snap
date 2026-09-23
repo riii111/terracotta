@@ -18,7 +18,7 @@ Total       +0 ~0 -0  Error     Running     Pending     Excluded
                       │ Enter                open selected resource in raw plan                ┃ │
                       │ 1–9                  open selected resource in the numbered            ┃ │
                       │                      environment                                       ┃ │
-                      │ Space                expand or collapse a group                        ┃ │
+                      │ Space                expand or collapse only on [+]/[-] group rows     ┃ │
                       │ /                    filter full addresses                             ┃ │
                       │                                                                        ┃ │
                       │ Other                                                                  ┃ │
@@ -41,4 +41,4 @@ Total       +0 ~0 -0  Error     Running     Pending     Excluded
 
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-Enter open selected resource in raw plan  / filter  Space expand  ? help  q quit
+Enter open selected resource in raw plan  / filter  ? help  q quit

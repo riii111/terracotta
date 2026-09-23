@@ -20,6 +20,7 @@ pub(crate) enum OverviewOverlay {
 pub(crate) struct OverviewRow {
     pub(crate) group_index: usize,
     pub(crate) member_index: Option<usize>,
+    pub(crate) child: bool,
     pub(crate) address: String,
     pub(crate) display_address: String,
     pub(crate) action: String,
@@ -56,10 +57,11 @@ impl OverviewContent {
                 continue;
             }
             let first = matching[0];
-            if group.is_repeated() {
+            if group.is_repeated() && matching.len() > 1 {
                 rows.push(OverviewRow {
                     group_index,
                     member_index: None,
+                    child: false,
                     address: group.members[first].address.clone(),
                     display_address: group.display_address.clone(),
                     action: action_text(&group.members[0]),
@@ -69,6 +71,7 @@ impl OverviewContent {
                     rows.extend(matching.into_iter().map(|member_index| OverviewRow {
                         group_index,
                         member_index: Some(member_index),
+                        child: true,
                         address: group.members[member_index].address.clone(),
                         display_address: group.members[member_index].address.clone(),
                         action: action_text(&group.members[member_index]),
@@ -76,14 +79,15 @@ impl OverviewContent {
                     }));
                 }
             } else {
-                rows.push(OverviewRow {
+                rows.extend(matching.into_iter().map(|member_index| OverviewRow {
                     group_index,
-                    member_index: Some(first),
-                    address: group.members[first].address.clone(),
-                    display_address: group.members[first].address.clone(),
-                    action: action_text(&group.members[first]),
+                    member_index: Some(member_index),
+                    child: false,
+                    address: group.members[member_index].address.clone(),
+                    display_address: group.members[member_index].address.clone(),
+                    action: action_text(&group.members[member_index]),
                     count: 1,
-                });
+                }));
             }
         }
         Self {
@@ -160,11 +164,10 @@ impl OverviewViewState {
                 None
             }
             OverviewInput::ToggleExpand => {
-                if let Some(row) = self.selected.and_then(|index| content.rows.get(index))
-                    && row.member_index.is_none()
-                    && !self.expanded.remove(&row.group_index)
+                if let Some(group_index) = self.selected_group_index(content)
+                    && !self.expanded.remove(&group_index)
                 {
-                    self.expanded.insert(row.group_index);
+                    self.expanded.insert(group_index);
                 }
                 None
             }
@@ -313,6 +316,18 @@ impl OverviewViewState {
 
     pub(crate) const fn selected(&self) -> Option<usize> {
         self.selected
+    }
+
+    pub(crate) fn selected_group_expanded(&self, content: &OverviewContent) -> Option<bool> {
+        let group_index = self.selected_group_index(content)?;
+        Some(self.expanded.contains(&group_index))
+    }
+
+    fn selected_group_index(&self, content: &OverviewContent) -> Option<usize> {
+        self.selected
+            .and_then(|index| content.rows.get(index))
+            .filter(|row| row.member_index.is_none() && row.count > 1)
+            .map(|row| row.group_index)
     }
 
     pub(crate) const fn scroll(&self) -> u16 {
@@ -490,6 +505,7 @@ mod tests {
                 .map(|index| OverviewRow {
                     group_index: index,
                     member_index: Some(index),
+                    child: false,
                     address: format!("resource.{index}"),
                     display_address: format!("resource.{index}"),
                     action: "~".to_owned(),

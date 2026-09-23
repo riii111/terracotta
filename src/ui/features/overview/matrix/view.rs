@@ -68,6 +68,11 @@ impl MatrixView {
         !self.filter.is_empty()
     }
 
+    pub(crate) fn selected_group_expanded(&self) -> Option<bool> {
+        let group = self.rows.get(self.selected)?.group.as_ref()?;
+        Some(self.expanded.contains(group))
+    }
+
     pub(crate) fn cell(&self, environment: usize) -> Option<&MatrixCell> {
         self.rows.get(self.selected)?.cells.get(environment)
     }
@@ -226,6 +231,10 @@ fn rows(overview: &EnvironmentOverview, filter: &str, expanded: &BTreeSet<GroupI
                     .filter(|child| child.address.contains(filter))
                     .collect();
                 if children.is_empty() {
+                    continue;
+                }
+                if children.len() == 1 {
+                    rows.push(individual(children[0], false));
                     continue;
                 }
                 let cells = group
