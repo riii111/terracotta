@@ -4,9 +4,10 @@ expression: bottom_text
 ---
 infra  ws:default  ...ng...  /repo/infra
 O┌Help────────────────────────────────┐
-─│                                  ▲ │─
- │ Actions                          │ │
-O│ y                                │ │u
+─│   top                            ▲ │─
+ │                                  │ │
+O│ Actions                          │ │u
+ │ y                                │ │
  │   copy the full plan             │ │
  │ c                                │ │
  │   show execution context         │ │
@@ -14,7 +15,6 @@ O│ y                                │ │u
  │ Exit                             ┃ │
  │ q                                ┃ │
  │   quit                           ▼ │
- │ ↑/↓/k/j/PgUp/PgDn scroll           │
 ─│ ?/Esc close                        │─
 /└────────────────────────────────────┘
 ? help | q quit

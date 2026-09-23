@@ -8,13 +8,13 @@ U┌Help────────────────────────
  │ ↑ / ↓ / j / k                    ┃ │▲
  │   scroll vertically              ┃ │┃
  │ ← / → / h / l                    ┃ │┃
- │   scroll horizontally            │ ││
+ │   scroll horizontally            ┃ ││
  │ PgUp / PgDn                      │ ││
  │   scroll one page                │ ││
  │ Home / End                       │ ││
  │   go to the top or bottom        │ ││
--│ s                                ▼ ││
-◀︎│ ↑/↓/k/j/PgUp/PgDn scroll           │▶︎
+-│ s                                │ ││
+◀︎│   overview                       ▼ │▶︎
 ─│ ?/Esc close                        │─
 s└────────────────────────────────────┘
 ? help | q quit                    L3/43

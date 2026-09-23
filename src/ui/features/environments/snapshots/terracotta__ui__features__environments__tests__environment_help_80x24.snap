@@ -5,24 +5,24 @@ expression: text
 0 Overview   1 a-ready  2 b-error  3 c-running  4 d-pending  5 e-hcp
 R┌Help────────────────────────────────────────────────────────────────────────┐
 d│ Current: Overview                                                        ▲ │
- │ ↑ / ↓ / j / k        scroll matrix when preview is closed; scroll        ┃ │
- │                      preview when open                                   ┃ │
- │ ← / →                select env when preview is closed; scroll preview   ┃ │
- │                      when open                                           ┃ │
+ │ ↑ / ↓ / j / k        scroll matrix or preview; move through filter       ┃ │
+ │                      candidates                                          ┃ │
+ │ ← / →                select env or scroll preview; move in filter search ┃ │
  │ [ / ]                select previous or next environment                 ┃ │
- │ Enter                open the selected environment's plan preview        ┃ │
- │ Esc                  close preview; return from full plan                ┃ │
+ │ Enter                open plan preview; apply filter or accept search    ┃ │
+ │ Esc                  close preview; return from plan; cancel filter;     ┃ │
+ │                      restore search                                      ┃ │
  │ 1–9                  open the numbered environment's full plan           ┃ │
- │ Space                expand all collapsed groups, or collapse all groups ┃ │
- │ /                    filter full addresses                               │ │
+ │ Space                expand or collapse groups; toggle a filter          │ │
+ │                      candidate                                           │ │
+ │ /                    filter addresses; search environment names in       │ │
+ │                      filter                                              │ │
  │ e                    filter compared environments                        │ │
  │                                                                          │ │
  │ Other                                                                    │ │
- │ PgUp / PgDn          move one page in the active view                    │ │
- │ Home / End           go to the start or end of the active view           │ │
- │ v                    show the full plan from the top                     │ │
- │ y                    copy the selected environment's plan                │ │
- │ c                    show environment context                            ▼ │
- │ ↑/↓/k/j/PgUp/PgDn scroll | ?/Esc close                                     │
+ │ PgUp / PgDn          move a page in the active view or candidate list    │ │
+ │ Home / End           go to an endpoint or the start/end of search text   │ │
+ │ a                    clear filter search and select all                  ▼ │
+ │ ?/Esc close                                                                │
  └────────────────────────────────────────────────────────────────────────────┘
-  e env filter | v full plan | ? help | q quit
+  ? help | q quit

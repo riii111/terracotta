@@ -280,7 +280,7 @@ mod tests {
         let lines = layout_with_notice(
             vec![
                 hint(&["Ctrl-C"], "cancel"),
-                hint(&["↑", "↓", "PgUp", "PgDn"], "scroll"),
+                hint(&["y"], "copy result"),
                 hint(&["End"], "follow latest"),
             ],
             width,
@@ -456,7 +456,7 @@ mod tests {
 
     #[rstest]
     #[case::single_line(40, vec!["q quit", "Esc back"], vec!["q quit | Esc back"])]
-    #[case::two_lines(16, vec!["q quit", "Esc back", "PgUp/PgDn scroll"], vec!["q quit", "Esc back"])]
+    #[case::two_lines(16, vec!["q quit", "Esc back", "y copy result"], vec!["q quit", "Esc back"])]
     #[case::wide_item_is_skipped(8, vec!["q quit", "longer than width"], vec!["q quit"])]
     fn lays_out_complete_items_in_at_most_two_rows(
         #[case] width: u16,

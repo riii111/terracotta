@@ -13,22 +13,22 @@ Compared: a-ready   b-error: Error   c-running: Running   d-pending: Pending   e
 
   Total       +0 ~0 -0    Error       Running       Pending       Excluded
               0 replace
-  blank: absent   .: unchanged   ?: plan unavailable
-                                   ┌Help───────────────────────────────────────────────────────────────────────────────────┐
+  blank: absent   .: unchanged   ?:┌Help───────────────────────────────────────────────────────────────────────────────────┐
                                    │ Current: Overview                                                                     │
-                                   │ ↑ / ↓ / j / k        scroll matrix when preview is closed; scroll preview when open   │
-                                   │ ← / →                select env when preview is closed; scroll preview when open      │
+                                   │ ↑ / ↓ / j / k        scroll matrix or preview; move through filter candidates         │
+                                   │ ← / →                select env or scroll preview; move in filter search              │
                                    │ [ / ]                select previous or next environment                              │
-                                   │ Enter                open the selected environment's plan preview                     │
-                                   │ Esc                  close preview; return from full plan                             │
+                                   │ Enter                open plan preview; apply filter or accept search                 │
+                                   │ Esc                  close preview; return from plan; cancel filter; restore search   │
                                    │ 1–9                  open the numbered environment's full plan                        │
-                                   │ Space                expand all collapsed groups, or collapse all groups              │
-                                   │ /                    filter full addresses                                            │
+                                   │ Space                expand or collapse groups; toggle a filter candidate             │
+                                   │ /                    filter addresses; search environment names in filter             │
                                    │ e                    filter compared environments                                     │
                                    │                                                                                       │
                                    │ Other                                                                                 │
-                                   │ PgUp / PgDn          move one page in the active view                                 │
-                                   │ Home / End           go to the start or end of the active view                        │
+                                   │ PgUp / PgDn          move a page in the active view or candidate list                 │
+                                   │ Home / End           go to an endpoint or the start/end of search text                │
+                                   │ a                    clear filter search and select all                               │
                                    │ v                    show the full plan from the top                                  │
                                    │ y                    copy the selected environment's plan                             │
                                    │ c                    show environment context                                         │
@@ -61,4 +61,4 @@ Compared: a-ready   b-error: Error   c-running: Running   d-pending: Pending   e
 
 
 
-  ↑↓ scroll rows | ←→ select env | Enter preview | [ ] env | / filter | e env filter | v full plan | ? help | q quit
+  [ ] environment | Enter preview | / filter | e environments | v full plan | ? help | q quit

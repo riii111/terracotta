@@ -4,16 +4,17 @@ expression: buffer_text(buffer)
 ---
 Target: main [PROD] Workspace: default
 U┌Apply help──────────────────────────┐~
-─│ Home / End                       ▲ │─
- │   move to input start or end     │ │▲
+─│   move in confirmation input     ▲ │─
+ │ Home / End                       │ │▲
+ │   move to input start or end     │ │┃
  │                                  │ │┃
- │ Input                            │ │┃
+ │ Input                            ┃ │┃
  │ Type                             ┃ │┃
  │   enter the confirmation text    ┃ │┃
  │ Backspace                        ┃ │┃
  │   delete before the cursor       ┃ │┃
- │                                  ┃ │┃
--│ Context                          ┃ ││
+-│                                  ┃ ││
+ │ Context                          ┃ ││
  │ Tab                              ┃ ││
  │   show execution context         ┃ ││
  │                                  ┃ ││
@@ -21,8 +22,7 @@ U┌Apply help──────────────────────
  │ Enter                            ┃ ││
  │   confirm apply                  ┃ ││
  │ Esc                              ┃ ││
- │   return to plan review          ▼ ││
-◀︎│ ↑/↓/k/j/PgUp/PgDn scroll           │▶︎
+◀︎│   return to plan review          ▼ │▶︎
 ─│ ?/Esc close                        │─
 s└────────────────────────────────────┘
 q quit                             L3/43

@@ -15,14 +15,14 @@ O│   select a row                   ┃ │u
  │ Review                           ┃ │
  │ Enter                            ┃ │
  │   open the selected raw block    ┃ │
- │ /                                │ │
+ │ /                                ┃ │
  │   filter full addresses          │ │
  │ Space                            │ │
  │   expand or collapse only on     │ │
  │   [+]/[-] group rows             │ │
  │ v                                │ │
- │   show the full plan from the    ▼ │
- │ ↑/↓/k/j/PgUp/PgDn scroll           │
+ │   show the full plan from the    │ │
+ │   top                            ▼ │
 ─│ ?/Esc close                        │─
 /└────────────────────────────────────┘
 ? help | q quit

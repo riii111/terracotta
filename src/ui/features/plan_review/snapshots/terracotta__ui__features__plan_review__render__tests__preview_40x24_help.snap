@@ -16,13 +16,13 @@ U┌Help────────────────────────
 -│ s                                ┃ ││
  │   overview                       ┃ ││
  │                                  ┃ ││
- │ Review                           │ ││
+ │ Review                           ┃ ││
  │ /                                │ ││
  │   filter the full plan           │ ││
  │                                  │ ││
  │ Actions                          │ ││
- │ c                                ▼ ││
-◀︎│ ↑/↓/k/j/PgUp/PgDn scroll           │▶︎
+ │ c                                │ ││
+◀︎│   show execution context         ▼ │▶︎
 ─│ ?/Esc close                        │─
 s└────────────────────────────────────┘
 ? help | q quit                    L3/43

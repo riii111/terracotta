@@ -8,13 +8,13 @@ U┌Apply help──────────────────────
  │ ↑ / ↓ / PgUp / PgDn              ┃ │▲
  │   scroll confirmation            ┃ │┃
  │ ← / →                            ┃ │┃
- │   move in confirmation input     │ ││
+ │   move in confirmation input     ┃ ││
  │ Home / End                       │ ││
  │   move to input start or end     │ ││
  │                                  │ ││
  │ Input                            │ ││
--│ Type                             ▼ ││
-◀︎│ ↑/↓/k/j/PgUp/PgDn scroll           │▶︎
+-│ Type                             │ ││
+◀︎│   enter the confirmation text    ▼ │▶︎
 ─│ ?/Esc close                        │─
 s└────────────────────────────────────┘
 q quit                             L3/43

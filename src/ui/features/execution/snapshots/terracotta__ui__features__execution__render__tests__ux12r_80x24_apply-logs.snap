@@ -24,4 +24,4 @@ expression: buffer_text(buffer)
  ││xxxxxxxxxxxxxxxx                                                         ▼││
  │└──────────────────────────────────────────────────────────────────────────┘│
  └────────────────────────────────────────────────────────────────────────────┘
- Ctrl-C cancel | ↑/↓/j/k scroll log | Tab focus | End follow latest
+ Ctrl-C cancel | Tab focus | End follow latest

@@ -23,7 +23,6 @@ const MAX_WIDTH: u16 = 76;
 const MAX_HEIGHT: u16 = 20;
 const MIN_WIDTH: u16 = 24;
 const MIN_HEIGHT: u16 = 8;
-const FOOTER_HEIGHT: u16 = 3;
 
 #[derive(Default)]
 pub(crate) struct EnvironmentFilterDialog {
@@ -258,7 +257,9 @@ impl EnvironmentFilterDialog {
         );
 
         let list_y = inner.y.saturating_add(2);
-        let footer_y = inner.bottom().saturating_sub(FOOTER_HEIGHT);
+        let footer_lines = footer_lines(self.notice, self.searching());
+        let footer_height = u16::try_from(footer_lines.len()).unwrap_or(u16::MAX);
+        let footer_y = inner.bottom().saturating_sub(footer_height);
         let list_height = footer_y.saturating_sub(list_y);
         let list_area = Rect::new(inner.x, list_y, inner.width, list_height);
         let candidates = visible_candidates(plans, &self.query);
@@ -306,29 +307,25 @@ impl EnvironmentFilterDialog {
             vertical,
         );
 
-        let footer = Rect::new(inner.x, footer_y, inner.width, FOOTER_HEIGHT);
-        render_footer(frame, footer, self.notice);
+        let footer = Rect::new(inner.x, footer_y, inner.width, footer_height);
+        frame.render_widget(Paragraph::new(footer_lines), footer);
     }
 }
 
-fn render_footer(frame: &mut Frame<'_>, area: Rect, notice: Option<&'static str>) {
-    let lines = notice.map_or_else(
-        || {
-            vec![
-                Line::from("↑↓ move  PgUp/PgDn page"),
-                Line::from("Space toggle  a all"),
-                Line::from("Enter apply  Esc cancel  / search"),
-            ]
-        },
-        |notice| {
-            vec![
-                Line::styled(notice, theme::warning_style()),
-                Line::from("Space toggle  a all"),
-                Line::from("Enter apply  Esc cancel"),
-            ]
-        },
-    );
-    frame.render_widget(Paragraph::new(lines), area);
+fn footer_lines(notice: Option<&'static str>, searching: bool) -> Vec<Line<'static>> {
+    if searching {
+        vec![Line::from("Enter accept search  Esc restore")]
+    } else {
+        let mut lines = notice
+            .map(|notice| Line::styled(notice, theme::warning_style()))
+            .into_iter()
+            .collect::<Vec<_>>();
+        lines.extend([
+            Line::from("Space toggle  a all  / search"),
+            Line::from("Enter apply  Esc cancel"),
+        ]);
+        lines
+    }
 }
 
 fn visible_candidates(plans: &[EnvironmentPlan], query: &str) -> Vec<usize> {
@@ -634,8 +631,8 @@ mod tests {
         for marker in [
             "Environment filter",
             "Search:",
-            "PgUp/PgDn",
             "Space toggle",
+            "/ search",
             "Enter apply",
             "Esc cancel",
             "┃",
@@ -659,8 +656,8 @@ mod tests {
             for marker in [
                 "Environment filter",
                 "Search:",
-                "PgUp/PgDn",
                 "Space toggle",
+                "/ search",
                 "Enter apply",
                 "Esc cancel",
                 "┃",
@@ -671,5 +668,24 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn filter_search_footer_explains_search_confirmation_and_cancel() {
+        let state = session(&["dev".to_owned(), "prod".to_owned()]);
+        let plans = state.plans();
+        let size = Size::new(40, 16);
+        let mut dialog = EnvironmentFilterDialog::new(plans, None, 0, size);
+        assert!(press(&mut dialog, KeyCode::Char('/'), size, plans).is_none());
+
+        let text = buffer_text(&render_to_buffer((40, 16), |frame| {
+            dialog.render(frame, frame.area(), plans);
+        }));
+
+        assert!(text.contains("Enter accept search"), "{text}");
+        assert!(text.contains("Esc restore"), "{text}");
+        assert!(!text.contains("Enter apply"), "{text}");
+        assert!(!text.contains("↑↓"), "{text}");
+        assert!(!text.contains("PgUp/PgDn"), "{text}");
     }
 }
