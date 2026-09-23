@@ -121,8 +121,10 @@ impl EnvironmentView {
             || self.matrix.searching(),
             |index| self.reviews[index].searching() || self.reviews[index].overlay().is_some(),
         );
-        let clearing_filter =
-            self.selection.raw.is_none() && self.matrix.filtered() && key.code == KeyCode::Esc;
+        let clearing_filter = self.selection.raw.is_none()
+            && self.matrix.filtered()
+            && !self.preview_open
+            && key.code == KeyCode::Esc;
         if !editing
             && !clearing_filter
             && let ControlFlow::Break(result) = self.navigation(key, state)

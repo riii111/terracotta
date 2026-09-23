@@ -605,7 +605,7 @@ fn plan_preview_preserves_search_cancel_priority() {
 }
 
 #[test]
-fn confirmed_matrix_filter_is_cleared_before_closing_the_preview() {
+fn confirmed_matrix_filter_does_not_consume_preview_escape() {
     let mut state = session(&["dev"]);
     complete(
         &mut state,
@@ -622,9 +622,10 @@ fn confirmed_matrix_filter_is_cleared_before_closing_the_preview() {
     assert_eq!(view.matrix.filter(), "api");
 
     press(&mut view, &mut state, KeyCode::Esc);
-    assert_eq!(view.matrix.filter(), "");
-    assert!(view.preview_open);
+    assert_eq!(view.matrix.filter(), "api");
+    assert!(!view.preview_open);
     press(&mut view, &mut state, KeyCode::Esc);
+    assert_eq!(view.matrix.filter(), "");
     assert!(!view.preview_open);
 }
 
