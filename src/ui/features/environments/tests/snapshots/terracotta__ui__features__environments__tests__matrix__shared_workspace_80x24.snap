@@ -5,6 +5,7 @@ expression: output
 0 Overview   1 staging  2 staging
 Ready: 0/2   Compared: none   staging: Error   staging: Error
 ────────────────────────────────────────────────────────────────────────────────
+
 Synthetic acquisition error
 Address     staging   staging    why
 blank: absent   .: unchanged   ?: plan unavailable
@@ -23,6 +24,5 @@ Total       Error     Error
 
 
 
-
 ────────────────────────────────────────────────────────────────────────────────
-↑↓ row | ←→ env | Enter open raw | / filter | v full plan | ? help | q quit
+↑↓ row | ←→ env | Enter preview | / filter | v full plan | ? help | q quit

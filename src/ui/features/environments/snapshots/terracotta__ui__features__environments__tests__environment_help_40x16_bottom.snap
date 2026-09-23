@@ -7,14 +7,14 @@ R┌Help────────────────────────
 b│ Comparison                       ▲ │
 d│ Same changes                     │ │
 H│   no differences found in Ready  │ │
-─│   plans; unknown values may      │ │─
-A│   differ                         │ │
-b│ Scope                            │ │
-?│   only Ready environments are    │ │
-N│   compared                       │ │h
-─│ Excluded                         ┃ │─
-T│   environments are not retried   ▼ │
- │ ↑/↓/k/j/PgUp/PgDn scroll           │
-─│ ?/Esc close                        │─
+ │   plans; unknown values may      │ │
+ │   differ                         │ │
+A│ Scope                            │ │
+b│   only Ready environments are    │ │
+?│   compared                       │ │
+N│ Excluded                         ┃ │h
+─│   environments are not retried   ▼ │─
+T│ ↑/↓/k/j/PgUp/PgDn scroll           │
+ │ ?/Esc close                        │
 ↑└────────────────────────────────────┘
-v plan | ? help | q quit
+v plan  ? help  q quit

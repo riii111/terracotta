@@ -7,14 +7,14 @@ R┌Help────────────────────────
 b│ Current: Overview                ▲ │
 d│ ↑ / ↓ / j / k                    ┃ │
 H│   select a resource row          │ │
-─│ ← / → / [ / ]                    │ │─
-A│   select an environment          │ │
-b│ Enter                            │ │
-?│   open selected resource in the  │ │
-N│   selected environment's raw     │ │h
-─│   plan                           │ │─
-T│ 1–9                              ▼ │
- │ ↑/↓/k/j/PgUp/PgDn scroll           │
-─│ ?/Esc close                        │─
+ │ ← / → / [ / ]                    │ │
+ │   select an environment          │ │
+A│ Enter / Esc                      │ │
+b│   show / hide preview; Esc       │ │
+?│   returns from full plan         │ │
+N│ 1–9                              │ │h
+─│   open selected resource in the  ▼ │─
+T│ ↑/↓/k/j/PgUp/PgDn scroll           │
+ │ ?/Esc close                        │
 ↑└────────────────────────────────────┘
-v plan | ? help | q quit
+v plan  ? help  q quit

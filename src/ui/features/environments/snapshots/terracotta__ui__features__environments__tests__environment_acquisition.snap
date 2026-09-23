@@ -6,6 +6,7 @@ expression: text
 Ready: 1/5   Compared: a-ready   b-error: Error   c-running: Running
 d-pending: Pending   e-hcp: Excluded: HCP execution
 ────────────────────────────────────────────────────────────────────────────────
+
 Missing required variable
 Pass a variable before retrying.
 Address     a-ready   b-error   c-running   d-pending   e-hcp      why
@@ -23,6 +24,5 @@ Total       +0 ~0 -0  Error     Running     Pending     Excluded
 
 
 
-
 ────────────────────────────────────────────────────────────────────────────────
-↑↓ row | ←→ env | Enter open raw | / filter | v full plan | ? help | q quit
+↑↓ row | ←→ env | Enter preview | / filter | v full plan | ? help | q quit

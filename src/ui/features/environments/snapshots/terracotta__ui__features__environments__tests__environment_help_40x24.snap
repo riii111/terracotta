@@ -8,21 +8,21 @@ b│ Current: Overview                ▲ │
 d│ ↑ / ↓ / j / k                    ┃ │
 H│   select a resource row          ┃ │
 ─│ ← / → / [ / ]                    ┃ │─
-A│   select an environment          ┃ │
-b│ Enter                            │ │
-?│   open selected resource in the  │ │
-N│   selected environment's raw     │ │h
-─│   plan                           │ │─
-T│ 1–9                              │ │
- │   open selected resource in the  │ │
- │   numbered environment's raw     │ │
- │   plan                           │ │
+ │   select an environment          ┃ │
+ │ Enter / Esc                      │ │
+A│   show / hide preview; Esc       │ │
+b│   returns from full plan         │ │
+?│ 1–9                              │ │
+N│   open selected resource in the  │ │h
+─│   numbered environment's raw     │ │─
+T│   plan                           │ │
  │ Space                            │ │
  │   expand or collapse only on     │ │
  │   [+]/[-] group rows             │ │
  │ /                                │ │
- │   filter full addresses          ▼ │
+ │   filter full addresses          │ │
+ │                                  ▼ │
  │ ↑/↓/k/j/PgUp/PgDn scroll           │
 ─│ ?/Esc close                        │─
 ↑└────────────────────────────────────┘
-v plan | ? help | q quit
+v plan  ? help  q quit

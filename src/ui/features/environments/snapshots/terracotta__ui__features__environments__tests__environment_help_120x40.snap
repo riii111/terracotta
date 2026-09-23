@@ -6,14 +6,14 @@ expression: text
 Ready: 1/5   Compared: a-ready   b-error: Error   c-running: Running   d-pending: Pending   e-hcp: Excluded: HCP
 execution
 ───────────────┌Help───────────────────────────────────────────────────────────────────────────────────┐────────────────
-Address     a-r│ Current: Overview                                                                     │
-blank: absent  │ ↑ / ↓ / j / k        select a resource row                                            │
-No matching res│ ← / → / [ / ]        select an environment                                            │
-───────────────│ Enter                open selected resource in the selected environment's raw plan    │────────────────
-Total       +0 │ 1–9                  open selected resource in the numbered environment's raw plan    │
-            0 r│ Space                expand or collapse only on [+]/[-] group rows                    │
-               │ /                    filter full addresses                                            │
-               │                                                                                       │
+               │ Current: Overview                                                                     │
+               │ ↑ / ↓ / j / k        select a resource row                                            │
+Address     a-r│ ← / → / [ / ]        select an environment                                            │
+blank: absent  │ Enter / Esc          show / hide preview; Esc returns from full plan                  │
+No matching res│ 1–9                  open selected resource in the numbered environment's raw plan    │
+───────────────│ Space                expand or collapse only on [+]/[-] group rows                    │────────────────
+Total       +0 │ /                    filter full addresses                                            │
+            0 r│                                                                                       │
                │ Other                                                                                 │
                │ PgUp / PgDn          move one page                                                    │
                │ Home / End           go to the first or last row                                      │
@@ -41,4 +41,4 @@ Total       +0 │ 1–9                  open selected resource in the numbered
 
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-↑↓ row | ←→ env | Enter open raw | / filter | v full plan | ? help | q quit
+↑↓ row | ←→ env | Enter preview | / filter | v full plan | ? help | q quit

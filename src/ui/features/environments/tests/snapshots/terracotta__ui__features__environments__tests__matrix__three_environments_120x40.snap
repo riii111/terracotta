@@ -5,6 +5,8 @@ expression: rendered
 0 Overview   1 dev  2 prod [PROD]  3 stg
 Ready: 3/3
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
 Address                        dev       prod       stg        why
 blank: absent   .: unchanged   ?: plan unavailable
 Differs across envs
@@ -38,7 +40,5 @@ Total                          +0 ~21 -0 +0 ~200 -0 +0 ~20 -1
 
 
 
-
-
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-↑↓ row | ←→ env | Enter open raw | / filter | v full plan | ? help | q quit
+↑↓ row | ←→ env | Enter preview | / filter | v full plan | ? help | q quit

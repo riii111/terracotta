@@ -77,6 +77,16 @@ impl MatrixView {
         self.rows.get(self.selected)?.cells.get(environment)
     }
 
+    pub(crate) fn selected_address(&self) -> Option<&str> {
+        self.rows.get(self.selected).map(|row| row.address.as_str())
+    }
+
+    pub(crate) fn selected_is_group(&self) -> bool {
+        self.rows
+            .get(self.selected)
+            .is_some_and(|row| row.group.is_some())
+    }
+
     pub(crate) fn apply(
         &mut self,
         input: OverviewInput,

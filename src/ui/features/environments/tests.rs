@@ -190,9 +190,9 @@ fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
         }
         if (width, height) == (80, 24) {
             assert!(text.contains("1–9"));
-            assert!(text.contains(
-                "↑↓ row | ←→ env | Enter open raw | / filter | v full plan | ? help | q quit"
-            ));
+            assert!(text.contains("show / hide preview"));
+            assert!(text.contains("↑↓ row"));
+            assert!(text.contains("Enter preview"));
             assert!(text.contains("only on [+]/[-] group rows"));
         }
         assert_eq!(text.matches("close").count(), 1, "{width}x{height}: {text}");
@@ -337,7 +337,7 @@ fn ready_review_remains_available_and_quit_requires_confirmation_while_acquiring
     let size = Size::new(80, 24);
     render_to_buffer((80, 24), |frame| view.render(frame, &state));
     view.handle_key(
-        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
         size,
         &state,
     );
@@ -415,7 +415,7 @@ fn overview_round_trip_reopens_the_selected_plan_line_when_content_overflows() {
         let mut view = EnvironmentView::default();
         let terminal = Size::new(size.0, size.1);
         view.handle_key(
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE),
             terminal,
             &state,
         );
@@ -440,7 +440,7 @@ fn overview_round_trip_reopens_the_selected_plan_line_when_content_overflows() {
             "{size:?}: {overview}"
         );
         view.handle_key(
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE),
             terminal,
             &state,
         );
@@ -457,7 +457,7 @@ fn filtered_plan_position_tracks_the_visible_source_line_after_resize() {
     let mut view = EnvironmentView::default();
     let small = Size::new(80, 24);
     view.handle_key(
-        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
         small,
         &state,
     );
@@ -515,7 +515,7 @@ fn raw_environment_help_explains_tab_navigation_at_supported_widths() {
     let size = Size::new(80, 24);
 
     view.handle_key(
-        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
         size,
         &state,
     );
@@ -550,7 +550,7 @@ fn raw_environment_help_scrolls_by_line_and_page_without_moving_the_plan() {
     let size = Size::new(80, 24);
 
     view.handle_key(
-        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
         size,
         &state,
     );

@@ -6,6 +6,7 @@ expression: output
 Ready: 0/2   Compared: none   staging:
 Error   staging: Error
 ────────────────────────────────────────
+
 Synthetic acquisition error
 Address     staging   staging    why
 blank: absent   .: unchanged
@@ -14,7 +15,6 @@ Waiting for environment plans.
 ────────────────────────────────────────
 Total       Error     Error
 
-
 ────────────────────────────────────────
-↑↓ row | ←→ env | Enter raw | / filter
-v plan | ? help | q quit
+↑↓ row  ←→ env  Enter preview  / filter
+v plan  ? help  q quit

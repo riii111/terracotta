@@ -5,6 +5,8 @@ expression: rendered
 0 Overview   1 dev  2 prod [PROD]  ›
 Ready: 3/3
 ────────────────────────────────────────
+
+
 Address               dev        why
 blank: absent   .: unchanged
 ?: plan unavailable
@@ -14,7 +16,5 @@ Differs across envs
 Same change across envs
   …orm_data.server[*] ~ 20
 ────────────────────────────────────────
-Total                 +0 ~21 -0
-────────────────────────────────────────
-↑↓ row | ←→ env | Enter raw | / filter
-v plan | ? help | q quit
+↑↓ row  ←→ env  Enter preview  / filter
+v plan  ? help  q quit

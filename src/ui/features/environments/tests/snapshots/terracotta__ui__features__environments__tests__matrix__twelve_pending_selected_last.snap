@@ -8,6 +8,8 @@ Pending   env-03: Pending   env-04: Pending   env-05: Pending   env-06: Pending
  env-07: Pending   env-08: Pending   env-09: Pending   env-10: Pending   env-11:
 Pending
 ────────────────────────────────────────────────────────────────────────────────
+
+
 Address     env-06    env-07    env-08    env-09    env-10    env-11     why
 blank: absent   .: unchanged   ?: plan unavailable
 Waiting for environment plans.
@@ -22,7 +24,5 @@ Total       Pending   Pending   Pending   Pending   Pending   Pending
 
 
 
-
-
 ────────────────────────────────────────────────────────────────────────────────
-↑↓ row | ←→ env | Enter open raw | / filter | v full plan | ? help | q quit
+↑↓ row | ←→ env | Enter preview | / filter | v full plan | ? help | q quit
