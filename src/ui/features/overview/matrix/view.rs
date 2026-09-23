@@ -68,6 +68,11 @@ impl MatrixView {
         !self.filter.is_empty()
     }
 
+    pub(crate) fn selected_group_expanded(&self) -> Option<bool> {
+        let group = self.rows.get(self.selected)?.group.as_ref()?;
+        Some(self.expanded.contains(group))
+    }
+
     pub(crate) fn cell(&self, environment: usize) -> Option<&MatrixCell> {
         self.rows.get(self.selected)?.cells.get(environment)
     }

@@ -227,7 +227,63 @@ fn three_environments_show_groups_actions_and_totals(#[case] width: u16, #[case]
     let rendered = buffer_text(&buffer);
     assert!(rendered.contains("> dev"));
     assert!(rendered.contains("> terraform_data.api"));
+    assert!(!rendered.contains("Space expand"));
+    assert!(!rendered.contains("Space collapse"));
     insta::assert_snapshot!(format!("three_environments_{width}x{height}"), rendered);
+}
+
+#[test]
+fn selected_group_footer_tracks_expansion_children_and_filtered_rows() {
+    let mut state = session(&["dev", "prod", "stg"]);
+    for _ in 0..3 {
+        complete(
+            &mut state,
+            (0..2)
+                .map(|index| {
+                    change(
+                        &format!("terraform_data.server[{index}]"),
+                        ResourceChangeKind::Update,
+                    )
+                })
+                .collect(),
+        );
+    }
+    let mut view = EnvironmentView::default();
+
+    let collapsed = text(&mut view, &state, (80, 24));
+    assert!(collapsed.contains("[+] terraform_data.server[*]"));
+    assert!(collapsed.contains("Space expand"));
+    assert!(text(&mut view, &state, (40, 16)).contains("Space expand"));
+
+    press(&mut view, &mut state, KeyCode::Char(' '));
+    let expanded = text(&mut view, &state, (80, 24));
+    assert!(expanded.contains("[-] terraform_data.server[*]"));
+    assert!(expanded.contains("terraform_data.server[0]"));
+    assert!(expanded.contains("Space collapse"));
+
+    press(&mut view, &mut state, KeyCode::Char('j'));
+    let child = text(&mut view, &state, (80, 24));
+    assert!(!child.contains("Space expand"));
+    assert!(!child.contains("Space collapse"));
+    press(&mut view, &mut state, KeyCode::Char(' '));
+    assert_eq!(text(&mut view, &state, (80, 24)), child);
+
+    press(&mut view, &mut state, KeyCode::Char('k'));
+    assert!(text(&mut view, &state, (80, 24)).contains("Space collapse"));
+    press(&mut view, &mut state, KeyCode::Char(' '));
+    let collapsed_again = text(&mut view, &state, (80, 24));
+    assert!(collapsed_again.contains("[+] terraform_data.server[*]"));
+    assert!(collapsed_again.contains("Space expand"));
+    assert!(!collapsed_again.contains("terraform_data.server[0]"));
+
+    press(&mut view, &mut state, KeyCode::Char('/'));
+    for character in "server[1]".chars() {
+        press(&mut view, &mut state, KeyCode::Char(character));
+    }
+    press(&mut view, &mut state, KeyCode::Enter);
+    let filtered = text(&mut view, &state, (80, 24));
+    assert!(filtered.contains("[+] terraform_data.server[*]"));
+    assert!(filtered.contains("Space expand"));
 }
 
 #[test]

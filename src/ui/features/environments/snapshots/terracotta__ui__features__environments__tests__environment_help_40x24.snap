@@ -17,11 +17,11 @@ To│ 1–9             open selected  │ │
   │                 the numbered   │ │
   │                 environment    │ │
   │ Space           expand or      │ │
-  │                 collapse a     │ │
-  │                 group          │ │
+  │                 collapse only  │ │
+  │                 on [+]/[-]     │ │
+  │                 group rows     │ │
   │ /               filter full    │ │
-  │                 addresses      │ │
-  │                                ▼ │
+  │                 addresses      ▼ │
   │ ↑/↓/PgUp/PgDn scroll             │
   │ ?/Esc close                      │
 ──└──────────────────────────────────┘──
