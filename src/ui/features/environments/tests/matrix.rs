@@ -238,31 +238,46 @@ fn three_environments_show_groups_actions_and_totals(#[case] width: u16, #[case]
     let rendered = buffer_text(&buffer);
     assert!(rendered.contains("1 dev"));
     assert!(!rendered.contains("dev · terraform"));
-    assert!(rendered.contains("blank: absent"));
-    assert!(rendered.contains("?: plan unavailable"));
+    if (width, height) == (40, 16) {
+        view.handle_key(
+            KeyEvent::new(KeyCode::End, KeyModifiers::NONE),
+            Size::new(width, height),
+            &state,
+        );
+        let bottom = text(&mut view, &state, (width, height));
+        assert!(bottom.contains("blank: absent"), "{bottom}");
+        assert!(bottom.contains("?: plan unavailable"), "{bottom}");
+        assert!(bottom.contains("Total"), "{bottom}");
+        assert!(rendered.contains("v plan"), "{rendered}");
+    } else {
+        assert!(rendered.contains("blank: absent"));
+        assert!(rendered.contains("?: plan unavailable"));
+    }
     assert!(rendered.contains("> dev"));
     assert!(!rendered.contains("> terraform_data.api"));
     let overview_tab = buffer.cell((0, 0)).expect("overview tab");
-    assert_eq!(overview_tab.bg, Color::Rgb(0xf4, 0x9e, 0x4c));
+    assert_eq!(overview_tab.bg, Color::Rgb(0x2c, 0x2d, 0x2b));
+    assert_eq!(overview_tab.fg, Color::Rgb(0xef, 0xae, 0x6d));
+    assert!(overview_tab.modifier.contains(Modifier::BOLD));
     let environment_header = rendered.lines().next().unwrap();
     let environment_column = u16::try_from(environment_header.find("1 dev").unwrap()).unwrap();
-    assert_ne!(
+    assert_eq!(
         buffer
             .cell((environment_column, 0))
             .expect("environment tab")
             .bg,
-        Color::Rgb(0xf4, 0x9e, 0x4c)
+        Color::Rgb(0x2c, 0x2d, 0x2b)
     );
     let matrix_header = rendered
         .lines()
-        .position(|line| line.starts_with("Address"))
+        .position(|line| line.trim_start().starts_with("Address"))
         .unwrap();
     let matrix_environment_column = u16::try_from(
         rendered
             .lines()
             .nth(matrix_header)
             .unwrap()
-            .find("dev")
+            .find("> dev")
             .unwrap(),
     )
     .unwrap();
@@ -274,7 +289,39 @@ fn three_environments_show_groups_actions_and_totals(#[case] width: u16, #[case]
             ))
             .expect("matrix environment heading")
             .fg,
-        Color::Rgb(0xf4, 0x9e, 0x4c)
+        Color::Rgb(0xde, 0xd8, 0xd1)
+    );
+    assert_eq!(
+        buffer
+            .cell((
+                matrix_environment_column,
+                u16::try_from(matrix_header).unwrap()
+            ))
+            .expect("selected environment heading")
+            .bg,
+        Color::Rgb(0x50, 0x48, 0x3e)
+    );
+    assert_eq!(
+        buffer
+            .cell((2, u16::try_from(matrix_header).unwrap()))
+            .expect("matrix background")
+            .bg,
+        Color::Rgb(0x39, 0x39, 0x38)
+    );
+    let total_line = rendered
+        .lines()
+        .position(|line| line.trim_start().starts_with("Total"))
+        .unwrap();
+    assert_eq!(
+        buffer
+            .cell((2, u16::try_from(total_line).unwrap()))
+            .expect("total band")
+            .bg,
+        Color::Rgb(0x30, 0x32, 0x2f)
+    );
+    assert_eq!(
+        buffer.cell((width - 1, height - 1)).unwrap().bg,
+        Color::Rgb(0x39, 0x39, 0x38)
     );
     assert!(rendered.contains("Space expand all"));
     insta::assert_snapshot!(format!("three_environments_{width}x{height}"), rendered);
@@ -301,7 +348,7 @@ fn selected_environment_column_includes_blank_cells_without_selecting_rows() {
     let column = u16::try_from(
         rendered
             .lines()
-            .find(|line| line.starts_with("Address"))
+            .find(|line| line.trim_start().starts_with("Address"))
             .unwrap()
             .find("> dev")
             .unwrap(),
@@ -310,7 +357,7 @@ fn selected_environment_column_includes_blank_cells_without_selecting_rows() {
     let empty_row = u16::try_from(
         rendered
             .lines()
-            .position(|line| line.starts_with("terraform_data.zeta"))
+            .position(|line| line.contains("terraform_data.zeta"))
             .expect("row with a blank selected cell"),
     )
     .unwrap();
@@ -319,7 +366,7 @@ fn selected_environment_column_includes_blank_cells_without_selecting_rows() {
             .cell((column, empty_row))
             .expect("selected blank cell")
             .bg,
-        Color::Rgb(0x35, 0x35, 0x3d)
+        Color::Rgb(0x3e, 0x3d, 0x38)
     );
 
     press(&mut view, &mut state, KeyCode::Right);
@@ -328,7 +375,7 @@ fn selected_environment_column_includes_blank_cells_without_selecting_rows() {
     let column = u16::try_from(
         rendered
             .lines()
-            .find(|line| line.starts_with("Address"))
+            .find(|line| line.trim_start().starts_with("Address"))
             .unwrap()
             .find("> prod")
             .unwrap(),
@@ -336,7 +383,7 @@ fn selected_environment_column_includes_blank_cells_without_selecting_rows() {
     .unwrap();
     assert_eq!(
         buffer.cell((column, empty_row)).expect("selected cell").bg,
-        Color::Rgb(0x35, 0x35, 0x3d)
+        Color::Rgb(0x3e, 0x3d, 0x38)
     );
 }
 
@@ -411,7 +458,7 @@ fn space_toggles_all_groups_independently_of_matrix_scroll() {
 }
 
 #[test]
-fn short_terminal_keeps_environment_actions_and_total_separator() {
+fn short_terminal_keeps_environment_actions_and_total_band() {
     let state = session(&["dev", "prod", "stg"]);
     let mut view = EnvironmentView::default();
     let rendered = text(&mut view, &state, (40, 14));
@@ -431,9 +478,10 @@ fn short_terminal_keeps_environment_actions_and_total_separator() {
     let lines = rendered.lines().collect::<Vec<_>>();
     assert!(
         lines
-            .windows(2)
-            .any(|pair| { pair[0] == "─".repeat(40) && pair[1].starts_with("Total") })
+            .iter()
+            .any(|line| line.trim_start().starts_with("Total"))
     );
+    assert!(!rendered.contains(&"─".repeat(40)));
 }
 
 #[test]
@@ -443,7 +491,7 @@ fn narrow_matrix_keeps_why_visible_with_a_long_selected_environment_name() {
     let rendered = text(&mut view, &state, (40, 16));
     let header = rendered
         .lines()
-        .find(|line| line.starts_with("Address"))
+        .find(|line| line.trim_start().starts_with("Address"))
         .expect("matrix header");
 
     assert!(header.contains('>'));
@@ -549,9 +597,28 @@ fn plan_preview_follows_the_environment_and_survives_full_plan_round_trip() {
     assert!(view.preview_open);
     assert!(view.selection.raw.is_none());
 
-    let api = text(&mut view, &state, (120, 40));
+    let api_buffer = render_to_buffer((120, 40), |frame| view.render(frame, &state));
+    let api = buffer_text(&api_buffer);
     assert!(api.contains("dev · Plan preview"), "{api}");
     assert!(api.contains("# terraform_data.api will change"), "{api}");
+    let heading_line = api
+        .lines()
+        .position(|line| line.contains("dev · Plan preview"))
+        .unwrap();
+    let heading_column = u16::try_from(
+        api.lines()
+            .nth(heading_line)
+            .unwrap()
+            .find("> dev · Plan preview")
+            .unwrap(),
+    )
+    .unwrap();
+    let heading_cell = api_buffer
+        .cell((heading_column, u16::try_from(heading_line).unwrap()))
+        .expect("focused preview title");
+    assert_eq!(heading_cell.bg, Color::Rgb(0x30, 0x32, 0x2f));
+    assert_eq!(heading_cell.fg, Color::Rgb(0xef, 0xae, 0x6d));
+    assert!(heading_cell.modifier.contains(Modifier::BOLD));
     press(&mut view, &mut state, KeyCode::Enter);
     assert!(view.selection.raw.is_none());
 
@@ -960,7 +1027,9 @@ fn full_preview_scrolls_long_raw_text_in_both_directions() {
             assert!(!rendered.contains("CLIPPED_RAW_TAIL"), "{rendered}");
         }
         if size == (160, 60) {
-            assert!(rendered.contains("synthetic block line 24"), "{rendered}");
+            press(&mut view, &mut state, KeyCode::PageDown);
+            let scrolled = text(&mut view, &state, size);
+            assert!(scrolled.contains("synthetic block line 24"), "{scrolled}");
         }
     }
     for _ in 0..120 {
@@ -1183,7 +1252,8 @@ fn environment_filter_updates_comparison_columns_and_preserves_global_ready_prog
     press(&mut view, &mut state, KeyCode::Enter);
 
     let output = text(&mut view, &state, (80, 24));
-    assert!(output.contains("Ready: 3/3   [Env filter ON]"), "{output}");
+    assert!(output.contains("Ready: 3/3"), "{output}");
+    assert!(output.contains("[Env filter ON]"), "{output}");
     assert!(
         output.contains("Same change across selected envs"),
         "{output}"
@@ -1269,7 +1339,8 @@ fn filter_can_narrow_a_three_environment_matrix_to_one_selected_environment() {
     press(&mut view, &mut state, KeyCode::Enter);
 
     let output = text(&mut view, &state, (80, 24));
-    assert!(output.contains("Ready: 3/3   [Env filter ON]"), "{output}");
+    assert!(output.contains("Ready: 3/3"), "{output}");
+    assert!(output.contains("[Env filter ON]"), "{output}");
     assert!(output.contains("1 prod"), "{output}");
     assert!(!output.contains("1 dev"), "{output}");
     assert!(!output.contains("2 stg"), "{output}");

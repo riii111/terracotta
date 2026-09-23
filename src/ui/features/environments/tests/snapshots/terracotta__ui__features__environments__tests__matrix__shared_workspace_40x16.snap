@@ -6,15 +6,15 @@ expression: output
 Ready: 0/2   Compared: none   staging:
 Error   staging: Error
 
-Synthetic acquisition error
-Address     > staging    why
-blank: absent   .: unchanged
-?: plan unavailable
-Waiting for environment plans.
-────────────────────────────────────────
-Total       Error
+ Synthetic acquisition error
+ Address     > staging    why
 
+ Waiting for environment plans.
 
-↑↓ rows  ←→ env  Enter preview
-/ filter  e env filter  v plan
-? help  q quit
+ Total       Error
+
+ blank: absent   .: unchanged
+ ?: plan unavailable
+ ↑↓ rows  ←→ env  Enter preview
+ / filter  e env filter  v plan
+ ? help  q quit

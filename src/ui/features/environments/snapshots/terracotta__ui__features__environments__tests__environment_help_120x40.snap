@@ -2,18 +2,18 @@
 source: src/ui/features/environments/tests.rs
 expression: text
 ---
-0 Overview   1 a-ready  2 b-error  3 c-running  4 d-pending  5 e-hcp
-Ready: 1/5   Co┌Help───────────────────────────────────────────────────────────────────────────────────┐ded: HCP
-execution      │ Current: Overview                                                                     │
-───────────────│ ↑ / ↓ / j / k        scroll the matrix or preview                                     │────────────────
+0 Overview   1 a-ready  2 b-error  3 c-running  4 d-pending  5 e-hcp                                          Ready: 1/5
+Compared: a-rea┌Help───────────────────────────────────────────────────────────────────────────────────┐ution
+               │ Current: Overview                                                                     │
+               │ ↑ / ↓ / j / k        scroll the matrix or preview                                     │
                │ ← / →                select env in matrix; scroll preview                             │
-               │ [ / ]                select previous or next environment                              │
-Address     > a│ Enter                open the selected environment's full plan preview                │
-blank: absent  │ Tab                  switch input between matrix and preview                          │
-No matching res│ Esc                  close preview; return from full plan                             │
-───────────────│ 1–9                  open the numbered environment's full plan                        │────────────────
-Total       +0 │ Space                expand all collapsed groups, or collapse all groups              │
-            0 r│ /                    filter full addresses                                            │
+  Address     >│ [ / ]                select previous or next environment                              │
+               │ Enter                open the selected environment's full plan preview                │
+  No matching r│ Tab                  switch input between matrix and preview                          │
+               │ Esc                  close preview; return from full plan                             │
+  Total       +│ 1–9                  open the numbered environment's full plan                        │
+              0│ Space                expand all collapsed groups, or collapse all groups              │
+  blank: absent│ /                    filter full addresses                                            │
                │ e                    filter compared environments                                     │
                │                                                                                       │
                │ Other                                                                                 │
@@ -39,6 +39,6 @@ Total       +0 │ Space                expand all collapsed groups, or collapse
                │ Scope                only Ready environments are compared                             │
                │ Excluded             environments are not retried                                     │
                │ ?/Esc close                                                                           │
-───────────────└───────────────────────────────────────────────────────────────────────────────────────┘────────────────
-↑↓ scroll rows | ←→ select env | Enter preview | [ ] select env | / filter | e env filter | v full plan | ? help
-q quit
+               └───────────────────────────────────────────────────────────────────────────────────────┘
+  ↑↓ scroll rows | ←→ select env | Enter preview | [ ] select env | / filter | e env filter | v full plan | ? help
+  q quit

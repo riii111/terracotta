@@ -9,12 +9,12 @@ d│ ↑ / ↓ / j / k                    ┃ │
 H│   scroll the matrix or preview   │ │
  │ ← / →                            │ │
  │   select env in matrix; scroll   │ │
-A│   preview                        │ │
-b│ [ / ]                            │ │
-?│   select previous or next        │ │
-N│   environment                    │ │h
-─│ Enter                            ▼ │─
-T│ ↑/↓/k/j/PgUp/PgDn scroll           │
-↑│ ?/Esc close                        │
-/└────────────────────────────────────┘
-? help  q quit
+ │   preview                        │ │
+ │ [ / ]                            │ │
+ │   select previous or next        │ │
+ │   environment                    │ │
+ │ Enter                            ▼ │
+ │ ↑/↓/k/j/PgUp/PgDn scroll           │
+ │ ?/Esc close                        │
+ └────────────────────────────────────┘
+ ? help  q quit

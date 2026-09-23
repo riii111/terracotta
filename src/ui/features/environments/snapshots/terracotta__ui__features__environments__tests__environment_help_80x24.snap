@@ -5,14 +5,14 @@ expression: text
 0 Overview   1 a-ready  2 b-error  3 c-running  4 d-pending  5 e-hcp
 R┌Help────────────────────────────────────────────────────────────────────────┐
 d│ Current: Overview                                                        ▲ │
-─│ ↑ / ↓ / j / k        scroll the matrix or preview                        ┃ │─
+ │ ↑ / ↓ / j / k        scroll the matrix or preview                        ┃ │
  │ ← / →                select env in matrix; scroll preview                ┃ │
  │ [ / ]                select previous or next environment                 ┃ │
-A│ Enter                open the selected environment's full plan preview   ┃ │
-b│ Tab                  switch input between matrix and preview             ┃ │
-N│ Esc                  close preview; return from full plan                ┃ │
-─│ 1–9                  open the numbered environment's full plan           ┃ │─
-T│ Space                expand all collapsed groups, or collapse all groups ┃ │
+ │ Enter                open the selected environment's full plan preview   ┃ │
+ │ Tab                  switch input between matrix and preview             ┃ │
+ │ Esc                  close preview; return from full plan                ┃ │
+ │ 1–9                  open the numbered environment's full plan           ┃ │
+ │ Space                expand all collapsed groups, or collapse all groups ┃ │
  │ /                    filter full addresses                               ┃ │
  │ e                    filter compared environments                        │ │
  │                                                                          │ │
@@ -23,6 +23,6 @@ T│ Space                expand all collapsed groups, or collapse all groups �
  │ y                    copy the selected environment's plan                │ │
  │ c                    show environment context                            │ │
  │ r                    retry a selected Error environment                  ▼ │
-─│ ↑/↓/k/j/PgUp/PgDn scroll | ?/Esc close                                     │─
-↑└────────────────────────────────────────────────────────────────────────────┘
-e env filter | v full plan | ? help | q quit
+ │ ↑/↓/k/j/PgUp/PgDn scroll | ?/Esc close                                     │
+ └────────────────────────────────────────────────────────────────────────────┘
+  e env filter | v full plan | ? help | q quit
