@@ -7,14 +7,14 @@ Re┌Help───────────────────────�
 b-│ Current: Overview              ▲ │
 d-│ ↑ / ↓ / j / k   select a       ┃ │
 HC│                 resource row   │ │
-a-│ ← / → / [ / ]   select an      │ │
-  │                 environment    │ │
-Ad│ Enter           open selected  │ │
-No│                 resource in    │ │th
-To│                 raw plan       │ │
-  │ 1–9             open selected  │ │
-  │                 resource in    ▼ │
+──│ ← / → / [ / ]   select an      │ │──
+Ad│                 environment    │ │
+bl│ Enter           open selected  │ │
+?:│                 resource in    │ │
+No│                 raw plan       │ │th
+──│ 1–9             open selected  │ │──
+To│                 resource in    ▼ │
   │ ↑/↓/PgUp/PgDn scroll             │
   │ ?/Esc close                      │
-  └──────────────────────────────────┘
+──└──────────────────────────────────┘──
 Enter open resource  ? help  q quit

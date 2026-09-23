@@ -79,7 +79,7 @@ impl EnvironmentView {
         let Some(plan) = state.plans().get(self.selection.column) else {
             return;
         };
-        let context = overview_context(self, plan);
+        let context = overview_context(self);
         let detail = overview_detail(plan);
         let (context_height, detail_height) = section_heights(area, &context, &detail);
         frame.render_widget(
@@ -138,7 +138,7 @@ impl EnvironmentView {
             return false;
         };
         let shell = environments::layout(area, state, self.notice.as_deref(), false);
-        let context = overview_context(self, plan);
+        let context = overview_context(self);
         let detail = overview_detail(plan);
         let (context_height, detail_height) = section_heights(shell.body, &context, &detail);
         let matrix_height = shell
@@ -167,19 +167,11 @@ impl EnvironmentView {
     }
 }
 
-fn overview_context(view: &EnvironmentView, plan: &EnvironmentPlan) -> String {
-    let selection = format!(
-        "{} · {}",
-        environments::name(plan),
-        plan.tool.display_name()
-    );
+fn overview_context(view: &EnvironmentView) -> String {
     if view.matrix.searching() || view.matrix.filtered() {
-        format!(
-            "Filter: /{}   (display only)\n{selection}",
-            view.matrix.filter()
-        )
+        format!("Filter: /{}   (display only)", view.matrix.filter())
     } else {
-        selection
+        String::new()
     }
 }
 
@@ -200,21 +192,29 @@ fn overview_detail(plan: &EnvironmentPlan) -> String {
 }
 
 fn section_heights(area: Rect, context: &str, detail: &str) -> (u16, u16) {
-    let context_height = u16::try_from(
-        Paragraph::new(context)
-            .wrap(Wrap { trim: false })
-            .line_count(area.width.max(1)),
-    )
-    .unwrap_or(u16::MAX)
-    .min(area.height.saturating_sub(6));
-    let detail_height = u16::try_from(
-        Paragraph::new(detail)
-            .wrap(Wrap { trim: false })
-            .line_count(area.width.max(1)),
-    )
-    .unwrap_or(u16::MAX)
-    .min(3)
-    .min(area.height.saturating_sub(context_height + 6));
+    let context_height = if context.is_empty() {
+        0
+    } else {
+        u16::try_from(
+            Paragraph::new(context)
+                .wrap(Wrap { trim: false })
+                .line_count(area.width.max(1)),
+        )
+        .unwrap_or(u16::MAX)
+        .min(area.height.saturating_sub(6))
+    };
+    let detail_height = if detail.is_empty() {
+        0
+    } else {
+        u16::try_from(
+            Paragraph::new(detail)
+                .wrap(Wrap { trim: false })
+                .line_count(area.width.max(1)),
+        )
+        .unwrap_or(u16::MAX)
+        .min(3)
+        .min(area.height.saturating_sub(context_height + 6))
+    };
 
     (context_height, detail_height)
 }

@@ -7,14 +7,14 @@ Re┌Help───────────────────────�
 b-│ read / move /   action shown   ▲ │
 d-│ import          by name        │ │
 HC│ why: missing    resource       │ │
-a-│                 present in     │ │
-  │                 only some      │ │
-Ad│                 Ready plans    │ │
-No│ Only Ready environments are    │ │th
-To│ compared.                      │ │
-  │ Excluded environments are not  ┃ │
-  │ retried.                       ▼ │
+──│                 present in     │ │──
+Ad│                 only some      │ │
+bl│                 Ready plans    │ │
+?:│ Only Ready environments are    │ │
+No│ compared.                      │ │th
+──│ Excluded environments are not  ┃ │──
+To│ retried.                       ▼ │
   │ ↑/↓/PgUp/PgDn scroll             │
   │ ?/Esc close                      │
-  └──────────────────────────────────┘
+──└──────────────────────────────────┘──
 Enter open resource  ? help  q quit

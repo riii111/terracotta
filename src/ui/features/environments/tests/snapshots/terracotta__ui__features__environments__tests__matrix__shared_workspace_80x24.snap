@@ -5,12 +5,12 @@ expression: output
 0 Overview   1 staging  2 staging
 Ready: 0/2   Compared: none   staging: Error   staging: Error
 ────────────────────────────────────────────────────────────────────────────────
-staging · tofu
 Synthetic acquisition error
-Address     staging   > staging  why
+Address     staging   staging    why
+blank: absent   .: unchanged   ?: plan unavailable
 Waiting for environment plans.
+────────────────────────────────────────────────────────────────────────────────
 Total       Error     Error
-
 
 
 

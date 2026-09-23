@@ -3,7 +3,7 @@ use std::{
     time::Instant,
 };
 
-use ratatui::style::Modifier;
+use ratatui::style::{Color, Modifier};
 use rstest::rstest;
 
 use super::*;
@@ -223,21 +223,115 @@ fn three_environments_show_groups_actions_and_totals(#[case] width: u16, #[case]
         .iter()
         .filter(|cell| cell.modifier.contains(Modifier::REVERSED))
         .count();
-    assert_eq!(reversed_cells, 1);
+    assert!(reversed_cells >= 8, "selected cell width: {reversed_cells}");
     let rendered = buffer_text(&buffer);
-    assert!(rendered.contains("> dev"));
+    assert!(rendered.contains("1 dev"));
+    assert!(!rendered.contains("dev · terraform"));
+    assert!(rendered.contains("blank: absent"));
+    assert!(rendered.contains("?: plan unavailable"));
     assert!(rendered.contains("> terraform_data.api"));
+    let overview_tab = buffer.cell((0, 0)).expect("overview tab");
+    assert_eq!(overview_tab.bg, Color::Rgb(0xf4, 0x9e, 0x4c));
+    let environment_header = rendered.lines().next().unwrap();
+    let environment_column = u16::try_from(environment_header.find("1 dev").unwrap()).unwrap();
+    assert_ne!(
+        buffer
+            .cell((environment_column, 0))
+            .expect("environment tab")
+            .bg,
+        Color::Rgb(0xf4, 0x9e, 0x4c)
+    );
+    let matrix_header = rendered
+        .lines()
+        .position(|line| line.starts_with("Address"))
+        .unwrap();
+    let matrix_environment_column = u16::try_from(
+        rendered
+            .lines()
+            .nth(matrix_header)
+            .unwrap()
+            .find("dev")
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        buffer
+            .cell((
+                matrix_environment_column,
+                u16::try_from(matrix_header).unwrap()
+            ))
+            .expect("matrix environment heading")
+            .fg,
+        Color::Rgb(0xc0, 0xb8, 0xb8)
+    );
     insta::assert_snapshot!(format!("three_environments_{width}x{height}"), rendered);
 }
 
 #[test]
-fn short_terminal_keeps_environment_actions_without_boundary_rows() {
+fn selecting_an_empty_matrix_cell_keeps_full_cell_emphasis() {
+    let mut state = session(&["dev", "prod"]);
+    complete(
+        &mut state,
+        vec![change("terraform_data.alpha", ResourceChangeKind::Update)],
+    );
+    complete(
+        &mut state,
+        vec![change("terraform_data.zeta", ResourceChangeKind::Update)],
+    );
+    let mut view = EnvironmentView::default();
+
+    press(&mut view, &mut state, KeyCode::Down);
+    let buffer = render_to_buffer((80, 24), |frame| view.render(frame, &state));
+    let reversed_cells = buffer
+        .content
+        .iter()
+        .filter(|cell| cell.modifier.contains(Modifier::REVERSED))
+        .count();
+    assert!(
+        reversed_cells >= 8,
+        "selected empty cell width: {reversed_cells}"
+    );
+    let rendered = buffer_text(&buffer);
+    assert!(rendered.contains("> terraform_data.zeta"));
+    let selected_row = u16::try_from(
+        rendered
+            .lines()
+            .position(|line| line.starts_with("> terraform_data.zeta"))
+            .expect("selected row"),
+    )
+    .unwrap();
+    assert_eq!(
+        buffer.cell((0, selected_row)).expect("row marker").bg,
+        Color::Rgb(0x35, 0x35, 0x3d)
+    );
+
+    press(&mut view, &mut state, KeyCode::Right);
+    let buffer = render_to_buffer((80, 24), |frame| view.render(frame, &state));
+    let reversed_cells = buffer
+        .content
+        .iter()
+        .filter(|cell| cell.modifier.contains(Modifier::REVERSED))
+        .count();
+    assert!(
+        reversed_cells >= 8,
+        "selected populated cell width: {reversed_cells}"
+    );
+}
+
+#[test]
+fn short_terminal_keeps_environment_actions_and_total_separator() {
     let state = session(&["dev", "prod", "stg"]);
     let mut view = EnvironmentView::default();
     let rendered = text(&mut view, &state, (40, 14));
 
     assert!(rendered.contains("Enter open resource  ? help  q quit"));
-    assert!(!rendered.contains(&"─".repeat(40)));
+    assert_eq!(
+        rendered
+            .lines()
+            .filter(|line| *line == "─".repeat(40))
+            .count(),
+        3
+    );
 }
 
 #[test]
@@ -250,7 +344,7 @@ fn narrow_matrix_keeps_why_visible_with_a_long_selected_environment_name() {
         .find(|line| line.starts_with("Address"))
         .expect("matrix header");
 
-    assert!(header.contains('>'));
+    assert!(!header.contains('>'));
     assert!(header.contains("why"));
 }
 
@@ -283,6 +377,23 @@ fn columns_remain_selectable_without_rows_and_scroll_beyond_nine() {
     assert_eq!(view.selection.raw, Some(10));
     press(&mut view, &mut state, KeyCode::Esc);
     assert_eq!(view.selection.column, 11);
+}
+
+#[rstest]
+#[case::one(1)]
+#[case::three(3)]
+#[case::ten(10)]
+fn matrix_symbol_legend_remains_visible_across_environment_counts(#[case] count: usize) {
+    let names = (0..count)
+        .map(|index| format!("env-{index:02}"))
+        .collect::<Vec<_>>();
+    let state = session(&names.iter().map(String::as_str).collect::<Vec<_>>());
+    let mut view = EnvironmentView::default();
+    let rendered = text(&mut view, &state, (120, 40));
+
+    assert!(rendered.contains("blank: absent"));
+    assert!(rendered.contains(".: unchanged"));
+    assert!(rendered.contains("?: plan unavailable"));
 }
 
 #[test]
@@ -528,10 +639,13 @@ fn shared_workspace_names_keep_retry_directory_and_tool_visible(
     let output = text(&mut view, &state, (width, height));
 
     assert!(!output.contains("/synthetic/prod"));
-    assert!(output.contains("staging · tofu"));
+    assert!(output.contains("2 staging"));
+    assert!(!output.contains("staging · tofu"));
     insta::assert_snapshot!(format!("shared_workspace_{width}x{height}"), output);
     press(&mut view, &mut state, KeyCode::Char('c'));
-    assert!(text(&mut view, &state, (width, height)).contains("/synthetic/prod"));
+    let context = text(&mut view, &state, (width, height));
+    assert!(context.contains("/synthetic/prod"));
+    assert!(context.contains("tofu"));
     press(&mut view, &mut state, KeyCode::Esc);
     let input = view.handle_key(
         KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE),

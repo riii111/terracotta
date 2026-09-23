@@ -8,12 +8,12 @@ b-│ Current: Overview              ▲ │
 d-│ ↑ / ↓ / j / k   select a       ┃ │
 HC│                 resource row   ┃ │
 ──│ ← / → / [ / ]   select an      ┃ │──
-a-│                 environment    ┃ │
-  │ Enter           open selected  │ │
-Ad│                 resource in    │ │
+Ad│                 environment    ┃ │
+bl│ Enter           open selected  │ │
+?:│                 resource in    │ │
 No│                 raw plan       │ │th
-To│ 1–9             open selected  │ │
-  │                 resource in    │ │
+──│ 1–9             open selected  │ │──
+To│                 resource in    │ │
   │                 the numbered   │ │
   │                 environment    │ │
   │ Space           expand or      │ │
