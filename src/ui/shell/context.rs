@@ -85,14 +85,14 @@ pub(crate) fn truncate_middle(value: &str, max_width: usize) -> String {
     )
 }
 
-fn display_width(value: &str) -> usize {
+pub(super) fn display_width(value: &str) -> usize {
     Line::from(value)
         .styled_graphemes(Style::default())
         .map(|grapheme| usize::from(grapheme.symbol.cell_width()))
         .sum()
 }
 
-fn take_from_start(value: &str, max_width: usize) -> String {
+pub(super) fn take_from_start(value: &str, max_width: usize) -> String {
     let mut result = String::new();
     let mut width = 0;
     for grapheme in Line::from(value).styled_graphemes(Style::default()) {

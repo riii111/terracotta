@@ -41,4 +41,4 @@ Plan: 2 to add, 2 to change, 1 to destroy.                                      
 Synthetic review text continues below so the viewport and scrollbar remain meaningful.                                 │
 The same long body is intentionally reused across every review state and terminal size.                                ▼
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-Quit Terracotta?   [Enter] Quit   [Esc] Cancel
+s overview | / filter | a apply | ? help | q quit                                                              Line 3/43

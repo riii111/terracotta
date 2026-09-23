@@ -2,8 +2,8 @@
 source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
-Target: main [PROD] Workspace: default Tool: terraform loading... Dir: /repo/environments/production/main
-Filter: /terraform_data
+Target: very-long-target-name-for-review [PROD] Workspace: default Tool: terraform 1.9.0 Dir: ./environments/production/very-long-target-name-for-review
+Unique targets (replace once): +2 add  ~2 update  0 replace  -1 destroy
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   # terraform_data.api will be updated in-place
   ~ resource "terraform_data" "api" {
@@ -30,6 +30,9 @@ Filter: /terraform_data
       note  = "A deliberately long synthetic value keeps horizontal scrolling visible"
     }
 
+Changes to Outputs:
+  + endpoint = (known after apply)
+  ~ summary  = "old summary" -> "new summary with a deliberately long value for review"
 
 Warning: Value for "pending" is not known until apply
 
@@ -57,8 +60,5 @@ End of synthetic plan body.
 
 
 
-
-
-
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-Enter confirm | Esc cancel                                                                                                                 8 matches   Line 3/43
+s overview | / filter | a apply | ? help | q quit                                                                                                      Line 3/43

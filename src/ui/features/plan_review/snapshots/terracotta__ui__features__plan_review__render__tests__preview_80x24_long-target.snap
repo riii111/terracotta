@@ -2,8 +2,8 @@
 source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
-Target: main [PROD] Workspace: default Tool: terraform loading... Dir: /re...ain
-Filter: /terraform_data
+Target: very-lon... [PROD] Workspace: default Tool: terraform 1.9.0 Dir: ./e...w
+Unique targets (replace once): +2 add  ~2 update  0 replace  -1 destroy
 ────────────────────────────────────────────────────────────────────────────────
   # terraform_data.api will be updated in-place                                ▲
   ~ resource "terraform_data" "api" {                                          ┃
@@ -13,7 +13,7 @@ Filter: /terraform_data
     }                                                                          ┃
                                                                                ┃
   # terraform_data.worker must be replaced                                     ┃
--/+ resource "terraform_data" "worker" {                                       ┃
+-/+ resource "terraform_data" "worker" {                                       │
       ~ input = "worker-before" -> "worker-after" # forces replacement         │
       - old_checksum = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef│
       + new_checksum = (known after apply)                                     │
@@ -25,4 +25,4 @@ Filter: /terraform_data
     }                                                                          │
 ◀︎═══════════════════════════════════════════════════════════════════───────────▶︎
 ────────────────────────────────────────────────────────────────────────────────
-Enter confirm | Esc cancel                                 8 matches   Line 3/43
+s overview | / filter | a apply | ? help | q quit                      Line 3/43

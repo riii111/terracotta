@@ -11,16 +11,45 @@ use crate::app::{
 };
 use crate::ui::theme;
 
-use super::context::{relative_directory, target, truncate_middle};
+use super::context::{display_width, relative_directory, take_from_start, target, truncate_middle};
 
+const REVIEW_HEADER_SEPARATOR: &str = " ";
+const PRODUCTION_SUFFIX: &str = " [PROD]";
 const GAP: &str = "  ";
+
+struct HeaderField {
+    label: &'static str,
+    value: String,
+    minimum_value_width: usize,
+    kind: HeaderFieldKind,
+}
+
+#[derive(Clone, Copy)]
+enum HeaderFieldKind {
+    Target,
+    Workspace,
+    Tool,
+    Directory,
+}
 
 pub(crate) fn render(frame: &mut Frame<'_>, area: Rect, lines: Vec<Line<'static>>) {
     frame.render_widget(Paragraph::new(lines).style(theme::secondary_style()), area);
 }
 
 pub(crate) fn render_review(frame: &mut Frame<'_>, area: Rect, review: &PlanReview) {
-    render(frame, area, vec![review_header_line(review, area.width)]);
+    render(
+        frame,
+        area,
+        vec![compact_review_header_line(review, area.width)],
+    );
+}
+
+pub(crate) fn render_plan_review(frame: &mut Frame<'_>, area: Rect, review: &PlanReview) {
+    render(
+        frame,
+        area,
+        vec![plan_review_header_line(review, area.width)],
+    );
 }
 
 pub(crate) fn render_execution(frame: &mut Frame<'_>, area: Rect, context: &ExecutionContext) {
@@ -35,7 +64,7 @@ pub(crate) fn render_execution(frame: &mut Frame<'_>, area: Rect, context: &Exec
     );
 }
 
-fn review_header_line(review: &PlanReview, width: u16) -> Line<'static> {
+fn plan_review_header_line(review: &PlanReview, width: u16) -> Line<'static> {
     let context = review.context();
     let target_name = match context.display_name() {
         ExecutionContextValue::Known(name) => {
@@ -55,7 +84,60 @@ fn review_header_line(review: &PlanReview, width: u16) -> Line<'static> {
         ExecutionContextValue::Known(value) => value.as_str(),
         ExecutionContextValue::Loading => "loading...",
     };
+    let tool = format!("{} {version}", context.tool_name());
+    let directory = relative_directory(context.cwd_path(), context.launch_root_path());
     fit_header(
+        &[
+            HeaderField {
+                label: "Target: ",
+                minimum_value_width: 8,
+                value: target_name,
+                kind: HeaderFieldKind::Target,
+            },
+            HeaderField {
+                label: "Workspace: ",
+                minimum_value_width: display_width(workspace).min(7),
+                value: workspace.to_owned(),
+                kind: HeaderFieldKind::Workspace,
+            },
+            HeaderField {
+                label: "Tool: ",
+                minimum_value_width: display_width(&tool),
+                value: tool,
+                kind: HeaderFieldKind::Tool,
+            },
+            HeaderField {
+                label: "Dir: ",
+                minimum_value_width: display_width(&directory).min(7),
+                value: directory,
+                kind: HeaderFieldKind::Directory,
+            },
+        ],
+        width,
+    )
+}
+
+fn compact_review_header_line(review: &PlanReview, width: u16) -> Line<'static> {
+    let context = review.context();
+    let target_name = match context.display_name() {
+        ExecutionContextValue::Known(name) => {
+            if context.is_production() == Some(true) {
+                format!("{name} [PROD]")
+            } else {
+                name.clone()
+            }
+        }
+        ExecutionContextValue::Loading => target(review.root()),
+    };
+    let workspace = match context.workspace() {
+        ExecutionContextValue::Known(value) => value.as_str(),
+        ExecutionContextValue::Loading => review.workspace(),
+    };
+    let version = match context.tool_version() {
+        ExecutionContextValue::Known(value) => value.as_str(),
+        ExecutionContextValue::Loading => "loading...",
+    };
+    fit_compact_header(
         &[
             target_name,
             format!("ws:{workspace}"),
@@ -66,7 +148,139 @@ fn review_header_line(review: &PlanReview, width: u16) -> Line<'static> {
     )
 }
 
-fn fit_header(parts: &[String], width: u16) -> Line<'static> {
+fn fit_header(fields: &[HeaderField], width: u16) -> Line<'static> {
+    let width = usize::from(width);
+    let separator_width = Line::from(REVIEW_HEADER_SEPARATOR).width();
+    let full_width = fields
+        .iter()
+        .map(header_field_width)
+        .sum::<usize>()
+        .saturating_add(separator_width.saturating_mul(fields.len().saturating_sub(1)));
+    let allocations = if full_width <= width {
+        fields
+            .iter()
+            .map(|field| (field, header_field_width(field)))
+            .collect::<Vec<_>>()
+    } else {
+        allocate_header_fields(fields, width, separator_width)
+    };
+    let value = allocations
+        .into_iter()
+        .map(|(field, allocation)| format_header_field(field, allocation))
+        .filter(|field| !field.is_empty())
+        .collect::<Vec<_>>()
+        .join(REVIEW_HEADER_SEPARATOR);
+    Line::from(Span::styled(value, theme::secondary_style()))
+}
+
+fn allocate_header_fields(
+    fields: &[HeaderField],
+    width: usize,
+    separator_width: usize,
+) -> Vec<(&HeaderField, usize)> {
+    let Some(target) = fields.first() else {
+        return Vec::new();
+    };
+    let mut selected = vec![target];
+    for candidate in fields.iter().skip(1) {
+        let candidate_minimum = selected
+            .iter()
+            .map(|field| header_field_minimum_width(field))
+            .sum::<usize>()
+            .saturating_add(header_field_minimum_width(candidate))
+            .saturating_add(separator_width.saturating_mul(selected.len()));
+        if candidate_minimum <= width {
+            selected.push(candidate);
+        }
+    }
+
+    let available = width.saturating_sub(separator_width.saturating_mul(selected.len() - 1));
+    let mut allocations = selected
+        .iter()
+        .map(|field| header_field_minimum_width(field).min(width))
+        .collect::<Vec<_>>();
+    let mut remaining = available.saturating_sub(allocations.iter().sum());
+    for (allocation, field) in allocations.iter_mut().zip(&selected) {
+        let extra = remaining.min(header_field_width(field).saturating_sub(*allocation));
+        *allocation += extra;
+        remaining -= extra;
+    }
+    selected.into_iter().zip(allocations).collect()
+}
+
+fn header_field_minimum_width(field: &HeaderField) -> usize {
+    display_width(field.label)
+        .saturating_add(field.minimum_value_width.min(display_width(&field.value)))
+}
+
+fn header_field_width(field: &HeaderField) -> usize {
+    display_width(field.label).saturating_add(display_width(&field.value))
+}
+
+fn format_header_field(field: &HeaderField, allocation: usize) -> String {
+    let label_width = display_width(field.label);
+    if allocation < label_width {
+        return truncate_middle(field.label.trim_end(), allocation);
+    }
+    let value_width = allocation.saturating_sub(label_width);
+    let value = match field.kind {
+        HeaderFieldKind::Target => truncate_target(&field.value, value_width),
+        HeaderFieldKind::Workspace => truncate_middle(&field.value, value_width),
+        HeaderFieldKind::Tool => truncate_tool(&field.value, value_width),
+        HeaderFieldKind::Directory => truncate_directory(&field.value, value_width),
+    };
+    format!("{}{value}", field.label)
+}
+
+fn truncate_tool(value: &str, max_width: usize) -> String {
+    let Some((name, version)) = value.split_once(' ') else {
+        return truncate_middle(value, max_width);
+    };
+    let name_width = display_width(name);
+    if max_width <= name_width {
+        return take_from_start(name, max_width);
+    }
+    let version_width = max_width.saturating_sub(name_width).saturating_sub(1);
+    format!("{name} {}", truncate_middle(version, version_width))
+}
+
+fn truncate_target(value: &str, max_width: usize) -> String {
+    if display_width(value) <= max_width {
+        return value.to_owned();
+    }
+    if let Some(prefix) = value.strip_suffix(PRODUCTION_SUFFIX) {
+        let suffix_width = display_width(PRODUCTION_SUFFIX);
+        if max_width >= suffix_width.saturating_add(3) {
+            let prefix_width = max_width - suffix_width - 3;
+            return format!(
+                "{}...{PRODUCTION_SUFFIX}",
+                take_from_start(prefix, prefix_width)
+            );
+        }
+        if max_width >= suffix_width {
+            return format!(
+                "{}{PRODUCTION_SUFFIX}",
+                take_from_start(prefix, max_width - suffix_width)
+            );
+        }
+    }
+    truncate_middle(value, max_width)
+}
+
+fn truncate_directory(value: &str, max_width: usize) -> String {
+    if display_width(value) <= max_width {
+        return value.to_owned();
+    }
+    if let Some(relative) = value.strip_prefix("./") {
+        if max_width <= 2 {
+            return take_from_start("./", max_width);
+        }
+        return format!("./{}", truncate_middle(relative, max_width - 2));
+    }
+    truncate_middle(value, max_width)
+}
+
+fn fit_compact_header(parts: &[String], width: u16) -> Line<'static> {
     let width = usize::from(width);
     let separator_width = Line::from(GAP).width();
     let full = parts.join(GAP);
@@ -105,7 +319,11 @@ fn fit_header(parts: &[String], width: u16) -> Line<'static> {
                 .zip(allocations)
                 .enumerate()
                 .map(|(index, (part, allocation))| {
-                    truncate_header_part(part, allocation, index == parts.len().saturating_sub(1))
+                    truncate_compact_header_part(
+                        part,
+                        allocation,
+                        index == parts.len().saturating_sub(1),
+                    )
                 })
                 .collect::<Vec<_>>()
                 .join(GAP)
@@ -114,7 +332,7 @@ fn fit_header(parts: &[String], width: u16) -> Line<'static> {
     Line::from(Span::styled(value, theme::secondary_style()))
 }
 
-fn truncate_header_part(value: &str, max_width: usize, is_directory: bool) -> String {
+fn truncate_compact_header_part(value: &str, max_width: usize, is_directory: bool) -> String {
     if is_directory && value.starts_with("./") && Line::from(value).width() > max_width {
         if max_width <= 2 {
             return truncate_middle(value, max_width);
@@ -159,20 +377,95 @@ mod tests {
     use super::*;
 
     #[test]
-    fn narrow_review_header_keeps_workspace_and_tool_fields() {
+    fn review_header_labels_context_and_preserves_target_identity_at_eighty_columns() {
+        let fields = [
+            HeaderField {
+                label: "Target: ",
+                minimum_value_width: 8,
+                value: "very-long-target-name-for-review [PROD]".to_owned(),
+                kind: HeaderFieldKind::Target,
+            },
+            HeaderField {
+                label: "Workspace: ",
+                minimum_value_width: 7,
+                value: "default".to_owned(),
+                kind: HeaderFieldKind::Workspace,
+            },
+            HeaderField {
+                label: "Tool: ",
+                minimum_value_width: 15,
+                value: "terraform 1.9.0".to_owned(),
+                kind: HeaderFieldKind::Tool,
+            },
+            HeaderField {
+                label: "Dir: ",
+                minimum_value_width: 7,
+                value: "./environments/production".to_owned(),
+                kind: HeaderFieldKind::Directory,
+            },
+        ];
+        let line = fit_header(&fields, 80);
+        let value = line.to_string();
+
+        assert!(value.starts_with("Target: "), "{value}");
+        assert!(value.contains("[PROD]"), "{value}");
+        assert!(value.contains("Workspace:"), "{value}");
+        assert!(value.contains("Tool: terraform"), "{value}");
+        assert!(value.contains("Dir: ./"), "{value}");
+        assert!(line.width() <= 80, "{value}");
+    }
+
+    #[test]
+    fn narrow_review_header_keeps_target_label_when_context_fields_do_not_fit() {
         let line = fit_header(
             &[
-                "very-long-target-name-for-review [PROD]".to_owned(),
-                "ws:default".to_owned(),
-                "terraform 1.9.0".to_owned(),
-                "./environments/production".to_owned(),
+                HeaderField {
+                    label: "Target: ",
+                    minimum_value_width: 8,
+                    value: "production [PROD]".to_owned(),
+                    kind: HeaderFieldKind::Target,
+                },
+                HeaderField {
+                    label: "Workspace: ",
+                    minimum_value_width: 7,
+                    value: "default".to_owned(),
+                    kind: HeaderFieldKind::Workspace,
+                },
+                HeaderField {
+                    label: "Tool: ",
+                    minimum_value_width: 15,
+                    value: "terraform 1.9.0".to_owned(),
+                    kind: HeaderFieldKind::Tool,
+                },
+                HeaderField {
+                    label: "Dir: ",
+                    minimum_value_width: 7,
+                    value: "./environments/production".to_owned(),
+                    kind: HeaderFieldKind::Directory,
+                },
             ],
-            50,
+            24,
         );
         let value = line.to_string();
 
-        assert!(value.contains("ws:default"));
-        assert!(value.contains("terraform 1.9.0"));
-        assert!(value.contains("./"));
+        assert!(value.starts_with("Target: "), "{value}");
+        assert!(value.contains("PROD"), "{value}");
+        assert!(line.width() <= 24, "{value}");
+    }
+
+    #[test]
+    fn very_narrow_review_header_stays_within_the_available_width() {
+        let line = fit_header(
+            &[HeaderField {
+                label: "Target: ",
+                minimum_value_width: 8,
+                value: "production [PROD]".to_owned(),
+                kind: HeaderFieldKind::Target,
+            }],
+            10,
+        );
+
+        assert!(line.width() <= 10, "{line}");
+        assert!(line.to_string().starts_with("Target:"));
     }
 }
