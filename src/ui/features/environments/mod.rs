@@ -13,7 +13,7 @@ use super::{
 use crate::{
     app::{
         copy::{self, CopyTarget},
-        environments::{EnvironmentSession, EnvironmentState, comparison::CellState},
+        environments::{EnvironmentSession, EnvironmentState},
         session::{Action, ReviewSessionState},
     },
     ui::{
@@ -29,6 +29,9 @@ pub(crate) struct EnvironmentView {
     selected_environments: Option<Vec<usize>>,
     matrix: MatrixView,
     preview_open: bool,
+    preview_focused: bool,
+    preview_vertical: usize,
+    preview_horizontal: usize,
     confirming_quit: bool,
     reviews: Vec<PlanReviewViewState>,
     notice: Option<String>,
@@ -49,7 +52,7 @@ pub(crate) enum EnvironmentInput {
     Interrupt,
 }
 
-pub(crate) struct CellPreview {
+pub(crate) struct PlanPreview {
     pub(crate) title: String,
     pub(crate) text: String,
     pub(crate) is_raw: bool,
@@ -69,8 +72,7 @@ impl EnvironmentView {
                 return None;
             }
             if self.selection.raw.is_none() && self.matrix.searching() {
-                self.matrix
-                    .apply(OverviewInput::SearchCancel, self.selection.column);
+                self.matrix.apply(OverviewInput::SearchCancel);
                 return None;
             }
             return Some(EnvironmentInput::Interrupt);
@@ -119,7 +121,14 @@ impl EnvironmentView {
             || self.matrix.searching(),
             |index| self.reviews[index].searching() || self.reviews[index].overlay().is_some(),
         );
-        if !editing && let ControlFlow::Break(result) = self.navigation(key, state) {
+        let clearing_filter = self.selection.raw.is_none()
+            && self.matrix.filtered()
+            && !self.preview_open
+            && key.code == KeyCode::Esc;
+        if !editing
+            && !clearing_filter
+            && let ControlFlow::Break(result) = self.navigation(key, state)
+        {
             return result;
         }
         if let Some(index) = self.selection.raw {
@@ -139,9 +148,10 @@ impl EnvironmentView {
             OverviewInput::Quit => self.quit(state),
             OverviewInput::Open => {
                 self.preview_open = true;
+                self.preview_focused = true;
                 None
             }
-            OverviewInput::ViewPlan => self.open(state, self.selection.column, true),
+            OverviewInput::ViewPlan => self.open(state, self.selection.column),
             OverviewInput::Copy => Some(EnvironmentInput::Review(
                 self.selection.column,
                 Box::new(Action::Copy(CopyTarget::Plan)),
@@ -169,7 +179,7 @@ impl EnvironmentView {
                 None
             }
             _ => {
-                self.matrix.apply(input, self.selection.column);
+                self.matrix.apply(input);
                 None
             }
         }
@@ -179,7 +189,7 @@ impl EnvironmentView {
         self.reviews
             .resize_with(state.plans().len(), PlanReviewViewState::default);
         let indexes = self.visible_environments(state.plans().len());
-        self.matrix.sync(state, &indexes, self.selection.column);
+        self.matrix.sync(state, &indexes);
     }
 
     fn handle_filter_dialog_key(
@@ -203,11 +213,12 @@ impl EnvironmentView {
                     .as_ref()
                     .is_some_and(|indexes| !indexes.contains(&self.selection.column))
                 {
-                    self.selection.column = self
+                    let column = self
                         .selected_environments
                         .as_ref()
                         .and_then(|indexes| indexes.first().copied())
                         .unwrap_or(0);
+                    self.select_environment(column);
                 }
                 self.notice = None;
                 self.sync(state);
@@ -224,100 +235,43 @@ impl EnvironmentView {
             .unwrap_or_else(|| (0..count).collect())
     }
 
-    fn selected_cell_preview(&self, state: &EnvironmentSession) -> CellPreview {
+    fn selected_plan_preview(&self, state: &EnvironmentSession) -> PlanPreview {
         let Some(selected_plan) = state.plans().get(self.selection.column) else {
-            return CellPreview {
+            return PlanPreview {
                 title: "No environment selected".to_owned(),
                 text: "Select an environment to preview its plan.".to_owned(),
                 is_raw: false,
             };
         };
         let environment = environments::name(selected_plan);
-        let Some(address) = self.matrix.selected_address() else {
-            return CellPreview {
-                title: environment,
-                text: "No resource row is selected.".to_owned(),
-                is_raw: false,
-            };
-        };
-        if self.matrix.selected_is_group() {
-            return CellPreview {
-                title: format!("{environment} · {address}"),
-                text: "This row groups multiple resources. Press Space to expand it, then select a resource.".to_owned(),
-                is_raw: false,
-            };
-        }
-        let Some(cell) = self.matrix.cell(self.selection.column) else {
-            return CellPreview {
-                title: format!("{environment} · {address}"),
-                text: "No cell is available for this environment.".to_owned(),
-                is_raw: false,
-            };
-        };
-        let plan = cell
-            .source
-            .as_ref()
-            .and_then(|source| state.plans().get(source.environment))
-            .unwrap_or(selected_plan);
-        let title = format!("{} · {address}", environments::name(plan));
-        let text = match &cell.state {
-            CellState::Missing => {
-                "This resource is absent from the selected environment's plan.".to_owned()
+        let title = format!("{environment} · Plan preview");
+        if let Some(review) = selected_plan.review() {
+            let review = review.review();
+            PlanPreview {
+                title,
+                text: copy::sanitize_text(
+                    review.document().text(),
+                    review.metadata().sensitive_values(),
+                ),
+                is_raw: true,
             }
-            CellState::NoOp => {
-                "This resource exists in the selected environment and has no changes.".to_owned()
-            }
-            CellState::Unavailable => match plan.state() {
+        } else {
+            let text = match selected_plan.state() {
                 EnvironmentState::Pending => "The plan has not been acquired yet.".to_owned(),
                 EnvironmentState::Running => "Plan acquisition is still in progress.".to_owned(),
-                EnvironmentState::Error => {
-                    "Plan acquisition failed. See the environment diagnostic above.".to_owned()
-                }
+                EnvironmentState::Error => selected_plan.diagnostic().text().to_owned(),
                 EnvironmentState::ExcludedHcp => {
                     "This environment is excluded because it uses HCP execution.".to_owned()
                 }
                 EnvironmentState::Ready { .. } => {
                     "No reviewable plan is available for this environment.".to_owned()
                 }
-            },
-            CellState::Change { .. } => {
-                let Some(review) = plan.review() else {
-                    return CellPreview {
-                        title,
-                        text: "The selected environment has no reviewable plan.".to_owned(),
-                        is_raw: false,
-                    };
-                };
-                let document = review.review().document();
-                let block = cell.source.as_ref().and_then(|source| {
-                    let block = document.block_for_address(address)?;
-                    (Some(block.lines().start) == source.line).then_some(block)
-                });
-                let Some(block) = block else {
-                    return CellPreview {
-                        title,
-                        text: "The selected cell has no matching raw block in this environment's plan.".to_owned(),
-                        is_raw: false,
-                    };
-                };
-                let range = block.lines().clone();
-                let lines = document.text().split('\n').collect::<Vec<_>>();
-                let Some(lines) = lines.get(range) else {
-                    return CellPreview {
-                        title,
-                        text: "The selected cell's raw block is unavailable.".to_owned(),
-                        is_raw: false,
-                    };
-                };
-                let raw = lines.join("\n");
-                copy::sanitize_text(&raw, review.review().metadata().sensitive_values())
+            };
+            PlanPreview {
+                title,
+                text,
+                is_raw: false,
             }
-        };
-        let is_raw = matches!(&cell.state, CellState::Change { .. });
-        CellPreview {
-            title,
-            text,
-            is_raw,
         }
     }
 
@@ -326,26 +280,62 @@ impl EnvironmentView {
         key: KeyEvent,
         state: &EnvironmentSession,
     ) -> ControlFlow<Option<EnvironmentInput>> {
-        let tab_delta = match (key.code, key.modifiers) {
-            (KeyCode::Tab, KeyModifiers::NONE) => Some(1),
-            (KeyCode::BackTab, KeyModifiers::NONE | KeyModifiers::SHIFT)
-            | (KeyCode::Tab, KeyModifiers::SHIFT) => Some(-1),
-            _ => None,
-        };
         let visible = self.visible_environments(state.plans().len());
-        if self.selection.raw.is_some()
-            && let Some(delta) = tab_delta
-        {
-            let index = adjacent_environment(self.selection.active(), delta, &visible);
-            return ControlFlow::Break(self.open(state, index, false));
-        }
-
-        if self.selection.raw.is_none() && self.preview_open && key.code == KeyCode::Esc {
-            self.preview_open = false;
-            self.notice = None;
+        if let Some(index) = self.selection.raw {
+            if let Some(delta) = tab_delta(key) {
+                let index = adjacent_environment(index, delta, &visible);
+                return ControlFlow::Break(self.open(state, index));
+            }
+        } else if self.navigate_preview(key) {
             return ControlFlow::Break(None);
         }
+        self.navigate_selection(key, state, &visible)
+    }
 
+    fn navigate_preview(&mut self, key: KeyEvent) -> bool {
+        if self.preview_open && matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
+            self.preview_focused = !self.preview_focused;
+            return true;
+        }
+        if self.preview_open && key.code == KeyCode::Esc {
+            self.preview_open = false;
+            self.preview_focused = false;
+            self.notice = None;
+            return true;
+        }
+        if !self.preview_focused {
+            return false;
+        }
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.preview_vertical = self.preview_vertical.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.preview_vertical = self.preview_vertical.saturating_add(1);
+            }
+            KeyCode::PageUp => self.preview_vertical = self.preview_vertical.saturating_sub(10),
+            KeyCode::PageDown => {
+                self.preview_vertical = self.preview_vertical.saturating_add(10);
+            }
+            KeyCode::Home => self.preview_vertical = 0,
+            KeyCode::End => self.preview_vertical = usize::MAX,
+            KeyCode::Left => {
+                self.preview_horizontal = self.preview_horizontal.saturating_sub(1);
+            }
+            KeyCode::Right => {
+                self.preview_horizontal = self.preview_horizontal.saturating_add(1);
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    fn navigate_selection(
+        &mut self,
+        key: KeyEvent,
+        state: &EnvironmentSession,
+        visible: &[usize],
+    ) -> ControlFlow<Option<EnvironmentInput>> {
         match key.code {
             KeyCode::Char('0' | 's') => {
                 self.selection.raw = None;
@@ -367,7 +357,7 @@ impl EnvironmentView {
                 };
                 let visible_index = digit as usize - '1' as usize;
                 if let Some(index) = visible.get(visible_index).copied() {
-                    return ControlFlow::Break(self.open(state, index, false));
+                    return ControlFlow::Break(self.open(state, index));
                 }
             }
             KeyCode::Char('[' | ']') | KeyCode::Left | KeyCode::Right
@@ -378,11 +368,11 @@ impl EnvironmentView {
                 } else {
                     1
                 };
-                let index = adjacent_environment(self.selection.active(), delta, &visible);
+                let index = adjacent_environment(self.selection.active(), delta, visible);
                 if self.selection.raw.is_some() {
-                    return ControlFlow::Break(self.open(state, index, false));
+                    return ControlFlow::Break(self.open(state, index));
                 }
-                self.selection.column = index;
+                self.select_environment(index);
                 self.notice = None;
             }
             KeyCode::Char('r') => {
@@ -401,16 +391,19 @@ impl EnvironmentView {
         ControlFlow::Break(None)
     }
 
-    fn open(
-        &mut self,
-        state: &EnvironmentSession,
-        index: usize,
-        full: bool,
-    ) -> Option<EnvironmentInput> {
+    const fn select_environment(&mut self, index: usize) {
+        if self.selection.column != index {
+            self.selection.column = index;
+            self.preview_vertical = 0;
+            self.preview_horizontal = 0;
+        }
+    }
+
+    fn open(&mut self, state: &EnvironmentSession, index: usize) -> Option<EnvironmentInput> {
         let plan = state.plans().get(index)?;
         if plan.review().is_none() {
             self.selection.raw = None;
-            self.selection.column = index;
+            self.select_environment(index);
             self.show_dialog(format!(
                 "{}: {}\n{}\n{}\n\nEsc close   r retries Error after closing",
                 environments::name(plan),
@@ -424,42 +417,9 @@ impl EnvironmentView {
             ));
             return None;
         }
-        let cell = (!full).then(|| self.matrix.cell(index)).flatten();
-        if cell.is_some_and(|cell| {
-            cell.state == CellState::Missing
-                || (matches!(cell.state, CellState::Change { .. }) && cell.members.is_empty())
-        }) {
-            self.notice = Some("This resource does not exist in this environment.".to_owned());
-            return None;
-        }
-        let unchanged = cell.is_some_and(|cell| cell.state == CellState::NoOp);
-        let line = if unchanged {
-            0
-        } else {
-            cell.and_then(|cell| cell.source.as_ref())
-                .and_then(|source| source.line)
-                .unwrap_or(0)
-        };
-        self.notice = if unchanged {
-            Some("This resource has no changes. Showing the full plan from the top.".to_owned())
-        } else if !full
-            && cell.is_some_and(|cell| {
-                cell.source
-                    .as_ref()
-                    .is_none_or(|source| source.line.is_none())
-            })
-        {
-            Some("No matching raw block. Showing the full plan from the top.".to_owned())
-        } else {
-            None
-        };
+        self.notice = None;
         self.selection.raw = Some(index);
-        let offset = if full || unchanged {
-            0
-        } else {
-            plan_review::source_offset(plan.review()?, line)
-        };
-        self.reviews[index].jump_to_line(offset, u16::MAX);
+        self.reviews[index].jump_to_line(0, u16::MAX);
         Some(EnvironmentInput::Review(
             index,
             Box::new(Action::ReviewSearchChanged(String::new())),
@@ -549,6 +509,15 @@ impl EnvironmentView {
         } else {
             Some(EnvironmentInput::Quit)
         }
+    }
+}
+
+const fn tab_delta(key: KeyEvent) -> Option<isize> {
+    match (key.code, key.modifiers) {
+        (KeyCode::Tab, KeyModifiers::NONE) => Some(1),
+        (KeyCode::BackTab, KeyModifiers::NONE | KeyModifiers::SHIFT)
+        | (KeyCode::Tab, KeyModifiers::SHIFT) => Some(-1),
+        _ => None,
     }
 }
 

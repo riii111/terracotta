@@ -167,7 +167,7 @@ fn press_event(view: &mut EnvironmentView, state: &mut EnvironmentSession, key: 
 }
 
 #[test]
-fn tab_keys_open_the_same_target_in_adjacent_environments_from_raw_plan() {
+fn tab_keys_open_the_adjacent_full_plan_from_raw_plan() {
     let mut state = session(&["dev", "prod", "stg"]);
     for _ in 0..3 {
         complete(
@@ -184,11 +184,11 @@ fn tab_keys_open_the_same_target_in_adjacent_environments_from_raw_plan() {
 
     press(&mut view, &mut state, KeyCode::Char('v'));
     assert_eq!(view.selection.raw, Some(1));
-    let selected = view.matrix.cell(1).unwrap().members.clone();
+    assert!(text(&mut view, &state, (80, 24)).contains("# terraform_data.api will change"));
 
     press(&mut view, &mut state, KeyCode::Tab);
     assert_eq!(view.selection.raw, Some(2));
-    assert_eq!(view.matrix.cell(2).unwrap().members, selected);
+    assert!(text(&mut view, &state, (80, 24)).contains("# terraform_data.api will change"));
 
     press_event(
         &mut view,
@@ -196,7 +196,7 @@ fn tab_keys_open_the_same_target_in_adjacent_environments_from_raw_plan() {
         KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
     );
     assert_eq!(view.selection.raw, Some(1));
-    assert_eq!(view.matrix.cell(1).unwrap().members, selected);
+    assert!(text(&mut view, &state, (80, 24)).contains("# terraform_data.api will change"));
 }
 
 fn text(view: &mut EnvironmentView, state: &EnvironmentSession, size: (u16, u16)) -> String {
@@ -234,13 +234,14 @@ fn three_environments_show_groups_actions_and_totals(#[case] width: u16, #[case]
         .iter()
         .filter(|cell| cell.modifier.contains(Modifier::REVERSED))
         .count();
-    assert!(reversed_cells >= 8, "selected cell width: {reversed_cells}");
+    assert_eq!(reversed_cells, 0, "the matrix has no selected resource row");
     let rendered = buffer_text(&buffer);
     assert!(rendered.contains("1 dev"));
     assert!(!rendered.contains("dev · terraform"));
     assert!(rendered.contains("blank: absent"));
     assert!(rendered.contains("?: plan unavailable"));
-    assert!(rendered.contains("> terraform_data.api"));
+    assert!(rendered.contains("> dev"));
+    assert!(!rendered.contains("> terraform_data.api"));
     let overview_tab = buffer.cell((0, 0)).expect("overview tab");
     assert_eq!(overview_tab.bg, Color::Rgb(0xf4, 0x9e, 0x4c));
     let environment_header = rendered.lines().next().unwrap();
@@ -273,15 +274,14 @@ fn three_environments_show_groups_actions_and_totals(#[case] width: u16, #[case]
             ))
             .expect("matrix environment heading")
             .fg,
-        Color::Rgb(0xc0, 0xb8, 0xb8)
+        Color::Rgb(0xf4, 0x9e, 0x4c)
     );
-    assert!(!rendered.contains("Space expand"));
-    assert!(!rendered.contains("Space collapse"));
+    assert!(rendered.contains("Space expand all"));
     insta::assert_snapshot!(format!("three_environments_{width}x{height}"), rendered);
 }
 
 #[test]
-fn selecting_an_empty_matrix_cell_keeps_full_cell_emphasis() {
+fn selected_environment_column_includes_blank_cells_without_selecting_rows() {
     let mut state = session(&["dev", "prod"]);
     complete(
         &mut state,
@@ -293,46 +293,55 @@ fn selecting_an_empty_matrix_cell_keeps_full_cell_emphasis() {
     );
     let mut view = EnvironmentView::default();
 
-    press(&mut view, &mut state, KeyCode::Down);
     let buffer = render_to_buffer((80, 24), |frame| view.render(frame, &state));
-    let reversed_cells = buffer
-        .content
-        .iter()
-        .filter(|cell| cell.modifier.contains(Modifier::REVERSED))
-        .count();
-    assert!(
-        reversed_cells >= 8,
-        "selected empty cell width: {reversed_cells}"
-    );
     let rendered = buffer_text(&buffer);
-    assert!(rendered.contains("> terraform_data.zeta"));
-    let selected_row = u16::try_from(
+    assert!(rendered.contains("> dev"));
+    assert!(!rendered.contains("> terraform_data.alpha"));
+    assert!(!rendered.contains("> terraform_data.zeta"));
+    let column = u16::try_from(
         rendered
             .lines()
-            .position(|line| line.starts_with("> terraform_data.zeta"))
-            .expect("selected row"),
+            .find(|line| line.starts_with("Address"))
+            .unwrap()
+            .find("> dev")
+            .unwrap(),
+    )
+    .unwrap();
+    let empty_row = u16::try_from(
+        rendered
+            .lines()
+            .position(|line| line.starts_with("terraform_data.zeta"))
+            .expect("row with a blank selected cell"),
     )
     .unwrap();
     assert_eq!(
-        buffer.cell((0, selected_row)).expect("row marker").bg,
+        buffer
+            .cell((column, empty_row))
+            .expect("selected blank cell")
+            .bg,
         Color::Rgb(0x35, 0x35, 0x3d)
     );
 
     press(&mut view, &mut state, KeyCode::Right);
     let buffer = render_to_buffer((80, 24), |frame| view.render(frame, &state));
-    let reversed_cells = buffer
-        .content
-        .iter()
-        .filter(|cell| cell.modifier.contains(Modifier::REVERSED))
-        .count();
-    assert!(
-        reversed_cells >= 8,
-        "selected populated cell width: {reversed_cells}"
+    let rendered = buffer_text(&buffer);
+    let column = u16::try_from(
+        rendered
+            .lines()
+            .find(|line| line.starts_with("Address"))
+            .unwrap()
+            .find("> prod")
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        buffer.cell((column, empty_row)).expect("selected cell").bg,
+        Color::Rgb(0x35, 0x35, 0x3d)
     );
 }
 
 #[test]
-fn selected_group_footer_tracks_expansion_children_and_filtered_rows() {
+fn space_toggles_all_groups_independently_of_matrix_scroll() {
     let mut state = session(&["dev", "prod", "stg"]);
     for _ in 0..3 {
         complete(
@@ -351,15 +360,15 @@ fn selected_group_footer_tracks_expansion_children_and_filtered_rows() {
 
     let collapsed = text(&mut view, &state, (80, 24));
     assert!(collapsed.contains("[+] terraform_data.server[*]"));
-    assert!(collapsed.contains("Space expand"));
+    assert!(collapsed.contains("Space expand all"));
     assert!(text(&mut view, &state, (40, 16)).contains("Space expand"));
     for (width, height) in [(40, 16), (80, 24), (120, 40), (160, 60)] {
         let rendered = text(&mut view, &state, (width, height));
         for hint in [
-            "↑↓ row",
-            "←→ env",
+            "↑↓",
+            "←→",
             "/ filter",
-            "Space expand",
+            "Space expand all",
             "? help",
             "q quit",
         ] {
@@ -374,23 +383,18 @@ fn selected_group_footer_tracks_expansion_children_and_filtered_rows() {
     let expanded = text(&mut view, &state, (80, 24));
     assert!(expanded.contains("[-] terraform_data.server[*]"));
     assert!(expanded.contains("terraform_data.server[0]"));
-    assert!(expanded.contains("Space collapse"));
+    assert!(expanded.contains("Space collapse all"));
     assert!(expanded.contains("q quit"));
 
     press(&mut view, &mut state, KeyCode::Char('j'));
     let child = text(&mut view, &state, (80, 24));
-    assert!(!child.contains("Space expand"));
-    assert!(!child.contains("Space collapse"));
+    assert!(child.contains("Space collapse all"));
     press(&mut view, &mut state, KeyCode::Char(' '));
-    assert_eq!(text(&mut view, &state, (80, 24)), child);
+    let collapsed = text(&mut view, &state, (80, 24));
+    assert!(collapsed.contains("[+] terraform_data.server[*]"));
 
     press(&mut view, &mut state, KeyCode::Char('k'));
-    assert!(text(&mut view, &state, (80, 24)).contains("Space collapse"));
-    press(&mut view, &mut state, KeyCode::Char(' '));
-    let collapsed_again = text(&mut view, &state, (80, 24));
-    assert!(collapsed_again.contains("[+] terraform_data.server[*]"));
-    assert!(collapsed_again.contains("Space expand"));
-    assert!(!collapsed_again.contains("terraform_data.server[0]"));
+    assert!(text(&mut view, &state, (80, 24)).contains("Space expand all"));
 
     press(&mut view, &mut state, KeyCode::Char('/'));
     for character in "server[1]".chars() {
@@ -400,8 +404,8 @@ fn selected_group_footer_tracks_expansion_children_and_filtered_rows() {
     let filtered = text(&mut view, &state, (80, 24));
     assert!(filtered.contains("terraform_data.server[1]"));
     assert!(!filtered.contains("terraform_data.server[*]"));
-    assert!(!filtered.contains("Space expand"));
-    assert!(!filtered.contains("Space collapse"));
+    assert!(!filtered.contains("Space expand all"));
+    assert!(!filtered.contains("Space collapse all"));
     press(&mut view, &mut state, KeyCode::Char(' '));
     assert_eq!(text(&mut view, &state, (80, 24)), filtered);
 }
@@ -414,7 +418,7 @@ fn short_terminal_keeps_environment_actions_and_total_separator() {
 
     assert!(rendered.contains("Enter preview"));
     for hint in [
-        "↑↓ row",
+        "↑↓ rows",
         "←→ env",
         "Enter preview",
         "/ filter",
@@ -442,7 +446,7 @@ fn narrow_matrix_keeps_why_visible_with_a_long_selected_environment_name() {
         .find(|line| line.starts_with("Address"))
         .expect("matrix header");
 
-    assert!(!header.contains('>'));
+    assert!(header.contains('>'));
     assert!(header.contains("why"));
 }
 
@@ -495,7 +499,7 @@ fn matrix_symbol_legend_remains_visible_across_environment_counts(#[case] count:
 }
 
 #[test]
-fn no_op_missing_and_unavailable_open_distinct_guidance() {
+fn unavailable_environment_opens_its_state_dialog_and_preview_after_completion() {
     let mut state = session(&["a", "b", "c"]);
     complete(
         &mut state,
@@ -508,7 +512,9 @@ fn no_op_missing_and_unavailable_open_distinct_guidance() {
     let mut view = EnvironmentView::default();
     press(&mut view, &mut state, KeyCode::Char('2'));
     assert_eq!(view.selection.raw, Some(1));
-    assert!(text(&mut view, &state, (80, 24)).contains("no changes"));
+    assert!(
+        text(&mut view, &state, (80, 24)).contains("Terraform will perform the following actions")
+    );
     press(&mut view, &mut state, KeyCode::Esc);
     press(&mut view, &mut state, KeyCode::Char('3'));
     assert!(text(&mut view, &state, (80, 24)).contains("Pending"));
@@ -516,15 +522,18 @@ fn no_op_missing_and_unavailable_open_distinct_guidance() {
     press(&mut view, &mut state, KeyCode::Esc);
     complete(&mut state, Vec::new());
     press(&mut view, &mut state, KeyCode::Enter);
+    let rendered = text(&mut view, &state, (80, 24));
+    assert!(rendered.contains("c · Plan preview"), "{rendered}");
     assert!(
-        text(&mut view, &state, (80, 24)).contains("absent from the selected environment's plan")
+        rendered.contains("Terraform will perform the following actions"),
+        "{rendered}"
     );
     assert!(view.selection.raw.is_none());
     assert!(view.preview_open);
 }
 
 #[test]
-fn selected_cell_preview_follows_selection_and_survives_full_plan_round_trip() {
+fn plan_preview_follows_the_environment_and_survives_full_plan_round_trip() {
     let mut state = session(&["dev", "prod"]);
     for _ in 0..2 {
         complete(
@@ -541,17 +550,18 @@ fn selected_cell_preview_follows_selection_and_survives_full_plan_round_trip() {
     assert!(view.selection.raw.is_none());
 
     let api = text(&mut view, &state, (120, 40));
-    assert!(api.contains("dev · terraform_data.api"), "{api}");
+    assert!(api.contains("dev · Plan preview"), "{api}");
     assert!(api.contains("# terraform_data.api will change"), "{api}");
     press(&mut view, &mut state, KeyCode::Enter);
     assert!(view.selection.raw.is_none());
 
-    press(&mut view, &mut state, KeyCode::Down);
+    press(&mut view, &mut state, KeyCode::Tab);
     press(&mut view, &mut state, KeyCode::Right);
+    press(&mut view, &mut state, KeyCode::Tab);
     let worker = text(&mut view, &state, (120, 40));
-    assert!(worker.contains("prod · terraform_data.worker"), "{worker}");
+    assert!(worker.contains("prod · Plan preview"), "{worker}");
     assert!(
-        worker.contains("# terraform_data.worker will change"),
+        worker.contains("# terraform_data.api will change"),
         "{worker}"
     );
 
@@ -563,12 +573,9 @@ fn selected_cell_preview_follows_selection_and_survives_full_plan_round_trip() {
     assert!(view.selection.raw.is_none());
     assert!(view.preview_open);
     let returned = text(&mut view, &state, (120, 40));
+    assert!(returned.contains("prod · Plan preview"), "{returned}");
     assert!(
-        returned.contains("prod · terraform_data.worker"),
-        "{returned}"
-    );
-    assert!(
-        returned.contains("# terraform_data.worker will change"),
+        returned.contains("# terraform_data.api will change"),
         "{returned}"
     );
 
@@ -578,7 +585,7 @@ fn selected_cell_preview_follows_selection_and_survives_full_plan_round_trip() {
 }
 
 #[test]
-fn selected_cell_preview_preserves_search_cancel_priority() {
+fn plan_preview_preserves_search_cancel_priority() {
     let mut state = session(&["dev"]);
     complete(
         &mut state,
@@ -598,92 +605,307 @@ fn selected_cell_preview_preserves_search_cancel_priority() {
 }
 
 #[test]
-fn selected_cell_preview_explains_absent_unchanged_and_unavailable_cells() {
-    let mut state = session(&["dev", "missing", "unchanged", "pending"]);
+fn confirmed_matrix_filter_does_not_consume_preview_escape() {
+    let mut state = session(&["dev"]);
     complete(
         &mut state,
         vec![change("terraform_data.api", ResourceChangeKind::Update)],
     );
-    complete(&mut state, Vec::new());
+    let mut view = EnvironmentView::default();
+    press(&mut view, &mut state, KeyCode::Char('/'));
+    for character in "api".chars() {
+        press(&mut view, &mut state, KeyCode::Char(character));
+    }
+    press(&mut view, &mut state, KeyCode::Enter);
+    press(&mut view, &mut state, KeyCode::Enter);
+    assert!(view.preview_open);
+    assert_eq!(view.matrix.filter(), "api");
+
+    press(&mut view, &mut state, KeyCode::Esc);
+    assert_eq!(view.matrix.filter(), "api");
+    assert!(!view.preview_open);
+    press(&mut view, &mut state, KeyCode::Esc);
+    assert_eq!(view.matrix.filter(), "");
+    assert!(!view.preview_open);
+}
+
+#[test]
+fn plan_preview_tracks_unavailable_environment_states() {
+    let mut state = session(&["dev", "pending"]);
     complete(
         &mut state,
-        vec![change("terraform_data.api", ResourceChangeKind::NoOp)],
+        vec![change("terraform_data.api", ResourceChangeKind::Update)],
     );
     let mut view = EnvironmentView::default();
 
     press(&mut view, &mut state, KeyCode::Right);
     press(&mut view, &mut state, KeyCode::Enter);
+    let rendered = text(&mut view, &state, (80, 24));
+    assert!(rendered.contains("pending · Plan preview"), "{rendered}");
+    assert!(rendered.contains("has not been acquired yet"), "{rendered}");
+    press(&mut view, &mut state, KeyCode::Esc);
+
+    complete(&mut state, Vec::new());
+    press(&mut view, &mut state, KeyCode::Enter);
+    let rendered = text(&mut view, &state, (80, 24));
+    assert!(rendered.contains("pending · Plan preview"), "{rendered}");
     assert!(
-        text(&mut view, &state, (80, 24)).contains("absent from the selected environment's plan")
+        rendered.contains("Terraform will perform the following actions"),
+        "{rendered}"
     );
-    press(&mut view, &mut state, KeyCode::Esc);
-
-    press(&mut view, &mut state, KeyCode::Right);
-    press(&mut view, &mut state, KeyCode::Enter);
-    assert!(text(&mut view, &state, (80, 24)).contains("has no changes"));
-    press(&mut view, &mut state, KeyCode::Esc);
-
-    press(&mut view, &mut state, KeyCode::Right);
-    press(&mut view, &mut state, KeyCode::Enter);
-    assert!(text(&mut view, &state, (80, 24)).contains("has not been acquired yet"));
 }
 
 #[test]
-fn selected_cell_preview_reports_missing_raw_block_without_using_another_cell() {
+fn failed_plan_preview_shows_its_diagnostic_and_keeps_retry_available() {
+    let mut state = session(&["dev", "failed"]);
+    complete(
+        &mut state,
+        vec![change("terraform_data.api", ResourceChangeKind::Update)],
+    );
+    let index = state.start_next().unwrap();
+    assert!(state.complete(
+        index,
+        PlanResult::Error("Synthetic plan acquisition failure".to_owned()),
+        Vec::new(),
+    ));
+    assert_eq!(environments::status(&state.plans()[index]), "Error");
+    let mut view = EnvironmentView::default();
+    press(&mut view, &mut state, KeyCode::Enter);
+    press(&mut view, &mut state, KeyCode::Tab);
+    press(&mut view, &mut state, KeyCode::Right);
+    press(&mut view, &mut state, KeyCode::Tab);
+
+    let rendered = text(&mut view, &state, (80, 24));
+    assert!(rendered.contains("failed · Plan preview"), "{rendered}");
+    assert!(
+        rendered.contains("Synthetic plan acquisition failure"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("# terraform_data.api will change"),
+        "{rendered}"
+    );
+    press(&mut view, &mut state, KeyCode::Char('r'));
+    assert_eq!(state.start_next(), Some(index));
+    let rendered = text(&mut view, &state, (80, 24));
+    assert!(
+        rendered.contains("Plan acquisition is still in progress"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn plan_preview_shows_the_full_sanitized_environment_document() {
     let mut state = session(&["dev", "prod"]);
     let address = "terraform_data.api";
-    let missing_address = "terraform_data.worker";
+    let plan_text = [
+        "PRELUDE_MARKER",
+        &format!("# {address} will change"),
+        "~ password = synthetic-secret -> rotated",
+        "",
+        "# terraform_data.worker will change",
+        "~ input = old -> new",
+        "",
+        "Changes to Outputs:",
+        "  endpoint = \"https://synthetic.invalid\"",
+        "",
+        "Plan: 0 to add, 2 to change, 0 to destroy.",
+        "TAIL_SUMMARY_MARKER",
+    ]
+    .join("\n");
     let changes = vec![
         change(address, ResourceChangeKind::Update),
-        change(missing_address, ResourceChangeKind::Update),
+        change("terraform_data.worker", ResourceChangeKind::Update),
     ];
     for _ in 0..2 {
         complete_with_plan_document(
             &mut state,
             changes.clone(),
-            format!("# {address} will change\n~ input = old -> new"),
-            vec![PlanBlock::with_addresses(
-                0..2,
-                PlanBlockKind::Resource,
-                vec![address.to_owned()],
-            )],
+            plan_text.clone(),
+            Vec::new(),
+            vec![SensitiveValue::Text("synthetic-secret".to_owned())],
+        );
+    }
+    let mut view = EnvironmentView::default();
+    press(&mut view, &mut state, KeyCode::Enter);
+
+    let rendered = text(&mut view, &state, (80, 24));
+    assert!(rendered.contains("dev · Plan preview"), "{rendered}");
+    assert!(rendered.contains("PRELUDE_MARKER"), "{rendered}");
+    assert!(
+        rendered.contains("# terraform_data.api will change"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("synthetic-secret"), "{rendered}");
+    assert!(rendered.contains("terraform_data.worker"), "{rendered}");
+
+    for _ in 0..4 {
+        press(&mut view, &mut state, KeyCode::PageDown);
+    }
+    let rendered = text(&mut view, &state, (80, 24));
+    assert!(rendered.contains("TAIL_SUMMARY_MARKER"), "{rendered}");
+    assert!(!rendered.contains("synthetic-secret"), "{rendered}");
+}
+
+#[test]
+fn preview_focus_separates_matrix_and_plan_navigation() {
+    let mut state = session(&["dev", "prod"]);
+    for name in ["dev", "prod"] {
+        let plan_text = format!(
+            "Terraform plan for {name}\n{}\n{name}_TAIL",
+            (0..30)
+                .map(|index| format!("# {name} line {index}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        complete_with_plan_document(
+            &mut state,
+            vec![change("terraform_data.api", ResourceChangeKind::Update)],
+            plan_text,
+            Vec::new(),
             Vec::new(),
         );
     }
     let mut view = EnvironmentView::default();
-    press(&mut view, &mut state, KeyCode::Down);
-    assert_eq!(view.matrix.selected_address(), Some(missing_address));
-    press(&mut view, &mut state, KeyCode::Enter);
 
+    press(&mut view, &mut state, KeyCode::Enter);
+    assert!(view.preview_focused);
+    press(&mut view, &mut state, KeyCode::PageDown);
+    press(&mut view, &mut state, KeyCode::Right);
+    assert!(view.preview_vertical > 0);
+    assert!(view.preview_horizontal > 0);
+    press(&mut view, &mut state, KeyCode::Tab);
+    assert!(!view.preview_focused);
+    press(&mut view, &mut state, KeyCode::Right);
+    assert_eq!(view.selection.column, 1);
+    assert_eq!(view.preview_vertical, 0);
+    assert_eq!(view.preview_horizontal, 0);
     let rendered = text(&mut view, &state, (80, 24));
-    assert!(rendered.contains("no matching raw block"), "{rendered}");
-    assert!(!rendered.contains("# terraform_data.api will change"));
+    assert!(rendered.contains("prod · Plan preview"), "{rendered}");
+    assert!(!rendered.contains("dev line"), "{rendered}");
+
+    press(&mut view, &mut state, KeyCode::Tab);
+    assert!(view.preview_focused);
+    press(&mut view, &mut state, KeyCode::Esc);
+    assert!(!view.preview_open);
+    assert!(!view.preview_focused);
 }
 
 #[test]
-fn grouped_cell_preview_requires_expansion_before_showing_a_resource_block() {
+fn filtering_out_the_preview_environment_selects_the_visible_plan_from_the_top() {
+    let mut state = session(&["dev", "prod", "stg"]);
+    for name in ["dev", "prod", "stg"] {
+        complete_with_plan_document(
+            &mut state,
+            vec![change("terraform_data.api", ResourceChangeKind::Update)],
+            format!(
+                "Plan for {name}\n{}\n{name}_TAIL",
+                (0..24)
+                    .map(|index| format!("# {name} line {index}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
+            Vec::new(),
+            Vec::new(),
+        );
+    }
+    let mut view = EnvironmentView::default();
+    press(&mut view, &mut state, KeyCode::Enter);
+    press(&mut view, &mut state, KeyCode::PageDown);
+    assert!(view.preview_vertical > 0);
+
+    press(&mut view, &mut state, KeyCode::Char('e'));
+    press(&mut view, &mut state, KeyCode::Char(' '));
+    press(&mut view, &mut state, KeyCode::Down);
+    press(&mut view, &mut state, KeyCode::Enter);
+    assert_eq!(view.selection.column, 1);
+    assert_eq!(view.preview_vertical, 0);
+    let rendered = text(&mut view, &state, (80, 24));
+    assert!(rendered.contains("prod · Plan preview"), "{rendered}");
+    assert!(!rendered.contains("dev line"), "{rendered}");
+    assert!(!rendered.contains("dev_TAIL"), "{rendered}");
+}
+
+#[test]
+fn reopening_preview_for_the_same_environment_keeps_its_scroll_position() {
+    let mut state = session(&["dev", "prod"]);
+    for _ in 0..2 {
+        let plan_text = (0..40)
+            .map(|index| format!("# line {index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        complete_with_plan_document(
+            &mut state,
+            vec![change("terraform_data.api", ResourceChangeKind::Update)],
+            plan_text,
+            Vec::new(),
+            Vec::new(),
+        );
+    }
+    let mut view = EnvironmentView::default();
+    press(&mut view, &mut state, KeyCode::Enter);
+    press(&mut view, &mut state, KeyCode::PageDown);
+    let scroll = view.preview_vertical;
+    assert!(scroll > 0);
+    press(&mut view, &mut state, KeyCode::Esc);
+    press(&mut view, &mut state, KeyCode::Enter);
+
+    assert_eq!(view.preview_vertical, scroll);
+    assert!(view.preview_focused);
+}
+
+#[test]
+fn space_toggles_all_displayed_resource_groups() {
     let mut state = session(&["dev", "prod"]);
     let changes: Vec<_> = (0..2)
-        .map(|index| {
-            change(
-                &format!("terraform_data.server[{index}]"),
-                ResourceChangeKind::Update,
-            )
+        .flat_map(|group| {
+            (0..2).map(move |instance| {
+                change(
+                    &format!("terraform_data.server_{group}[{instance}]"),
+                    ResourceChangeKind::Update,
+                )
+            })
         })
         .collect();
     complete(&mut state, changes.clone());
     complete(&mut state, changes);
     let mut view = EnvironmentView::default();
-    press(&mut view, &mut state, KeyCode::Enter);
 
-    assert!(view.matrix.selected_is_group());
-    let rendered = text(&mut view, &state, (80, 24));
-    assert!(rendered.contains("Press Space to expand"), "{rendered}");
-    assert!(!rendered.contains("# terraform_data.server[0] will change"));
+    let collapsed = text(&mut view, &state, (120, 40));
+    assert!(
+        collapsed.contains("[+] terraform_data.server_0[*]"),
+        "{collapsed}"
+    );
+    assert!(
+        collapsed.contains("[+] terraform_data.server_1[*]"),
+        "{collapsed}"
+    );
+    press(&mut view, &mut state, KeyCode::Char(' '));
+    let expanded = text(&mut view, &state, (120, 40));
+    assert!(
+        expanded.contains("[-] terraform_data.server_0[*]"),
+        "{expanded}"
+    );
+    assert!(
+        expanded.contains("[-] terraform_data.server_1[*]"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("server_0[0]"), "{expanded}");
+    assert!(expanded.contains("server_1[1]"), "{expanded}");
+    press(&mut view, &mut state, KeyCode::Char(' '));
+    let collapsed = text(&mut view, &state, (120, 40));
+    assert!(
+        collapsed.contains("[+] terraform_data.server_0[*]"),
+        "{collapsed}"
+    );
+    assert!(
+        collapsed.contains("[+] terraform_data.server_1[*]"),
+        "{collapsed}"
+    );
 }
 
 #[test]
-fn preview_uses_and_redacts_long_original_blocks_across_supported_sizes() {
+fn full_preview_scrolls_long_raw_text_in_both_directions() {
     let mut state = session(&["dev", "prod"]);
     let address = "terraform_data.api";
     let mut lines = vec![
@@ -714,7 +936,7 @@ fn preview_uses_and_redacts_long_original_blocks_across_supported_sizes() {
     let mut view = EnvironmentView::default();
     press(&mut view, &mut state, KeyCode::Enter);
 
-    for size in [(40, 16), (40, 24), (80, 24), (120, 40), (160, 60)] {
+    for size in [(40, 24), (80, 24), (120, 40), (160, 60)] {
         let rendered = text(&mut view, &state, size);
         assert!(
             rendered.contains("# terraform_data.api will change"),
@@ -741,6 +963,13 @@ fn preview_uses_and_redacts_long_original_blocks_across_supported_sizes() {
             assert!(rendered.contains("synthetic block line 24"), "{rendered}");
         }
     }
+    for _ in 0..120 {
+        press(&mut view, &mut state, KeyCode::Right);
+    }
+    assert!(
+        text(&mut view, &state, (40, 24)).contains("CLIPPED_RAW_TAIL"),
+        "horizontal scrolling should reveal the unwrapped tail"
+    );
 }
 
 #[test]
@@ -754,16 +983,11 @@ fn preview_falls_back_when_it_would_shrink_the_matrix_below_minimum() {
     }
     let mut view = EnvironmentView::default();
     press(&mut view, &mut state, KeyCode::Enter);
-    let selected_address = view.matrix.selected_address().unwrap().to_owned();
-
     let small = text(&mut view, &state, (40, 12));
     assert!(small.contains("Resize for preview"), "{small}");
-    assert!(small.contains("v plan"), "{small}");
+    assert!(small.contains('v'), "{small}");
     assert!(small.contains("Address"), "{small}");
-    assert_eq!(
-        view.matrix.selected_address(),
-        Some(selected_address.as_str())
-    );
+    assert!(!view.preview_focused);
 
     let large = text(&mut view, &state, (80, 24));
     assert!(
@@ -771,14 +995,11 @@ fn preview_falls_back_when_it_would_shrink_the_matrix_below_minimum() {
         "{large}"
     );
     assert!(view.preview_open);
-    assert_eq!(
-        view.matrix.selected_address(),
-        Some(selected_address.as_str())
-    );
+    assert!(!view.preview_focused);
 }
 
 #[test]
-fn filter_uses_complete_member_addresses_and_raw_return_preserves_expansion() {
+fn filter_uses_complete_addresses_and_raw_return_preserves_expansion() {
     let mut state = session(&["a", "b", "c"]);
     for _ in 0..3 {
         complete(
@@ -805,18 +1026,17 @@ fn filter_uses_complete_member_addresses_and_raw_return_preserves_expansion() {
     let before = text(&mut view, &state, (80, 24));
     press(&mut view, &mut state, KeyCode::Char('3'));
     assert_eq!(view.selection.raw, Some(2));
-    assert!(view.reviews[2].scroll().0 > 500);
+    assert_eq!(view.reviews[2].scroll().0, 0);
     press(&mut view, &mut state, KeyCode::Esc);
     assert_eq!(view.selection.column, 1);
     assert_eq!(text(&mut view, &state, (80, 24)), before);
-    assert_eq!(
-        view.matrix.cell(1).unwrap().members,
-        ["module.long_name.terraform_data.server[198]"]
+    assert!(
+        text(&mut view, &state, (80, 24)).contains("module.long_name.terraform_data.server[198]")
     );
 }
 
 #[test]
-fn matrix_search_edits_graphemes_and_restores_the_selected_anchor_on_cancel() {
+fn matrix_search_edits_graphemes_and_restores_the_previous_filter_on_cancel() {
     let mut state = session(&["a"]);
     complete(
         &mut state,
@@ -826,12 +1046,6 @@ fn matrix_search_edits_graphemes_and_restores_the_selected_anchor_on_cancel() {
         ],
     );
     let mut view = EnvironmentView::default();
-    press(&mut view, &mut state, KeyCode::Down);
-    assert_eq!(
-        view.matrix.cell(0).unwrap().members,
-        ["terraform_data.beta"]
-    );
-
     press(&mut view, &mut state, KeyCode::Char('/'));
     for character in "aあe\u{301}👩💻".chars() {
         press(&mut view, &mut state, KeyCode::Char(character));
@@ -858,10 +1072,7 @@ fn matrix_search_edits_graphemes_and_restores_the_selected_anchor_on_cancel() {
     press(&mut view, &mut state, KeyCode::Char('Y'));
     press(&mut view, &mut state, KeyCode::Esc);
     assert_eq!(view.matrix.filter(), "");
-    assert_eq!(
-        view.matrix.cell(0).unwrap().members,
-        ["terraform_data.beta"]
-    );
+    assert!(text(&mut view, &state, (80, 24)).contains("terraform_data.beta"));
 
     press(&mut view, &mut state, KeyCode::Char('/'));
     for character in "terraform_data.beta".chars() {
@@ -869,19 +1080,13 @@ fn matrix_search_edits_graphemes_and_restores_the_selected_anchor_on_cancel() {
     }
     press(&mut view, &mut state, KeyCode::Enter);
     assert_eq!(view.matrix.filter(), "terraform_data.beta");
-    assert_eq!(
-        view.matrix.cell(0).unwrap().members,
-        ["terraform_data.beta"]
-    );
+    assert!(text(&mut view, &state, (80, 24)).contains("terraform_data.beta"));
 
     press(&mut view, &mut state, KeyCode::Char('/'));
     press(&mut view, &mut state, KeyCode::Char('x'));
     press(&mut view, &mut state, KeyCode::Esc);
     assert_eq!(view.matrix.filter(), "terraform_data.beta");
-    assert_eq!(
-        view.matrix.cell(0).unwrap().members,
-        ["terraform_data.beta"]
-    );
+    assert!(text(&mut view, &state, (80, 24)).contains("terraform_data.beta"));
 }
 
 #[test]
@@ -911,10 +1116,6 @@ fn retry_and_new_ready_environment_keep_member_when_group_disappears() {
     press(&mut view, &mut state, KeyCode::Right);
     press(&mut view, &mut state, KeyCode::Char('r'));
     assert_eq!(view.selection.column, 2);
-    assert_eq!(
-        view.matrix.cell(0).unwrap().members[0],
-        "terraform_data.server[0]"
-    );
     complete(
         &mut state,
         vec![
@@ -924,10 +1125,7 @@ fn retry_and_new_ready_environment_keep_member_when_group_disappears() {
     );
     let output = text(&mut view, &state, (80, 24));
     assert_eq!(view.selection.column, 2);
-    assert_eq!(
-        view.matrix.cell(0).unwrap().members,
-        ["terraform_data.server[0]"]
-    );
+    assert!(output.contains("terraform_data.server[0]"), "{output}");
     assert!(output.contains("Ready: 3/3"));
     assert!(!output.contains("Compared:"));
 }

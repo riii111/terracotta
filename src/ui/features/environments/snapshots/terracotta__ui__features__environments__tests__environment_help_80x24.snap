@@ -5,24 +5,24 @@ expression: text
 0 Overview   1 a-ready  2 b-error  3 c-running  4 d-pending  5 e-hcp
 R┌Help────────────────────────────────────────────────────────────────────────┐
 d│ Current: Overview                                                        ▲ │
-─│ ↑ / ↓ / j / k        select a resource row                               ┃ │─
- │ ← / → / [ / ]        select an environment                               ┃ │
- │ Enter / Esc          show / hide preview; Esc returns from full plan     ┃ │
-A│ 1–9                  open selected resource in the numbered              ┃ │
-b│                      environment's raw plan                              ┃ │
-N│ Space                expand or collapse only on [+]/[-] group rows       ┃ │
-─│ /                    filter full addresses                               ┃ │─
-T│ e                    filter compared environments                        ┃ │
- │                                                                          ┃ │
- │ Other                                                                    ┃ │
+─│ ↑ / ↓ / j / k        scroll the matrix or preview                        ┃ │─
+ │ ← / →                select env in matrix; scroll preview                ┃ │
+ │ [ / ]                select previous or next environment                 ┃ │
+A│ Enter                open the selected environment's full plan preview   ┃ │
+b│ Tab                  switch input between matrix and preview             ┃ │
+N│ Esc                  close preview; return from full plan                ┃ │
+─│ 1–9                  open the numbered environment's full plan           ┃ │─
+T│ Space                expand all collapsed groups, or collapse all groups ┃ │
+ │ /                    filter full addresses                               ┃ │
+ │ e                    filter compared environments                        │ │
+ │                                                                          │ │
+ │ Other                                                                    │ │
  │ PgUp / PgDn          move one page                                       │ │
- │ Home / End           go to the first or last row                         │ │
+ │ Home / End           go to the start or end of the matrix or preview     │ │
  │ v                    show the full plan from the top                     │ │
  │ y                    copy the selected environment's plan                │ │
  │ c                    show environment context                            │ │
- │ r                    retry a selected Error environment                  │ │
- │ q                    quit; confirms first while acquiring                │ │
- │                                                                          ▼ │
+ │ r                    retry a selected Error environment                  ▼ │
 ─│ ↑/↓/k/j/PgUp/PgDn scroll | ?/Esc close                                     │─
-↑└────────────────────────────────────────────────────────────────────────────┘p
-q quit
+↑└────────────────────────────────────────────────────────────────────────────┘
+e env filter | v full plan | ? help | q quit

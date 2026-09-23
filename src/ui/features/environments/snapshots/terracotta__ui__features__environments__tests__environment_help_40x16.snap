@@ -6,14 +6,14 @@ expression: text
 R┌Help────────────────────────────────┐
 b│ Current: Overview                ▲ │
 d│ ↑ / ↓ / j / k                    ┃ │
-H│   select a resource row          │ │
- │ ← / → / [ / ]                    │ │
- │   select an environment          │ │
-A│ Enter / Esc                      │ │
-b│   show / hide preview; Esc       │ │
-?│   returns from full plan         │ │
-N│ 1–9                              │ │h
-─│   open selected resource in the  ▼ │─
+H│   scroll the matrix or preview   │ │
+ │ ← / →                            │ │
+ │   select env in matrix; scroll   │ │
+A│   preview                        │ │
+b│ [ / ]                            │ │
+?│   select previous or next        │ │
+N│   environment                    │ │h
+─│ Enter                            ▼ │─
 T│ ↑/↓/k/j/PgUp/PgDn scroll           │
 ↑│ ?/Esc close                        │
 /└────────────────────────────────────┘

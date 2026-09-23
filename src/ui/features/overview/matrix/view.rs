@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use crate::app::environments::{
     EnvironmentSession,
     comparison::EnvironmentSelection,
-    comparison::{CellState, ComparisonRow, DifferenceReason, SourceReference},
+    comparison::{CellState, ComparisonRow, DifferenceReason},
     overview::{EnvironmentOverview, GroupId, OverviewRow, environment_overview_for_selection},
 };
 use crate::ui::features::overview::OverviewInput;
@@ -12,7 +12,6 @@ use crate::ui::text_input;
 #[derive(Clone)]
 pub(crate) struct MatrixCell {
     pub(crate) state: CellState,
-    pub(crate) source: Option<SourceReference>,
     pub(crate) members: Vec<String>,
 }
 
@@ -24,22 +23,14 @@ pub(super) struct Row {
     pub(super) difference: Option<DifferenceReason>,
 }
 
-#[derive(Clone)]
-struct Anchor {
-    group: Option<GroupId>,
-    address: String,
-}
-
 struct Search {
     previous: String,
-    anchor: Option<Anchor>,
     cursor: usize,
 }
 
 #[derive(Default)]
 pub(crate) struct MatrixView {
     pub(super) rows: Vec<Row>,
-    pub(super) selected: usize,
     pub(super) vertical: usize,
     pub(super) first_column: usize,
     pub(super) expanded: BTreeSet<GroupId>,
@@ -51,14 +42,8 @@ pub(crate) struct MatrixView {
 }
 
 impl MatrixView {
-    pub(crate) fn sync(
-        &mut self,
-        state: &EnvironmentSession,
-        environments: &[usize],
-        environment: usize,
-    ) {
+    pub(crate) fn sync(&mut self, state: &EnvironmentSession, environments: &[usize]) {
         if self.revision != Some(state.revision()) || self.environments != environments {
-            let anchor = self.anchor(environment);
             self.overview = Some(if environments.len() == state.plans().len() {
                 state.overview().clone()
             } else {
@@ -68,7 +53,7 @@ impl MatrixView {
                 environment_overview_for_selection(state.plans(), &selection)
             });
             self.environments = environments.to_vec();
-            self.rebuild(anchor.as_ref());
+            self.rebuild();
             self.revision = Some(state.revision());
         }
     }
@@ -85,27 +70,13 @@ impl MatrixView {
         !self.filter.is_empty()
     }
 
-    pub(crate) fn selected_group_expanded(&self) -> Option<bool> {
-        let group = self.rows.get(self.selected)?.group.as_ref()?;
-        Some(self.expanded.contains(group))
-    }
-
-    pub(crate) fn cell(&self, environment: usize) -> Option<&MatrixCell> {
-        let column = self
-            .environments
+    pub(crate) fn groups_expanded(&self) -> Option<bool> {
+        let groups: Vec<_> = self
+            .rows
             .iter()
-            .position(|index| *index == environment)?;
-        self.rows.get(self.selected)?.cells.get(column)
-    }
-
-    pub(crate) fn selected_address(&self) -> Option<&str> {
-        self.rows.get(self.selected).map(|row| row.address.as_str())
-    }
-
-    pub(crate) fn selected_is_group(&self) -> bool {
-        self.rows
-            .get(self.selected)
-            .is_some_and(|row| row.group.is_some())
+            .filter_map(|row| row.group.as_ref())
+            .collect();
+        (!groups.is_empty()).then(|| groups.iter().all(|group| self.expanded.contains(group)))
     }
 
     pub(crate) fn selected_column(&self, environment: usize) -> usize {
@@ -115,109 +86,53 @@ impl MatrixView {
             .unwrap_or(0)
     }
 
-    pub(crate) fn apply(&mut self, input: OverviewInput, environment: usize) {
+    pub(crate) fn apply(&mut self, input: OverviewInput) {
         if self.searching() {
             self.edit_search(input);
             return;
         }
         match input {
-            OverviewInput::Up => self.selected = self.selected.saturating_sub(1),
-            OverviewInput::Down => {
-                self.selected = (self.selected + 1).min(self.rows.len().saturating_sub(1));
-            }
-            OverviewInput::PageUp => self.selected = self.selected.saturating_sub(10),
-            OverviewInput::PageDown => {
-                self.selected = (self.selected + 10).min(self.rows.len().saturating_sub(1));
-            }
-            OverviewInput::Top => self.selected = 0,
-            OverviewInput::Bottom => self.selected = self.rows.len().saturating_sub(1),
+            OverviewInput::Up => self.vertical = self.vertical.saturating_sub(1),
+            OverviewInput::Down => self.vertical = self.vertical.saturating_add(1),
+            OverviewInput::PageUp => self.vertical = self.vertical.saturating_sub(10),
+            OverviewInput::PageDown => self.vertical = self.vertical.saturating_add(10),
+            OverviewInput::Top => self.vertical = 0,
+            OverviewInput::Bottom => self.vertical = usize::MAX,
             OverviewInput::ToggleExpand => {
-                let anchor = self.anchor(environment);
-                if let Some(group) = self
+                let groups: BTreeSet<_> = self
                     .rows
-                    .get(self.selected)
-                    .and_then(|row| row.group.clone())
-                {
-                    if !self.expanded.remove(&group) {
-                        self.expanded.insert(group);
-                    }
-                    self.rebuild(anchor.as_ref());
+                    .iter()
+                    .filter_map(|row| row.group.clone())
+                    .collect();
+                if groups.iter().any(|group| !self.expanded.contains(group)) {
+                    self.expanded.extend(groups);
+                } else {
+                    self.expanded.retain(|group| !groups.contains(group));
                 }
+                self.rebuild();
             }
             OverviewInput::SearchStart => {
                 self.search = Some(Search {
                     previous: self.filter.clone(),
-                    anchor: self.anchor(environment),
                     cursor: text_input::last_grapheme_boundary(&self.filter),
                 });
             }
             OverviewInput::SearchCancel => {
                 self.filter.clear();
-                let anchor = self.anchor(environment);
-                self.rebuild(anchor.as_ref());
+                self.rebuild();
             }
             _ => {}
         }
     }
 
-    fn anchor(&self, environment: usize) -> Option<Anchor> {
-        let row = self.rows.get(self.selected)?;
-        let column = self
-            .environments
-            .iter()
-            .position(|index| *index == environment);
-        let address = row
-            .cells
-            .get(column?)
-            .and_then(|cell| cell.members.first())
-            .or_else(|| row.cells.iter().find_map(|cell| cell.members.first()))
-            .unwrap_or(&row.address)
-            .clone();
-        Some(Anchor {
-            group: row.group.clone(),
-            address,
-        })
-    }
-
-    fn rebuild(&mut self, anchor: Option<&Anchor>) {
+    fn rebuild(&mut self) {
         let Some(overview) = &self.overview else {
             self.rows.clear();
-            self.selected = 0;
             self.vertical = 0;
             return;
         };
         self.rows = rows(overview, &self.filter, &self.expanded);
-        let selected = anchor.and_then(|anchor| {
-            if let Some(group) = &anchor.group
-                && let Some(index) = self
-                    .rows
-                    .iter()
-                    .position(|row| row.group.as_ref() == Some(group))
-            {
-                return Some(index);
-            }
-            if let Some(index) = self
-                .rows
-                .iter()
-                .position(|row| row.group.is_none() && row.address == anchor.address)
-            {
-                return Some(index);
-            }
-            let containing = self.rows.iter().find(|row| {
-                row.cells
-                    .iter()
-                    .any(|cell| cell.members.contains(&anchor.address))
-            })?;
-            if let Some(group) = containing.group.clone() {
-                self.expanded.insert(group);
-                self.rows = rows(overview, &self.filter, &self.expanded);
-            }
-            self.rows
-                .iter()
-                .position(|row| row.address == anchor.address)
-        });
-        self.selected = selected.unwrap_or(0);
-        if selected.is_none() {
+        if self.rows.is_empty() {
             self.vertical = 0;
         }
     }
@@ -232,7 +147,7 @@ impl MatrixView {
             OverviewInput::SearchCancel => {
                 let search = self.search.take().expect("active search");
                 self.filter = search.previous;
-                self.rebuild(search.anchor.as_ref());
+                self.rebuild();
                 return;
             }
             OverviewInput::SearchChar(character) => {
@@ -257,7 +172,7 @@ impl MatrixView {
             OverviewInput::SearchEnd => search.cursor = self.filter.len(),
             _ => return,
         }
-        self.rebuild(None);
+        self.rebuild();
     }
 }
 
@@ -294,9 +209,6 @@ fn rows(overview: &EnvironmentOverview, filter: &str, expanded: &BTreeSet<GroupI
                             .collect();
                         MatrixCell {
                             state: cell.state.clone(),
-                            source: members
-                                .first()
-                                .and_then(|child| child.cells[index].source.clone()),
                             members: members.iter().map(|child| child.address.clone()).collect(),
                         }
                     })
@@ -328,7 +240,6 @@ fn individual(row: &ComparisonRow, child: bool) -> Row {
             .iter()
             .map(|cell| MatrixCell {
                 state: cell.state.clone(),
-                source: cell.source.clone(),
                 members: vec![row.address.clone()],
             })
             .collect(),

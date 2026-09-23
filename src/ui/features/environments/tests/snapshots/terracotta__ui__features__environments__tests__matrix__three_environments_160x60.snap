@@ -7,16 +7,16 @@ Ready: 3/3
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
-Address                        dev       prod       stg        why
+Address                      > dev         prod         stg        why
 blank: absent   .: unchanged   ?: plan unavailable
 Differs across envs
-> terraform_data.api           ~         +/-        -          action
+terraform_data.api           ~           +/-          -            action
 
 Same change across envs
-  [+] terraform_data.server[*] ~ 20      ~ 200      ~ 20
+[+] terraform_data.server[*] ~ 20        ~ 200        ~ 20
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-Total                          +0 ~21 -0 +0 ~200 -0 +0 ~20 -1
-                               0 replace 1 replace  0 replace
+Total                        +0 ~21 -0   +0 ~200 -0   +0 ~20 -1
+                             0 replace   1 replace    0 replace
 
 
 
@@ -61,4 +61,4 @@ Total                          +0 ~21 -0 +0 ~200 -0 +0 ~20 -1
 
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-↑↓ row | ←→ env | Enter preview | / filter | e env filter | v full plan | ? help | q quit
+↑↓ scroll rows | ←→ select env | Enter preview | [ ] select env | / filter | e env filter | Space expand all | v full plan | ? help | q quit
