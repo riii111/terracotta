@@ -65,7 +65,7 @@ pub(crate) fn overview_header_selected_style() -> Style {
 pub(crate) fn overview_selected_column_style() -> Style {
     Style::default()
         .fg(Color::Rgb(0xde, 0xd8, 0xd1))
-        .bg(Color::Rgb(0x3e, 0x3d, 0x38))
+        .bg(Color::Reset)
 }
 
 pub(crate) fn overview_total_style() -> Style {

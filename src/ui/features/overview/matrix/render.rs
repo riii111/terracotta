@@ -181,7 +181,7 @@ fn render_column_headers(
         let style = if selected {
             theme::overview_header_selected_style().add_modifier(Modifier::BOLD)
         } else {
-            theme::overview_header_muted_style()
+            theme::overview_muted_style()
         };
         header.push(Span::styled(
             format!("{marker}{label}{} ", " ".repeat(padding)),

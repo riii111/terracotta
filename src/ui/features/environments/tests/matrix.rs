@@ -301,6 +301,23 @@ fn three_environments_show_groups_actions_and_totals(#[case] width: u16, #[case]
             .bg,
         Color::Rgb(0x50, 0x48, 0x3e)
     );
+    if let Some(nonselected_environment_column) = rendered
+        .lines()
+        .nth(matrix_header)
+        .and_then(|line| line.find("prod"))
+        .and_then(|column| u16::try_from(column).ok())
+    {
+        assert_eq!(
+            buffer
+                .cell((
+                    nonselected_environment_column,
+                    u16::try_from(matrix_header).unwrap()
+                ))
+                .expect("nonselected environment heading")
+                .bg,
+            Color::Reset
+        );
+    }
     assert_eq!(
         buffer
             .cell((2, u16::try_from(matrix_header).unwrap()))
@@ -366,7 +383,7 @@ fn selected_environment_column_includes_blank_cells_without_selecting_rows() {
             .cell((column, empty_row))
             .expect("selected blank cell")
             .bg,
-        Color::Rgb(0x3e, 0x3d, 0x38)
+        Color::Reset
     );
 
     press(&mut view, &mut state, KeyCode::Right);
@@ -383,7 +400,7 @@ fn selected_environment_column_includes_blank_cells_without_selecting_rows() {
     .unwrap();
     assert_eq!(
         buffer.cell((column, empty_row)).expect("selected cell").bg,
-        Color::Rgb(0x3e, 0x3d, 0x38)
+        Color::Reset
     );
 }
 
