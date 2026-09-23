@@ -253,10 +253,13 @@ fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
                 vec![
                     help_dialog::HelpAction::new("↑ / ↓ / j / k", "select a resource row"),
                     help_dialog::HelpAction::new("← / → / [ / ]", "select an environment"),
-                    help_dialog::HelpAction::new("Enter", "open selected resource in raw plan"),
+                    help_dialog::HelpAction::new(
+                        "Enter",
+                        "open selected resource in the selected environment's raw plan",
+                    ),
                     help_dialog::HelpAction::new(
                         "1–9",
-                        "open selected resource in the numbered environment",
+                        "open selected resource in the numbered environment's raw plan",
                     ),
                     help_dialog::HelpAction::new(
                         "Space",
@@ -280,10 +283,6 @@ fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
             help_dialog::HelpSection::new(
                 "Matrix legend",
                 vec![
-                    help_dialog::HelpAction::new(
-                        "Same changes",
-                        "no difference detected among Ready plans; unknown values may differ",
-                    ),
                     help_dialog::HelpAction::new("+ / ~ / -", "create / update / delete"),
                     help_dialog::HelpAction::new(
                         "+/- / -/+",
@@ -291,17 +290,23 @@ fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
                     ),
                     help_dialog::HelpAction::new("blank", "resource absent from this environment"),
                     help_dialog::HelpAction::new(".", "resource present, with no change"),
-                    help_dialog::HelpAction::new(
-                        "?",
-                        "plan unavailable; action unknown or unsupported",
-                    ),
+                    help_dialog::HelpAction::new("?", "plan unavailable; action unknown"),
                     help_dialog::HelpAction::new("read / move / import", "action shown by name"),
                     help_dialog::HelpAction::new(
                         "why: missing",
                         "resource present in only some Ready plans",
                     ),
-                    help_dialog::HelpAction::note("Only Ready environments are compared."),
-                    help_dialog::HelpAction::note("Excluded environments are not retried."),
+                ],
+            ),
+            help_dialog::HelpSection::new(
+                "Comparison",
+                vec![
+                    help_dialog::HelpAction::new(
+                        "Same changes",
+                        "no differences found in Ready plans; unknown values may differ",
+                    ),
+                    help_dialog::HelpAction::new("Scope", "only Ready environments are compared"),
+                    help_dialog::HelpAction::new("Excluded", "environments are not retried"),
                 ],
             ),
         ],

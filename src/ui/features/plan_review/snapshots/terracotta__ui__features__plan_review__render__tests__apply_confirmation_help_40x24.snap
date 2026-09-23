@@ -1,0 +1,28 @@
+---
+source: src/ui/features/plan_review/render.rs
+expression: buffer_text(buffer)
+---
+Target: main [PROD] Workspace: default
+U┌Apply help──────────────────────────┐~
+─│ Navigation                       ▲ │─
+ │ ↑ / ↓ / PgUp / PgDn              ┃ │▲
+ │   scroll confirmation            ┃ │┃
+ │ ← / →                            ┃ │┃
+ │   move in confirmation input     ┃ │┃
+ │ Home / End                       ┃ │┃
+ │   move to input start or end     ┃ │┃
+ │                                  ┃ │┃
+ │ Input                            ┃ │┃
+-│ Type                             ┃ ││
+ │   enter the confirmation text    ┃ ││
+ │ Backspace                        ┃ ││
+ │   delete before the cursor       ┃ ││
+ │                                  ┃ ││
+ │ Context                          │ ││
+ │ Tab                              │ ││
+ │   show execution context         │ ││
+ │                                  ▼ ││
+◀︎│ ↑/↓/k/j/PgUp/PgDn scroll           │▶︎
+─│ ?/Esc close                        │─
+s└────────────────────────────────────┘
+q quit                             L3/43

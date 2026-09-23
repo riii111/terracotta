@@ -1,0 +1,20 @@
+---
+source: src/ui/features/overview/render.rs
+expression: bottom_text
+---
+infra  ws:default  ...ng...  /repo/infra
+O┌Help────────────────────────────────┐
+─│                                  ▲ │─
+ │ Actions                          │ │
+O│ y                                │ │u
+ │   copy the full plan             │ │
+ │ c                                │ │
+ │   show execution context         │ │
+ │                                  ┃ │
+ │ Exit                             ┃ │
+ │ q                                ┃ │
+ │   quit                           ▼ │
+ │ ↑/↓/k/j/PgUp/PgDn scroll           │
+─│ ?/Esc close                        │─
+/└────────────────────────────────────┘
+? help | q quit
