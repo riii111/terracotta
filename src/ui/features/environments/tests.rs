@@ -626,7 +626,7 @@ fn environment_filter_dialog_shows_names_and_acquisition_states_without_prod_tag
 }
 
 #[test]
-fn active_environment_filter_keeps_global_progress_without_listing_environments() {
+fn active_environment_filter_keeps_global_failure_state_without_listing_environments() {
     let state = partial_session();
     let mut view = EnvironmentView::default();
     let size = Size::new(80, 24);
@@ -657,7 +657,7 @@ fn active_environment_filter_keeps_global_progress_without_listing_environments(
     }));
     let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
 
-    for marker in ["Ready: 1/5", "[Env filter ON]"] {
+    for marker in ["Ready: 1/5", "Error present", "[Env filter ON]"] {
         assert!(compact.contains(marker), "missing {marker:?}:\n{text}");
     }
     assert!(!compact.contains("Compared:"), "{text}");

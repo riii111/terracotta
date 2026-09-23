@@ -107,6 +107,13 @@ pub(crate) fn summary(state: &EnvironmentSession, filter_active: bool) -> String
         .count();
     let mut parts = vec![format!("Ready: {ready}/{}", state.plans().len())];
     if filter_active {
+        if state
+            .plans()
+            .iter()
+            .any(|plan| matches!(plan.state(), EnvironmentState::Error))
+        {
+            parts.push("Error present".to_owned());
+        }
         parts.push("[Env filter ON]".to_owned());
         return parts.join("   ");
     }
