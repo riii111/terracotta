@@ -185,16 +185,16 @@ fn three_environments_show_groups_actions_and_totals(#[case] width: u16, #[case]
     let mut view = EnvironmentView::default();
     let buffer = render_to_buffer((width, height), |frame| view.render(frame, &state));
 
-    assert!(
-        buffer
-            .content
-            .iter()
-            .any(|cell| cell.modifier.contains(Modifier::REVERSED))
-    );
-    insta::assert_snapshot!(
-        format!("three_environments_{width}x{height}"),
-        buffer_text(&buffer)
-    );
+    let reversed_cells = buffer
+        .content
+        .iter()
+        .filter(|cell| cell.modifier.contains(Modifier::REVERSED))
+        .count();
+    assert_eq!(reversed_cells, 1);
+    let rendered = buffer_text(&buffer);
+    assert!(rendered.contains("> dev"));
+    assert!(rendered.contains("> terraform_data.api"));
+    insta::assert_snapshot!(format!("three_environments_{width}x{height}"), rendered);
 }
 
 #[test]
@@ -205,6 +205,20 @@ fn short_terminal_keeps_environment_actions_without_boundary_rows() {
 
     assert!(rendered.contains("Enter open  / filter  ? help  q quit"));
     assert!(!rendered.contains(&"─".repeat(40)));
+}
+
+#[test]
+fn narrow_matrix_keeps_why_visible_with_a_long_selected_environment_name() {
+    let state = session(&["production-eu-west-1"]);
+    let mut view = EnvironmentView::default();
+    let rendered = text(&mut view, &state, (40, 16));
+    let header = rendered
+        .lines()
+        .find(|line| line.starts_with("Address"))
+        .expect("matrix header");
+
+    assert!(header.contains('>'));
+    assert!(header.contains("why"));
 }
 
 #[test]
@@ -480,9 +494,8 @@ fn shared_workspace_names_keep_retry_directory_and_tool_visible(
     press(&mut view, &mut state, KeyCode::Right);
     let output = text(&mut view, &state, (width, height));
 
-    assert!(output.contains("/synthetic/prod"));
-    assert!(output.contains("ws:staging"));
-    assert!(output.contains("tofu"));
+    assert!(!output.contains("/synthetic/prod"));
+    assert!(output.contains("staging · tofu"));
     insta::assert_snapshot!(format!("shared_workspace_{width}x{height}"), output);
     press(&mut view, &mut state, KeyCode::Char('c'));
     assert!(text(&mut view, &state, (width, height)).contains("/synthetic/prod"));

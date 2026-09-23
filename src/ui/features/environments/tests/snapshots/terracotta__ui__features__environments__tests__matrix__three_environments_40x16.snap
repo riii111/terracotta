@@ -5,16 +5,16 @@ expression: buffer_text(&buffer)
 0 Overview   1 dev  2 prod [PROD]  ›
 Ready: 3/3
 ────────────────────────────────────────
-dev: Ready
-terraform   ws:default
-Directory: /synthetic/dev
+dev · terraform
 
-Address         dev             why
+Address               > dev      why
 Differs across envs
-> …orm_data.api ~               action
+> terraform_data.api  ~          action
 Same change across envs
-  …ta.server[*] ~ 20
-Total           +0 ~21 -0
-                0 replace
+  …orm_data.server[*] ~ 20
+Total                 +0 ~21 -0
+                      0 replace
+
+
 ────────────────────────────────────────
 Enter open  / filter  ? help  q quit

@@ -6,12 +6,12 @@ expression: text
 Ready: 1/5 ┌Help────────────────────────────────────────────────────┐
 d-pending: │Navigation                                              │
 ───────────│↑ / ↓ / j / k select a resource row                     │───────────
-a-ready: Re│                                                        │
-terraform  │← / → / [ / ] select an environment                     │
-Directory: │                                                        │
-           │PgUp / PgDn   move one page                             │
-Address    │                                                        │  why
-No matching│Home / End    go to the first or last row               │
+a-ready · t│                                                        │
+           │← / → / [ / ] select an environment                     │
+Address    │                                                        │y
+No matching│PgUp / PgDn   move one page                             │
+Total      │                                                        │
+           │Home / End    go to the first or last row               │
            │                                                        │
            │Review                                                  │
            │Enter         open the selected resource                │
@@ -22,7 +22,7 @@ No matching│Home / End    go to the first or last row               │
            │                                                        │
            │/             filter full addresses                     │
            │                                                        │
-Total      │v             show the full plan from the top           │
+           │v             show the full plan from the top           │
            │?/Esc close                                             │
 ───────────└────────────────────────────────────────────────────────┘───────────
 Enter open diff   / filter   Space expand   ? help   q quit

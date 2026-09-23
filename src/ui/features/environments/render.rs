@@ -142,7 +142,7 @@ impl EnvironmentView {
             .height
             .saturating_sub(context_height + 1 + detail_height);
 
-        matrix_height >= 7
+        matrix_height >= 9
     }
 
     fn render_dialog(&self, frame: &mut Frame<'_>, text: &str) {
@@ -164,16 +164,19 @@ impl EnvironmentView {
 }
 
 fn overview_context(view: &EnvironmentView, plan: &EnvironmentPlan) -> String {
-    let status = if view.matrix.searching() || view.matrix.filtered() {
-        format!("Filter: /{}   (display only)", view.matrix.filter())
-    } else {
+    let selection = format!(
+        "{} · {}",
+        environments::name(plan),
+        plan.tool.display_name()
+    );
+    if view.matrix.searching() || view.matrix.filtered() {
         format!(
-            "{}: {}",
-            environments::name(plan),
-            environments::status(plan)
+            "Filter: /{}   (display only)\n{selection}",
+            view.matrix.filter()
         )
-    };
-    format!("{status}\n{}", environments::context(plan))
+    } else {
+        selection
+    }
 }
 
 fn overview_detail(plan: &EnvironmentPlan) -> String {

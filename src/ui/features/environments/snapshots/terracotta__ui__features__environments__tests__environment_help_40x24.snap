@@ -9,11 +9,11 @@ d-│↑ / ↓ / j / select a resource row │
 HC│k                                 │
 ──│                                  │──
 a-│← / → / [ / select an environment │
-te│]                                 │
-Di│                                  │
-  │PgUp / PgDn move one page         │
+  │]                                 │
 Ad│                                  │
-No│Home / End  go to the first or    │th
+No│PgUp / PgDn move one page         │th
+To│                                  │
+  │Home / End  go to the first or    │
   │            last row              │
   │                                  │
   │Review                            │
@@ -22,7 +22,7 @@ No│Home / End  go to the first or    │th
   │                                  │
   │1–9         open the resource in  │
   │            that environment      │
-To│                                  │
+  │                                  │
   │?/Esc close                       │
 ──└──────────────────────────────────┘──
 Enter open  / filter  ? help  q quit
