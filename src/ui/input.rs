@@ -45,8 +45,6 @@ pub(super) fn normalize_key(mut key: KeyEvent) -> KeyEvent {
 
 #[cfg(test)]
 mod tests {
-    use rstest::rstest;
-
     use super::*;
 
     #[test]
@@ -68,17 +66,8 @@ mod tests {
         }
     }
 
-    #[rstest]
-    #[case::uppercase_without_shift(KeyModifiers::NONE)]
-    #[case::uppercase_with_redundant_shift(KeyModifiers::SHIFT)]
-    fn uppercase_key_has_no_redundant_shift(#[case] modifiers: KeyModifiers) {
-        let key = normalize_key(KeyEvent::new(KeyCode::Char('Y'), modifiers));
-
-        assert_eq!(key.modifiers, KeyModifiers::NONE);
-    }
-
     #[test]
-    fn uppercase_normalization_preserves_non_shift_modifiers() {
+    fn uppercase_normalization_removes_shift_only_from_uppercase() {
         struct Case {
             name: &'static str,
             character: char,
@@ -87,6 +76,18 @@ mod tests {
         }
 
         let cases = [
+            Case {
+                name: "uppercase_without_shift",
+                character: 'Y',
+                modifiers: KeyModifiers::NONE,
+                expected: KeyModifiers::NONE,
+            },
+            Case {
+                name: "uppercase_with_redundant_shift",
+                character: 'Y',
+                modifiers: KeyModifiers::SHIFT,
+                expected: KeyModifiers::NONE,
+            },
             Case {
                 name: "control",
                 character: 'Y',

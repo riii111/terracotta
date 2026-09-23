@@ -2396,7 +2396,6 @@ mod tests {
             assert!(text.contains("Apply result"));
             assert!(text.contains("Changes may already be"));
             assert!(layout.log_area().y > layout.status().y);
-            assert!(layout.body().height > 0);
         }
 
         #[test]

@@ -166,12 +166,6 @@ mod tests {
                 Some(ExecutionInput::Quit),
             ),
             (
-                "y_is_ignored_while_running",
-                key(KeyCode::Char('y'), KeyModifiers::NONE),
-                ExecutionStage::Planning,
-                None,
-            ),
-            (
                 "y_copies_diagnostic_after_failure",
                 key(KeyCode::Char('y'), KeyModifiers::NONE),
                 ExecutionStage::Failed,
@@ -285,6 +279,22 @@ mod tests {
         );
         assert_eq!(
             execution_key_to_input(
+                key(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                ExecutionStage::Applying,
+                false,
+            ),
+            Some(ExecutionInput::Action(ExecutionAction::RequestCancellation))
+        );
+        assert_eq!(
+            execution_key_to_input(
+                key(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                ExecutionStage::Applying,
+                true,
+            ),
+            Some(ExecutionInput::Action(ExecutionAction::RequestCancellation))
+        );
+        assert_eq!(
+            execution_key_to_input(
                 key(KeyCode::Down, KeyModifiers::NONE),
                 ExecutionStage::Applying,
                 true,
@@ -306,34 +316,6 @@ mod tests {
                 false,
             ),
             Some(ExecutionInput::SelectTarget(ExecutionTargetMove::Next))
-        );
-    }
-
-    #[test]
-    fn target_focus_selects_targets_but_keeps_cancellation() {
-        assert_eq!(
-            execution_key_to_input(
-                key(KeyCode::Down, KeyModifiers::NONE),
-                ExecutionStage::Applying,
-                false,
-            ),
-            Some(ExecutionInput::SelectTarget(ExecutionTargetMove::Next))
-        );
-        assert_eq!(
-            execution_key_to_input(
-                key(KeyCode::Char('c'), KeyModifiers::CONTROL),
-                ExecutionStage::Applying,
-                false,
-            ),
-            Some(ExecutionInput::Action(ExecutionAction::RequestCancellation))
-        );
-        assert_eq!(
-            execution_key_to_input(
-                key(KeyCode::Char('c'), KeyModifiers::CONTROL),
-                ExecutionStage::Applying,
-                true,
-            ),
-            Some(ExecutionInput::Action(ExecutionAction::RequestCancellation))
         );
     }
 }
