@@ -549,7 +549,8 @@ mod tests {
     use std::time::Duration;
 
     use super::super::copy::CopyNotice;
-    use super::super::execution::ExecutionContext;
+    use super::super::execution::{ExecutionContext, ExecutionTargetSpec};
+    use super::super::plan::PlanAction;
     use super::super::review::{
         PlanBlock, PlanBlockKind,
         test_support::{plan_document, plan_document_with_blocks},
@@ -894,7 +895,24 @@ mod tests {
     #[test]
     fn filtered_review_applies_the_complete_plan() {
         let now = Instant::now();
-        let mut filtered = applyable_review().with_apply_entry(true);
+        let targets = vec![
+            ExecutionTargetSpec {
+                address: "terraform_data.api".to_owned(),
+                actions: vec![PlanAction::Update],
+            },
+            ExecutionTargetSpec {
+                address: "terraform_data.worker".to_owned(),
+                actions: vec![PlanAction::Create],
+            },
+        ];
+        let mut filtered = PlanReview::new(
+            PathBuf::from("/project"),
+            "default".to_owned(),
+            plan_document("Terraform will perform actions.\n".to_owned()),
+            PlanMetadata::new(Vec::new(), Vec::new(), 1, 1, 0, true).with_apply_targets(targets),
+            Vec::new(),
+        )
+        .with_apply_entry(true);
         filtered.set_search_query("not-present".to_owned());
         let mut state = SessionState::new(ExecutionState::with_context(
             now,
@@ -903,6 +921,28 @@ mod tests {
         update(&mut state, Action::ReviewCompleted(filtered), now);
         assert!(update(&mut state, Action::OpenApplyConfirmation, now).is_none());
         assert!(state.apply_confirmation().is_some());
+        assert_eq!(
+            state
+                .apply_confirmation()
+                .expect("apply confirmation should retain the review")
+                .review()
+                .search_query(),
+            "not-present"
+        );
+
+        assert!(matches!(
+            update(&mut state, Action::ConfirmApply("yes".to_owned()), now),
+            Some(Effect::StartApply)
+        ));
+        let apply = state
+            .apply()
+            .expect("the full plan should enter apply state");
+        let targets = apply.progress().targets();
+        assert_eq!(targets.len(), 2);
+        assert_eq!(targets[0].address(), "terraform_data.api");
+        assert_eq!(targets[0].actions(), &[PlanAction::Update]);
+        assert_eq!(targets[1].address(), "terraform_data.worker");
+        assert_eq!(targets[1].actions(), &[PlanAction::Create]);
     }
 
     #[test]

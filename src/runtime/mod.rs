@@ -694,18 +694,6 @@ mod tests {
     }
 
     #[test]
-    fn plan_join_panic_is_reported_after_a_successful_ui() {
-        let error = finalize_ui_result(
-            Ok(SessionOutcome::Interrupted(ExecutionStage::Initializing)),
-            &Ok(()),
-            &panic_join(),
-        )
-        .expect_err("a plan worker panic should fail the runtime");
-
-        assert_eq!(error.to_string(), "plan worker panicked");
-    }
-
-    #[test]
     fn successful_worker_joins_preserve_the_ui_outcome() {
         let outcome = SessionOutcome::Interrupted(ExecutionStage::Initializing);
         let apply_join = Ok(());

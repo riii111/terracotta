@@ -779,6 +779,9 @@ Plan: 0 to add, 3 to change, 0 to destroy.
         assert_eq!(result.exit_code, 0);
         result.assert_restored();
         result.observed("plan_help");
+        result.observed("apply_filter_input");
+        result.observed("apply_filter_no_matches");
+        result.observed("apply_filter_confirmed");
         result.observed("apply_confirmation");
         result.observed("apply_help");
         result.observed("apply_context");
@@ -793,6 +796,13 @@ Plan: 0 to add, 3 to change, 0 to destroy.
         assert_eq!(
             arguments[0].split("-out=").nth(1),
             arguments[7].split("-json -input=false ").nth(1)
+        );
+        assert_eq!(
+            arguments
+                .iter()
+                .filter(|arguments| arguments.starts_with("apply "))
+                .count(),
+            1
         );
         fixture.assert_saved_plan_removed();
     }
@@ -926,7 +936,16 @@ Plan: 0 to add, 3 to change, 0 to destroy.
         result.observed("apply_confirmation_narrow");
         result.observed("apply_confirmation_resized");
         result.observed("apply_started");
+        result.observed("apply_second_enter");
         result.observed("apply_result");
+        assert_eq!(
+            fixture
+                .invocation_arguments()
+                .iter()
+                .filter(|arguments| arguments.starts_with("apply "))
+                .count(),
+            1
+        );
         fixture.assert_saved_plan_removed();
     }
 

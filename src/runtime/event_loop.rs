@@ -1550,13 +1550,34 @@ mod tests {
     }
 
     #[test]
-    fn draw_decision_covers_dirty_and_runtime_states() {
+    fn draw_decision_covers_dirty_runtime_and_feedback_states() {
         let started_at = Instant::now();
         let mut failed_execution =
             ExecutionState::with_context(started_at, ExecutionContext::loading("failed"));
         failed_execution.fail("plan failed".to_owned(), started_at);
 
+        let mut review_feedback = review_state();
+        record_copy(
+            &mut review_feedback,
+            CopyTarget::Plan,
+            CopyResult::Written,
+            started_at,
+        );
+        let mut apply_feedback = apply_state(started_at, Some(ApplyStatus::Succeeded));
+        record_copy(
+            &mut apply_feedback,
+            CopyTarget::Execution,
+            CopyResult::Written,
+            started_at,
+        );
+
         assert_draw_cases([
+            DrawCase {
+                name: "no_feedback",
+                state: review_state(),
+                dirty: false,
+                expected: false,
+            },
             DrawCase {
                 name: "dirty_confirmation",
                 state: confirmation_state(),
@@ -1601,6 +1622,18 @@ mod tests {
                 state: apply_state(started_at, Some(ApplyStatus::Succeeded)),
                 dirty: false,
                 expected: false,
+            },
+            DrawCase {
+                name: "review_feedback_pending",
+                state: review_feedback,
+                dirty: false,
+                expected: true,
+            },
+            DrawCase {
+                name: "finished_apply_feedback_pending",
+                state: apply_feedback,
+                dirty: false,
+                expected: true,
             },
         ]);
     }
@@ -1653,48 +1686,6 @@ mod tests {
             )
             .expect("cleared diagnostic copy notice should stop rendering")
         );
-    }
-
-    #[test]
-    fn draw_decision_covers_pending_copy_feedback() {
-        let started_at = Instant::now();
-
-        let mut review_flash = review_state();
-        record_copy(
-            &mut review_flash,
-            CopyTarget::Plan,
-            CopyResult::Written,
-            started_at,
-        );
-
-        let mut apply_flash = apply_state(started_at, Some(ApplyStatus::Succeeded));
-        record_copy(
-            &mut apply_flash,
-            CopyTarget::Execution,
-            CopyResult::Written,
-            started_at,
-        );
-
-        assert_draw_cases([
-            DrawCase {
-                name: "no_feedback",
-                state: review_state(),
-                dirty: false,
-                expected: false,
-            },
-            DrawCase {
-                name: "review_feedback_pending",
-                state: review_flash,
-                dirty: false,
-                expected: true,
-            },
-            DrawCase {
-                name: "finished_apply_feedback_pending",
-                state: apply_flash,
-                dirty: false,
-                expected: true,
-            },
-        ]);
     }
 
     fn assert_draw_cases(cases: impl IntoIterator<Item = DrawCase>) {
@@ -1778,88 +1769,6 @@ mod tests {
         );
         assert_eq!(confirmation_view.input(), "y");
         assert!(!confirmation_view.input().contains("yy"));
-    }
-
-    #[test]
-    fn confirmation_yes_waits_for_a_resized_terminal_before_starting_apply() {
-        let now = Instant::now();
-        let mut state = applyable_review_state();
-        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
-        let mut execution_view = execution::ExecutionViewState::default();
-        let mut review_view = plan_review::PlanReviewViewState::default();
-        let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
-
-        let open = handle_key_event(
-            &terminal,
-            &state,
-            &mut execution_view,
-            &mut review_view,
-            &mut confirmation_view,
-            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
-        )
-        .expect("apply key should be handled")
-        .expect("apply key should open confirmation");
-        update_session(&mut state, open, &mut execution_view, now);
-
-        for character in "yes".chars() {
-            assert!(
-                handle_key_event(
-                    &terminal,
-                    &state,
-                    &mut execution_view,
-                    &mut review_view,
-                    &mut confirmation_view,
-                    KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
-                )
-                .expect("confirmation character should be handled")
-                .is_none()
-            );
-        }
-
-        terminal.backend_mut().resize(24, 6);
-        assert_eq!(
-            handle_key_event(
-                &terminal,
-                &state,
-                &mut execution_view,
-                &mut review_view,
-                &mut confirmation_view,
-                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-            )
-            .expect("small confirmation should be handled"),
-            None
-        );
-        assert_eq!(confirmation_view.input(), "yes");
-
-        terminal.backend_mut().resize(80, 24);
-        let confirm = handle_key_event(
-            &terminal,
-            &state,
-            &mut execution_view,
-            &mut review_view,
-            &mut confirmation_view,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        )
-        .expect("resized confirmation should be handled")
-        .expect("yes should confirm after resize");
-        assert!(matches!(
-            update_session(&mut state, confirm, &mut execution_view, now),
-            Some(Effect::StartApply)
-        ));
-        assert!(state.apply().is_some());
-
-        assert_eq!(
-            handle_key_event(
-                &terminal,
-                &state,
-                &mut execution_view,
-                &mut review_view,
-                &mut confirmation_view,
-                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-            )
-            .expect("apply state should consume the second Enter"),
-            None
-        );
     }
 
     #[test]
