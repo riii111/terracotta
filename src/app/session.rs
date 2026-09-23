@@ -750,7 +750,6 @@ mod tests {
                 .copy_feedback()
                 .flash_active(now + Duration::from_millis(100))
         );
-        assert!(review.copy_feedback().flash_pending());
         assert!(review.copy_feedback().notice().is_some());
 
         let SessionState::Review(review) = &mut state else {
@@ -759,7 +758,11 @@ mod tests {
         review
             .copy_feedback
             .clear_expired(now + Duration::from_millis(200));
-        assert!(!review.copy_feedback().flash_pending());
+        assert!(
+            !review
+                .copy_feedback()
+                .flash_active(now + Duration::from_millis(200))
+        );
         assert!(review.copy_feedback().notice().is_some());
     }
 

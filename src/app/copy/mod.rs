@@ -74,13 +74,8 @@ impl CopyFeedback {
     }
 
     #[must_use]
-    pub(crate) const fn flash_pending(&self) -> bool {
-        self.flash_until.is_some()
-    }
-
-    #[must_use]
     pub(crate) const fn pending(&self) -> bool {
-        self.notice_until.is_some() || self.flash_pending()
+        self.notice_until.is_some() || self.flash_until.is_some()
     }
 
     pub(crate) fn record(
@@ -325,7 +320,7 @@ mod tests {
             ExecutionEvent, ExecutionEventKind, ExecutionLogLine,
         },
         review::{
-            PlanBlock, PlanBlockKind, PlanMetadata,
+            PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata,
             test_support::{plan_document, plan_document_with_blocks},
         },
     };
@@ -333,80 +328,87 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plan_copy_prefixes_diagnostics_and_preserves_the_plan_text() {
+    fn plan_copy_preserves_diagnostics_and_complete_show_text() {
         struct Case {
             name: &'static str,
-            detail: Option<&'static str>,
-            expected: &'static str,
+            document: PlanDocument,
+            metadata: PlanMetadata,
+            diagnostics: Vec<Diagnostic>,
+            expected: String,
+            source: String,
         }
 
+        let warning = |detail: Option<&str>| Diagnostic {
+            severity: DiagnosticSeverity::Warning,
+            summary: "Provider warning".to_owned(),
+            detail: detail.map(str::to_owned),
+            address: None,
+            position: None,
+            source: DiagnosticSource::Terraform,
+        };
         let plan_text = "Terraform plan body\n";
+        let show_text =
+            "Terraform used the selected providers to generate the following execution\n"
+                .to_owned()
+                + "plan. Resource actions are indicated with the following symbols:\n\n"
+                + "  # terraform_data.api will be created\n"
+                + "  + resource \"terraform_data\" \"api\" {\n"
+                + "      value = (sensitive value)\n"
+                + "    }\n\n"
+                + "Changes to Outputs:\n"
+                + "  + endpoint = (known after apply)\n\n"
+                + "Plan: 1 to add, 0 to change, 0 to destroy.\n";
+        let show_end = show_text.split('\n').count();
+
         for case in [
             Case {
                 name: "summary_only",
-                detail: None,
-                expected: "Provider warning\nTerraform plan body\n",
+                document: plan_document(plan_text.to_owned()),
+                metadata: PlanMetadata::new(Vec::new(), Vec::new(), 0, 1, 0, true),
+                diagnostics: vec![warning(None)],
+                expected: "Provider warning\nTerraform plan body\n".to_owned(),
+                source: plan_text.to_owned(),
             },
             Case {
                 name: "summary_and_detail",
-                detail: Some("warning detail"),
-                expected: "Provider warning\nwarning detail\nTerraform plan body\n",
+                document: plan_document(plan_text.to_owned()),
+                metadata: PlanMetadata::new(Vec::new(), Vec::new(), 0, 1, 0, true),
+                diagnostics: vec![warning(Some("warning detail"))],
+                expected: "Provider warning\nwarning detail\nTerraform plan body\n".to_owned(),
+                source: plan_text.to_owned(),
+            },
+            Case {
+                name: "complete_show_text",
+                document: plan_document_with_blocks(
+                    show_text.clone(),
+                    vec![PlanBlock::new(0..show_end, PlanBlockKind::Common)],
+                ),
+                metadata: PlanMetadata::new(
+                    vec!["terraform_data.api".to_owned()],
+                    vec!["endpoint".to_owned()],
+                    1,
+                    0,
+                    0,
+                    true,
+                ),
+                diagnostics: Vec::new(),
+                expected: show_text.clone(),
+                source: show_text,
             },
         ] {
             let review = PlanReview::new(
                 PathBuf::from("/project"),
                 "default".to_owned(),
-                plan_document(plan_text.to_owned()),
-                PlanMetadata::new(Vec::new(), Vec::new(), 0, 1, 0, true),
-                vec![Diagnostic {
-                    severity: DiagnosticSeverity::Warning,
-                    summary: "Provider warning".to_owned(),
-                    detail: case.detail.map(str::to_owned),
-                    address: None,
-                    position: None,
-                    source: DiagnosticSource::Terraform,
-                }],
+                case.document,
+                case.metadata,
+                case.diagnostics,
             );
 
             let effect = plan_effect(&review);
 
             assert_eq!(effect.text(), case.expected, "case: {}", case.name);
-            assert!(!format!("{effect:?}").contains(plan_text));
+            assert!(!format!("{effect:?}").contains(case.source.as_str()));
         }
-    }
-
-    #[test]
-    fn plan_copy_preserves_the_complete_sanitized_show_text() {
-        let source = "Terraform used the selected providers to generate the following execution\n"
-            .to_owned()
-            + "plan. Resource actions are indicated with the following symbols:\n\n"
-            + "  # terraform_data.api will be created\n"
-            + "  + resource \"terraform_data\" \"api\" {\n"
-            + "      value = (sensitive value)\n"
-            + "    }\n\n"
-            + "Changes to Outputs:\n"
-            + "  + endpoint = (known after apply)\n\n"
-            + "Plan: 1 to add, 0 to change, 0 to destroy.\n";
-        let end = source.split('\n').count();
-        let review = PlanReview::new(
-            PathBuf::from("/project"),
-            "default".to_owned(),
-            plan_document_with_blocks(
-                source.clone(),
-                vec![PlanBlock::new(0..end, PlanBlockKind::Common)],
-            ),
-            PlanMetadata::new(
-                vec!["terraform_data.api".to_owned()],
-                vec!["endpoint".to_owned()],
-                1,
-                0,
-                0,
-                true,
-            ),
-            Vec::new(),
-        );
-
-        assert_eq!(plan_effect(&review).text(), source);
     }
 
     #[test]

@@ -2090,7 +2090,6 @@ mod tests {
         );
 
         assert!(copy_target_has_flash_style(target, &terminal));
-        assert!(copy_flash_pending(&state));
 
         assert!(
             draw_if_needed(
@@ -2105,7 +2104,6 @@ mod tests {
             .expect("expired flash should render")
         );
 
-        assert!(!copy_flash_pending(&state));
         assert!(should_draw(&state, false));
         assert!(!copy_target_has_flash_style(target, &terminal));
         match target {
@@ -2731,12 +2729,6 @@ mod tests {
             ),
             CopyFlashTarget::Apply => buffer_has_flash_style(terminal),
         }
-    }
-
-    fn copy_flash_pending(state: &SessionState) -> bool {
-        state
-            .copy_feedback()
-            .is_some_and(CopyFeedback::flash_pending)
     }
 
     fn review_state() -> SessionState {
