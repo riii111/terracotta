@@ -1,4 +1,5 @@
 use crate::app::session::Action;
+use crate::ui::text_input;
 
 use super::ApplyConfirmationInput;
 
@@ -26,32 +27,26 @@ impl ApplyConfirmationViewState {
         match input {
             ApplyConfirmationInput::Character(character) => {
                 self.input.insert(self.cursor, character);
-                self.cursor += character.len_utf8();
+                self.cursor = text_input::next_grapheme_boundary_at_or_after(
+                    &self.input,
+                    self.cursor + character.len_utf8(),
+                );
                 None
             }
             ApplyConfirmationInput::Backspace => {
                 if self.cursor > 0 {
-                    let previous = self.input[..self.cursor]
-                        .char_indices()
-                        .next_back()
-                        .map_or(0, |(index, _)| index);
+                    let previous = text_input::previous_grapheme_boundary(&self.input, self.cursor);
                     self.input.drain(previous..self.cursor);
                     self.cursor = previous;
                 }
                 None
             }
             ApplyConfirmationInput::Left => {
-                self.cursor = self.input[..self.cursor]
-                    .char_indices()
-                    .next_back()
-                    .map_or(0, |(index, _)| index);
+                self.cursor = text_input::previous_grapheme_boundary(&self.input, self.cursor);
                 None
             }
             ApplyConfirmationInput::Right => {
-                self.cursor = self.input[self.cursor..]
-                    .char_indices()
-                    .nth(1)
-                    .map_or(self.input.len(), |(index, _)| self.cursor + index);
+                self.cursor = text_input::next_grapheme_boundary(&self.input, self.cursor);
                 None
             }
             ApplyConfirmationInput::Home => {
@@ -229,6 +224,39 @@ mod tests {
 
         assert_eq!(view.input(), "ab");
         assert_eq!(view.cursor(), 1);
+    }
+
+    #[test]
+    fn cursor_moves_and_backspace_follow_grapheme_boundaries() {
+        let mut view = ApplyConfirmationViewState::default();
+        enter(&mut view, "aあe\u{301}👩💻");
+
+        view.apply(ApplyConfirmationInput::Home, "yes");
+        view.apply(ApplyConfirmationInput::Right, "yes");
+        view.apply(ApplyConfirmationInput::Right, "yes");
+        view.apply(ApplyConfirmationInput::Backspace, "yes");
+
+        assert_eq!(view.input(), "ae\u{301}👩💻");
+        assert_eq!(view.cursor(), 1);
+
+        view.apply(ApplyConfirmationInput::End, "yes");
+        view.apply(ApplyConfirmationInput::Left, "yes");
+        view.apply(ApplyConfirmationInput::Character('\u{200d}'), "yes");
+        view.apply(ApplyConfirmationInput::Character('x'), "yes");
+
+        assert_eq!(view.input(), "ae\u{301}👩\u{200d}💻x");
+        assert_eq!(view.cursor(), view.input().len());
+
+        view.apply(ApplyConfirmationInput::Backspace, "yes");
+        view.apply(ApplyConfirmationInput::Backspace, "yes");
+        view.apply(ApplyConfirmationInput::Backspace, "yes");
+
+        assert_eq!(view.input(), "a");
+        assert_eq!(view.cursor(), 1);
+
+        view.apply(ApplyConfirmationInput::Home, "yes");
+        view.apply(ApplyConfirmationInput::Character('X'), "yes");
+        assert_eq!(view.input(), "Xa");
     }
 
     #[test]

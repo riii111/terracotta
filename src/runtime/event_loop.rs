@@ -11,7 +11,7 @@ use ratatui::{DefaultTerminal, Terminal, backend::Backend, layout::Rect};
 
 use crate::{
     app::{
-        copy::{CopyEffect, CopyResult, CopyTarget},
+        copy::{CopyEffect, CopyFeedback, CopyResult, CopyTarget},
         execution::{
             ExecutionContextValue, ExecutionStage, ExecutionState, ExecutionTargetState, Tool,
         },
@@ -236,29 +236,13 @@ fn dispatch_finished_workers<C: ClipboardWriter>(
     None
 }
 
-fn should_draw(state: &SessionState, dirty: bool, now: Instant) -> bool {
+fn should_draw(state: &SessionState, dirty: bool) -> bool {
     dirty
-        || state.execution().is_some_and(|execution| {
-            execution.result().is_none()
-                || execution.copy_flash_pending()
-                || execution.copy_notice_pending()
-        })
+        || state
+            .execution()
+            .is_some_and(|execution| execution.result().is_none())
         || state.apply().is_some_and(|apply| apply.result().is_none())
-        || state.review().is_some_and(|review| {
-            review.copy_flash_active(now)
-                || review.copy_flash_pending()
-                || review.copy_notice_pending()
-        })
-        || state.overview().is_some_and(|overview| {
-            overview.copy_flash_active(now)
-                || overview.copy_flash_pending()
-                || overview.copy_notice_pending()
-        })
-        || state.apply().is_some_and(|apply| {
-            apply.copy_flash_active(now)
-                || apply.copy_flash_pending()
-                || apply.copy_notice_pending()
-        })
+        || state.copy_feedback().is_some_and(CopyFeedback::pending)
 }
 
 #[expect(
@@ -275,7 +259,7 @@ fn draw_if_needed_with_quit_confirmation<B: Backend>(
     now: Instant,
     quit_confirmation: bool,
 ) -> Result<bool, B::Error> {
-    if !should_draw(state, *dirty, now) {
+    if !should_draw(state, *dirty) {
         return Ok(false);
     }
 
@@ -294,40 +278,8 @@ fn draw_if_needed_with_quit_confirmation<B: Backend>(
 }
 
 fn clear_expired_copy_feedback(state: &mut SessionState, now: Instant) {
-    match state {
-        SessionState::Execution(execution) => {
-            if execution.copy_notice_pending() && execution.copy_notice_at(now).is_none() {
-                execution.clear_copy_notice();
-            }
-            if execution.copy_flash_pending() && !execution.copy_flash_active(now) {
-                execution.clear_copy_flash();
-            }
-        }
-        SessionState::Review(review) => {
-            if review.copy_notice_pending() && review.copy_notice_at(now).is_none() {
-                review.clear_copy_notice();
-            }
-            if review.copy_flash_pending() && !review.copy_flash_active(now) {
-                review.clear_copy_flash();
-            }
-        }
-        SessionState::Overview(overview) => {
-            if overview.copy_notice_pending() && overview.copy_notice_at(now).is_none() {
-                overview.clear_copy_notice();
-            }
-            if overview.copy_flash_pending() && !overview.copy_flash_active(now) {
-                overview.clear_copy_flash();
-            }
-        }
-        SessionState::Apply(apply) => {
-            if apply.copy_notice_pending() && apply.copy_notice_at(now).is_none() {
-                apply.clear_copy_notice();
-            }
-            if apply.copy_flash_pending() && !apply.copy_flash_active(now) {
-                apply.clear_copy_flash();
-            }
-        }
-        SessionState::ApplyConfirmation(_) => {}
+    if let Some(feedback) = state.copy_feedback_mut() {
+        feedback.clear_expired(now);
     }
 }
 
@@ -1000,7 +952,6 @@ mod tests {
         name: &'static str,
         state: SessionState,
         dirty: bool,
-        now: Instant,
         expected: bool,
     }
 
@@ -1610,14 +1561,12 @@ mod tests {
                 name: "dirty_confirmation",
                 state: confirmation_state(),
                 dirty: true,
-                now: started_at,
                 expected: true,
             },
             DrawCase {
                 name: "clean_confirmation",
                 state: confirmation_state(),
                 dirty: false,
-                now: started_at,
                 expected: false,
             },
             DrawCase {
@@ -1627,35 +1576,30 @@ mod tests {
                     ExecutionContext::loading("loading..."),
                 )),
                 dirty: false,
-                now: started_at,
                 expected: true,
             },
             DrawCase {
                 name: "failed_execution_static",
                 state: SessionState::new(failed_execution.clone()),
                 dirty: false,
-                now: started_at,
                 expected: false,
             },
             DrawCase {
                 name: "failed_execution_after_resize",
                 state: SessionState::new(failed_execution),
                 dirty: true,
-                now: started_at,
                 expected: true,
             },
             DrawCase {
                 name: "apply_in_progress",
                 state: apply_state(started_at, None),
                 dirty: false,
-                now: started_at,
                 expected: true,
             },
             DrawCase {
                 name: "apply_succeeded",
                 state: apply_state(started_at, Some(ApplyStatus::Succeeded)),
                 dirty: false,
-                now: started_at,
                 expected: false,
             },
         ]);
@@ -1677,7 +1621,7 @@ mod tests {
             copied_at,
         );
 
-        assert!(should_draw(&state, false, copied_at));
+        assert!(should_draw(&state, false));
 
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
         let execution_view = execution::ExecutionViewState::default();
@@ -1696,7 +1640,7 @@ mod tests {
             )
             .expect("expired diagnostic copy notice should render once")
         );
-        assert!(!should_draw(&state, false, notice_expired_at));
+        assert!(!should_draw(&state, false));
         assert!(
             !draw_if_needed(
                 &mut state,
@@ -1712,18 +1656,15 @@ mod tests {
     }
 
     #[test]
-    fn draw_decision_covers_copy_flash_lifecycle() {
+    fn draw_decision_covers_pending_copy_feedback() {
         let started_at = Instant::now();
-        let flash_started_at = started_at + Duration::from_secs(1);
-        let flash_active_at = flash_started_at + Duration::from_millis(100);
-        let flash_expired_at = flash_started_at + Duration::from_millis(200);
 
         let mut review_flash = review_state();
         record_copy(
             &mut review_flash,
             CopyTarget::Plan,
             CopyResult::Written,
-            flash_started_at,
+            started_at,
         );
 
         let mut apply_flash = apply_state(started_at, Some(ApplyStatus::Succeeded));
@@ -1731,43 +1672,26 @@ mod tests {
             &mut apply_flash,
             CopyTarget::Execution,
             CopyResult::Written,
-            flash_started_at,
+            started_at,
         );
 
         assert_draw_cases([
             DrawCase {
-                name: "flash_before_start",
+                name: "no_feedback",
                 state: review_state(),
                 dirty: false,
-                now: flash_started_at,
                 expected: false,
             },
             DrawCase {
-                name: "review_flash_active",
-                state: review_flash.clone(),
-                dirty: false,
-                now: flash_active_at,
-                expected: true,
-            },
-            DrawCase {
-                name: "review_flash_expired",
+                name: "review_feedback_pending",
                 state: review_flash,
                 dirty: false,
-                now: flash_expired_at,
                 expected: true,
             },
             DrawCase {
-                name: "finished_apply_flash_active",
-                state: apply_flash.clone(),
-                dirty: false,
-                now: flash_active_at,
-                expected: true,
-            },
-            DrawCase {
-                name: "finished_apply_flash_expired",
+                name: "finished_apply_feedback_pending",
                 state: apply_flash,
                 dirty: false,
-                now: flash_expired_at,
                 expected: true,
             },
         ]);
@@ -1776,7 +1700,7 @@ mod tests {
     fn assert_draw_cases(cases: impl IntoIterator<Item = DrawCase>) {
         for case in cases {
             assert_eq!(
-                should_draw(&case.state, case.dirty, case.now),
+                should_draw(&case.state, case.dirty),
                 case.expected,
                 "case: {}",
                 case.name
@@ -2166,7 +2090,6 @@ mod tests {
         );
 
         assert!(copy_target_has_flash_style(target, &terminal));
-        assert!(copy_flash_pending(&state, target));
 
         assert!(
             draw_if_needed(
@@ -2181,8 +2104,7 @@ mod tests {
             .expect("expired flash should render")
         );
 
-        assert!(!copy_flash_pending(&state, target));
-        assert!(should_draw(&state, false, expired_at));
+        assert!(should_draw(&state, false));
         assert!(!copy_target_has_flash_style(target, &terminal));
         match target {
             CopyFlashTarget::Review => {
@@ -2227,7 +2149,7 @@ mod tests {
             )
             .expect("expired copy notice should render once")
         );
-        assert!(!should_draw(&state, false, notice_expired_at));
+        assert!(!should_draw(&state, false));
     }
 
     #[rstest]
@@ -2255,7 +2177,7 @@ mod tests {
         );
         assert!(!copy_target_has_flash_style(target, &terminal));
         assert!(terminal_text(&terminal).contains("Copy failed."));
-        assert!(should_draw(&state, false, started_at));
+        assert!(should_draw(&state, false));
         let notice_expired_at = started_at + Duration::from_secs(5);
         assert!(
             draw_if_needed(
@@ -2270,7 +2192,7 @@ mod tests {
             .expect("expired copy failure notice should render once")
         );
         assert!(!terminal_text(&terminal).contains("Copy failed."));
-        assert!(!should_draw(&state, false, notice_expired_at));
+        assert!(!should_draw(&state, false));
     }
 
     #[rstest]
@@ -2678,7 +2600,13 @@ mod tests {
             )
             .is_none()
         );
-        assert!(state.apply().expect("apply state").copy_notice().is_some());
+        assert!(
+            state
+                .copy_feedback()
+                .expect("apply feedback")
+                .notice()
+                .is_some()
+        );
         let _ = render_apply_to_text(state, terminal, *view, review_view, confirmation_view, now);
         assert_eq!(execution_scroll_position(state, *view), copied_vertical);
         assert_eq!(view.horizontal(), copied_horizontal);
@@ -2800,13 +2728,6 @@ mod tests {
                 Modifier::empty(),
             ),
             CopyFlashTarget::Apply => buffer_has_flash_style(terminal),
-        }
-    }
-
-    fn copy_flash_pending(state: &SessionState, target: CopyFlashTarget) -> bool {
-        match target {
-            CopyFlashTarget::Review => state.review().expect("review state").copy_flash_pending(),
-            CopyFlashTarget::Apply => state.apply().expect("apply state").copy_flash_pending(),
         }
     }
 

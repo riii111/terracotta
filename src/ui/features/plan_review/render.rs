@@ -246,7 +246,7 @@ fn layout_for_navigation(
         searching,
         state,
         &content,
-        state.copy_notice(),
+        state.copy_feedback().notice(),
         quit_confirmation,
         navigation,
     )
@@ -1023,7 +1023,7 @@ fn render_for_navigation(
         view.searching(),
         state,
         &content,
-        state.copy_notice_at(now),
+        state.copy_feedback().notice_at(now),
         quit_confirmation,
         navigation,
     );
@@ -1054,7 +1054,7 @@ fn render_for_navigation(
     let (vertical, horizontal) = view.scroll();
     let vertical = vertical.min(max_vertical);
     let horizontal = horizontal.min(max_horizontal);
-    let lines = if state.copy_flash_active(now) {
+    let lines = if state.copy_feedback().flash_active(now) {
         flash_lines(&content.lines)
     } else {
         content_lines_with_selection(
@@ -1097,7 +1097,7 @@ fn render_for_navigation(
             usize::from(horizontal),
         );
     }
-    let footer_status = if quit_confirmation || state.copy_notice_at(now).is_some() {
+    let footer_status = if quit_confirmation || state.copy_feedback().notice_at(now).is_some() {
         layout.footer_status.clone()
     } else {
         Some((

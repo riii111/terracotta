@@ -45,7 +45,7 @@ pub(crate) fn render_execution_with_quit_confirmation(
     }
     let content = prepare_content(state);
     let status = status_lines(state, view, now);
-    let notice = state.copy_notice_at(now);
+    let notice = state.copy_feedback().notice_at(now);
     let layout = execution_layout_with_content(
         area,
         state,
@@ -101,7 +101,7 @@ fn render_apply_execution(
     let area = frame.area();
     let content = prepare_selected_content(state, view);
     let status = apply_status_lines(state, now);
-    let notice = state.copy_notice_at(now);
+    let notice = state.copy_feedback().notice_at(now);
     let layout = execution_layout_with_content(
         area,
         state,
@@ -277,7 +277,7 @@ fn render_log_panel(
     let (max_vertical, max_horizontal) = scroll_limits(line_count, max_line_width, body);
     let scroll = view.vertical_offset(initial_scroll(state, max_vertical), max_vertical);
     let horizontal = view.horizontal().min(max_horizontal);
-    let lines = if state.copy_flash_active(now) {
+    let lines = if state.copy_feedback().flash_active(now) {
         flash_lines(content.lines)
     } else {
         content.lines
@@ -336,7 +336,7 @@ fn render_log_view(
     let max_horizontal = layout.max_horizontal();
     let scroll = view.vertical_offset(initial_scroll(state, max_vertical), max_vertical);
     let horizontal = view.horizontal().min(max_horizontal);
-    let lines = if state.copy_flash_active(now) {
+    let lines = if state.copy_feedback().flash_active(now) {
         flash_lines(content.lines)
     } else {
         content.lines
@@ -520,7 +520,7 @@ fn execution_layout_with_quit_confirmation_and_view(
         view,
         &content,
         &status,
-        state.copy_notice().map(CopyNotice::message),
+        state.copy_feedback().notice().map(CopyNotice::message),
         quit_confirmation,
     )
 }
