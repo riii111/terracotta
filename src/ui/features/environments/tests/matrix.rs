@@ -689,6 +689,11 @@ fn preview_uses_and_redacts_long_original_blocks_across_supported_sizes() {
         format!("# {address} will change"),
         "~ password = synthetic-secret -> rotated".to_owned(),
     ];
+    lines.push(format!(
+        "  long_attribute = {}CLIPPED_RAW_TAIL",
+        "x".repeat(80)
+    ));
+    lines.push("  # immediately after long raw line".to_owned());
     lines.extend((1..=24).map(|index| format!("  # synthetic block line {index}")));
     let plan_text = lines.join("\n");
     let block = PlanBlock::with_addresses(
@@ -708,7 +713,7 @@ fn preview_uses_and_redacts_long_original_blocks_across_supported_sizes() {
     let mut view = EnvironmentView::default();
     press(&mut view, &mut state, KeyCode::Enter);
 
-    for size in [(40, 16), (80, 24), (120, 40), (160, 60)] {
+    for size in [(40, 16), (40, 24), (80, 24), (120, 40), (160, 60)] {
         let rendered = text(&mut view, &state, size);
         assert!(
             rendered.contains("# terraform_data.api will change"),
@@ -718,6 +723,19 @@ fn preview_uses_and_redacts_long_original_blocks_across_supported_sizes() {
             !rendered.contains("synthetic-secret"),
             "{size:?}: {rendered}"
         );
+        if size == (40, 24) {
+            let rendered_lines: Vec<_> = rendered.lines().collect();
+            let long_line = rendered_lines
+                .iter()
+                .position(|line| line.contains("long_attribute ="))
+                .expect("long raw line should be visible");
+            let following_line = rendered_lines
+                .iter()
+                .position(|line| line.contains("immediately after long raw line"))
+                .expect("following raw line should be visible");
+            assert_eq!(following_line, long_line + 1, "{rendered}");
+            assert!(!rendered.contains("CLIPPED_RAW_TAIL"), "{rendered}");
+        }
         if size == (160, 60) {
             assert!(rendered.contains("synthetic block line 24"), "{rendered}");
         }

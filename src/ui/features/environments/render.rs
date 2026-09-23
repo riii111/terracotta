@@ -522,19 +522,23 @@ fn render_cell_preview(frame: &mut Frame<'_>, area: Rect, preview: &CellPreview)
         Paragraph::new(preview.title.as_str()).style(theme::accent_style()),
         Rect::new(area.x, area.y.saturating_add(1), area.width, 1),
     );
-    frame.render_widget(
-        Paragraph::new(preview.text.as_str())
-            .wrap(Wrap { trim: false })
-            .style(if preview.is_raw {
-                theme::body_style()
-            } else {
-                theme::warning_style()
-            }),
-        Rect::new(
-            area.x,
-            area.y.saturating_add(2),
-            area.width,
-            area.height.saturating_sub(2),
-        ),
+    let body_area = Rect::new(
+        area.x,
+        area.y.saturating_add(2),
+        area.width,
+        area.height.saturating_sub(2),
     );
+    if preview.is_raw {
+        frame.render_widget(
+            Paragraph::new(preview.text.as_str()).style(theme::body_style()),
+            body_area,
+        );
+    } else {
+        frame.render_widget(
+            Paragraph::new(preview.text.as_str())
+                .wrap(Wrap { trim: false })
+                .style(theme::warning_style()),
+            body_area,
+        );
+    }
 }
