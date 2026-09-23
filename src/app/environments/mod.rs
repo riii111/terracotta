@@ -194,18 +194,6 @@ impl EnvironmentSession {
         })
     }
 
-    pub(crate) fn has_pending_copy_feedback(&self) -> bool {
-        self.plans.iter().any(|plan| {
-            matches!(
-                &plan.state,
-                EnvironmentState::Ready { session, .. }
-                    if session
-                        .copy_feedback()
-                        .is_some_and(copy::CopyFeedback::pending)
-            )
-        })
-    }
-
     pub(crate) fn clear_expired_copy_feedback(&mut self, now: std::time::Instant) -> bool {
         let mut cleared = false;
         for plan in &mut self.plans {
@@ -461,12 +449,10 @@ mod tests {
         let copied_at = std::time::Instant::now();
         record_plan_copy(&mut state, 0, copied_at);
         record_plan_copy(&mut state, 1, copied_at + std::time::Duration::from_secs(1));
-        assert!(state.has_pending_copy_feedback());
 
         assert!(state.clear_expired_copy_feedback(copied_at + std::time::Duration::from_secs(3)));
-        assert!(state.has_pending_copy_feedback());
+        assert!(!state.clear_expired_copy_feedback(copied_at + std::time::Duration::from_secs(3)));
         assert!(state.clear_expired_copy_feedback(copied_at + std::time::Duration::from_secs(4)));
-        assert!(!state.has_pending_copy_feedback());
         assert!(!state.clear_expired_copy_feedback(copied_at + std::time::Duration::from_secs(5)));
     }
 

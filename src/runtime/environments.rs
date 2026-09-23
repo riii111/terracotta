@@ -122,7 +122,7 @@ pub(super) fn run(invocation: &Invocation, environments: Vec<Environment>) -> io
 }
 
 fn should_draw(state: &EnvironmentSession, dirty: bool) -> bool {
-    dirty || state.acquiring() || state.has_pending_copy_feedback()
+    dirty || state.acquiring()
 }
 
 fn draw_if_needed<B: Backend>(
@@ -373,13 +373,20 @@ mod tests {
         assert!(!event_requires_draw(&Event::FocusGained));
 
         let copied_at = Instant::now();
+        let copy_event = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
+        assert!(event_requires_draw(&copy_event));
+        dirty = true;
         record_copy(&mut state, copied_at);
-        assert!(should_draw(&state, false));
+        assert!(should_draw(&state, dirty));
         assert!(
             draw_if_needed(&state, &mut view, &mut terminal, &mut dirty)
                 .expect("copy notice should draw")
         );
         draws += 1;
+        assert!(
+            !draw_if_needed(&state, &mut view, &mut terminal, &mut dirty)
+                .expect("pending copy notice should not draw on an empty poll")
+        );
 
         dirty |= state.clear_expired_copy_feedback(copied_at + Duration::from_secs(3));
         assert!(dirty);
