@@ -739,15 +739,9 @@ mod tests {
                 rows: Vec::new()
             }
         );
-        complete_next(&mut session, review(vec![change.clone()], None));
+        complete_next(&mut session, review(vec![change], None));
         let run = session.start_next().unwrap();
-        for phase in [
-            "running",
-            "error",
-            "retry pending",
-            "retry running",
-            "stale completion",
-        ] {
+        for phase in ["running", "error", "retry pending", "retry running"] {
             match phase {
                 "error" => {
                     session.complete(run, PlanResult::Error("failed".to_owned()), Vec::new());
@@ -757,16 +751,6 @@ mod tests {
                 }
                 "retry running" => {
                     session.start_next().unwrap();
-                }
-                "stale completion" => {
-                    assert!(!session.complete(
-                        run,
-                        PlanResult::Ready {
-                            review: Box::new(review(vec![change.clone()], None)),
-                            changed: true
-                        },
-                        Vec::new()
-                    ));
                 }
                 _ => {}
             }

@@ -66,8 +66,8 @@ fn change(address: &str, kind: ResourceChangeKind) -> ResourceChange {
 }
 
 fn complete(state: &mut EnvironmentSession, changes: Vec<ResourceChange>) {
-    let key = state.start_next().expect("pending environment");
-    let directory = state.plans()[key.index].directory().to_owned();
+    let index = state.start_next().expect("pending environment");
+    let directory = state.plans()[index].directory().to_owned();
     let mut lines = vec![
         "Terraform will perform the following actions:".to_owned(),
         String::new(),
@@ -129,7 +129,7 @@ fn complete(state: &mut EnvironmentSession, changes: Vec<ResourceChange>) {
         output_changes: Vec::new(),
     });
     state.complete(
-        key,
+        index,
         PlanResult::Ready {
             review: Box::new(review),
             changed: true,
@@ -309,9 +309,9 @@ fn retry_and_new_ready_environment_keep_member_when_group_disappears() {
                 .collect(),
         );
     }
-    let key = state.start_next().unwrap();
+    let index = state.start_next().unwrap();
     state.complete(
-        key,
+        index,
         PlanResult::Error("synthetic error".to_owned()),
         Vec::new(),
     );
@@ -391,9 +391,9 @@ fn shared_workspace_names_keep_retry_directory_and_tool_visible(
         false,
     );
     for _ in 0..2 {
-        let key = state.start_next().unwrap();
+        let index = state.start_next().unwrap();
         state.complete(
-            key,
+            index,
             PlanResult::Error("Synthetic acquisition error".to_owned()),
             Vec::new(),
         );
