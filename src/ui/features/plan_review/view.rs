@@ -157,6 +157,10 @@ impl PlanReviewViewState {
         }
     }
 
+    pub(crate) fn reconcile_scroll(&mut self, max_vertical: u16, max_horizontal: u16) {
+        self.clamp_scroll(max_vertical, max_horizontal);
+    }
+
     pub(crate) fn reconcile(
         &mut self,
         body: Rect,
@@ -765,7 +769,7 @@ mod tests {
     }
 
     #[test]
-    fn resize_reconciles_selected_match_visibility_without_clearing_it() {
+    fn resize_clamps_scroll_without_clearing_search_selection() {
         let matches = [PlanReviewMatch::new(8, 9, 40)];
         let mut view = PlanReviewViewState::default();
         view.apply_with_matches(
@@ -787,7 +791,17 @@ mod tests {
         assert_eq!(view.selected(), Some(0));
         assert_eq!(view.scroll(), (6, 9));
 
-        view.reconcile(Rect::new(0, 0, 30, 10), 0, 10, &matches);
+        view.apply_with_matches(
+            PlanReviewInput::Bottom,
+            BODY,
+            MAX_VERTICAL,
+            MAX_HORIZONTAL,
+            "x",
+            &matches,
+        );
+        assert_eq!(view.scroll(), (MAX_VERTICAL, 9));
+
+        view.reconcile_scroll(0, 10);
 
         assert_eq!(view.selected(), Some(0));
         assert_eq!(view.scroll(), (0, 9));
