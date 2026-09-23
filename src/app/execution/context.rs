@@ -206,22 +206,56 @@ fn is_production(cwd: &Path, workspace: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use rstest::rstest;
-
     use super::*;
 
-    #[rstest]
-    #[case::prod("/repo/prod", "default", true)]
-    #[case::production("/repo/productionapp", "default", false)]
-    #[case::production_token("/repo/production/prod", "default", true)]
-    #[case::workspace("/repo/staging", "prd", true)]
-    #[case::product("/repo/product", "default", false)]
-    fn production_detection_uses_complete_tokens(
-        #[case] cwd: &str,
-        #[case] workspace: &str,
-        #[case] expected: bool,
-    ) {
-        assert_eq!(is_production(Path::new(cwd), workspace), expected);
+    #[test]
+    fn production_detection_uses_complete_tokens() {
+        struct Case {
+            name: &'static str,
+            cwd: &'static str,
+            workspace: &'static str,
+            expected: bool,
+        }
+
+        for case in [
+            Case {
+                name: "prod_directory",
+                cwd: "/repo/prod",
+                workspace: "default",
+                expected: true,
+            },
+            Case {
+                name: "production_prefix",
+                cwd: "/repo/productionapp",
+                workspace: "default",
+                expected: false,
+            },
+            Case {
+                name: "production_and_prod_tokens",
+                cwd: "/repo/production/prod",
+                workspace: "default",
+                expected: true,
+            },
+            Case {
+                name: "workspace_token",
+                cwd: "/repo/staging",
+                workspace: "prd",
+                expected: true,
+            },
+            Case {
+                name: "product_prefix",
+                cwd: "/repo/product",
+                workspace: "default",
+                expected: false,
+            },
+        ] {
+            assert_eq!(
+                is_production(Path::new(case.cwd), case.workspace),
+                case.expected,
+                "case: {}",
+                case.name
+            );
+        }
     }
 
     #[test]

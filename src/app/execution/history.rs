@@ -100,8 +100,6 @@ fn normalize_directory(path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use rstest::rstest;
-
     use super::*;
 
     fn key(
@@ -119,38 +117,71 @@ mod tests {
         }
     }
 
-    #[rstest]
-    #[case::directory(
-        key("/repo/infra/../infra", "default", "aws_vpc.main", vec![PlanAction::Update]),
-        key("/repo/infra", "default", "aws_vpc.main", vec![PlanAction::Update]),
-        true
-    )]
-    #[case::workspace(
-        key("/repo/infra", "staging", "aws_vpc.main", vec![PlanAction::Update]),
-        key("/repo/infra", "production", "aws_vpc.main", vec![PlanAction::Update]),
-        false
-    )]
-    #[case::address(
-        key("/repo/infra", "default", "aws_vpc.main", vec![PlanAction::Update]),
-        key("/repo/infra", "default", "aws_vpc.worker", vec![PlanAction::Update]),
-        false
-    )]
-    #[case::actions(
-        key("/repo/infra", "default", "aws_vpc.main", vec![PlanAction::Delete, PlanAction::Create]),
-        key("/repo/infra", "default", "aws_vpc.main", vec![PlanAction::Create, PlanAction::Delete]),
-        false
-    )]
-    #[case::tool(
-        HistoryKey { tool: Tool::Terraform, ..key("/repo/infra", "default", "aws_vpc.main", vec![PlanAction::Update]) },
-        HistoryKey { tool: Tool::OpenTofu, ..key("/repo/infra", "default", "aws_vpc.main", vec![PlanAction::Update]) },
-        false
-    )]
-    fn key_components_are_part_of_the_digest(
-        #[case] first: HistoryKey,
-        #[case] second: HistoryKey,
-        #[case] same: bool,
-    ) {
-        assert_eq!(first.file_stem() == second.file_stem(), same);
+    #[test]
+    fn key_components_are_part_of_the_digest() {
+        let update_key =
+            |workspace, address| key("/repo/infra", workspace, address, vec![PlanAction::Update]);
+        let cases = [
+            (
+                "normalized_directory",
+                key(
+                    "/repo/infra/../infra",
+                    "default",
+                    "aws_vpc.main",
+                    vec![PlanAction::Update],
+                ),
+                update_key("default", "aws_vpc.main"),
+                true,
+            ),
+            (
+                "workspace",
+                update_key("staging", "aws_vpc.main"),
+                update_key("production", "aws_vpc.main"),
+                false,
+            ),
+            (
+                "address",
+                update_key("default", "aws_vpc.main"),
+                update_key("default", "aws_vpc.worker"),
+                false,
+            ),
+            (
+                "action_sequence",
+                key(
+                    "/repo/infra",
+                    "default",
+                    "aws_vpc.main",
+                    vec![PlanAction::Delete, PlanAction::Create],
+                ),
+                key(
+                    "/repo/infra",
+                    "default",
+                    "aws_vpc.main",
+                    vec![PlanAction::Create, PlanAction::Delete],
+                ),
+                false,
+            ),
+            (
+                "tool",
+                HistoryKey {
+                    tool: Tool::Terraform,
+                    ..update_key("default", "aws_vpc.main")
+                },
+                HistoryKey {
+                    tool: Tool::OpenTofu,
+                    ..update_key("default", "aws_vpc.main")
+                },
+                false,
+            ),
+        ];
+
+        for (name, first, second, same_digest) in cases {
+            assert_eq!(
+                first.file_stem() == second.file_stem(),
+                same_digest,
+                "case: {name}"
+            );
+        }
     }
 
     #[test]

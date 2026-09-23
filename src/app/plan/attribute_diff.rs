@@ -1223,48 +1223,69 @@ mod tests {
     }
 
     #[test]
-    fn represents_omitted_complex_unknown_as_a_parent_value() {
-        let mut change = change(ChangeFixture {
-            before: json!({"config": null}),
-            after: json!(null),
-            before_sensitive: json!(false),
-            after_sensitive: json!(false),
-            after_unknown: json!({"config": {"token": true}}),
-        });
-        change.after = None;
+    fn omitted_complex_unknown_shapes_remain_at_the_parent() {
+        struct Case {
+            name: &'static str,
+            before: Value,
+            after_unknown: Value,
+            expected_before_kind: AttributeValueKind,
+            expected_count: usize,
+        }
 
-        let diffs = diff_resource_attributes(&change);
-        let config = attribute(&diffs, &[AttributePathSegment::Key("config".to_owned())]);
+        for case in [
+            Case {
+                name: "object_marker",
+                before: json!(null),
+                after_unknown: json!({"config": {"token": true}}),
+                expected_before_kind: AttributeValueKind::Null,
+                expected_count: 1,
+            },
+            Case {
+                name: "array_marker",
+                before: json!({"old": true}),
+                after_unknown: json!({"config": [true]}),
+                expected_before_kind: AttributeValueKind::Known,
+                expected_count: 1,
+            },
+        ] {
+            let mut change = change(ChangeFixture {
+                before: json!({"config": case.before}),
+                after: json!(null),
+                before_sensitive: json!(false),
+                after_sensitive: json!(false),
+                after_unknown: case.after_unknown,
+            });
+            change.after = None;
 
-        assert_eq!(config.before.kind(), AttributeValueKind::Null);
-        assert_eq!(config.after.kind(), AttributeValueKind::Unknown);
-        assert_eq!(config.after.display(), "<unknown>");
-        assert_eq!(diffs.changed_count, 1);
-        assert_eq!(diffs.attributes.len(), 1);
-        assert_eq!(
-            config.path,
-            [AttributePathSegment::Key("config".to_owned())]
-        );
-    }
+            let diffs = diff_resource_attributes(&change);
+            let config = attribute(&diffs, &[AttributePathSegment::Key("config".to_owned())]);
 
-    #[test]
-    fn keeps_omitted_unknown_shape_changes_at_the_parent() {
-        let mut change = change(ChangeFixture {
-            before: json!({"config": {"old": true}}),
-            after: json!(null),
-            before_sensitive: json!(false),
-            after_sensitive: json!(false),
-            after_unknown: json!({"config": [true]}),
-        });
-        change.after = None;
-
-        let diffs = diff_resource_attributes(&change);
-        let config = attribute(&diffs, &[AttributePathSegment::Key("config".to_owned())]);
-
-        assert_eq!(config.before.kind(), AttributeValueKind::Known);
-        assert_eq!(config.after.kind(), AttributeValueKind::Unknown);
-        assert_eq!(config.after.display(), "<unknown>");
-        assert_eq!(diffs.attributes.len(), 1);
+            assert_eq!(
+                config.before.kind(),
+                case.expected_before_kind,
+                "case: {}",
+                case.name
+            );
+            assert_eq!(config.after.kind(), AttributeValueKind::Unknown);
+            assert_eq!(config.after.display(), "<unknown>");
+            assert_eq!(
+                diffs.changed_count, case.expected_count,
+                "case: {}",
+                case.name
+            );
+            assert_eq!(
+                diffs.attributes.len(),
+                case.expected_count,
+                "case: {}",
+                case.name
+            );
+            assert_eq!(
+                config.path,
+                [AttributePathSegment::Key("config".to_owned())],
+                "case: {}",
+                case.name
+            );
+        }
     }
 
     #[test]

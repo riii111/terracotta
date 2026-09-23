@@ -332,33 +332,44 @@ mod tests {
         assert_partition(&session, &overview);
     }
 
-    #[rstest]
-    #[case::unkeyed_and_keyed(
-        "test_resource.item",
-        ["test_resource.item[0]", "test_resource.item[1]"],
-        "test_resource.item[*]"
-    )]
-    #[case::module_and_resource_keys(
-        r#"module.app["dev"].test_resource.item"#,
-        ["module.app.test_resource.item[0]", "module.app.test_resource.item[1]"],
-        "module.app[*].test_resource.item[*]"
-    )]
-    fn group_display_retains_key_positions_from_every_member(
-        #[case] left: &str,
-        #[case] right: [&str; 2],
-        #[case] display: &str,
-    ) {
-        let session = ready_session([
-            vec![change(left, "new")],
-            right.map(|address| change(address, "new")).to_vec(),
-        ]);
+    #[test]
+    fn group_display_retains_key_positions_from_every_member() {
+        struct Case {
+            name: &'static str,
+            left: &'static str,
+            right: [&'static str; 2],
+            display: &'static str,
+        }
 
-        let overview = environment_overview(session.plans());
+        for case in [
+            Case {
+                name: "unkeyed_and_keyed",
+                left: "test_resource.item",
+                right: ["test_resource.item[0]", "test_resource.item[1]"],
+                display: "test_resource.item[*]",
+            },
+            Case {
+                name: "module_and_resource_keys",
+                left: r#"module.app["dev"].test_resource.item"#,
+                right: [
+                    "module.app.test_resource.item[0]",
+                    "module.app.test_resource.item[1]",
+                ],
+                display: "module.app[*].test_resource.item[*]",
+            },
+        ] {
+            let session = ready_session([
+                vec![change(case.left, "new")],
+                case.right.map(|address| change(address, "new")).to_vec(),
+            ]);
 
-        let group = only_group(&overview);
-        assert_eq!(group.display_address, display);
-        assert_eq!(member_counts(group), [1, 2]);
-        assert_partition(&session, &overview);
+            let overview = environment_overview(session.plans());
+
+            let group = only_group(&overview);
+            assert_eq!(group.display_address, case.display, "case: {}", case.name);
+            assert_eq!(member_counts(group), [1, 2]);
+            assert_partition(&session, &overview);
+        }
     }
 
     #[rstest]
