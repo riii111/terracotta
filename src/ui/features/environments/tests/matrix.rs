@@ -264,6 +264,8 @@ fn three_environments_show_groups_actions_and_totals(#[case] width: u16, #[case]
             .fg,
         Color::Rgb(0xc0, 0xb8, 0xb8)
     );
+    assert!(!rendered.contains("Space expand"));
+    assert!(!rendered.contains("Space collapse"));
     insta::assert_snapshot!(format!("three_environments_{width}x{height}"), rendered);
 }
 
@@ -319,18 +321,105 @@ fn selecting_an_empty_matrix_cell_keeps_full_cell_emphasis() {
 }
 
 #[test]
+fn selected_group_footer_tracks_expansion_children_and_filtered_rows() {
+    let mut state = session(&["dev", "prod", "stg"]);
+    for _ in 0..3 {
+        complete(
+            &mut state,
+            (0..2)
+                .map(|index| {
+                    change(
+                        &format!("terraform_data.server[{index}]"),
+                        ResourceChangeKind::Update,
+                    )
+                })
+                .collect(),
+        );
+    }
+    let mut view = EnvironmentView::default();
+
+    let collapsed = text(&mut view, &state, (80, 24));
+    assert!(collapsed.contains("[+] terraform_data.server[*]"));
+    assert!(collapsed.contains("Space expand"));
+    assert!(text(&mut view, &state, (40, 16)).contains("Space expand"));
+    for (width, height) in [(40, 16), (80, 24), (120, 40), (160, 60)] {
+        let rendered = text(&mut view, &state, (width, height));
+        for hint in [
+            "↑↓ row",
+            "←→ env",
+            "/ filter",
+            "Space expand",
+            "? help",
+            "q quit",
+        ] {
+            assert!(rendered.contains(hint), "{width}x{height}: {hint}");
+        }
+        let (open, plan) = if width < 56 {
+            ("Enter raw", "v plan")
+        } else {
+            ("Enter open raw", "v full plan")
+        };
+        assert!(rendered.contains(open), "{width}x{height}: {open}");
+        assert!(rendered.contains(plan), "{width}x{height}: {plan}");
+    }
+
+    press(&mut view, &mut state, KeyCode::Char(' '));
+    let expanded = text(&mut view, &state, (80, 24));
+    assert!(expanded.contains("[-] terraform_data.server[*]"));
+    assert!(expanded.contains("terraform_data.server[0]"));
+    assert!(expanded.contains("Space collapse"));
+    assert!(expanded.contains("q quit"));
+
+    press(&mut view, &mut state, KeyCode::Char('j'));
+    let child = text(&mut view, &state, (80, 24));
+    assert!(!child.contains("Space expand"));
+    assert!(!child.contains("Space collapse"));
+    press(&mut view, &mut state, KeyCode::Char(' '));
+    assert_eq!(text(&mut view, &state, (80, 24)), child);
+
+    press(&mut view, &mut state, KeyCode::Char('k'));
+    assert!(text(&mut view, &state, (80, 24)).contains("Space collapse"));
+    press(&mut view, &mut state, KeyCode::Char(' '));
+    let collapsed_again = text(&mut view, &state, (80, 24));
+    assert!(collapsed_again.contains("[+] terraform_data.server[*]"));
+    assert!(collapsed_again.contains("Space expand"));
+    assert!(!collapsed_again.contains("terraform_data.server[0]"));
+
+    press(&mut view, &mut state, KeyCode::Char('/'));
+    for character in "server[1]".chars() {
+        press(&mut view, &mut state, KeyCode::Char(character));
+    }
+    press(&mut view, &mut state, KeyCode::Enter);
+    let filtered = text(&mut view, &state, (80, 24));
+    assert!(filtered.contains("terraform_data.server[1]"));
+    assert!(!filtered.contains("terraform_data.server[*]"));
+    assert!(!filtered.contains("Space expand"));
+    assert!(!filtered.contains("Space collapse"));
+    press(&mut view, &mut state, KeyCode::Char(' '));
+    assert_eq!(text(&mut view, &state, (80, 24)), filtered);
+}
+
+#[test]
 fn short_terminal_keeps_environment_actions_and_total_separator() {
     let state = session(&["dev", "prod", "stg"]);
     let mut view = EnvironmentView::default();
     let rendered = text(&mut view, &state, (40, 14));
 
-    assert!(rendered.contains("Enter open resource  ? help  q quit"));
-    assert_eq!(
-        rendered
-            .lines()
-            .filter(|line| *line == "─".repeat(40))
-            .count(),
-        3
+    for hint in [
+        "↑↓ row",
+        "←→ env",
+        "Enter raw",
+        "/ filter",
+        "? help",
+        "q quit",
+    ] {
+        assert!(rendered.contains(hint), "{hint}");
+    }
+    let lines = rendered.lines().collect::<Vec<_>>();
+    assert!(
+        lines
+            .windows(2)
+            .any(|pair| { pair[0] == "─".repeat(40) && pair[1].starts_with("Total") })
     );
 }
 

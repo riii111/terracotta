@@ -4,25 +4,25 @@ expression: text
 ---
 infra  ws:default  terraform loading...  /repo/infra
 Overview  +0 add  ~2 update  0 replace  -0 destroy  Repeated: 2
-──────────────┌Help─────────────────────────────────────────────┐───────────────
-  Change Addre│ Navigation                                      │
-Other changes:│ ↑ / ↓ / j / k select a row                      │ss v for the fu
-  ~ x2   [+] t│ PgUp / PgDn   move one page                     │
-              │ Home / End    go to the first or last row       │
-              │                                                 │
-              │ Review                                          │
-              │ Enter         open the selected raw block       │
-              │ /             filter full addresses             │
-              │ Space         expand or collapse a group        │
-              │ v             show the full plan from the top   │
-              │                                                 │
-              │ Actions                                         │
-              │ y             copy the full plan                │
-              │ c             show execution context            │
-              │                                                 │
-              │ Exit                                            │
-              │ q             quit                              │
-              │ ?/Esc close                                     │
-              └─────────────────────────────────────────────────┘
+───────┌Help───────────────────────────────────────────────────────────┐────────
+  Chang│ Navigation                                                    │
+Other c│ ↑ / ↓ / j / k select a row                                    │r the fu
+  ~ x2 │ PgUp / PgDn   move one page                                   │
+       │ Home / End    go to the first or last row                     │
+       │                                                               │
+       │ Review                                                        │
+       │ Enter         open the selected raw block                     │
+       │ /             filter full addresses                           │
+       │ Space         expand or collapse only on [+]/[-] group rows   │
+       │ v             show the full plan from the top                 │
+       │                                                               │
+       │ Actions                                                       │
+       │ y             copy the full plan                              │
+       │ c             show execution context                          │
+       │                                                               │
+       │ Exit                                                          │
+       │ q             quit                                            │
+       │ ?/Esc close                                                   │
+       └───────────────────────────────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────
-/ filter | Enter open raw | Space expand | v full plan | ? help | q quit
+/ filter | Enter open raw | v full plan | ? help | q quit

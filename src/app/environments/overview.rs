@@ -6,8 +6,8 @@ use std::{
 use super::{
     EnvironmentPlan,
     comparison::{
-        CellState, ComparisonRow, ComparisonScope, DifferenceReason, SourceReference,
-        compare_environments,
+        CellState, ComparisonRow, ComparisonScope, DifferenceReason, EnvironmentSelection,
+        SourceReference, compare_environments_for_selection,
     },
 };
 use crate::app::{
@@ -49,10 +49,21 @@ pub(crate) struct GroupCell {
 }
 
 pub(crate) fn environment_overview(plans: &[EnvironmentPlan]) -> EnvironmentOverview {
-    let comparison = compare_environments(plans);
-    let candidates: Vec<BTreeMap<_, _>> = plans
+    let selection = EnvironmentSelection::new(None, plans.len())
+        .expect("all environment indexes form a valid selection");
+    environment_overview_for_selection(plans, &selection)
+}
+
+pub(crate) fn environment_overview_for_selection(
+    plans: &[EnvironmentPlan],
+    selection: &EnvironmentSelection,
+) -> EnvironmentOverview {
+    let comparison = compare_environments_for_selection(plans, selection);
+    let candidates: Vec<BTreeMap<_, _>> = selection
+        .indexes()
         .iter()
-        .map(|plan| {
+        .map(|index| {
+            let plan = &plans[*index];
             let Some(review) = plan.review().map(ReviewSessionState::review) else {
                 return BTreeMap::new();
             };
@@ -80,7 +91,7 @@ pub(crate) fn environment_overview(plans: &[EnvironmentPlan]) -> EnvironmentOver
     }
     for (key, mut children) in groups {
         children.sort_by(|a, b| a.address.cmp(&b.address));
-        let cells = group_cells(&children, plans.len());
+        let cells = group_cells(&children, selection.indexes().len());
         if is_common_group(&cells) {
             let address =
                 normalize_resource_addresses(children.iter().map(|row| row.address.as_str()))
@@ -196,6 +207,45 @@ mod tests {
         assert_eq!(extra.difference, Some(DifferenceReason::Missing));
         assert_eq!(extra.cells[0].state, CellState::Missing);
         assert_partition(&session, &overview);
+    }
+
+    #[test]
+    fn selected_environments_group_only_their_common_changes_and_keep_original_sources() {
+        let session = ready_session([changes(2, "excluded"), changes(2, "new"), changes(3, "new")]);
+        let all = environment_overview(session.plans());
+        let selection = EnvironmentSelection::new(Some(vec![2, 1]), session.plans().len()).unwrap();
+
+        let overview = environment_overview_for_selection(session.plans(), &selection);
+
+        assert!(
+            all.rows
+                .iter()
+                .all(|row| matches!(row, OverviewRow::Individual(_)))
+        );
+        let group = only_group(&overview);
+        assert_eq!(member_counts(group), [2, 3]);
+        assert_eq!(group.children.len(), 3);
+        assert_eq!(
+            group
+                .cells
+                .iter()
+                .map(|cell| cell.source.as_ref().unwrap().environment)
+                .collect::<Vec<_>>(),
+            [1, 2]
+        );
+        let child = group
+            .children
+            .iter()
+            .find(|row| row.address == "test_resource.item[0]")
+            .unwrap();
+        assert_eq!(
+            child
+                .cells
+                .iter()
+                .map(|cell| cell.source.as_ref().unwrap().environment)
+                .collect::<Vec<_>>(),
+            [1, 2]
+        );
     }
 
     #[test]
@@ -524,7 +574,8 @@ mod tests {
     }
 
     fn assert_partition(session: &EnvironmentSession, overview: &EnvironmentOverview) {
-        let comparison = compare_environments(session.plans());
+        let selection = EnvironmentSelection::new(None, session.plans().len()).unwrap();
+        let comparison = compare_environments_for_selection(session.plans(), &selection);
         assert_eq!(overview.scope, comparison.scope);
         let mut expanded = Vec::new();
         for row in &overview.rows {

@@ -11,6 +11,35 @@ use crate::app::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EnvironmentSelection {
+    indexes: Vec<usize>,
+}
+
+impl EnvironmentSelection {
+    pub(crate) fn new(
+        selected_indexes: Option<Vec<usize>>,
+        environment_count: usize,
+    ) -> Option<Self> {
+        let selected = selected_indexes.is_some();
+        let mut indexes = selected_indexes.unwrap_or_else(|| (0..environment_count).collect());
+        if selected
+            && (indexes.is_empty() || indexes.iter().any(|index| *index >= environment_count))
+        {
+            return None;
+        }
+        indexes.sort_unstable();
+        if indexes.windows(2).any(|pair| pair[0] == pair[1]) {
+            return None;
+        }
+        Some(Self { indexes })
+    }
+
+    pub(crate) fn indexes(&self) -> &[usize] {
+        &self.indexes
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct EnvironmentComparison {
     pub(crate) scope: ComparisonScope,
     pub(crate) rows: Vec<ComparisonRow>,
@@ -63,19 +92,28 @@ pub(crate) enum DifferenceReason {
     Value,
 }
 
-pub(crate) fn compare_environments(plans: &[EnvironmentPlan]) -> EnvironmentComparison {
-    let reviews: Vec<_> = plans
+pub(crate) fn compare_environments_for_selection(
+    plans: &[EnvironmentPlan],
+    selection: &EnvironmentSelection,
+) -> EnvironmentComparison {
+    assert!(
+        selection.indexes().iter().all(|index| *index < plans.len()),
+        "environment selection indexes must belong to the compared plans"
+    );
+    let reviews: Vec<_> = selection
+        .indexes()
         .iter()
-        .map(|plan| plan.review().map(ReviewSessionState::review))
+        .map(|index| plans[*index].review().map(ReviewSessionState::review))
         .collect();
-    let compared: Vec<_> = reviews
+    let compared: Vec<_> = selection
+        .indexes()
         .iter()
-        .enumerate()
-        .filter_map(|(index, review)| review.map(|_| index))
+        .zip(&reviews)
+        .filter_map(|(index, review)| review.as_ref().map(|_| *index))
         .collect();
     let scope = if compared.is_empty() {
         ComparisonScope::Waiting
-    } else if compared.len() == plans.len() {
+    } else if compared.len() == selection.indexes().len() {
         ComparisonScope::All { compared }
     } else {
         ComparisonScope::Partial { compared }
@@ -102,9 +140,9 @@ pub(crate) fn compare_environments(plans: &[EnvironmentPlan]) -> EnvironmentComp
             let cells: Vec<_> = reviews
                 .iter()
                 .zip(&resources)
-                .enumerate()
-                .map(|(index, (review, resources))| {
-                    comparison_cell(index, address, *review, resources.get(address).copied())
+                .zip(selection.indexes())
+                .map(|((review, resources), index)| {
+                    comparison_cell(*index, address, *review, resources.get(address).copied())
                 })
                 .collect();
             let difference = difference_reason(address, &reviews, &resources, &cells);
@@ -352,7 +390,12 @@ mod tests {
                 review(change.into_iter().collect(), schema.cloned()),
             );
         }
-        compare_environments(session.plans())
+        compare_all(session.plans())
+    }
+
+    fn compare_all(plans: &[EnvironmentPlan]) -> EnvironmentComparison {
+        let selection = EnvironmentSelection::new(None, plans.len()).unwrap();
+        compare_environments_for_selection(plans, &selection)
     }
 
     #[test]
@@ -660,7 +703,7 @@ mod tests {
         );
         complete_next(&mut session, review(vec![right.clone(), unchanged], None));
 
-        let comparison = compare_environments(session.plans());
+        let comparison = compare_all(session.plans());
 
         assert_eq!(
             comparison
@@ -697,7 +740,7 @@ mod tests {
         complete_next(&mut session, review(vec![change], None));
         complete_next(&mut session, review(Vec::new(), None).with_plan(plan));
 
-        let comparison = compare_environments(session.plans());
+        let comparison = compare_all(session.plans());
 
         assert_eq!(
             comparison.rows[0].difference,
@@ -733,7 +776,7 @@ mod tests {
             false,
         );
         assert_eq!(
-            compare_environments(session.plans()),
+            compare_all(session.plans()),
             EnvironmentComparison {
                 scope: ComparisonScope::Waiting,
                 rows: Vec::new()
@@ -754,7 +797,7 @@ mod tests {
                 }
                 _ => {}
             }
-            let comparison = compare_environments(session.plans());
+            let comparison = compare_all(session.plans());
             assert_eq!(
                 comparison.scope,
                 ComparisonScope::Partial { compared: vec![0] },
@@ -778,12 +821,12 @@ mod tests {
         let mut session = EnvironmentSession::new(vec![environment("a"), environment("b")], false);
         complete_next(&mut session, review(vec![left], None));
         assert_eq!(
-            compare_environments(session.plans()).scope,
+            compare_all(session.plans()).scope,
             ComparisonScope::Partial { compared: vec![0] }
         );
 
         complete_next(&mut session, review(vec![right], None));
-        let comparison = compare_environments(session.plans());
+        let comparison = compare_all(session.plans());
 
         assert_eq!(
             comparison.scope,
@@ -792,6 +835,93 @@ mod tests {
             }
         );
         assert_eq!(comparison.rows[0].difference, Some(DifferenceReason::Value));
+    }
+
+    #[test]
+    fn selected_environment_indexes_must_be_nonempty_unique_and_in_range() {
+        assert!(EnvironmentSelection::new(Some(Vec::new()), 3).is_none());
+        assert!(EnvironmentSelection::new(Some(vec![0, 0]), 3).is_none());
+        assert!(EnvironmentSelection::new(Some(vec![3]), 3).is_none());
+        assert_eq!(
+            EnvironmentSelection::new(Some(vec![2, 0]), 3)
+                .unwrap()
+                .indexes(),
+            [0, 2]
+        );
+    }
+
+    #[test]
+    fn selected_ready_environments_define_rows_differences_and_source_indexes() {
+        let same = update(json!({"a": 0}), json!({"a": 1}));
+        let outside = update(json!({"a": 0}), json!({"a": 2}));
+        let mut outside_only = update(json!({"a": 0}), json!({"a": 3}));
+        outside_only.address = "test_resource.outside_only".to_owned();
+        let mut session = EnvironmentSession::new(
+            vec![environment("a"), environment("b"), environment("c")],
+            false,
+        );
+        complete_next(&mut session, review(vec![same.clone()], None));
+        complete_next(&mut session, review(vec![outside, outside_only], None));
+        complete_next(&mut session, review(vec![same], None));
+        let selection = EnvironmentSelection::new(Some(vec![2, 0]), session.plans().len()).unwrap();
+
+        let comparison = compare_environments_for_selection(session.plans(), &selection);
+
+        assert_eq!(
+            comparison.scope,
+            ComparisonScope::All {
+                compared: vec![0, 2]
+            }
+        );
+        assert_eq!(comparison.rows.len(), 1);
+        assert_eq!(comparison.rows[0].difference, None);
+        assert_eq!(comparison.rows[0].cells.len(), 2);
+        assert_eq!(
+            comparison.rows[0]
+                .cells
+                .iter()
+                .map(|cell| cell.source.as_ref().unwrap().environment)
+                .collect::<Vec<_>>(),
+            [0, 2]
+        );
+        let full_comparison = compare_all(session.plans());
+        let item = full_comparison
+            .rows
+            .iter()
+            .find(|row| row.address == "test_resource.item")
+            .unwrap();
+        assert_eq!(item.difference, Some(DifferenceReason::Value));
+        assert_eq!(session.plans().len(), 3);
+        assert_eq!(session.exit_code(), 0);
+    }
+
+    #[test]
+    fn selected_error_stays_unavailable_and_does_not_compare_an_unselected_ready_plan() {
+        let left = update(json!({"a": 0}), json!({"a": 1}));
+        let right = update(json!({"a": 0}), json!({"a": 2}));
+        let mut session = EnvironmentSession::new(
+            vec![environment("a"), environment("b"), environment("c")],
+            false,
+        );
+        complete_next(&mut session, review(vec![left], None));
+        let run = session.start_next().unwrap();
+        assert!(session.complete(run, PlanResult::Error("failed".to_owned()), Vec::new()));
+        complete_next(&mut session, review(vec![right], None));
+        let selected_error =
+            EnvironmentSelection::new(Some(vec![1, 0]), session.plans().len()).unwrap();
+
+        let comparison = compare_environments_for_selection(session.plans(), &selected_error);
+
+        assert_eq!(
+            comparison.scope,
+            ComparisonScope::Partial { compared: vec![0] }
+        );
+        assert_eq!(comparison.rows[0].difference, None);
+        assert_eq!(comparison.rows[0].cells.len(), 2);
+        assert_eq!(comparison.rows[0].cells[1].state, CellState::Unavailable);
+        assert_eq!(comparison.rows[0].cells[1].source, None);
+        assert_eq!(session.plans().len(), 3);
+        assert_eq!(session.exit_code(), 1);
     }
 
     #[test]
@@ -806,7 +936,7 @@ mod tests {
         complete_next(&mut session, review(vec![change.clone()], None));
         complete_next(&mut session, review(vec![change], None));
 
-        let comparison = compare_environments(session.plans());
+        let comparison = compare_all(session.plans());
         let debug = format!("{comparison:?} {:?}", session.plans());
         let copied = copy::plan_effect(session.plans()[0].review().unwrap().review());
 
@@ -843,7 +973,7 @@ mod tests {
         complete_next(&mut session, review(left, None));
         complete_next(&mut session, review(right, None));
 
-        let comparison = compare_environments(session.plans());
+        let comparison = compare_all(session.plans());
 
         assert_eq!(
             comparison

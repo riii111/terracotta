@@ -4,13 +4,14 @@ use crate::{
     ui::{
         features::{overview::matrix, plan_review},
         primitives::{atoms::separator, molecules::help_dialog},
-        shell::environments,
+        shell::{environments, footer},
         theme,
     },
 };
 use ratatui::{
     Frame,
     layout::Rect,
+    text::Line,
     widgets::{Clear, Paragraph, Wrap},
 };
 use std::time::Instant;
@@ -82,6 +83,12 @@ impl EnvironmentView {
         let context = overview_context(self);
         let detail = overview_detail(plan);
         let (context_height, detail_height) = section_heights(area, &context, &detail);
+        let footer = overview_footer(
+            area.width,
+            self.matrix.searching(),
+            self.matrix.selected_group_expanded(),
+        );
+        let footer_height = u16::try_from(footer.len()).unwrap_or(u16::MAX);
         frame.render_widget(
             Paragraph::new(context).wrap(Wrap { trim: false }),
             Rect::new(area.x, area.y, area.width, context_height),
@@ -101,34 +108,29 @@ impl EnvironmentView {
             area.x,
             area.y.saturating_add(context_height + detail_height),
             area.width,
-            area.height
-                .saturating_sub(context_height + 1 + detail_height + u16::from(show_boundaries)),
+            area.height.saturating_sub(
+                context_height + footer_height + detail_height + u16::from(show_boundaries),
+            ),
         );
         matrix::render(frame, body, state, &mut self.matrix, self.selection.column);
-        let footer = if self.matrix.searching() {
-            "Enter confirm   Esc cancel"
-        } else if area.width < 45 {
-            "Enter open resource  ? help  q quit"
-        } else if area.width < 56 {
-            "Enter open selected resource  ? help"
-        } else if area.width < 80 {
-            "Enter open selected resource in raw plan  ? help  q quit"
-        } else {
-            "Enter open selected resource in raw plan  / filter  Space expand  ? help  q quit"
-        };
         if show_boundaries {
             frame.render_widget(
                 separator::render(area.width),
-                Rect::new(area.x, area.bottom().saturating_sub(2), area.width, 1),
+                Rect::new(
+                    area.x,
+                    area.bottom().saturating_sub(footer_height + 1),
+                    area.width,
+                    1,
+                ),
             );
         }
         frame.render_widget(
             Paragraph::new(footer),
             Rect::new(
                 area.x,
-                area.bottom().saturating_sub(1),
+                area.bottom().saturating_sub(footer_height),
                 area.width,
-                area.height.min(1),
+                footer_height,
             ),
         );
     }
@@ -141,10 +143,19 @@ impl EnvironmentView {
         let context = overview_context(self);
         let detail = overview_detail(plan);
         let (context_height, detail_height) = section_heights(shell.body, &context, &detail);
+        let footer_height = u16::try_from(
+            overview_footer(
+                area.width,
+                self.matrix.searching(),
+                self.matrix.selected_group_expanded(),
+            )
+            .len(),
+        )
+        .unwrap_or(u16::MAX);
         let matrix_height = shell
             .body
             .height
-            .saturating_sub(context_height + 1 + detail_height);
+            .saturating_sub(context_height + footer_height + detail_height);
 
         matrix_height >= 9
     }
@@ -173,6 +184,40 @@ fn overview_context(view: &EnvironmentView) -> String {
     } else {
         String::new()
     }
+}
+
+fn overview_footer(width: u16, searching: bool, expanded: Option<bool>) -> Vec<Line<'static>> {
+    if searching {
+        return footer::layout(
+            vec![
+                footer::hint(&["Enter"], "confirm"),
+                footer::hint(&["Esc"], "cancel"),
+            ],
+            width,
+        );
+    }
+    let (open, plan) = if width < 56 {
+        ("raw", "plan")
+    } else {
+        ("open raw", "full plan")
+    };
+    let mut items = vec![
+        footer::hint(&["↑↓"], "row"),
+        footer::hint(&["←→"], "env"),
+        footer::hint(&["Enter"], open),
+        footer::hint(&["/"], "filter"),
+    ];
+    if let Some(expanded) = expanded {
+        items.push(footer::hint(
+            &["Space"],
+            if expanded { "collapse" } else { "expand" },
+        ));
+    }
+    if !(width < 45 && expanded == Some(true)) {
+        items.push(footer::hint(&["v"], plan));
+    }
+    items.extend([footer::hint(&["?"], "help"), footer::hint(&["q"], "quit")]);
+    footer::layout(items, width)
 }
 
 fn overview_detail(plan: &EnvironmentPlan) -> String {
@@ -230,12 +275,18 @@ fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
                 vec![
                     help_dialog::HelpAction::new("↑ / ↓ / j / k", "select a resource row"),
                     help_dialog::HelpAction::new("← / → / [ / ]", "select an environment"),
-                    help_dialog::HelpAction::new("Enter", "open selected resource in raw plan"),
+                    help_dialog::HelpAction::new(
+                        "Enter",
+                        "open selected resource in the selected environment's raw plan",
+                    ),
                     help_dialog::HelpAction::new(
                         "1–9",
-                        "open selected resource in the numbered environment",
+                        "open selected resource in the numbered environment's raw plan",
                     ),
-                    help_dialog::HelpAction::new("Space", "expand or collapse a group"),
+                    help_dialog::HelpAction::new(
+                        "Space",
+                        "expand or collapse only on [+]/[-] group rows",
+                    ),
                     help_dialog::HelpAction::new("/", "filter full addresses"),
                 ],
             ),
@@ -254,10 +305,6 @@ fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
             help_dialog::HelpSection::new(
                 "Matrix legend",
                 vec![
-                    help_dialog::HelpAction::new(
-                        "Same changes",
-                        "no difference detected among Ready plans; unknown values may differ",
-                    ),
                     help_dialog::HelpAction::new("+ / ~ / -", "create / update / delete"),
                     help_dialog::HelpAction::new(
                         "+/- / -/+",
@@ -265,17 +312,23 @@ fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
                     ),
                     help_dialog::HelpAction::new("blank", "resource absent from this environment"),
                     help_dialog::HelpAction::new(".", "resource present, with no change"),
-                    help_dialog::HelpAction::new(
-                        "?",
-                        "plan unavailable; action unknown or unsupported",
-                    ),
+                    help_dialog::HelpAction::new("?", "plan unavailable; action unknown"),
                     help_dialog::HelpAction::new("read / move / import", "action shown by name"),
                     help_dialog::HelpAction::new(
                         "why: missing",
                         "resource present in only some Ready plans",
                     ),
-                    help_dialog::HelpAction::note("Only Ready environments are compared."),
-                    help_dialog::HelpAction::note("Excluded environments are not retried."),
+                ],
+            ),
+            help_dialog::HelpSection::new(
+                "Comparison",
+                vec![
+                    help_dialog::HelpAction::new(
+                        "Same changes",
+                        "no differences found in Ready plans; unknown values may differ",
+                    ),
+                    help_dialog::HelpAction::new("Scope", "only Ready environments are compared"),
+                    help_dialog::HelpAction::new("Excluded", "environments are not retried"),
                 ],
             ),
         ],
