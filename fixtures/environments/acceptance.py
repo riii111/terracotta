@@ -59,10 +59,11 @@ def main():
         )
         if result.returncode:
             raise RuntimeError(result.stdout + result.stderr)
+        output_lines = result.stdout.splitlines()
         if (
-            "exit=0" not in result.stdout
-            or "restored=true" not in result.stdout
-            or "cursor_restored=true" not in result.stdout
+            "exit=0" not in output_lines
+            or "restored=true" not in output_lines
+            or "cursor_restored=true" not in output_lines
         ):
             raise RuntimeError(result.stdout)
         calls = [json.loads(line) for line in log.read_text().splitlines()]
