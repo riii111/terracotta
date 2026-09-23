@@ -2198,7 +2198,10 @@ End of synthetic plan body."#;
         });
         let help_text = buffer_text(&help);
         assert!(help_text.contains("Help"));
-        assert!(help_text.contains("s             overview"));
+        assert!(help_text.lines().any(|line| {
+            let words: Vec<_> = line.split_whitespace().collect();
+            words.contains(&"s") && words.contains(&"overview")
+        }));
         assert!(help_text.contains("copy the full plan"));
         assert!(help_text.contains("apply the full plan"));
         assert!(!help_text.contains("clear filter"));
@@ -4425,9 +4428,10 @@ End of synthetic plan body."#;
                     .filter(|character| !character.is_whitespace())
                     .collect::<String>();
 
-                assert!(compact.contains("Tab/"), "{size:?}: {text}");
+                assert!(compact.contains("Tab"), "{size:?}: {text}");
                 assert!(compact.contains("Shift-Tab"), "{size:?}: {text}");
-                assert!(compact.contains("next/previous"), "{size:?}: {text}");
+                assert!(compact.contains("next"), "{size:?}: {text}");
+                assert!(compact.contains("previous"), "{size:?}: {text}");
                 assert!(compact.contains("environment"), "{size:?}: {text}");
             }
         }

@@ -1,0 +1,20 @@
+---
+source: src/ui/features/environments/tests.rs
+expression: text
+---
+0 Overview   1 a-ready  2 b-error  ›
+Re┌Help──────────────────────────────┐
+b-│ Current: Overview              ▲ │
+d-│ ↑ / ↓ / j / k   select a       ┃ │
+HC│                 resource row   │ │
+a-│ ← / → / [ / ]   select an      │ │
+  │                 environment    │ │
+Ad│ Enter           open selected  │ │
+No│                 resource in    │ │th
+To│                 raw plan       │ │
+  │ 1–9             open selected  │ │
+  │                 resource in    ▼ │
+  │ ↑/↓/PgUp/PgDn scroll             │
+  │ ?/Esc close                      │
+  └──────────────────────────────────┘
+Enter open resource  ? help  q quit

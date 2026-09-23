@@ -1,6 +1,6 @@
 ---
 source: src/ui/features/environments/tests/matrix.rs
-expression: buffer_text(&buffer)
+expression: rendered
 ---
 0 Overview   1 dev  2 prod [PROD]  3 stg
 Ready: 3/3
@@ -61,4 +61,4 @@ Total                          +0 ~21 -0 +0 ~200 -0 +0 ~20 -1
 
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-Enter open diff   / filter   Space expand   ? help   q quit
+Enter open selected resource in raw plan  / filter  Space expand  ? help  q quit

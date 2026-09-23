@@ -177,34 +177,96 @@ fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
     let mut view = EnvironmentView::default();
     view.help();
 
-    let buffer = render_to_buffer((80, 24), |frame| view.render(frame, &state));
-    let text = buffer_text(&buffer);
-    assert!(text.contains("Help"));
-    assert!(text.contains("Navigation"));
-    assert!(text.contains("select an environment"));
-    assert!(!text.contains("0 / s"));
-    assert_eq!(text.matches("close").count(), 1);
-    assert!(
-        buffer
-            .cell((0, 0))
-            .expect("dimmed background")
-            .modifier
-            .contains(ratatui::style::Modifier::DIM)
-    );
-    insta::assert_snapshot!("environment_help_80x24", text);
+    for (width, height) in [(40, 16), (40, 24), (80, 24), (120, 40), (160, 60)] {
+        let buffer = render_to_buffer((width, height), |frame| view.render(frame, &state));
+        let text = buffer_text(&buffer);
+        assert!(text.contains("Help"), "{width}x{height}: {text}");
+        assert!(text.contains("Current"), "{width}x{height}: {text}");
+        assert!(text.contains("scroll"), "{width}x{height}: {text}");
+        if (width, height) == (80, 24) {
+            assert!(text.contains("1–9"));
+            assert!(text.contains(
+                "Enter open selected resource in raw plan  / filter  Space expand  ? help  q quit"
+            ));
+        }
+        assert_eq!(text.matches("close").count(), 1, "{width}x{height}: {text}");
+        if width == 80 {
+            assert!(
+                buffer
+                    .cell((0, 0))
+                    .expect("dimmed background")
+                    .modifier
+                    .contains(ratatui::style::Modifier::DIM)
+            );
+        }
+        insta::assert_snapshot!(format!("environment_help_{width}x{height}"), text);
+    }
 
-    let narrow = buffer_text(&render_to_buffer((40, 24), |frame| {
+    let wide = buffer_text(&render_to_buffer((160, 60), |frame| {
         view.render(frame, &state);
     }));
-    insta::assert_snapshot!("environment_help_40x24", narrow);
+    assert!(wide.contains("numbered"), "{wide}");
+    assert!(wide.contains("environment"), "{wide}");
 
     view.dialog_scroll = u16::MAX;
     let bottom = render_to_buffer((40, 16), |frame| view.render(frame, &state));
     let bottom_text = buffer_text(&bottom);
-    assert!(bottom_text.contains("Exit"));
+    assert!(bottom_text.contains("Excluded"));
     assert!(bottom_text.contains("quit"));
     assert_eq!(bottom_text.matches("close").count(), 1);
     insta::assert_snapshot!("environment_help_40x16_bottom", bottom_text);
+}
+
+#[test]
+fn help_scroll_keys_do_not_reach_the_environment_overview() {
+    let state = partial_session();
+    let mut view = EnvironmentView::default();
+    let size = Size::new(80, 24);
+
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    view.handle_key(
+        KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    assert_eq!(view.dialog_scroll, 4);
+    view.handle_key(
+        KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    assert_eq!(view.dialog_scroll, 8);
+
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    assert_eq!(view.selection.column, 0);
+    assert_eq!(view.matrix.filter(), "");
+    assert!(!view.matrix.searching());
+
+    view.handle_key(
+        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    assert!(view.dialog.is_none());
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    assert_eq!(view.selection.column, 1);
 }
 
 #[test]
@@ -212,15 +274,30 @@ fn help_explains_matrix_symbols_and_missing_rows() {
     let state = partial_session();
     let mut view = EnvironmentView::default();
     view.help();
+    view.dialog_scroll = u16::MAX;
 
     let text = buffer_text(&render_to_buffer((120, 60), |frame| {
         view.render(frame, &state);
     }));
+    let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
 
-    assert!(text.contains("blank: resource not in this environment."));
-    assert!(text.contains(".: resource present, with no change."));
-    assert!(text.contains("?: environment plan not fetched yet."));
-    assert!(text.contains("why: missing = present in only some environments."));
+    for marker in [
+        "Same changes",
+        "Ready plans",
+        "unknown",
+        "values may differ",
+        "+ / ~ / -",
+        "+/- / -/+",
+        "blank",
+        "resource absent from this environment",
+        ".",
+        "resource present, with no change",
+        "action unknown or unsupported",
+        "why: missing",
+        "some Ready plans",
+    ] {
+        assert!(compact.contains(marker), "{marker}: {text}");
+    }
 }
 
 #[test]
@@ -428,12 +505,10 @@ fn raw_environment_help_explains_tab_navigation_at_supported_widths() {
             .filter(|character| !character.is_whitespace())
             .collect::<String>();
 
-        assert!(compact.contains("Tab/"), "{width}x{height}: {text}");
+        assert!(compact.contains("Tab"), "{width}x{height}: {text}");
         assert!(compact.contains("Shift-Tab"), "{width}x{height}: {text}");
-        assert!(
-            compact.contains("next/previous"),
-            "{width}x{height}: {text}"
-        );
+        assert!(compact.contains("next"), "{width}x{height}: {text}");
+        assert!(compact.contains("previous"), "{width}x{height}: {text}");
         assert!(compact.contains("environment"), "{width}x{height}: {text}");
     }
 }

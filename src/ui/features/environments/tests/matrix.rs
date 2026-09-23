@@ -236,7 +236,7 @@ fn short_terminal_keeps_environment_actions_without_boundary_rows() {
     let mut view = EnvironmentView::default();
     let rendered = text(&mut view, &state, (40, 14));
 
-    assert!(rendered.contains("Enter open  / filter  ? help  q quit"));
+    assert!(rendered.contains("Enter open resource  ? help  q quit"));
     assert!(!rendered.contains(&"─".repeat(40)));
 }
 
