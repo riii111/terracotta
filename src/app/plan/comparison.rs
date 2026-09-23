@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::number::{CanonicalNumber, canonical_number};
 use super::{
     AttributeType, PlanValue, ProviderSchemas, ResourceChange, ResourceChangeKind, ResourceSchema,
-    attribute_diff::{CanonicalNumber, canonical_number},
 };
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

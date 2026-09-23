@@ -491,44 +491,55 @@ mod tests {
     }
 
     #[test]
-    fn compares_numbers_without_float_rounding_or_json_serialization() {
-        let changes = vec![
-            change(
-                "aws_instance.web[0]",
-                json!({"size": 1}),
-                json!({"size": 2}),
-            ),
-            change(
-                "aws_instance.web[1]",
-                json!({"size": 1.0}),
-                json!({"size": 2.0}),
-            ),
-            change(
-                "aws_instance.web[2]",
-                serde_json::from_str(r#"{"size":9007199254740992}"#).unwrap(),
-                serde_json::from_str(r#"{"size":9007199254740993}"#).unwrap(),
-            ),
+    fn groups_numbers_by_exact_decimal_value() {
+        struct NumberGroupingCase {
+            name: &'static str,
+            inputs: &'static [(&'static str, &'static str)],
+            expected_group_count: usize,
+            expected_repeated: usize,
+        }
+
+        let cases = [
+            NumberGroupingCase {
+                name: "groups equivalent decimals and keeps distinct integers above 2^53 apart",
+                inputs: &[
+                    ("1", "2"),
+                    ("1.0", "2.0"),
+                    ("9007199254740992", "9007199254740993"),
+                ],
+                expected_group_count: 2,
+                expected_repeated: 2,
+            },
+            NumberGroupingCase {
+                name: "groups equivalent trailing zero and exponent forms",
+                inputs: &[
+                    ("100000000000e1", "100000000001e1"),
+                    ("1e12", "1000000000010"),
+                ],
+                expected_group_count: 1,
+                expected_repeated: 2,
+            },
         ];
 
-        let grouping = group_resource_changes(&changes, None);
+        for case in cases {
+            let changes = case
+                .inputs
+                .iter()
+                .enumerate()
+                .map(|(index, (before, after))| {
+                    numeric_change(&format!("aws_instance.web[{index}]"), before, after)
+                })
+                .collect::<Vec<_>>();
+            let grouping = group_resource_changes(&changes, None);
 
-        assert_eq!(grouping.repeated, 2);
-        assert_eq!(grouping.groups.len(), 2);
-        assert_eq!(grouping.groups[0].members.len(), 2);
-        assert_eq!(grouping.groups[1].members.len(), 1);
-    }
-
-    #[test]
-    fn groups_equivalent_large_trailing_zero_and_exponent_number_forms() {
-        let changes = vec![
-            numeric_change("aws_instance.web[0]", "100000000000e1", "100000000001e1"),
-            numeric_change("aws_instance.web[1]", "1e12", "1000000000010"),
-        ];
-
-        let grouping = group_resource_changes(&changes, None);
-
-        assert_eq!(grouping.repeated, 2);
-        assert_eq!(grouping.groups.len(), 1);
+            assert_eq!(
+                grouping.groups.len(),
+                case.expected_group_count,
+                "{}",
+                case.name
+            );
+            assert_eq!(grouping.repeated, case.expected_repeated, "{}", case.name);
+        }
     }
 
     #[test]
