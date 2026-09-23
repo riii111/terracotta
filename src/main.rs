@@ -23,6 +23,11 @@ enum Command {
 
 fn main() -> ExitCode {
     let arguments: Vec<OsString> = env::args_os().collect();
+    if arguments.len() == 1
+        && let Some(exit) = terracotta::run_default()
+    {
+        return exit;
+    }
     match arguments.get(1).and_then(|arg| arg.to_str()) {
         Some("terraform") => terracotta::run_terraform(&arguments[2..]),
         Some("tofu") => terracotta::run_tofu(&arguments[2..]),

@@ -23,6 +23,20 @@ fn help_and_version_work_without_a_terminal_or_terraform(#[case] arg: &str) {
     assert!(!stdout.contains("compare-ref"));
 }
 
+#[test]
+fn no_arguments_without_a_terminal_prints_help_without_terraform() {
+    let output = Command::new(env!("CARGO_BIN_EXE_terracotta"))
+        .env("PATH", "")
+        .env_remove("CI")
+        .env_remove("TF_IN_AUTOMATION")
+        .output()
+        .expect("CLI should start");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Usage: terracotta"));
+}
+
 #[cfg(all(unix, feature = "test-support"))]
 mod pty_tests {
     use rstest::rstest;
@@ -164,6 +178,26 @@ mod pty_tests {
                 );
                 assert_clean(&fixture, &result);
             }
+        }
+
+        #[test]
+        fn no_argument_plan_discovers_multiple_environments_and_opens_the_matrix() {
+            let fixture = fixture(&["a-dev", "b-stg", "c-prod"]);
+            fs::write(&fixture.show_json, OVERVIEW_PLAN_JSON).unwrap();
+            fs::write(&fixture.show_text, OVERVIEW_PLAN_TEXT).unwrap();
+
+            let result = fixture.run_with_arguments("env_default_matrix", 120, 40, "", &[]);
+
+            assert_eq!(result.exit_code, 0);
+            result.observed("default_matrix");
+            assert_eq!(calls(&fixture, "plan").len(), 3);
+            assert!(
+                fixture
+                    .invoked_tools()
+                    .iter()
+                    .all(|tool| tool == "terraform")
+            );
+            assert_clean(&fixture, &result);
         }
 
         #[rstest]
@@ -442,8 +476,11 @@ Plan: 0 to add, 3 to change, 0 to destroy.
                 .arg(&self.root)
                 .arg(columns.to_string())
                 .arg(rows.to_string())
-                .arg(scenario)
-                .arg(command)
+                .arg(scenario);
+            if !command.is_empty() {
+                process.arg(command);
+            }
+            process
                 .args(arguments)
                 .env("PATH", path)
                 .env("TERRACOTTA_FAKE_MODE", scenario)
@@ -461,6 +498,9 @@ Plan: 0 to add, 3 to change, 0 to destroy.
                 .env_remove("TF_CLI_ARGS_plan")
                 .env("TF_CLI_CONFIG_FILE", "/dev/null")
                 .env("CHECKPOINT_DISABLE", "1");
+            if scenario == "default_ci" {
+                process.env("CI", "1");
+            }
             if scenario.starts_with("env_") {
                 let plans = self.directory.join("owned-plans");
                 fs::create_dir(&plans).unwrap();
@@ -607,6 +647,44 @@ Plan: 0 to add, 3 to change, 0 to destroy.
         assert_eq!(arguments[5], "providers schema -json");
         assert_eq!(arguments.len(), 6);
         fixture.assert_saved_plan_removed();
+    }
+
+    #[test]
+    fn pty_no_argument_terraform_plan_opens_single_environment_overview() {
+        let fixture = Fixture::new();
+        fixture.use_overview_plan();
+        let result = fixture.run_with_arguments("default_overview", 100, 24, "", &[]);
+
+        assert_eq!(result.exit_code, 0);
+        result.assert_restored();
+        result.observed("default_overview");
+        assert!(fixture.invocation_arguments()[0].starts_with("plan -detailed-exitcode -out="));
+        assert_eq!(fixture.invoked_tools(), vec!["terraform".to_owned(); 6]);
+        fixture.assert_saved_plan_removed();
+    }
+
+    #[test]
+    fn pty_no_argument_plan_in_ci_prints_help_without_starting_terraform() {
+        let fixture = Fixture::new();
+        let result = fixture.run_with_arguments("default_ci", 100, 24, "", &[]);
+
+        assert_eq!(result.exit_code, 0);
+        result.assert_no_tui();
+        result.observed("default_help");
+        assert!(fixture.invocation_arguments().is_empty());
+    }
+
+    #[test]
+    fn pty_no_argument_plan_rejects_hcp_without_delegating_to_terraform() {
+        let fixture = Fixture::new();
+        fs::write(fixture.root.join("main.tf"), "terraform {\n cloud {}\n}\n").unwrap();
+
+        let result = fixture.run_with_arguments("unsupported_default", 100, 24, "", &[]);
+
+        assert_eq!(result.exit_code, 1);
+        result.assert_no_tui();
+        result.observed("unsupported_default");
+        assert!(fixture.invocation_arguments().is_empty());
     }
 
     #[test]
@@ -1001,7 +1079,7 @@ Plan: 0 to add, 3 to change, 0 to destroy.
         assert_eq!(result.exit_code, 0);
         result.assert_restored();
         result.observed("demo_tui");
-        result.observed("demo_plan");
+        result.observed("demo_overview");
     }
 
     struct BasicScenario {

@@ -40,6 +40,7 @@ pub(crate) struct Invocation {
     input: bool,
     saved_plan: Option<OsString>,
     detailed_exitcode: bool,
+    initial_overview: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -50,7 +51,30 @@ enum Entry {
 }
 
 pub(crate) fn run(tool: Tool, arguments: &[OsString]) -> ExitCode {
-    match execute(tool, arguments) {
+    run_with_mode(tool, arguments, false)
+}
+
+pub(crate) fn run_default() -> Option<ExitCode> {
+    if !interactive(
+        [
+            io::stdin().is_terminal(),
+            io::stdout().is_terminal(),
+            io::stderr().is_terminal(),
+        ],
+        env::var_os("CI").as_deref(),
+        env::var_os("TF_IN_AUTOMATION").as_deref(),
+    ) {
+        return None;
+    }
+    Some(run_with_mode(
+        Tool::Terraform,
+        &[OsString::from("plan")],
+        true,
+    ))
+}
+
+fn run_with_mode(tool: Tool, arguments: &[OsString], default_entry: bool) -> ExitCode {
+    match execute(tool, arguments, default_entry) {
         Ok(exit) => exit,
         Err(error) => {
             super::report_error(&error.to_string());
@@ -59,15 +83,31 @@ pub(crate) fn run(tool: Tool, arguments: &[OsString]) -> ExitCode {
     }
 }
 
-fn execute(tool: Tool, arguments: &[OsString]) -> io::Result<ExitCode> {
+fn execute(tool: Tool, arguments: &[OsString], default_entry: bool) -> io::Result<ExitCode> {
     let executable = terraform::resolve_executable(tool)?;
     let Some(root) = env::current_dir().ok() else {
+        if default_entry {
+            return Err(io::Error::other(
+                "the default Terraform plan requires a local working directory",
+            ));
+        }
         return terraform::delegate(&executable, arguments);
     };
     let Some(mut invocation) = review_invocation(tool, arguments, &root) else {
+        if default_entry {
+            return Err(io::Error::other(
+                "the default Terraform plan does not support the current Terraform options; use `terracotta plan` to choose an explicit command",
+            ));
+        }
         return terraform::delegate(&executable, arguments);
     };
+    invocation.initial_overview = default_entry;
     match select_entry(&mut invocation, env::var_os("TF_DATA_DIR").as_deref())? {
+        Entry::Delegate if default_entry => {
+            return Err(io::Error::other(
+                "the default Terraform plan supports local execution only; use `terracotta terraform plan` for unsupported backends",
+            ));
+        }
         Entry::Delegate => return terraform::delegate(&executable, arguments),
         Entry::Single => {}
         Entry::Multiple => {
@@ -234,6 +274,7 @@ fn parse_for_tool(
             .is_some_and(|value| value == "0" || value.eq_ignore_ascii_case("false")),
         saved_plan: None,
         detailed_exitcode: false,
+        initial_overview: false,
     };
     classify_options(&mut invocation)?;
     Some(invocation)
@@ -361,6 +402,10 @@ impl Invocation {
 
     pub(crate) const fn detailed_exitcode(&self) -> bool {
         self.detailed_exitcode
+    }
+
+    pub(crate) const fn initial_overview(&self) -> bool {
+        self.initial_overview
     }
 
     pub(crate) const fn is_apply(&self) -> bool {

@@ -112,9 +112,9 @@ def demo():
         install_demo_terraform_wrapper(directory, environment)
         interactive_environment = environment.copy()
         interactive_environment.pop("TF_IN_AUTOMATION", None)
-        print("[3/3] Opening plan review...", file=sys.stderr, flush=True)
+        print("[3/3] Opening the single-environment Overview...", file=sys.stderr, flush=True)
         return subprocess.run(
-            [str(target / "debug" / executable), "plan"],
+            [str(target / "debug" / executable)],
             cwd=directory, env=interactive_environment,
         ).returncode
     finally:

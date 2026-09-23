@@ -56,6 +56,7 @@ pub(crate) fn run_plan(root: &Path, compare_ref: Option<&str>) -> ExitCode {
         &[],
         false,
         false,
+        false,
         invocation::variable_sources(root, &[]).unwrap_or_default(),
     )
 }
@@ -75,6 +76,7 @@ pub(crate) fn run_invocation(
         &invocation.apply_arguments(),
         invocation.is_apply(),
         invocation.detailed_exitcode(),
+        invocation.initial_overview(),
         variable_sources,
     )
 }
@@ -93,6 +95,7 @@ fn run_managed_invocation(
     apply_arguments: &[OsString],
     apply_entry: bool,
     detailed_exitcode: bool,
+    initial_overview: bool,
     variable_sources: VariableSources,
 ) -> ExitCode {
     let (saved_plan, plan_arguments) =
@@ -142,6 +145,7 @@ fn run_managed_invocation(
         apply_entry,
         plan_run,
         detailed_exitcode,
+        initial_overview,
         variable_sources,
     )
 }
@@ -163,6 +167,7 @@ fn run_saved_plan_review(
     apply_entry: bool,
     plan_run: terraform::PlanRun,
     detailed_exitcode: bool,
+    initial_overview: bool,
     variable_sources: VariableSources,
 ) -> ExitCode {
     let changed = plan_run.changed;
@@ -241,7 +246,7 @@ fn run_saved_plan_review(
         apply_worker: &mut apply_worker,
         history: history.as_ref(),
     };
-    let ui_result = run_interactive(context, &receiver, &mut worker, effects);
+    let ui_result = run_interactive(context, &receiver, &mut worker, effects, initial_overview);
     if ui_result.is_err() {
         cancellation.cancel();
     }
@@ -338,6 +343,7 @@ fn run_interactive(
     receiver: &mpsc::Receiver<PlanReviewMessage>,
     plan_worker: &mut WorkerGuard,
     effects: event_loop::RuntimeEffects<'_, ClipboardExecutor>,
+    initial_overview: bool,
 ) -> io::Result<SessionOutcome> {
     run_terminal(|terminal| {
         #[cfg(feature = "test-support")]
@@ -352,6 +358,7 @@ fn run_interactive(
             receiver,
             plan_worker,
             effects,
+            initial_overview,
         )
     })
 }

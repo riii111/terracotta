@@ -22,19 +22,21 @@ Review Terraform's familiar diff and apply the exact plan you reviewed. The UI a
 
 ## Usage
 
-Run from your Terraform or OpenTofu configuration directory in an interactive terminal, with the selected tool and credentials already configured.
+Run from your Terraform or OpenTofu configuration directory in an interactive
+terminal, with the selected tool and credentials already configured. With no
+arguments, Terracotta runs Terraform's plan and opens Overview; non-interactive
+runs print help.
 
 ```sh
+terracotta
 terracotta plan
+terracotta apply
+terracotta tofu plan
 ```
 
 `terracotta plan` runs Terraform's plan synchronously with the original
-arguments. After a successful plan, Terracotta opens the review UI and exits
-without applying anything.
-
-```sh
-terracotta apply
-```
+arguments. After a successful plan, Terracotta opens the full plan review and
+exits without applying anything.
 
 `terracotta apply` reviews the saved plan and asks for confirmation before
 applying that exact plan. It does not re-plan after review. A plan that has no
@@ -53,9 +55,11 @@ elapsed time visible; `q` closes it and `y` copies the result and full log.
 to keep the usual command name. The Terraform equivalent is
 `alias terraform='terracotta terraform'`.
 
-The review UI opens for interactive local `plan` and `apply` invocations,
-including supported options and the selected tool's `TF_CLI_ARGS*`. CI, redirected
-streams, HCP configurations, and unsupported options are delegated unchanged.
+For explicit commands, the review UI opens for supported interactive local
+`plan` and `apply` invocations, including the selected tool's `TF_CLI_ARGS*`.
+CI, redirected streams, HCP configurations, and unsupported options are
+delegated unchanged. The no-argument entry prints help outside an interactive
+terminal and reports unsupported backends or options without running a plan.
 Single-environment commands do not run `init` implicitly.
 
 In the review screen, press `s` to open the single-environment change overview.
@@ -92,3 +96,7 @@ This discovery path rejects `-out`, `-generate-config-out`, and a shared
 parent directory. The exit code is 130 when interrupted, 1 if any environment has
 an error or is excluded, and otherwise 2 for changes with `-detailed-exitcode`,
 or 0 without it.
+
+Try the cloudless demos: `python3 fixtures/basic/scenario.py demo` opens the
+single-environment Overview. `python3 fixtures/environments/scenario.py demo`
+opens the three-environment comparison.

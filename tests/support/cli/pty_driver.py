@@ -377,6 +377,11 @@ try:
             wait_new("Total", "real_complete_comparison")
             send_key(b"q")
             exit_code = wait_exit()
+        elif scenario == "env_default_matrix":
+            wait_parts(["Ready: 3/3", "terraform_data.server[*]"], "default_matrix")
+            observed.append("default_matrix")
+            send_key(b"q")
+            exit_code = wait_exit()
         elif scenario == "env_matrix":
             wait_parts(["Ready: 3/3", "~ 200"], "matrix_ready")
             send_key(b"/")
@@ -502,10 +507,23 @@ try:
         send_key(b"v")
         wait_parts(["Plan:", "terraform_data.api"], "overview_full_plan")
         exit_code = quit_with_enter()
+    elif scenario == "default_overview":
+        wait_parts(["Overview", "terraform_data.server[*]"], "default_overview")
+        send_key(b"q")
+        send_key(b"\r")
+        exit_code = wait_exit()
+    elif scenario == "default_ci":
+        wait_new("Usage: terracotta", "default_help")
+        exit_code = wait_exit()
+    elif scenario == "unsupported_default":
+        observed.append("unsupported_default")
+        exit_code = wait_exit()
     elif scenario == "demo":
-        wait_new("Opening plan review...", "demo_tui")
-        wait_parts(["Plan:", "terraform_data.api"], "demo_plan")
-        exit_code = quit_with_enter()
+        wait_new("Opening the single-environment Overview...", "demo_tui", timeout=120)
+        wait_parts(["Change Address", "terraform_data.api"], "demo_overview")
+        send_key(b"q")
+        send_key(b"\r")
+        exit_code = wait_exit()
     elif scenario == "basic_workflow":
         wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
         wait_new("a apply", "plan_ready")
