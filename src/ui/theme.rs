@@ -16,6 +16,113 @@ pub(crate) fn body_style() -> Style {
     Style::default().fg(Color::Rgb(0xe9, 0xdb, 0xdb))
 }
 
+pub(crate) fn overview_background_style() -> Style {
+    Style::default()
+        .fg(Color::Rgb(0xde, 0xd8, 0xd1))
+        .bg(Color::Rgb(0x39, 0x39, 0x38))
+}
+
+pub(crate) fn overview_text_style() -> Style {
+    overview_background_style()
+}
+
+pub(crate) fn overview_muted_style() -> Style {
+    Style::default()
+        .fg(Color::Rgb(0xb8, 0xb5, 0xae))
+        .bg(Color::Rgb(0x39, 0x39, 0x38))
+}
+
+pub(crate) fn overview_accent_style() -> Style {
+    Style::default()
+        .fg(Color::Rgb(0xef, 0xae, 0x6d))
+        .bg(Color::Rgb(0x39, 0x39, 0x38))
+}
+
+pub(crate) fn overview_header_style() -> Style {
+    Style::default()
+        .fg(Color::Rgb(0xde, 0xd8, 0xd1))
+        .bg(Color::Rgb(0x2c, 0x2d, 0x2b))
+}
+
+pub(crate) fn overview_header_muted_style() -> Style {
+    Style::default()
+        .fg(Color::Rgb(0xb8, 0xb5, 0xae))
+        .bg(Color::Rgb(0x2c, 0x2d, 0x2b))
+}
+
+pub(crate) fn overview_header_accent_style() -> Style {
+    Style::default()
+        .fg(Color::Rgb(0xef, 0xae, 0x6d))
+        .bg(Color::Rgb(0x2c, 0x2d, 0x2b))
+}
+
+pub(crate) fn overview_header_selected_style() -> Style {
+    Style::default()
+        .fg(Color::Rgb(0xde, 0xd8, 0xd1))
+        .bg(Color::Rgb(0x50, 0x48, 0x3e))
+}
+
+pub(crate) fn overview_selected_column_style() -> Style {
+    Style::default()
+        .fg(Color::Rgb(0xde, 0xd8, 0xd1))
+        .bg(Color::Rgb(0x3e, 0x3d, 0x38))
+}
+
+pub(crate) fn overview_total_style() -> Style {
+    Style::default()
+        .fg(Color::Rgb(0xde, 0xd8, 0xd1))
+        .bg(Color::Rgb(0x30, 0x32, 0x2f))
+}
+
+pub(crate) fn overview_total_muted_style() -> Style {
+    Style::default()
+        .fg(Color::Rgb(0xb8, 0xb5, 0xae))
+        .bg(Color::Rgb(0x30, 0x32, 0x2f))
+}
+
+pub(crate) fn overview_preview_title_style(focused: bool) -> Style {
+    Style::default()
+        .fg(if focused {
+            Color::Rgb(0xef, 0xae, 0x6d)
+        } else {
+            Color::Rgb(0xde, 0xd8, 0xd1)
+        })
+        .bg(Color::Rgb(0x30, 0x32, 0x2f))
+        .add_modifier(if focused {
+            Modifier::BOLD
+        } else {
+            Modifier::empty()
+        })
+}
+
+pub(crate) fn overview_warning_style() -> Style {
+    warning_style().bg(Color::Rgb(0x39, 0x39, 0x38))
+}
+
+pub(crate) fn overview_header_warning_style() -> Style {
+    warning_style().bg(Color::Rgb(0x2c, 0x2d, 0x2b))
+}
+
+pub(crate) fn overview_plan_line_style(line: &str) -> Style {
+    if matches!(line.trim_start().chars().next(), Some('+' | '-' | '~')) {
+        plan_line_style(line).bg(Color::Rgb(0x39, 0x39, 0x38))
+    } else {
+        overview_text_style()
+    }
+}
+
+pub(crate) fn overview_footer_key_style() -> Style {
+    overview_text_style()
+}
+
+pub(crate) fn overview_footer_text_style() -> Style {
+    overview_muted_style()
+}
+
+pub(crate) fn overview_footer_separator_style() -> Style {
+    overview_muted_style()
+}
+
 pub(crate) fn secondary_style() -> Style {
     Style::default().fg(Color::Rgb(0xc0, 0xb8, 0xb8))
 }
@@ -29,10 +136,6 @@ pub(crate) fn search_match_style() -> Style {
         .fg(Color::Rgb(0x11, 0x14, 0x19))
         .bg(Color::Rgb(0xf4, 0x9e, 0x4c))
         .add_modifier(Modifier::BOLD)
-}
-
-pub(crate) fn selected_row_style() -> Style {
-    body_style().bg(Color::Rgb(0x35, 0x35, 0x3d))
 }
 
 pub(crate) fn search_cursor_style() -> Style {

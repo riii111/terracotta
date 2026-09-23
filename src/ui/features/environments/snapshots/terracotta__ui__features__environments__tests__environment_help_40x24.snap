@@ -7,22 +7,22 @@ R┌Help────────────────────────
 b│ Current: Overview                ▲ │
 d│ ↑ / ↓ / j / k                    ┃ │
 H│   scroll the matrix or preview   ┃ │
-─│ ← / →                            ┃ │─
+ │ ← / →                            ┃ │
  │   select env in matrix; scroll   ┃ │
  │   preview                        │ │
-A│ [ / ]                            │ │
-b│   select previous or next        │ │
-?│   environment                    │ │
-N│ Enter                            │ │h
-─│   open the selected              │ │─
-T│   environment's full plan        │ │
+ │ [ / ]                            │ │
+ │   select previous or next        │ │
+ │   environment                    │ │
+ │ Enter                            │ │
+ │   open the selected              │ │
+ │   environment's full plan        │ │
  │   preview                        │ │
  │ Tab                              │ │
  │   switch input between matrix    │ │
  │   and preview                    │ │
  │ Esc                              │ │
  │   close preview; return from     ▼ │
-─│ ↑/↓/k/j/PgUp/PgDn scroll           │─
-↑│ ?/Esc close                        │
-/└────────────────────────────────────┘
-? help  q quit
+ │ ↑/↓/k/j/PgUp/PgDn scroll           │
+ │ ?/Esc close                        │
+ └────────────────────────────────────┘
+ ? help  q quit

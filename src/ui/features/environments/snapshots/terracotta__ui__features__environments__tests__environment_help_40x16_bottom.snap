@@ -9,12 +9,12 @@ d│ Same changes                     │ │
 H│   no differences found in Ready  │ │
  │   plans; unknown values may      │ │
  │   differ                         │ │
-A│ Scope                            │ │
-b│   only Ready environments are    │ │
-?│   compared                       │ │
-N│ Excluded                         ┃ │h
-─│   environments are not retried   ▼ │─
-T│ ↑/↓/k/j/PgUp/PgDn scroll           │
-↑│ ?/Esc close                        │
-/└────────────────────────────────────┘
-? help  q quit
+ │ Scope                            │ │
+ │   only Ready environments are    │ │
+ │   compared                       │ │
+ │ Excluded                         ┃ │
+ │   environments are not retried   ▼ │
+ │ ↑/↓/k/j/PgUp/PgDn scroll           │
+ │ ?/Esc close                        │
+ └────────────────────────────────────┘
+ ? help  q quit

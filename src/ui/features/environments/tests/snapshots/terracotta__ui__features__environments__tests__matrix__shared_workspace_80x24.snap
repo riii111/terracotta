@@ -2,20 +2,18 @@
 source: src/ui/features/environments/tests/matrix.rs
 expression: output
 ---
-0 Overview   1 staging  2 staging
-Ready: 0/2   Compared: none   staging: Error   staging: Error
-────────────────────────────────────────────────────────────────────────────────
-
-Synthetic acquisition error
-Address       staging   > staging    why
-blank: absent   .: unchanged   ?: plan unavailable
-Waiting for environment plans.
-────────────────────────────────────────────────────────────────────────────────
-Total       Error       Error
+0 Overview   1 staging  2 staging                                     Ready: 0/2
+Compared: none   staging: Error   staging: Error
 
 
+  Synthetic acquisition error
+  Address       staging   > staging    why
 
+  Waiting for environment plans.
 
+  Total       Error       Error
+
+  blank: absent   .: unchanged   ?: plan unavailable
 
 
 
@@ -23,6 +21,8 @@ Total       Error       Error
 
 
 
-────────────────────────────────────────────────────────────────────────────────
-↑↓ scroll rows | ←→ select env | Enter preview | [ ] select env | / filter
-e env filter | v full plan | ? help | q quit
+
+
+
+  ↑↓ scroll rows | ←→ select env | Enter preview | [ ] select env | / filter
+  e env filter | v full plan | ? help | q quit

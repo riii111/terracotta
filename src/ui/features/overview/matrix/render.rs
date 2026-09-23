@@ -34,7 +34,8 @@ pub(crate) fn render(
 ) {
     if area.width < 30 || area.height < 5 {
         frame.render_widget(
-            Paragraph::new("Resize to view the matrix. ? help   q quit"),
+            Paragraph::new("Resize to view the matrix. ? help   q quit")
+                .style(theme::overview_muted_style()),
             area,
         );
         return;
@@ -110,7 +111,14 @@ fn render_content(
             } else {
                 "Same change across envs"
             };
-            lines.push(Line::styled(title, theme::accent_style()));
+            lines.push(Line::styled(
+                title,
+                if row.difference.is_some() {
+                    theme::overview_accent_style()
+                } else {
+                    theme::overview_text_style()
+                },
+            ));
         }
         lines.push(row_line(row, view, columns, address_width, selected_column));
     }
@@ -125,25 +133,23 @@ fn render_content(
             "No matching resource changes. v opens the full plan."
         }));
     }
-    lines.push(Line::styled(
-        "─".repeat(usize::from(area.width)),
-        theme::separator_style(),
-    ));
+    lines.push(Line::default());
     lines.extend(total_lines(state, view, columns, address_width));
     let legend = symbol_legend(area.width);
-    let legend_height = u16::try_from(legend.len()).unwrap_or(u16::MAX);
+    lines.extend(legend);
     let body = Rect::new(
         area.x,
-        area.y + 1 + legend_height,
+        area.y.saturating_add(2),
         area.width,
-        area.height.saturating_sub(1 + legend_height),
+        area.height.saturating_sub(2),
     );
-    render_legend(frame, area, &legend);
     view.vertical = view
         .vertical
         .min(lines.len().saturating_sub(usize::from(body.height)));
     frame.render_widget(
-        Paragraph::new(lines).scroll((u16::try_from(view.vertical).unwrap_or(u16::MAX), 0)),
+        Paragraph::new(lines)
+            .style(theme::overview_text_style())
+            .scroll((u16::try_from(view.vertical).unwrap_or(u16::MAX), 0)),
         body,
     );
 }
@@ -157,8 +163,11 @@ fn render_column_headers(
     address_width: usize,
     selected_column: usize,
 ) {
-    let mut header = vec![Span::styled("Address", theme::secondary_style())];
-    header.push(Span::raw(" ".repeat(address_width.saturating_sub(7))));
+    let mut header = vec![Span::styled("Address", theme::overview_muted_style())];
+    header.push(Span::styled(
+        " ".repeat(address_width.saturating_sub(7)),
+        theme::overview_muted_style(),
+    ));
     for &(column, column_width) in columns {
         let environment = view.environments[column];
         let label = name(&state.plans()[environment]);
@@ -169,37 +178,26 @@ fn render_column_headers(
             column_width.saturating_sub(COLUMN_GAP + marker.len()),
             false,
         );
+        let style = if selected {
+            theme::overview_header_selected_style().add_modifier(Modifier::BOLD)
+        } else {
+            theme::overview_header_muted_style()
+        };
         header.push(Span::styled(
-            format!("{marker}{label}"),
-            if selected {
-                theme::accent_style().add_modifier(Modifier::BOLD)
-            } else {
-                theme::secondary_style()
-            },
+            format!("{marker}{label}{} ", " ".repeat(padding)),
+            style,
         ));
-        header.push(Span::raw(format!("{} ", " ".repeat(padding))));
     }
-    header.push(Span::raw(" "));
-    header.push(Span::styled("why", theme::secondary_style()));
-    header.push(Span::raw(" ".repeat(WHY_WIDTH.saturating_sub(3))));
+    header.push(Span::styled(" ", theme::overview_muted_style()));
+    header.push(Span::styled("why", theme::overview_muted_style()));
+    header.push(Span::styled(
+        " ".repeat(WHY_WIDTH.saturating_sub(3)),
+        theme::overview_muted_style(),
+    ));
     frame.render_widget(
-        Paragraph::new(Line::from(header)),
+        Paragraph::new(Line::from(header)).style(theme::overview_text_style()),
         Rect::new(area.x, area.y, area.width, 1),
     );
-}
-
-fn render_legend(frame: &mut Frame<'_>, area: Rect, legend: &[Line<'static>]) {
-    for (index, line) in legend.iter().cloned().enumerate() {
-        frame.render_widget(
-            Paragraph::new(line),
-            Rect::new(
-                area.x,
-                area.y + 1 + u16::try_from(index).unwrap_or(u16::MAX),
-                area.width,
-                1,
-            ),
-        );
-    }
 }
 
 fn address_width(area: Rect, view: &MatrixView) -> usize {
@@ -334,23 +332,36 @@ fn total_lines(
 ) -> [Line<'static>; 2] {
     let mut lines = [Line::default(), Line::default()];
     for (total_line, line) in lines.iter_mut().enumerate() {
+        let style = if total_line == 0 {
+            theme::overview_total_style()
+        } else {
+            theme::overview_total_muted_style()
+        };
         let mut spans = vec![Span::styled(
             fit(
                 if total_line == 0 { "Total" } else { "" },
                 address_width,
                 false,
             ),
-            theme::accent_style(),
+            style,
         )];
         for &(index, column_width) in columns {
             let environment = view.environments[index];
             let totals = total_text(&state.plans()[environment]);
             let text = if total_line == 0 { totals.0 } else { totals.1 };
             spans.push(Span::styled(
-                fit(&text, column_width - COLUMN_GAP, false),
-                theme::secondary_style(),
+                format!("{} ", fit(&text, column_width - COLUMN_GAP, false)),
+                style,
             ));
-            spans.push(Span::raw(" "));
+        }
+        spans.push(Span::styled(format!(" {}", " ".repeat(WHY_WIDTH)), style));
+        let table_width = address_width
+            .saturating_add(1)
+            .saturating_add(columns.iter().map(|(_, width)| *width).sum::<usize>())
+            .saturating_add(WHY_WIDTH);
+        let line_width = spans.iter().map(Span::width).sum::<usize>();
+        if line_width < table_width {
+            spans.push(Span::styled(" ".repeat(table_width - line_width), style));
         }
         *line = Line::from(spans);
     }
@@ -360,13 +371,16 @@ fn total_lines(
 fn symbol_legend(width: u16) -> Vec<Line<'static>> {
     if width < 50 {
         vec![
-            Line::styled("blank: absent   .: unchanged", theme::secondary_style()),
-            Line::styled("?: plan unavailable", theme::secondary_style()),
+            Line::styled(
+                "blank: absent   .: unchanged",
+                theme::overview_muted_style(),
+            ),
+            Line::styled("?: plan unavailable", theme::overview_muted_style()),
         ]
     } else {
         vec![Line::styled(
             "blank: absent   .: unchanged   ?: plan unavailable",
-            theme::secondary_style(),
+            theme::overview_muted_style(),
         )]
     }
 }
@@ -397,7 +411,7 @@ fn row_line(
                 true
             )
         ),
-        theme::body_style(),
+        theme::overview_text_style(),
     )];
     for &(index, column_width) in columns {
         let cell = &row.cells[index];
@@ -407,9 +421,9 @@ fn row_line(
             false,
         );
         let style = if index == selected_environment {
-            theme::selected_row_style()
+            theme::overview_selected_column_style()
         } else {
-            theme::body_style()
+            theme::overview_text_style()
         };
         spans.push(Span::styled(
             format!("{text}{} ", " ".repeat(padding)),
@@ -424,10 +438,10 @@ fn row_line(
         Some(DifferenceReason::Value) => "value",
         None => "",
     };
-    spans.push(Span::styled(" ", theme::body_style()));
+    spans.push(Span::styled(" ", theme::overview_text_style()));
     spans.push(Span::styled(
         fit(reason, WHY_WIDTH, false),
-        theme::secondary_style(),
+        theme::overview_muted_style(),
     ));
     Line::from(spans)
 }
