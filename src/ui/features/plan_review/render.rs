@@ -812,7 +812,11 @@ fn render_overlay(
             frame,
             area,
             overlay_title(overlay),
-            &plan_help_sections(review, navigation),
+            &plan_help_sections(
+                review,
+                navigation,
+                !view.searching() && !review.search_query().is_empty(),
+            ),
             view.overlay_scroll(),
         ),
         PlanReviewOverlay::Context => render_dialog(
@@ -883,6 +887,7 @@ fn render_confirmation_overlay(
 fn plan_help_sections(
     review: &PlanReview,
     navigation: ReviewNavigation,
+    filter_confirmed: bool,
 ) -> Vec<help_dialog::HelpSection> {
     let mut move_actions = vec![
         help_dialog::HelpAction::new("↑ / ↓ / j / k", "scroll vertically"),
@@ -908,6 +913,12 @@ fn plan_help_sections(
         review_actions.push(help_dialog::HelpAction::new(
             "n / N",
             "next or previous match",
+        ));
+    }
+    if filter_confirmed {
+        review_actions.push(help_dialog::HelpAction::new(
+            "Esc",
+            "close Help; press Esc again to clear filter",
         ));
     }
     let mut action_items = vec![
@@ -2070,6 +2081,7 @@ End of synthetic plan body."#;
         assert!(help_text.contains("s             overview"));
         assert!(help_text.contains("copy the full plan"));
         assert!(help_text.contains("apply the full plan"));
+        assert!(!help_text.contains("clear filter"));
         assert_eq!(help_text.matches("close").count(), 1);
         assert!(
             help.cell((0, 0))
@@ -2088,6 +2100,23 @@ End of synthetic plan body."#;
         assert!(bottom_text.contains("quit"));
         assert_eq!(bottom_text.matches("close").count(), 1);
         snapshot("preview_80x24_help_bottom", &bottom);
+    }
+
+    #[test]
+    fn confirmed_filter_help_explains_how_to_clear_the_filter() {
+        let mut plan = review();
+        plan.set_search_query("worker".to_owned());
+        let state = review_state(plan);
+        let mut view = PlanReviewViewState::default();
+        view.apply_with_matches(PlanReviewInput::OpenHelp, Rect::default(), 0, 0, "", &[]);
+
+        let help = render_to_buffer((120, 40), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        let text = buffer_text(&help);
+
+        assert!(text.contains("next or previous match"));
+        assert!(text.contains("press Esc again to clear filter"));
     }
 
     #[test]

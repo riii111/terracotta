@@ -113,12 +113,18 @@ fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
     );
     insta::assert_snapshot!("environment_help_80x24", text);
 
+    let narrow = buffer_text(&render_to_buffer((40, 24), |frame| {
+        view.render(frame, &state);
+    }));
+    insta::assert_snapshot!("environment_help_40x24", narrow);
+
     view.dialog_scroll = u16::MAX;
     let bottom = render_to_buffer((40, 16), |frame| view.render(frame, &state));
     let bottom_text = buffer_text(&bottom);
     assert!(bottom_text.contains("Exit"));
     assert!(bottom_text.contains("quit"));
     assert_eq!(bottom_text.matches("close").count(), 1);
+    insta::assert_snapshot!("environment_help_40x16_bottom", bottom_text);
 }
 
 #[test]

@@ -70,7 +70,8 @@ pub(crate) fn render(
     let key_width = key_column_width(sections, width.saturating_sub(2));
     let description_x = key_width.saturating_add(u16::from(key_width > 0));
     let description_width = width.saturating_sub(2).saturating_sub(description_x).max(1);
-    let content_height = content_height(sections, key_width, description_width);
+    let content_width = width.saturating_sub(2);
+    let content_height = content_height(sections, key_width, description_width, content_width);
     let height = u16::try_from(content_height)
         .unwrap_or(u16::MAX)
         .saturating_add(3)
@@ -170,7 +171,12 @@ fn key_column_width(sections: &[HelpSection], inner_width: u16) -> u16 {
         .min(key_limit)
 }
 
-fn content_height(sections: &[HelpSection], key_width: u16, description_width: u16) -> usize {
+fn content_height(
+    sections: &[HelpSection],
+    key_width: u16,
+    description_width: u16,
+    content_width: u16,
+) -> usize {
     let mut height = 0;
     for (section_index, section) in sections.iter().enumerate() {
         if section_index > 0 {
@@ -178,7 +184,7 @@ fn content_height(sections: &[HelpSection], key_width: u16, description_width: u
         }
         height += 1;
         for (action_index, action) in section.actions.iter().enumerate() {
-            let row_height = row_height(action, key_width, description_width);
+            let row_height = row_height(action, key_width, description_width, content_width);
             height += row_height;
             if action_index + 1 < section.actions.len() {
                 height += 1;
@@ -188,9 +194,14 @@ fn content_height(sections: &[HelpSection], key_width: u16, description_width: u
     height
 }
 
-fn row_height(action: &HelpAction, key_width: u16, description_width: u16) -> usize {
+fn row_height(
+    action: &HelpAction,
+    key_width: u16,
+    description_width: u16,
+    content_width: u16,
+) -> usize {
     if action.keys.is_empty() {
-        return wrapped_lines(action.description, description_width);
+        return wrapped_lines(action.description, content_width);
     }
     wrapped_lines(action.keys, key_width).max(wrapped_lines(action.description, description_width))
 }
@@ -232,7 +243,7 @@ fn render_sections(
         line += 1;
 
         for (action_index, action) in section.actions.iter().enumerate() {
-            let height = row_height(action, key_width, description_width);
+            let height = row_height(action, key_width, description_width, viewport.width);
             if action.keys.is_empty() {
                 render_scrolled_text(
                     frame,
@@ -311,4 +322,16 @@ fn render_scrolled_text(frame: &mut Frame<'_>, viewport: Rect, text: ScrolledTex
             .scroll((skipped, 0)),
         area,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HelpAction, row_height};
+
+    #[test]
+    fn note_height_uses_its_full_content_width() {
+        let note = HelpAction::note("A short comparison note spans one row at full width.");
+
+        assert_eq!(row_height(&note, 10, 20, 34), 2);
+    }
 }
