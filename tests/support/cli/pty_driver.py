@@ -528,6 +528,13 @@ try:
         "apply_mapping",
     ):
         wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
+        if scenario == "apply_success":
+            send_key(b"/")
+            wait_new("/ ", "apply_filter_input")
+            send_text("not-present")
+            observe_current_or_wait("No matches", "apply_filter_no_matches")
+            send_key(b"\r")
+            wait_new("y copy all", "apply_filter_confirmed")
         send_key(b"?")
         wait_new("Help", "plan_help")
         send_key(b"?")
@@ -594,6 +601,8 @@ try:
         )
         send_key(b"\r")
         wait_new("Applying...", "apply_started")
+        send_key(b"\r")
+        observed.append("apply_second_enter")
         wait_new("Apply complete", "apply_result", timeout=60)
         exit_code = quit_with_enter()
     elif scenario in ("apply_no", "apply_escape"):

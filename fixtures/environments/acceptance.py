@@ -59,7 +59,11 @@ def main():
         )
         if result.returncode:
             raise RuntimeError(result.stdout + result.stderr)
-        if "exit=0" not in result.stdout or "restored=true" not in result.stdout:
+        if (
+            "exit=0" not in result.stdout
+            or "restored=true" not in result.stdout
+            or "cursor_restored=true" not in result.stdout
+        ):
             raise RuntimeError(result.stdout)
         calls = [json.loads(line) for line in log.read_text().splitlines()]
         plans = Counter(call[0] for call in calls if call[1] == "plan")

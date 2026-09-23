@@ -671,24 +671,55 @@ mod tests {
     }
 
     #[test]
-    fn chdir_is_resolved_against_original_directory() {
-        let parsed = invocation(&["-chdir=directory with spaces", "plan"], &[]).expect("chdir");
-        assert_eq!(parsed.directory, Path::new("/root/directory with spaces"));
-        assert_eq!(
-            parsed.global_arguments,
-            [OsString::from("-chdir=directory with spaces")]
-        );
-    }
+    fn chdir_forms_resolve_from_the_original_directory_and_remain_global() {
+        struct ChdirCase {
+            name: &'static str,
+            arguments: &'static [&'static str],
+            expected_directory: &'static str,
+            expected_global_arguments: &'static [&'static str],
+            expected_apply: bool,
+        }
 
-    #[test]
-    fn separate_chdir_is_kept_as_a_global_argument() {
-        let parsed = invocation(&["-chdir", "directory", "apply"], &[]).expect("chdir");
-        assert_eq!(parsed.directory, Path::new("/root/directory"));
-        assert_eq!(
-            parsed.global_arguments,
-            [OsString::from("-chdir"), OsString::from("directory")]
-        );
-        assert!(parsed.is_apply());
+        for case in [
+            ChdirCase {
+                name: "equals_form",
+                arguments: &["-chdir=directory with spaces", "plan"],
+                expected_directory: "/root/directory with spaces",
+                expected_global_arguments: &["-chdir=directory with spaces"],
+                expected_apply: false,
+            },
+            ChdirCase {
+                name: "separate_form",
+                arguments: &["-chdir", "directory", "apply"],
+                expected_directory: "/root/directory",
+                expected_global_arguments: &["-chdir", "directory"],
+                expected_apply: true,
+            },
+        ] {
+            let parsed = invocation(case.arguments, &[]).expect("chdir");
+
+            assert_eq!(
+                parsed.directory,
+                Path::new(case.expected_directory),
+                "case: {}",
+                case.name
+            );
+            assert_eq!(
+                parsed.global_arguments,
+                case.expected_global_arguments
+                    .iter()
+                    .map(OsString::from)
+                    .collect::<Vec<_>>(),
+                "case: {}",
+                case.name
+            );
+            assert_eq!(
+                parsed.is_apply(),
+                case.expected_apply,
+                "case: {}",
+                case.name
+            );
+        }
     }
 
     #[test]

@@ -9,7 +9,6 @@ printf 'TF_CLI_ARGS_apply=%s\n' "${TF_CLI_ARGS_apply-}" >> "$TERRACOTTA_FAKE_ENV
 
 case "${TERRACOTTA_FAKE_MODE:-}" in
   env_*)
-    name=$(basename "$PWD")
     case "$1" in
       workspace)
         printf '%s\n' "${TF_WORKSPACE:-default}"
