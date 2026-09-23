@@ -16,7 +16,7 @@ use crate::app::{
 };
 use crate::ui::primitives::{
     atoms::{scrollbar, separator},
-    molecules::terminal_notice,
+    molecules::{help_dialog, terminal_notice},
 };
 use crate::ui::shell::{context, footer, header, layout as shell_layout};
 use crate::ui::theme;
@@ -802,21 +802,27 @@ fn render_overlay(
     area: Rect,
     review: &PlanReview,
     view: &PlanReviewViewState,
+    navigation: ReviewNavigation,
 ) {
     let Some(overlay) = view.overlay() else {
         return;
     };
-    let lines = match overlay {
-        PlanReviewOverlay::Help => plan_help_lines(review, view),
-        PlanReviewOverlay::Context => context::context_lines(review.context()),
-    };
-    render_dialog(
-        frame,
-        area,
-        overlay_title(overlay),
-        lines,
-        view.overlay_scroll(),
-    );
+    match overlay {
+        PlanReviewOverlay::Help => help_dialog::render(
+            frame,
+            area,
+            overlay_title(overlay),
+            &plan_help_sections(review, navigation),
+            view.overlay_scroll(),
+        ),
+        PlanReviewOverlay::Context => render_dialog(
+            frame,
+            area,
+            overlay_title(overlay),
+            context::context_lines(review.context()),
+            view.overlay_scroll(),
+        ),
+    }
 }
 
 fn render_confirmation_overlay(
@@ -826,58 +832,97 @@ fn render_confirmation_overlay(
     overlay: ConfirmationOverlay,
     scroll: u16,
 ) {
-    let lines = match overlay {
-        ConfirmationOverlay::Help => vec![
-            footer::hint(&["Enter"], "confirm"),
-            footer::hint(&["Esc"], "back"),
-            footer::hint(&["↑", "↓", "PgUp", "PgDn"], "scroll confirmation"),
-            footer::hint(&["←", "→"], "move input"),
-            footer::hint(&["Home", "End"], "input start/end"),
-            footer::hint(&["Backspace"], "delete input"),
-            footer::hint(&["Tab"], "context"),
-            footer::hint(&["?", "Esc"], "close help"),
-        ],
-        ConfirmationOverlay::Context => context::context_lines(review.context()),
-    };
-    render_dialog(
-        frame,
-        area,
-        confirmation_overlay_title(overlay),
-        lines,
-        scroll,
-    );
+    match overlay {
+        ConfirmationOverlay::Help => help_dialog::render(
+            frame,
+            area,
+            confirmation_overlay_title(overlay),
+            &[
+                help_dialog::HelpSection::new(
+                    "Navigation",
+                    vec![
+                        help_dialog::HelpAction::new("↑ / ↓ / PgUp / PgDn", "scroll confirmation"),
+                        help_dialog::HelpAction::new("← / →", "move in confirmation input"),
+                        help_dialog::HelpAction::new("Home / End", "move to input start or end"),
+                    ],
+                ),
+                help_dialog::HelpSection::new(
+                    "Input",
+                    vec![
+                        help_dialog::HelpAction::new("Type", "enter the confirmation text"),
+                        help_dialog::HelpAction::new("Backspace", "delete before the cursor"),
+                    ],
+                ),
+                help_dialog::HelpSection::new(
+                    "Context",
+                    vec![help_dialog::HelpAction::new(
+                        "Tab",
+                        "show execution context",
+                    )],
+                ),
+                help_dialog::HelpSection::new(
+                    "Apply",
+                    vec![
+                        help_dialog::HelpAction::new("Enter", "confirm apply"),
+                        help_dialog::HelpAction::new("Esc", "return to plan review"),
+                    ],
+                ),
+            ],
+            scroll,
+        ),
+        ConfirmationOverlay::Context => render_dialog(
+            frame,
+            area,
+            confirmation_overlay_title(overlay),
+            context::context_lines(review.context()),
+            scroll,
+        ),
+    }
 }
 
-fn plan_help_lines(review: &PlanReview, view: &PlanReviewViewState) -> Vec<Line<'static>> {
-    let filter_action = if review.search_query().is_empty() {
-        footer::hint(&["/"], "filter")
-    } else {
-        footer::hint(&["/"], "edit filter")
-    };
-    let mut lines = vec![
-        footer::hint(&["↑", "↓", "j", "k"], "scroll"),
-        footer::hint(&["←", "→", "h", "l"], "horizontal scroll"),
-        footer::hint(&["PgUp", "PgDn", "Home", "End"], "page/top/bottom"),
-        filter_action,
-        footer::hint(&["y"], "copy full plan"),
-        footer::hint(&["c"], "context"),
-        footer::hint(&["q"], "quit"),
+fn plan_help_sections(
+    review: &PlanReview,
+    navigation: ReviewNavigation,
+) -> Vec<help_dialog::HelpSection> {
+    let mut move_actions = vec![
+        help_dialog::HelpAction::new("↑ / ↓ / j / k", "scroll vertically"),
+        help_dialog::HelpAction::new("← / → / h / l", "scroll horizontally"),
+        help_dialog::HelpAction::new("PgUp / PgDn", "scroll one page"),
+        help_dialog::HelpAction::new("Home / End", "go to the top or bottom"),
     ];
+    if navigation == ReviewNavigation::Standalone {
+        move_actions.push(help_dialog::HelpAction::new("s", "overview"));
+    } else {
+        move_actions.push(help_dialog::HelpAction::new("0 / s", "return to overview"));
+    }
+
+    let mut review_actions = vec![help_dialog::HelpAction::new(
+        "/",
+        if review.search_query().is_empty() {
+            "filter the full plan"
+        } else {
+            "edit the full-plan filter"
+        },
+    )];
     if !review.search_query().is_empty() {
-        lines.insert(0, footer::hint(&["Esc"], "clear filter"));
-        lines.insert(6, footer::hint(&["n", "N"], "next/previous match"));
+        review_actions.push(help_dialog::HelpAction::new(
+            "n / N",
+            "next or previous match",
+        ));
     }
+    let mut action_items = vec![
+        help_dialog::HelpAction::new("c", "show execution context"),
+        help_dialog::HelpAction::new("y", "copy the full plan"),
+    ];
     if review.apply_entry() && review.apply_allowed() && review.metadata().applyable() {
-        lines.insert(5, footer::hint(&["a"], "apply full plan"));
+        action_items.push(help_dialog::HelpAction::new("a", "apply the full plan"));
     }
-    if view.searching() {
-        lines = vec![
-            footer::hint(&["Enter"], "confirm filter"),
-            footer::hint(&["Esc"], "cancel filter"),
-        ];
-    }
-    lines.push(footer::hint(&["?", "Esc"], "close help"));
-    lines
+    vec![
+        help_dialog::HelpSection::new("Navigation", move_actions),
+        help_dialog::HelpSection::new("Review", review_actions),
+        help_dialog::HelpSection::new("Actions", action_items),
+        help_dialog::HelpSection::new("Exit", vec![help_dialog::HelpAction::new("q", "quit")]),
+    ]
 }
 
 const fn overlay_title(overlay: PlanReviewOverlay) -> &'static str {
@@ -1113,7 +1158,7 @@ fn render_for_navigation(
             .as_ref()
             .map(|(message, style)| (message.as_str(), *style)),
     );
-    render_overlay(frame, area, state.review(), view);
+    render_overlay(frame, area, state.review(), view, navigation);
 }
 
 fn prepare_content<'a>(
@@ -1977,9 +2022,6 @@ End of synthetic plan body."#;
         });
         let help_text = buffer_text(&help);
         assert!(help_text.contains("Help"));
-        assert!(help_text.contains("a apply full plan"));
-        assert!(help_text.contains("y copy full plan"));
-        assert!(!help_text.contains("s overview"));
         assert_eq!(view.scroll(), position);
 
         view.close_overlay();
@@ -2015,6 +2057,40 @@ End of synthetic plan body."#;
     }
 
     #[test]
+    fn renders_plan_help_with_overview_navigation_and_scrollable_sections() {
+        let state = review_state(review().with_apply_entry(true));
+        let mut view = PlanReviewViewState::default();
+        view.apply_with_matches(PlanReviewInput::OpenHelp, Rect::default(), 0, 0, "", &[]);
+
+        let help = render_to_buffer((120, 40), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        let help_text = buffer_text(&help);
+        assert!(help_text.contains("Help"));
+        assert!(help_text.contains("s             overview"));
+        assert!(help_text.contains("copy the full plan"));
+        assert!(help_text.contains("apply the full plan"));
+        assert_eq!(help_text.matches("close").count(), 1);
+        assert!(
+            help.cell((0, 0))
+                .expect("dimmed background")
+                .modifier
+                .contains(Modifier::DIM)
+        );
+        snapshot("preview_120x40_help", &help);
+
+        view.overlay_bottom();
+        let bottom = render_to_buffer((80, 24), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        let bottom_text = buffer_text(&bottom);
+        assert!(bottom_text.contains("Exit"));
+        assert!(bottom_text.contains("quit"));
+        assert_eq!(bottom_text.matches("close").count(), 1);
+        snapshot("preview_80x24_help_bottom", &bottom);
+    }
+
+    #[test]
     fn renders_apply_help_and_context_with_only_confirmation_actions() {
         let plan = review().with_context(
             ExecutionContext::loading("/repo/environments/production/main")
@@ -2030,8 +2106,9 @@ End of synthetic plan body."#;
         });
         let help_text = buffer_text(&help);
         assert!(help_text.contains("Apply help"));
-        assert!(help_text.contains("Enter confirm"));
-        assert!(help_text.contains("Tab context"));
+        assert!(help_text.contains("confirm apply"));
+        assert!(help_text.contains("show execution context"));
+        assert_eq!(help_text.matches("close").count(), 1);
 
         view.close_overlay();
         assert_eq!(
