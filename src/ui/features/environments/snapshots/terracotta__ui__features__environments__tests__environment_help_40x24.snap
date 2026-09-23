@@ -1,28 +1,28 @@
 ---
 source: src/ui/features/environments/tests.rs
-expression: narrow
+expression: text
 ---
 0 Overview   1 a-ready  2 b-error  ›
 Re┌Help──────────────────────────────┐
-b-│Navigation                        │
-d-│↑ / ↓ / j / select a resource row │
-HC│k                                 │
-──│                                  │──
-a-│← / → / [ / select an environment │
-  │]                                 │
-Ad│                                  │
-No│PgUp / PgDn move one page         │th
-To│                                  │
-  │Home / End  go to the first or    │
-  │            last row              │
-  │                                  │
-  │Review                            │
-  │Enter       open the selected     │
-  │            resource              │
-  │                                  │
-  │1–9         open the resource in  │
-  │            that environment      │
-  │                                  │
-  │?/Esc close                       │
+b-│ Current: Overview              ▲ │
+d-│ ↑ / ↓ / j / k   select a       ┃ │
+HC│                 resource row   ┃ │
+──│ ← / → / [ / ]   select an      ┃ │──
+a-│                 environment    ┃ │
+  │ Enter           open selected  │ │
+Ad│                 resource in    │ │
+No│                 raw plan       │ │th
+To│ 1–9             open selected  │ │
+  │                 resource in    │ │
+  │                 the numbered   │ │
+  │                 environment    │ │
+  │ Space           expand or      │ │
+  │                 collapse a     │ │
+  │                 group          │ │
+  │ /               filter full    │ │
+  │                 addresses      │ │
+  │                                ▼ │
+  │ ↑/↓/PgUp/PgDn scroll             │
+  │ ?/Esc close                      │
 ──└──────────────────────────────────┘──
-Enter open  / filter  ? help  q quit
+Enter open resource  ? help  q quit

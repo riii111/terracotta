@@ -3,26 +3,26 @@ source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
 Target: main [PROD] Workspace: default Tool: terraform loading... Dir: /re...ain
-Unique targets (re┌Help─────────────────────────────────────┐-1 destroy
-──────────────────│                                         │───────────────────
-  # terraform_data│PgUp / PgDn   scroll one page            │                  ▲
-  ~ resource "terr│                                         │                  ┃
-      id       = "│Home / End    go to the top or bottom    │                  ┃
-      ~ input  = "│                                         │                  ┃
-      # (4 unchang│s             overview                   │                  ┃
-    }             │                                         │                  ┃
-                  │Review                                   │                  ┃
-  # terraform_data│/             filter the full plan       │                  ┃
--/+ resource "terr│                                         │                  │
-      ~ input = "w│Actions                                  │placement         │
-      - old_checks│c             show execution context     │ef0123456789abcdef│
-      + new_checks│                                         │                  │
-    }             │y             copy the full plan         │                  │
-                  │                                         │                  │
-  # terraform_data│a             apply the full plan        │                  │
-  - resource "terr│                                         │                  │
-      id = "old-20│Exit                                     │                  │
-    }             │q             quit                       │                  │
-◀︎═════════════════│?/Esc close                              │═══════───────────▶︎
-──────────────────└─────────────────────────────────────────┘───────────────────
+Unique targets (replace once): +2 add  ~2 update  0 replace  -1 destroy
+──────────────────┌Help─────────────────────────────────────┐───────────────────
+  # terraform_data│ Navigation                              │                  ▲
+  ~ resource "terr│ ↑ / ↓ / j / k scroll vertically         │                  ┃
+      id       = "│ ← / → / h / l scroll horizontally       │                  ┃
+      ~ input  = "│ PgUp / PgDn   scroll one page           │                  ┃
+      # (4 unchang│ Home / End    go to the top or bottom   │                  ┃
+    }             │ s             overview                  │                  ┃
+                  │                                         │                  ┃
+  # terraform_data│ Review                                  │                  ┃
+-/+ resource "terr│ /             filter the full plan      │                  │
+      ~ input = "w│                                         │placement         │
+      - old_checks│ Actions                                 │ef0123456789abcdef│
+      + new_checks│ c             show execution context    │                  │
+    }             │ y             copy the full plan        │                  │
+                  │ a             apply the full plan       │                  │
+  # terraform_data│                                         │                  │
+  - resource "terr│ Exit                                    │                  │
+      id = "old-20│ q             quit                      │                  │
+    }             │ ?/Esc close                             │                  │
+◀︎═════════════════└─────────────────────────────────────────┘═══════───────────▶︎
+────────────────────────────────────────────────────────────────────────────────
 s overview | / filter | a apply | ? help | q quit                      Line 3/43

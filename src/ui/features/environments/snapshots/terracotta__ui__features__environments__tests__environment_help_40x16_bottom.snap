@@ -4,17 +4,17 @@ expression: bottom_text
 ---
 0 Overview   1 a-ready  2 b-error  ›
 Re┌Help──────────────────────────────┐
-b-│Unknown values remain unknown.    │
-d-│                                  │
-HC│Only Ready environments are       │
-a-│compared.                         │
-  │                                  │
-Ad│Excluded environments are not     │
-No│retried.                          │th
-To│                                  │
-  │Exit                              │
-  │q           quit; confirms first  │
-  │            while acquiring       │
-  │?/Esc close                       │
+b-│                 Ready plans    ▲ │
+d-│ Only Ready environments are    │ │
+HC│ compared.                      │ │
+a-│ Excluded environments are not  │ │
+  │ retried.                       │ │
+Ad│                                │ │
+No│ Exit                           │ │th
+To│ q               quit; confirms │ │
+  │                 first while    ┃ │
+  │                 acquiring      ▼ │
+  │ ↑/↓/PgUp/PgDn scroll             │
+  │ ?/Esc close                      │
   └──────────────────────────────────┘
-Enter open  / filter  ? help  q quit
+Enter open resource  ? help  q quit

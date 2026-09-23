@@ -107,10 +107,14 @@ impl EnvironmentView {
         matrix::render(frame, body, state, &mut self.matrix, self.selection.column);
         let footer = if self.matrix.searching() {
             "Enter confirm   Esc cancel"
-        } else if area.width < 60 {
-            "Enter open  / filter  ? help  q quit"
+        } else if area.width < 45 {
+            "Enter open resource  ? help  q quit"
+        } else if area.width < 56 {
+            "Enter open selected resource  ? help"
+        } else if area.width < 80 {
+            "Enter open selected resource in raw plan  ? help  q quit"
         } else {
-            "Enter open diff   / filter   Space expand   ? help   q quit"
+            "Enter open selected resource in raw plan  / filter  Space expand  ? help  q quit"
         };
         if show_boundaries {
             frame.render_widget(
@@ -222,43 +226,51 @@ fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
         "Help",
         &[
             help_dialog::HelpSection::new(
-                "Navigation",
+                "Current: Overview",
                 vec![
                     help_dialog::HelpAction::new("↑ / ↓ / j / k", "select a resource row"),
                     help_dialog::HelpAction::new("← / → / [ / ]", "select an environment"),
-                    help_dialog::HelpAction::new("PgUp / PgDn", "move one page"),
-                    help_dialog::HelpAction::new("Home / End", "go to the first or last row"),
-                ],
-            ),
-            help_dialog::HelpSection::new(
-                "Review",
-                vec![
-                    help_dialog::HelpAction::new("Enter", "open the selected resource"),
-                    help_dialog::HelpAction::new("1–9", "open the resource in that environment"),
+                    help_dialog::HelpAction::new("Enter", "open selected resource in raw plan"),
+                    help_dialog::HelpAction::new(
+                        "1–9",
+                        "open selected resource in the numbered environment",
+                    ),
                     help_dialog::HelpAction::new("Space", "expand or collapse a group"),
                     help_dialog::HelpAction::new("/", "filter full addresses"),
-                    help_dialog::HelpAction::new("v", "show the full plan from the top"),
                 ],
             ),
             help_dialog::HelpSection::new(
-                "Actions",
+                "Other",
                 vec![
+                    help_dialog::HelpAction::new("PgUp / PgDn", "move one page"),
+                    help_dialog::HelpAction::new("Home / End", "go to the first or last row"),
+                    help_dialog::HelpAction::new("v", "show the full plan from the top"),
                     help_dialog::HelpAction::new("y", "copy the selected environment's plan"),
                     help_dialog::HelpAction::new("c", "show environment context"),
                     help_dialog::HelpAction::new("r", "retry a selected Error environment"),
+                    help_dialog::HelpAction::new("q", "quit; confirms first while acquiring"),
                 ],
             ),
             help_dialog::HelpSection::new(
-                "Comparison",
+                "Matrix legend",
                 vec![
-                    help_dialog::HelpAction::note("Same changes compare patterns."),
-                    help_dialog::HelpAction::note("blank: resource not in this environment."),
-                    help_dialog::HelpAction::note(".: resource present, with no change."),
-                    help_dialog::HelpAction::note("?: environment plan not fetched yet."),
-                    help_dialog::HelpAction::note(
-                        "why: missing = present in only some environments.",
+                    help_dialog::HelpAction::new(
+                        "Same changes",
+                        "no difference detected among Ready plans; unknown values may differ",
                     ),
-                    help_dialog::HelpAction::note("Unknown values remain unknown."),
+                    help_dialog::HelpAction::new("+ / ~ / -", "create / update / delete"),
+                    help_dialog::HelpAction::new(
+                        "+/- / -/+",
+                        "replace (create→delete / delete→create)",
+                    ),
+                    help_dialog::HelpAction::new("blank", "resource absent from this environment"),
+                    help_dialog::HelpAction::new(".", "resource present, with no change"),
+                    help_dialog::HelpAction::new("?", "plan unavailable or change unsupported"),
+                    help_dialog::HelpAction::new("read / move / import", "action shown by name"),
+                    help_dialog::HelpAction::new(
+                        "why: missing",
+                        "resource present in only some Ready plans",
+                    ),
                     help_dialog::HelpAction::note("Only Ready environments are compared."),
                     help_dialog::HelpAction::note("Excluded environments are not retried."),
                 ],

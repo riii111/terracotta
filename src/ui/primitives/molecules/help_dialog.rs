@@ -6,11 +6,17 @@ use ratatui::{
     widgets::{Block, Clear, Paragraph, Wrap},
 };
 
-use crate::ui::{primitives::molecules::terminal_notice, shell::footer, theme};
+use crate::ui::{
+    primitives::{atoms::scrollbar, molecules::terminal_notice},
+    shell::footer,
+    theme,
+};
 
 const MAX_WIDTH: u16 = 76;
+const MAX_HEIGHT: u16 = 22;
 const MIN_WIDTH: u16 = 20;
 const MIN_HEIGHT: u16 = 6;
+const HORIZONTAL_PADDING: u16 = 1;
 
 pub(crate) struct HelpAction {
     keys: &'static str,
@@ -67,15 +73,36 @@ pub(crate) fn render(
 
     dim_background(frame, area);
 
-    let key_width = key_column_width(sections, width.saturating_sub(2));
+    let text_width = width.saturating_sub(6);
+    let key_width = key_column_width(sections, text_width);
     let description_x = key_width.saturating_add(u16::from(key_width > 0));
-    let description_width = width.saturating_sub(2).saturating_sub(description_x).max(1);
-    let content_width = width.saturating_sub(2);
+    let description_width = text_width.saturating_sub(description_x).max(1);
+    let content_width = text_width;
     let content_height = content_height(sections, key_width, description_width, content_width);
+    let inner_width = width.saturating_sub(2);
+    let footer_width = inner_width.saturating_sub(HORIZONTAL_PADDING.saturating_mul(2));
+    let close_footer = footer::layout(vec![footer::hint(&["?", "Esc"], "close")], footer_width);
+    let scroll_footer = footer::layout(
+        vec![
+            footer::hint(&["↑", "↓", "PgUp", "PgDn"], "scroll"),
+            footer::hint(&["?", "Esc"], "close"),
+        ],
+        footer_width,
+    );
+    let max_height = area.height.saturating_sub(2).min(MAX_HEIGHT);
+    let needs_scroll =
+        content_height.saturating_add(2 + close_footer.len()) > usize::from(max_height);
+    let footer_lines = if needs_scroll {
+        &scroll_footer
+    } else {
+        &close_footer
+    };
+    let footer_height = u16::try_from(footer_lines.len()).unwrap_or(u16::MAX);
     let height = u16::try_from(content_height)
         .unwrap_or(u16::MAX)
-        .saturating_add(3)
-        .min(area.height.saturating_sub(2));
+        .saturating_add(2)
+        .saturating_add(footer_height)
+        .min(max_height);
     let dialog = Rect::new(
         area.x + area.width.saturating_sub(width) / 2,
         area.y + area.height.saturating_sub(height) / 2,
@@ -92,16 +119,22 @@ pub(crate) fn render(
     frame.render_widget(block, dialog);
 
     let content = Rect::new(
-        inner.x,
+        inner.x.saturating_add(HORIZONTAL_PADDING),
         inner.y,
-        inner.width,
-        inner.height.saturating_sub(1),
+        text_width,
+        inner.height.saturating_sub(footer_height),
+    );
+    let scrollbar_area = Rect::new(
+        content.right().saturating_add(1),
+        content.y,
+        1,
+        content.height,
     );
     let footer_area = Rect::new(
-        inner.x,
-        inner.bottom().saturating_sub(1),
-        inner.width,
-        u16::from(inner.height > 0),
+        inner.x.saturating_add(HORIZONTAL_PADDING),
+        inner.bottom().saturating_sub(footer_height),
+        footer_width,
+        footer_height,
     );
     let max_scroll = content_height.saturating_sub(usize::from(content.height));
     let scroll = usize::from(scroll).min(max_scroll);
@@ -114,12 +147,16 @@ pub(crate) fn render(
         description_width,
         scroll,
     );
-    footer::render(
-        frame,
-        footer_area,
-        &[footer::hint(&["?", "Esc"], "close")],
-        None,
-    );
+    if content.height > 0 {
+        scrollbar::render_vertical(
+            frame,
+            scrollbar_area,
+            content_height,
+            usize::from(content.height),
+            scroll,
+        );
+    }
+    footer::render(frame, footer_area, footer_lines, None);
 }
 
 fn dialog_width(area: Rect, sections: &[HelpSection]) -> u16 {
@@ -165,7 +202,7 @@ fn key_column_width(sections: &[HelpSection], inner_width: u16) -> u16 {
         .map(|action| Line::from(action.keys).width())
         .max()
         .unwrap_or_default();
-    let key_limit = inner_width / 3;
+    let key_limit = inner_width / 2;
     u16::try_from(max_key_width)
         .unwrap_or(u16::MAX)
         .min(key_limit)
@@ -183,12 +220,9 @@ fn content_height(
             height += 1;
         }
         height += 1;
-        for (action_index, action) in section.actions.iter().enumerate() {
+        for action in &section.actions {
             let row_height = row_height(action, key_width, description_width, content_width);
             height += row_height;
-            if action_index + 1 < section.actions.len() {
-                height += 1;
-            }
         }
     }
     height
@@ -242,7 +276,7 @@ fn render_sections(
         );
         line += 1;
 
-        for (action_index, action) in section.actions.iter().enumerate() {
+        for action in &section.actions {
             let height = row_height(action, key_width, description_width, viewport.width);
             if action.keys.is_empty() {
                 render_scrolled_text(
@@ -287,9 +321,6 @@ fn render_sections(
                 );
             }
             line += height;
-            if action_index + 1 < section.actions.len() {
-                line += 1;
-            }
         }
     }
 }
@@ -326,12 +357,35 @@ fn render_scrolled_text(frame: &mut Frame<'_>, viewport: Rect, text: ScrolledTex
 
 #[cfg(test)]
 mod tests {
-    use super::{HelpAction, row_height};
+    use super::{HelpAction, HelpSection, content_height, key_column_width, row_height};
 
     #[test]
     fn note_height_uses_its_full_content_width() {
         let note = HelpAction::note("A short comparison note spans one row at full width.");
 
         assert_eq!(row_height(&note, 10, 20, 34), 2);
+    }
+
+    #[test]
+    fn operation_rows_are_compact_and_sections_remain_separated() {
+        let sections = [
+            HelpSection::new(
+                "First",
+                vec![HelpAction::new("a", "one"), HelpAction::new("b", "two")],
+            ),
+            HelpSection::new("Second", vec![HelpAction::new("c", "three")]),
+        ];
+
+        assert_eq!(content_height(&sections, 1, 8, 10), 6);
+    }
+
+    #[test]
+    fn navigation_shortcuts_stay_together_in_narrow_dialogs() {
+        let sections = [HelpSection::new(
+            "Navigation",
+            vec![HelpAction::new("↑ / ↓ / j / k", "scroll vertically")],
+        )];
+
+        assert_eq!(key_column_width(&sections, 30), 13);
     }
 }

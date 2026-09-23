@@ -1,6 +1,6 @@
 ---
 source: src/ui/features/environments/tests/matrix.rs
-expression: buffer_text(&buffer)
+expression: rendered
 ---
 0 Overview   1 dev  2 prod [PROD]  ›
 Ready: 3/3
@@ -17,4 +17,4 @@ Total                 +0 ~21 -0
 
 
 ────────────────────────────────────────
-Enter open  / filter  ? help  q quit
+Enter open resource  ? help  q quit

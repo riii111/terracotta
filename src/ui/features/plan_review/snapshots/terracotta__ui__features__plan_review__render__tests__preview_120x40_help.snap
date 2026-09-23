@@ -9,32 +9,32 @@ Unique targets (replace once): +2 add  ~2 update  0 replace  -1 destroy
   ~ resource "terraform_data" "api" {                                                                                  ┃
       id       = "api-20260920"                                                                                        ┃
       ~ input  = "before" -> "after"                                                                                   ┃
-      # (4 unchanged attributes hidden┌Help─────────────────────────────────────┐                                      ┃
-    }                                 │Navigation                               │                                      ┃
-                                      │↑ / ↓ / j / k scroll vertically          │                                      ┃
-  # terraform_data.worker must be repl│                                         │                                      ┃
--/+ resource "terraform_data" "worker"│← / → / h / l scroll horizontally        │                                      ┃
-      ~ input = "worker-before" -> "wo│                                         │                                      ┃
-      - old_checksum = "sha256:0123456│PgUp / PgDn   scroll one page            │                                      ┃
-      + new_checksum = (known after ap│                                         │                                      ┃
-    }                                 │Home / End    go to the top or bottom    │                                      ┃
-                                      │                                         │                                      ┃
-  # terraform_data.old will be destroy│s             overview                   │                                      ┃
-  - resource "terraform_data" "old" { │                                         │                                      ┃
-      id = "old-20260920"             │Review                                   │                                      ┃
-    }                                 │/             filter the full plan       │                                      ┃
-                                      │                                         │                                      ┃
-  # terraform_data.new will be created│Actions                                  │                                      ┃
-  + resource "terraform_data" "new" { │c             show execution context     │                                      ┃
-      input = "new-value"             │                                         │                                      ┃
-      note  = "A deliberately long syn│y             copy the full plan         │ible"                                 ┃
+      # (4 unchanged attributes hidden)                                                                                ┃
+    }                                                                                                                  ┃
+                                                                                                                       ┃
+  # terraform_data.worker must be repl┌Help─────────────────────────────────────┐                                      ┃
+-/+ resource "terraform_data" "worker"│ Navigation                              │                                      ┃
+      ~ input = "worker-before" -> "wo│ ↑ / ↓ / j / k scroll vertically         │                                      ┃
+      - old_checksum = "sha256:0123456│ ← / → / h / l scroll horizontally       │                                      ┃
+      + new_checksum = (known after ap│ PgUp / PgDn   scroll one page           │                                      ┃
+    }                                 │ Home / End    go to the top or bottom   │                                      ┃
+                                      │ s             overview                  │                                      ┃
+  # terraform_data.old will be destroy│                                         │                                      ┃
+  - resource "terraform_data" "old" { │ Review                                  │                                      ┃
+      id = "old-20260920"             │ /             filter the full plan      │                                      ┃
     }                                 │                                         │                                      ┃
-                                      │a             apply the full plan        │                                      ┃
-Changes to Outputs:                   │                                         │                                      ┃
-  + endpoint = (known after apply)    │Exit                                     │                                      ┃
-  ~ summary  = "old summary" -> "new s│q             quit                       │eview"                                ┃
-                                      │?/Esc close                              │                                      ┃
-Warning: Value for "pending" is not kn└─────────────────────────────────────────┘                                      │
+                                      │ Actions                                 │                                      ┃
+  # terraform_data.new will be created│ c             show execution context    │                                      ┃
+  + resource "terraform_data" "new" { │ y             copy the full plan        │                                      ┃
+      input = "new-value"             │ a             apply the full plan       │                                      ┃
+      note  = "A deliberately long syn│                                         │ible"                                 ┃
+    }                                 │ Exit                                    │                                      ┃
+                                      │ q             quit                      │                                      ┃
+Changes to Outputs:                   │ ?/Esc close                             │                                      ┃
+  + endpoint = (known after apply)    └─────────────────────────────────────────┘                                      ┃
+  ~ summary  = "old summary" -> "new summary with a deliberately long value for review"                                ┃
+                                                                                                                       ┃
+Warning: Value for "pending" is not known until apply                                                                  │
                                                                                                                        │
 Plan: 2 to add, 2 to change, 1 to destroy.                                                                             │
                                                                                                                        │
