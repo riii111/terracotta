@@ -474,6 +474,15 @@ pub(crate) fn render_apply_confirmation(
     }
     if !layout.renderable() {
         terminal_notice::render_wrapped(frame, layout.notice(), CONFIRMATION_NOTICE);
+        if let Some(overlay) = view.overlay() {
+            render_confirmation_overlay(
+                frame,
+                area,
+                state.review(),
+                overlay,
+                view.overlay_scroll(),
+            );
+        }
         return;
     }
 
@@ -2282,9 +2291,9 @@ End of synthetic plan body."#;
                 .with_tool_version(Tool::Terraform, "1.9.0"),
         );
         let state = confirmation_state(plan);
-        let mut view = ApplyConfirmationViewState::default();
-        assert_eq!(view.apply(ApplyConfirmationInput::OpenHelp, "main"), None);
-        for (width, height) in [(80, 24), (120, 40), (160, 60)] {
+        for (width, height) in [(40, 16), (40, 24), (80, 24), (120, 40), (160, 60)] {
+            let mut view = ApplyConfirmationViewState::default();
+            assert_eq!(view.apply(ApplyConfirmationInput::OpenHelp, "main"), None);
             let help = render_to_buffer((width, height), |frame| {
                 render_apply_confirmation(frame, &state, &view);
             });
@@ -2309,9 +2318,37 @@ End of synthetic plan body."#;
                 );
             }
             snapshot(&format!("apply_confirmation_help_{width}x{height}"), &help);
+
+            if (width, height) == (40, 16) {
+                assert!(
+                    !apply_confirmation_layout(Rect::new(0, 0, width, height), &state).renderable(),
+                    "{width}x{height} should exercise Help over an unrenderable confirmation"
+                );
+            }
+
+            if width == 40 {
+                view.overlay_bottom();
+                let bottom = render_to_buffer((width, height), |frame| {
+                    render_apply_confirmation(frame, &state, &view);
+                });
+                let bottom_text = buffer_text(&bottom);
+                assert!(
+                    bottom_text.contains("confirm apply"),
+                    "{width}x{height}: {bottom_text}"
+                );
+                assert_eq!(
+                    bottom_text.matches("close").count(),
+                    1,
+                    "{width}x{height}: {bottom_text}"
+                );
+                snapshot(
+                    &format!("apply_confirmation_help_{width}x{height}_bottom"),
+                    &bottom,
+                );
+            }
         }
 
-        view.close_overlay();
+        let mut view = ApplyConfirmationViewState::default();
         assert_eq!(
             view.apply(ApplyConfirmationInput::OpenContext, "main"),
             None
