@@ -1039,7 +1039,7 @@ pub(crate) fn render_environment(
     frame: &mut Frame<'_>,
     area: Rect,
     state: &ReviewSessionState,
-    view: &PlanReviewViewState,
+    view: &mut PlanReviewViewState,
     now: Instant,
 ) {
     render_for_navigation(
@@ -1060,10 +1060,11 @@ pub(crate) fn render_with_quit_confirmation(
     now: Instant,
     quit_confirmation: bool,
 ) {
+    let mut view = view.clone();
     render_for_navigation(
         frame,
         state,
-        view,
+        &mut view,
         now,
         quit_confirmation,
         ReviewNavigation::Standalone,
@@ -1078,7 +1079,7 @@ pub(crate) fn render_with_quit_confirmation(
 fn render_for_navigation(
     frame: &mut Frame<'_>,
     state: &ReviewSessionState,
-    view: &PlanReviewViewState,
+    view: &mut PlanReviewViewState,
     now: Instant,
     quit_confirmation: bool,
     navigation: ReviewNavigation,
@@ -1120,6 +1121,12 @@ fn render_for_navigation(
         );
         return;
     }
+    view.reconcile(
+        layout.body(),
+        layout.max_vertical(),
+        layout.max_horizontal(),
+        layout.matches(),
+    );
     header::render_plan_review(frame, layout.shell.header(), state.review());
     frame.render_widget(
         Block::new().style(theme::body_style()),
