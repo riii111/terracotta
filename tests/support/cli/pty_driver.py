@@ -370,7 +370,7 @@ try:
             with open(os.path.join(root, "prod/retry.auto.tfvars"), "w") as repair:
                 repair.write('release = "new"\n')
             send_key(b"r")
-            wait_parts(["Ready: 3/3", "prod: Ready"], "real_selected_retry_success")
+            wait_parts(["Ready: 3/3", "prod · terraform"], "real_selected_retry_success")
             send_key(b"v")
             wait_parts(["terraform_data.api", "prod"], "real_retried_plan_review")
             send_key(b"0")
@@ -403,13 +403,13 @@ try:
             wait_new("Ready: 12/12", "many_ready")
             for _ in range(11):
                 send_key(b"]")
-            wait_new("env-11: Ready", "twelfth_column")
+            wait_new("env-11 · terraform", "twelfth_column")
             send_key(b"\r")
             wait_parts(["terraform_data.api", "env-11"], "twelfth_environment")
             send_key(b"[")
             wait_new("env-10", "eleventh_environment")
             send_key(b"0")
-            wait_new("env-11: Ready", "restored_last_column")
+            wait_new("env-11 · terraform", "restored_last_column")
             send_key(b"q")
             exit_code = wait_exit()
         elif scenario == "env_show_failure":

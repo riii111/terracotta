@@ -128,6 +128,22 @@ fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
 }
 
 #[test]
+fn help_explains_matrix_symbols_and_missing_rows() {
+    let state = partial_session();
+    let mut view = EnvironmentView::default();
+    view.help();
+
+    let text = buffer_text(&render_to_buffer((120, 60), |frame| {
+        view.render(frame, &state);
+    }));
+
+    assert!(text.contains("blank: resource not in this environment."));
+    assert!(text.contains(".: resource present, with no change."));
+    assert!(text.contains("?: environment plan not fetched yet."));
+    assert!(text.contains("why: missing = present in only some environments."));
+}
+
+#[test]
 fn ready_review_remains_available_and_quit_requires_confirmation_while_acquiring() {
     let state = partial_session();
     let mut view = EnvironmentView::default();

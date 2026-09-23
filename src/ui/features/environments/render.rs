@@ -142,7 +142,7 @@ impl EnvironmentView {
             .height
             .saturating_sub(context_height + 1 + detail_height);
 
-        matrix_height >= 7
+        matrix_height >= 9
     }
 
     fn render_dialog(&self, frame: &mut Frame<'_>, text: &str) {
@@ -164,16 +164,19 @@ impl EnvironmentView {
 }
 
 fn overview_context(view: &EnvironmentView, plan: &EnvironmentPlan) -> String {
-    let status = if view.matrix.searching() || view.matrix.filtered() {
-        format!("Filter: /{}   (display only)", view.matrix.filter())
-    } else {
+    let selection = format!(
+        "{} · {}",
+        environments::name(plan),
+        plan.tool.display_name()
+    );
+    if view.matrix.searching() || view.matrix.filtered() {
         format!(
-            "{}: {}",
-            environments::name(plan),
-            environments::status(plan)
+            "Filter: /{}   (display only)\n{selection}",
+            view.matrix.filter()
         )
-    };
-    format!("{status}\n{}", environments::context(plan))
+    } else {
+        selection
+    }
 }
 
 fn overview_detail(plan: &EnvironmentPlan) -> String {
@@ -249,6 +252,12 @@ fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
                 "Comparison",
                 vec![
                     help_dialog::HelpAction::note("Same changes compare patterns."),
+                    help_dialog::HelpAction::note("blank: resource not in this environment."),
+                    help_dialog::HelpAction::note(".: resource present, with no change."),
+                    help_dialog::HelpAction::note("?: environment plan not fetched yet."),
+                    help_dialog::HelpAction::note(
+                        "why: missing = present in only some environments.",
+                    ),
                     help_dialog::HelpAction::note("Unknown values remain unknown."),
                     help_dialog::HelpAction::note("Only Ready environments are compared."),
                     help_dialog::HelpAction::note("Excluded environments are not retried."),

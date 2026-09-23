@@ -3,26 +3,26 @@ source: src/ui/features/environments/tests.rs
 expression: text
 ---
 0 Overview   1 a-ready  2 b-error  3 c-running  4 d-pending  5 e-hcp
-Ready: 1/5 ┌Help────────────────────────────────────────────────────┐
-d-pending: │Navigation                                              │
-───────────│↑ / ↓ / j / k select a resource row                     │───────────
-a-ready: Re│                                                        │
-terraform  │← / → / [ / ] select an environment                     │
-Directory: │                                                        │
-           │PgUp / PgDn   move one page                             │
-Address    │                                                        │  why
-No matching│Home / End    go to the first or last row               │
-           │                                                        │
-           │Review                                                  │
-           │Enter         open the selected resource                │
-           │                                                        │
-           │1–9           open the resource in that environment     │
-           │                                                        │
-           │Space         expand or collapse a group                │
-           │                                                        │
-           │/             filter full addresses                     │
-           │                                                        │
-Total      │v             show the full plan from the top           │
-           │?/Esc close                                             │
-───────────└────────────────────────────────────────────────────────┘───────────
+Ready┌Help───────────────────────────────────────────────────────────────┐
+d-pen│Navigation                                                         │
+─────│↑ / ↓ / j / k select a resource row                                │──────
+a-rea│                                                                   │
+     │← / → / [ / ] select an environment                                │
+Addre│                                                                   │
+No ma│PgUp / PgDn   move one page                                        │
+Total│                                                                   │
+     │Home / End    go to the first or last row                          │
+     │                                                                   │
+     │Review                                                             │
+     │Enter         open the selected resource                           │
+     │                                                                   │
+     │1–9           open the resource in that environment                │
+     │                                                                   │
+     │Space         expand or collapse a group                           │
+     │                                                                   │
+     │/             filter full addresses                                │
+     │                                                                   │
+     │v             show the full plan from the top                      │
+     │?/Esc close                                                        │
+─────└───────────────────────────────────────────────────────────────────┘──────
 Enter open diff   / filter   Space expand   ? help   q quit

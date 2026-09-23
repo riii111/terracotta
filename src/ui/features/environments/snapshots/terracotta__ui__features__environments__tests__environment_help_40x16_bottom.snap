@@ -8,13 +8,13 @@ b-│Unknown values remain unknown.    │
 d-│                                  │
 HC│Only Ready environments are       │
 a-│compared.                         │
-te│                                  │
-Di│Excluded environments are not     │
-  │retried.                          │
-Ad│                                  │
-No│Exit                              │th
+  │                                  │
+Ad│Excluded environments are not     │
+No│retried.                          │th
+To│                                  │
+  │Exit                              │
   │q           quit; confirms first  │
   │            while acquiring       │
-To│?/Esc close                       │
+  │?/Esc close                       │
   └──────────────────────────────────┘
 Enter open  / filter  ? help  q quit

@@ -5,12 +5,11 @@ expression: output
 0 Overview   1 staging  2 staging
 Ready: 0/2   Compared: none   staging: Error   staging: Error
 ────────────────────────────────────────────────────────────────────────────────
-staging: Error
-tofu   ws:staging
-Directory: /synthetic/prod
+staging · tofu
 Synthetic acquisition error
-Address                         staging             staging             why
+Address     staging   > staging  why
 Waiting for environment plans.
+Total       Error     Error
 
 
 
@@ -22,7 +21,8 @@ Waiting for environment plans.
 
 
 
-Total                           Error               Error
+
+
 
 ────────────────────────────────────────────────────────────────────────────────
 Enter open diff   / filter   Space expand   ? help   q quit

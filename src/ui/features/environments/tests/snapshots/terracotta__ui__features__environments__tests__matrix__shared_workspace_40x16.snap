@@ -6,15 +6,15 @@ expression: output
 Ready: 0/2   Compared: none   staging:
 Error   staging: Error
 ────────────────────────────────────────
-staging: Error
-tofu   ws:staging
-Directory: /synthetic/prod
+staging · tofu
 Synthetic acquisition error
-Address         staging         why
+Address     staging   > staging  why
 Waiting for environment plans.
+Total       Error     Error
 
 
-Total           Error
+
+
 
 ────────────────────────────────────────
 Enter open  / filter  ? help  q quit
