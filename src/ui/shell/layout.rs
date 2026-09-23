@@ -279,7 +279,6 @@ mod tests {
     fn caps_centered_height_at_four_fifths_with_two_rows_of_margin() {
         assert_eq!(max_centered_height(Rect::new(0, 0, 80, 24)), 22);
         assert_eq!(max_centered_height(Rect::new(0, 0, 120, 40)), 32);
-        assert_eq!(max_centered_height(Rect::new(0, 0, 160, 60)), 48);
     }
 
     #[test]

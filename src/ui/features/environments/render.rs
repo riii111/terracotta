@@ -1,9 +1,9 @@
-use super::EnvironmentView;
+use super::{EnvironmentDialog, EnvironmentView};
 use crate::{
     app::environments::{EnvironmentPlan, EnvironmentSession, EnvironmentState},
     ui::{
         features::{overview::matrix, plan_review},
-        primitives::atoms::separator,
+        primitives::{atoms::separator, molecules::help_dialog},
         shell::environments,
         theme,
     },
@@ -59,8 +59,13 @@ impl EnvironmentView {
                 frame,
                 "Stop acquiring environment plans?\nEnter stop and quit   Esc continue",
             );
-        } else if let Some(text) = &self.dialog {
-            self.render_dialog(frame, text);
+        } else if let Some(dialog) = &self.dialog {
+            match dialog {
+                EnvironmentDialog::Help => {
+                    render_help_dialog(frame, frame.area(), self.dialog_scroll);
+                }
+                EnvironmentDialog::Message(text) => self.render_dialog(frame, text),
+            }
         }
     }
 
@@ -205,4 +210,58 @@ fn section_heights(area: Rect, context: &str, detail: &str) -> (u16, u16) {
     .min(area.height.saturating_sub(context_height + 6));
 
     (context_height, detail_height)
+}
+
+fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
+    help_dialog::render(
+        frame,
+        area,
+        "Help",
+        &[
+            help_dialog::HelpSection::new(
+                "Navigation",
+                vec![
+                    help_dialog::HelpAction::new("↑ / ↓ / j / k", "select a resource row"),
+                    help_dialog::HelpAction::new("← / → / [ / ]", "select an environment"),
+                    help_dialog::HelpAction::new("PgUp / PgDn", "move one page"),
+                    help_dialog::HelpAction::new("Home / End", "go to the first or last row"),
+                ],
+            ),
+            help_dialog::HelpSection::new(
+                "Review",
+                vec![
+                    help_dialog::HelpAction::new("Enter", "open the selected resource"),
+                    help_dialog::HelpAction::new("1–9", "open the resource in that environment"),
+                    help_dialog::HelpAction::new("Space", "expand or collapse a group"),
+                    help_dialog::HelpAction::new("/", "filter full addresses"),
+                    help_dialog::HelpAction::new("v", "show the full plan from the top"),
+                ],
+            ),
+            help_dialog::HelpSection::new(
+                "Actions",
+                vec![
+                    help_dialog::HelpAction::new("y", "copy the selected environment's plan"),
+                    help_dialog::HelpAction::new("c", "show environment context"),
+                    help_dialog::HelpAction::new("r", "retry a selected Error environment"),
+                ],
+            ),
+            help_dialog::HelpSection::new(
+                "Comparison",
+                vec![
+                    help_dialog::HelpAction::note("Same changes compare patterns."),
+                    help_dialog::HelpAction::note("Unknown values remain unknown."),
+                    help_dialog::HelpAction::note("Only Ready environments are compared."),
+                    help_dialog::HelpAction::note("Excluded environments are not retried."),
+                ],
+            ),
+            help_dialog::HelpSection::new(
+                "Exit",
+                vec![help_dialog::HelpAction::new(
+                    "q",
+                    "quit; confirms first while acquiring",
+                )],
+            ),
+        ],
+        scroll,
+    );
 }

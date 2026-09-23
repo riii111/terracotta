@@ -41,4 +41,4 @@ No Terraform process, provider, state file, or cloud credential is used by this 
 The review surface preserves Terraform order, attributes, output values, and diagnostics.                              │
 Long lines remain unwrapped in the plan body; horizontal movement exposes the hidden suffix.                           ▼
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-Enter confirm | Esc cancel                                                                             8 matches    3/43
+Enter confirm | Esc cancel                                                                         8 matches   Line 3/43

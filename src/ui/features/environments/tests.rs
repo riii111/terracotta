@@ -92,6 +92,42 @@ fn pending_running_ready_error_and_excluded_remain_distinct_at_supported_sizes()
 }
 
 #[test]
+fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
+    let state = partial_session();
+    let mut view = EnvironmentView::default();
+    view.help();
+
+    let buffer = render_to_buffer((80, 24), |frame| view.render(frame, &state));
+    let text = buffer_text(&buffer);
+    assert!(text.contains("Help"));
+    assert!(text.contains("Navigation"));
+    assert!(text.contains("select an environment"));
+    assert!(!text.contains("0 / s"));
+    assert_eq!(text.matches("close").count(), 1);
+    assert!(
+        buffer
+            .cell((0, 0))
+            .expect("dimmed background")
+            .modifier
+            .contains(ratatui::style::Modifier::DIM)
+    );
+    insta::assert_snapshot!("environment_help_80x24", text);
+
+    let narrow = buffer_text(&render_to_buffer((40, 24), |frame| {
+        view.render(frame, &state);
+    }));
+    insta::assert_snapshot!("environment_help_40x24", narrow);
+
+    view.dialog_scroll = u16::MAX;
+    let bottom = render_to_buffer((40, 16), |frame| view.render(frame, &state));
+    let bottom_text = buffer_text(&bottom);
+    assert!(bottom_text.contains("Exit"));
+    assert!(bottom_text.contains("quit"));
+    assert_eq!(bottom_text.matches("close").count(), 1);
+    insta::assert_snapshot!("environment_help_40x16_bottom", bottom_text);
+}
+
+#[test]
 fn ready_review_remains_available_and_quit_requires_confirmation_while_acquiring() {
     let state = partial_session();
     let mut view = EnvironmentView::default();

@@ -28,8 +28,13 @@ pub(crate) struct EnvironmentView {
     confirming_quit: bool,
     reviews: Vec<PlanReviewViewState>,
     notice: Option<String>,
-    dialog: Option<String>,
+    dialog: Option<EnvironmentDialog>,
     dialog_scroll: u16,
+}
+
+enum EnvironmentDialog {
+    Help,
+    Message(String),
 }
 
 pub(crate) enum EnvironmentInput {
@@ -306,12 +311,13 @@ impl EnvironmentView {
     }
 
     fn show_dialog(&mut self, text: String) {
-        self.dialog = Some(text);
+        self.dialog = Some(EnvironmentDialog::Message(text));
         self.dialog_scroll = 0;
     }
 
     fn help(&mut self) {
-        self.show_dialog("Help\n↑↓ / j k select row   ←→ select environment\nEnter open selected resource   Space expand/collapse group\n1-9 open resource in that environment   [ ] previous/next environment\n0 / s Overview   Esc return to the same row and column\n/ filter full addresses   v full plan from the top\nr retry selected Error environment\ny copy selected environment's full plan   c full environment context\nSame change compares patterns; unknown values remain unknown.\nCompared lists only Ready environments. Excluded environments are not retried.\nq quit (confirmation while acquiring)\n\n↑↓ scroll   ? / Esc close".to_owned());
+        self.dialog = Some(EnvironmentDialog::Help);
+        self.dialog_scroll = 0;
     }
 
     fn quit(&mut self, state: &EnvironmentSession) -> Option<EnvironmentInput> {

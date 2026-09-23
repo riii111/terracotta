@@ -23,9 +23,12 @@ def environment():
     }
 
 
-def configuration(name, changed):
+def configuration(name, changed, ready=False):
     value = "new" if changed else "old"
-    required = 'variable "release" { type = string }\n' if changed and name == "prod" else ""
+    required = (
+        'variable "release" { type = string }\n'
+        if changed and name == "prod" and not ready else ""
+    )
     release = "var.release" if required else json.dumps(value)
     extra = 'resource "terraform_data" "dev_only" { input = "new" }\n' if changed and name == "dev" else ""
     return f'''terraform {{
@@ -47,7 +50,7 @@ def run(directory, tool, *arguments):
         raise RuntimeError(result.stdout + result.stderr)
 
 
-def setup(tool):
+def setup(tool="terraform", *, ready=False):
     directory = Path(tempfile.mkdtemp(prefix="terracotta-environments-")).resolve()
     (directory / MARKER).write_text(str(directory) + "\n")
     try:
@@ -57,7 +60,7 @@ def setup(tool):
             (child / "main.tf").write_text(configuration(name, False))
             run(child, tool, "init", "-input=false", "-no-color")
             run(child, tool, "apply", "-auto-approve", "-input=false", "-no-color")
-            (child / "main.tf").write_text(configuration(name, True))
+            (child / "main.tf").write_text(configuration(name, True, ready=ready))
             # Keep local state; require Terracotta to initialize each environment.
             shutil.rmtree(child / ".terraform")
     except BaseException:
@@ -83,15 +86,56 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     create = commands.add_parser("setup")
     create.add_argument("--tool", choices=("terraform", "tofu"), default="terraform")
+    demo = commands.add_parser("demo", help="Build and open a ready three-environment review")
+    demo.add_argument("--tool", choices=("terraform", "tofu"), default="terraform")
     for name in ("repair", "clean"):
         commands.add_parser(name).add_argument("directory", type=Path)
     args = parser.parse_args()
     if args.command == "setup":
         print(setup(args.tool))
+    elif args.command == "demo":
+        sys.exit(run_demo(args.tool))
     elif args.command == "repair":
         (checked(args.directory) / "prod/retry.auto.tfvars").write_text('release = "new"\n')
     else:
         shutil.rmtree(checked(args.directory))
+
+
+def run_demo(tool):
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        raise RuntimeError("The demo requires an interactive terminal")
+
+    repository = Path(__file__).resolve().parents[2]
+    build_environment = environment()
+    target = Path(build_environment.get("CARGO_TARGET_DIR", "target/environments-demo"))
+    if not target.is_absolute():
+        target = repository / target
+    target = target.resolve()
+    build_environment["CARGO_TARGET_DIR"] = str(target)
+    print("Starting three-environment demo. Ctrl-C to cancel.", file=sys.stderr, flush=True)
+    print("[1/3] Preparing ready local environments...", file=sys.stderr, flush=True)
+    directory = setup(tool, ready=True)
+    try:
+        build_environment["RUSTC_WRAPPER"] = ""
+        print(f"[2/3] Building Terracotta (cache: {target})...", file=sys.stderr, flush=True)
+        build = subprocess.run(
+            ["cargo", "build", "--locked"],
+            cwd=repository,
+            env=build_environment,
+            stdin=subprocess.DEVNULL,
+        )
+        if build.returncode:
+            return build.returncode
+
+        executable = "terracotta.exe" if os.name == "nt" else "terracotta"
+        print("[3/3] Opening the three-environment review...", file=sys.stderr, flush=True)
+        return subprocess.run(
+            [str(target / "debug" / executable), tool, f"-chdir={directory}", "plan"],
+            cwd=directory,
+            env=environment(),
+        ).returncode
+    finally:
+        shutil.rmtree(checked(directory))
 
 
 if __name__ == "__main__":

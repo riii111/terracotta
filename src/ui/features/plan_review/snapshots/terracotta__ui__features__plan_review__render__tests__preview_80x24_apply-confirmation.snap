@@ -3,7 +3,7 @@ source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
 main [PROD]  ws:default  terraform loading...  /repo/environme...production/main
-Pmain [PROD]  ws:default  terraform loading...  /repo/environm...roduction/main
+Umain [PROD]  ws:default  terraform loading...  /repo/environm...roduction/main
 ────────────────────────────────────────────────────────────────────────────────
   # terraform_data.api will be updated in-place                                ▲
   ~ resource "terraform_data" "api" {                                          ┃
@@ -25,4 +25,4 @@ Pmain [PROD]  ws:default  terraform loading...  /repo/environm...roduction/main
     }                                                                          │
 ◀︎═══════════════════════════════════════════════════════════════════───────────▶︎
 ────────────────────────────────────────────────────────────────────────────────
-/ filter | ? help | q quit | y copy plan                                    3/43
+/ filter | ? help | q quit | y copy plan | s overview                  Line 3/43

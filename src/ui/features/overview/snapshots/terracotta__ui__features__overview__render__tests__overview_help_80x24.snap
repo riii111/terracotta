@@ -1,0 +1,28 @@
+---
+source: src/ui/features/overview/render.rs
+expression: text
+---
+infra  ws:default  terraform loading...  /repo/infra
+Overview  +0 a┌Help─────────────────────────────────────────────┐
+──────────────│Navigation                                       │───────────────
+  Change Addre│↑ / ↓ / j / k select a row                       │
+Other changes:│                                                 │ss v for the fu
+  ~ x2   [+] t│PgUp / PgDn   move one page                      │
+              │                                                 │
+              │Home / End    go to the first or last row        │
+              │                                                 │
+              │Review                                           │
+              │Enter         open the selected raw block        │
+              │                                                 │
+              │/             filter full addresses              │
+              │                                                 │
+              │Space         expand or collapse a group         │
+              │                                                 │
+              │v             show the full plan from the top    │
+              │                                                 │
+              │Actions                                          │
+              │y             copy the full plan                 │
+              │                                                 │
+              │?/Esc close                                      │
+──────────────└─────────────────────────────────────────────────┘───────────────
+/ filter | Enter open raw | Space expand | v full plan | ? help | q quit

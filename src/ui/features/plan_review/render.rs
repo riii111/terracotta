@@ -16,7 +16,7 @@ use crate::app::{
 };
 use crate::ui::primitives::{
     atoms::{scrollbar, separator},
-    molecules::terminal_notice,
+    molecules::{help_dialog, terminal_notice},
 };
 use crate::ui::shell::{context, footer, header, layout as shell_layout};
 use crate::ui::theme;
@@ -300,6 +300,7 @@ fn layout_with_content(
                                     content,
                                     0,
                                     state.review().document().text().split('\n').count(),
+                                    panel_width,
                                 ),
                             ),
                             theme::secondary_style(),
@@ -311,6 +312,7 @@ fn layout_with_content(
                             content,
                             0,
                             state.review().document().text().split('\n').count(),
+                            panel_width,
                         ),
                         theme::secondary_style(),
                     ))
@@ -802,21 +804,31 @@ fn render_overlay(
     area: Rect,
     review: &PlanReview,
     view: &PlanReviewViewState,
+    navigation: ReviewNavigation,
 ) {
     let Some(overlay) = view.overlay() else {
         return;
     };
-    let lines = match overlay {
-        PlanReviewOverlay::Help => plan_help_lines(review, view),
-        PlanReviewOverlay::Context => context::context_lines(review.context()),
-    };
-    render_dialog(
-        frame,
-        area,
-        overlay_title(overlay),
-        lines,
-        view.overlay_scroll(),
-    );
+    match overlay {
+        PlanReviewOverlay::Help => help_dialog::render(
+            frame,
+            area,
+            overlay_title(overlay),
+            &plan_help_sections(
+                review,
+                navigation,
+                !view.searching() && !review.search_query().is_empty(),
+            ),
+            view.overlay_scroll(),
+        ),
+        PlanReviewOverlay::Context => render_dialog(
+            frame,
+            area,
+            overlay_title(overlay),
+            context::context_lines(review.context()),
+            view.overlay_scroll(),
+        ),
+    }
 }
 
 fn render_confirmation_overlay(
@@ -826,58 +838,104 @@ fn render_confirmation_overlay(
     overlay: ConfirmationOverlay,
     scroll: u16,
 ) {
-    let lines = match overlay {
-        ConfirmationOverlay::Help => vec![
-            footer::hint(&["Enter"], "confirm"),
-            footer::hint(&["Esc"], "back"),
-            footer::hint(&["↑", "↓", "PgUp", "PgDn"], "scroll confirmation"),
-            footer::hint(&["←", "→"], "move input"),
-            footer::hint(&["Home", "End"], "input start/end"),
-            footer::hint(&["Backspace"], "delete input"),
-            footer::hint(&["Tab"], "context"),
-            footer::hint(&["?", "Esc"], "close help"),
-        ],
-        ConfirmationOverlay::Context => context::context_lines(review.context()),
-    };
-    render_dialog(
-        frame,
-        area,
-        confirmation_overlay_title(overlay),
-        lines,
-        scroll,
-    );
+    match overlay {
+        ConfirmationOverlay::Help => help_dialog::render(
+            frame,
+            area,
+            confirmation_overlay_title(overlay),
+            &[
+                help_dialog::HelpSection::new(
+                    "Navigation",
+                    vec![
+                        help_dialog::HelpAction::new("↑ / ↓ / PgUp / PgDn", "scroll confirmation"),
+                        help_dialog::HelpAction::new("← / →", "move in confirmation input"),
+                        help_dialog::HelpAction::new("Home / End", "move to input start or end"),
+                    ],
+                ),
+                help_dialog::HelpSection::new(
+                    "Input",
+                    vec![
+                        help_dialog::HelpAction::new("Type", "enter the confirmation text"),
+                        help_dialog::HelpAction::new("Backspace", "delete before the cursor"),
+                    ],
+                ),
+                help_dialog::HelpSection::new(
+                    "Context",
+                    vec![help_dialog::HelpAction::new(
+                        "Tab",
+                        "show execution context",
+                    )],
+                ),
+                help_dialog::HelpSection::new(
+                    "Apply",
+                    vec![
+                        help_dialog::HelpAction::new("Enter", "confirm apply"),
+                        help_dialog::HelpAction::new("Esc", "return to plan review"),
+                    ],
+                ),
+            ],
+            scroll,
+        ),
+        ConfirmationOverlay::Context => render_dialog(
+            frame,
+            area,
+            confirmation_overlay_title(overlay),
+            context::context_lines(review.context()),
+            scroll,
+        ),
+    }
 }
 
-fn plan_help_lines(review: &PlanReview, view: &PlanReviewViewState) -> Vec<Line<'static>> {
-    let filter_action = if review.search_query().is_empty() {
-        footer::hint(&["/"], "filter")
-    } else {
-        footer::hint(&["/"], "edit filter")
-    };
-    let mut lines = vec![
-        footer::hint(&["↑", "↓", "j", "k"], "scroll"),
-        footer::hint(&["←", "→", "h", "l"], "horizontal scroll"),
-        footer::hint(&["PgUp", "PgDn", "Home", "End"], "page/top/bottom"),
-        filter_action,
-        footer::hint(&["y"], "copy full plan"),
-        footer::hint(&["c"], "context"),
-        footer::hint(&["q"], "quit"),
+fn plan_help_sections(
+    review: &PlanReview,
+    navigation: ReviewNavigation,
+    filter_confirmed: bool,
+) -> Vec<help_dialog::HelpSection> {
+    let mut move_actions = vec![
+        help_dialog::HelpAction::new("↑ / ↓ / j / k", "scroll vertically"),
+        help_dialog::HelpAction::new("← / → / h / l", "scroll horizontally"),
+        help_dialog::HelpAction::new("PgUp / PgDn", "scroll one page"),
+        help_dialog::HelpAction::new("Home / End", "go to the top or bottom"),
     ];
+    if navigation == ReviewNavigation::Standalone {
+        move_actions.push(help_dialog::HelpAction::new("s", "overview"));
+    } else {
+        move_actions.push(help_dialog::HelpAction::new("0 / s", "return to overview"));
+    }
+
+    let mut review_actions = vec![help_dialog::HelpAction::new(
+        "/",
+        if review.search_query().is_empty() {
+            "filter the full plan"
+        } else {
+            "edit the full-plan filter"
+        },
+    )];
     if !review.search_query().is_empty() {
-        lines.insert(0, footer::hint(&["Esc"], "clear filter"));
-        lines.insert(6, footer::hint(&["n", "N"], "next/previous match"));
+        review_actions.push(help_dialog::HelpAction::new(
+            "n / N",
+            "next or previous match",
+        ));
     }
+    if filter_confirmed {
+        review_actions.push(help_dialog::HelpAction::new(
+            "Esc",
+            "close Help; press Esc again to clear filter",
+        ));
+    }
+    let mut action_items = vec![
+        help_dialog::HelpAction::new("c", "show execution context"),
+        help_dialog::HelpAction::new("y", "copy the full plan"),
+    ];
     if review.apply_entry() && review.apply_allowed() && review.metadata().applyable() {
-        lines.insert(5, footer::hint(&["a"], "apply full plan"));
+        action_items.push(help_dialog::HelpAction::new("a", "apply the full plan"));
     }
-    if view.searching() {
-        lines = vec![
-            footer::hint(&["Enter"], "confirm filter"),
-            footer::hint(&["Esc"], "cancel filter"),
-        ];
-    }
-    lines.push(footer::hint(&["?", "Esc"], "close help"));
-    lines
+    vec![
+        help_dialog::HelpSection::new("Navigation", move_actions),
+        help_dialog::HelpSection::new("Review", review_actions),
+        help_dialog::HelpSection::new("Actions", action_items),
+        help_dialog::HelpSection::new("Exit", vec![help_dialog::HelpAction::new("q", "quit")]),
+    ]
 }
 
 const fn overlay_title(overlay: PlanReviewOverlay) -> &'static str {
@@ -1117,7 +1175,7 @@ fn render_for_navigation(
         separator::render(layout.shell.footer_separator().width),
         layout.shell.footer_separator(),
     );
-    render_overlay(frame, area, state.review(), view);
+    render_overlay(frame, area, state.review(), view, navigation);
 }
 
 fn prepare_content<'a>(
@@ -1391,7 +1449,7 @@ const fn terminal_notice_message(
 fn plan_status_line(state: &ReviewSessionState) -> Line<'static> {
     Line::from(Span::styled(
         format!(
-            "Plan: +{} add  ~{} update  {} replace  -{} destroy",
+            "Unique targets: +{} add  ~{} update  {} replace  -{} destroy",
             state.review().metadata().additions(),
             state.review().metadata().changes(),
             state.review().metadata().replacements(),
@@ -1456,13 +1514,16 @@ fn filter_footer_status(query: &str, match_count: usize, width: u16) -> Option<S
     }
 }
 
-fn position_status(position: u16, total: usize) -> String {
+const COMPACT_POSITION_STATUS_WIDTH: u16 = 72;
+
+fn position_status(position: u16, total: usize, width: u16) -> String {
     let total = total.max(1);
     let position = usize::from(position).saturating_add(1).min(total);
-    format!(
-        "{position:>width$}/{total}",
-        width = total.to_string().len()
-    )
+    if width >= COMPACT_POSITION_STATUS_WIDTH {
+        format!("Line {position}/{total}")
+    } else {
+        format!("L{position}/{total}")
+    }
 }
 
 fn review_footer_status(
@@ -1475,6 +1536,7 @@ fn review_footer_status(
         content,
         view.scroll().0,
         state.review().document().text().split('\n').count(),
+        width,
     );
     filter_footer_status(state.review().search_query(), content.matches.len(), width).map_or_else(
         || position.clone(),
@@ -1486,6 +1548,7 @@ fn position_status_for_content(
     content: &PreparedContent<'_>,
     position: u16,
     total: usize,
+    width: u16,
 ) -> String {
     let display_index = usize::from(position);
     let source_position = content
@@ -1499,6 +1562,7 @@ fn position_status_for_content(
     position_status(
         u16::try_from(source_position.saturating_sub(1)).unwrap_or(u16::MAX),
         total,
+        width,
     )
 }
 
@@ -1579,6 +1643,8 @@ fn footer_items(
     };
     if navigation == ReviewNavigation::Environments && !searching && !filtered {
         items.insert(0, footer::hint(&["Esc"], "overview"));
+    } else if navigation == ReviewNavigation::Standalone && !searching && !filtered {
+        items.push(footer::hint(&["s"], "overview"));
     }
     items
 }
@@ -1982,9 +2048,6 @@ End of synthetic plan body."#;
         });
         let help_text = buffer_text(&help);
         assert!(help_text.contains("Help"));
-        assert!(help_text.contains("a apply full plan"));
-        assert!(help_text.contains("y copy full plan"));
-        assert!(!help_text.contains("s overview"));
         assert_eq!(view.scroll(), position);
 
         view.close_overlay();
@@ -2020,6 +2083,58 @@ End of synthetic plan body."#;
     }
 
     #[test]
+    fn renders_plan_help_with_overview_navigation_and_scrollable_sections() {
+        let state = review_state(review().with_apply_entry(true));
+        let mut view = PlanReviewViewState::default();
+        view.apply_with_matches(PlanReviewInput::OpenHelp, Rect::default(), 0, 0, "", &[]);
+
+        let help = render_to_buffer((120, 40), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        let help_text = buffer_text(&help);
+        assert!(help_text.contains("Help"));
+        assert!(help_text.contains("s             overview"));
+        assert!(help_text.contains("copy the full plan"));
+        assert!(help_text.contains("apply the full plan"));
+        assert!(!help_text.contains("clear filter"));
+        assert_eq!(help_text.matches("close").count(), 1);
+        assert!(
+            help.cell((0, 0))
+                .expect("dimmed background")
+                .modifier
+                .contains(Modifier::DIM)
+        );
+        snapshot("preview_120x40_help", &help);
+
+        view.overlay_bottom();
+        let bottom = render_to_buffer((80, 24), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        let bottom_text = buffer_text(&bottom);
+        assert!(bottom_text.contains("Exit"));
+        assert!(bottom_text.contains("quit"));
+        assert_eq!(bottom_text.matches("close").count(), 1);
+        snapshot("preview_80x24_help_bottom", &bottom);
+    }
+
+    #[test]
+    fn confirmed_filter_help_explains_how_to_clear_the_filter() {
+        let mut plan = review();
+        plan.set_search_query("worker".to_owned());
+        let state = review_state(plan);
+        let mut view = PlanReviewViewState::default();
+        view.apply_with_matches(PlanReviewInput::OpenHelp, Rect::default(), 0, 0, "", &[]);
+
+        let help = render_to_buffer((120, 40), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        let text = buffer_text(&help);
+
+        assert!(text.contains("next or previous match"));
+        assert!(text.contains("press Esc again to clear filter"));
+    }
+
+    #[test]
     fn renders_apply_help_and_context_with_only_confirmation_actions() {
         let plan = review().with_context(
             ExecutionContext::loading("/repo/environments/production/main")
@@ -2035,8 +2150,9 @@ End of synthetic plan body."#;
         });
         let help_text = buffer_text(&help);
         assert!(help_text.contains("Apply help"));
-        assert!(help_text.contains("Enter confirm"));
-        assert!(help_text.contains("Tab context"));
+        assert!(help_text.contains("confirm apply"));
+        assert!(help_text.contains("show execution context"));
+        assert_eq!(help_text.matches("close").count(), 1);
 
         view.close_overlay();
         assert_eq!(
@@ -3942,7 +4058,7 @@ End of synthetic plan body."#;
             assert!(
                 position("Warning: Deprecated configuration") < position("warning detail line 1")
             );
-            assert!(position("Plan: +1 add") < position("Error: Invalid configuration"));
+            assert!(position("Unique targets: +1 add") < position("Error: Invalid configuration"));
             assert_text_prefix_uses_style(
                 &buffer,
                 "Error: Invalid configuration",
@@ -4023,6 +4139,45 @@ End of synthetic plan body."#;
                 "{footer_lines:?}"
             );
             assert!(!footer_lines.iter().any(|line| line.contains("a apply")));
+        }
+
+        #[test]
+        fn single_environment_footer_shows_overview_when_it_fits() {
+            let wide = footer::layout_with_notice(
+                footer_items(false, true, 0, false, ReviewNavigation::Standalone),
+                80,
+                Some("Line 1/43"),
+            );
+            let wide_text = wide
+                .iter()
+                .flat_map(|line| line.spans.iter())
+                .map(|span| span.content.as_ref())
+                .collect::<String>();
+
+            assert!(wide_text.contains("s overview"), "{wide_text}");
+
+            let narrow = footer::layout_with_notice(
+                footer_items(false, true, 0, false, ReviewNavigation::Standalone),
+                24,
+                Some("L1/43"),
+            );
+            let narrow_text = narrow
+                .iter()
+                .flat_map(|line| line.spans.iter())
+                .map(|span| span.content.as_ref())
+                .collect::<String>();
+
+            assert!(narrow_text.contains("/ filter"), "{narrow_text}");
+            assert!(narrow_text.contains("a apply"), "{narrow_text}");
+            assert!(narrow_text.contains("? help"), "{narrow_text}");
+            assert!(narrow_text.contains("q quit"), "{narrow_text}");
+            assert!(!narrow_text.contains("s overview"), "{narrow_text}");
+        }
+
+        #[test]
+        fn position_status_names_the_source_line_at_wide_and_narrow_widths() {
+            assert_eq!(position_status(10, 47, 80), "Line 11/47");
+            assert_eq!(position_status(10, 47, 40), "L11/47");
         }
 
         #[test]
