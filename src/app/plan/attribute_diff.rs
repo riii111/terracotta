@@ -1266,8 +1266,13 @@ mod tests {
                 "case: {}",
                 case.name
             );
-            assert_eq!(config.after.kind(), AttributeValueKind::Unknown);
-            assert_eq!(config.after.display(), "<unknown>");
+            assert_eq!(
+                config.after.kind(),
+                AttributeValueKind::Unknown,
+                "case: {}",
+                case.name
+            );
+            assert_eq!(config.after.display(), "<unknown>", "case: {}", case.name);
             assert_eq!(
                 diffs.changed_count, case.expected_count,
                 "case: {}",

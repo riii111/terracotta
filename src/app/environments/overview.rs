@@ -367,7 +367,7 @@ mod tests {
 
             let group = only_group(&overview);
             assert_eq!(group.display_address, case.display, "case: {}", case.name);
-            assert_eq!(member_counts(group), [1, 2]);
+            assert_eq!(member_counts(group), [1, 2], "case: {}", case.name);
             assert_partition(&session, &overview);
         }
     }
