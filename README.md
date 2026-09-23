@@ -99,4 +99,11 @@ or 0 without it.
 
 Try the cloudless demos: `python3 fixtures/basic/scenario.py demo` opens the
 single-environment Overview. `python3 fixtures/environments/scenario.py demo`
-opens the three-environment comparison.
+opens the three-environment comparison. To see a repeated resource group from a
+real plan, run `python3 fixtures/basic/scenario.py demo --scenario group-expansion`;
+this downloads HashiCorp's time provider on first use, without connecting to a cloud.
+In the plan review, press `s` for Overview, then select `[+] time_sleep.server[*]`
+and press Space. To inspect the plan separately, run
+`python3 fixtures/basic/scenario.py setup --scenario group-expansion`, then remove
+the temporary directory with `python3 fixtures/basic/scenario.py clean PATH`.
+Pass `--plugin-dir PATH` to use an existing local provider directory.
