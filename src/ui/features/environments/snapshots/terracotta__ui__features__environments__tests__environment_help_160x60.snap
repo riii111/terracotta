@@ -5,50 +5,50 @@ expression: text
 0 Overview   1 a-ready  2 b-error  3 c-running  4 d-pending  5 e-hcp
 Ready: 1/5   Compared: a-ready   b-error: Error   c-running: Running   d-pending: Pending   e-hcp: Excluded: HCP execution
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-a-ready · terraform
 
-Address     > a-ready b-error   c-running   d-pending   e-hcp      why
+
+Address     a-ready   b-error   c-running   d-pending   e-hcp      why
+blank: absent   .: unchanged   ?: plan unavailable
 No matching resource changes. v opens the full plan.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 Total       +0 ~0 -0  Error     Running     Pending     Excluded
             0 replace
 
 
-
-
-
-
-
-
-
-
-                                          ┌Help──────────────────────────────────────────────────────────────────────┐
-                                          │ Current: Overview                                                      ▲ │
-                                          │ ↑ / ↓ / j / k        select a resource row                             ┃ │
-                                          │ ← / → / [ / ]        select an environment                             ┃ │
-                                          │ Enter                open selected resource in raw plan                ┃ │
-                                          │ 1–9                  open selected resource in the numbered            ┃ │
-                                          │                      environment                                       ┃ │
-                                          │ Space                expand or collapse only on [+]/[-] group rows     ┃ │
-                                          │ /                    filter full addresses                             ┃ │
-                                          │ e                    filter compared environments                      ┃ │
-                                          │                                                                        ┃ │
-                                          │ Other                                                                  ┃ │
-                                          │ PgUp / PgDn          move one page                                     │ │
-                                          │ Home / End           go to the first or last row                       │ │
-                                          │ v                    show the full plan from the top                   │ │
-                                          │ y                    copy the selected environment's plan              │ │
-                                          │ c                    show environment context                          │ │
-                                          │ r                    retry a selected Error environment                │ │
-                                          │ q                    quit; confirms first while acquiring              │ │
-                                          │                                                                        ▼ │
-                                          │ ↑/↓/PgUp/PgDn scroll | ?/Esc close                                       │
-                                          └──────────────────────────────────────────────────────────────────────────┘
-
-
-
-
-
-
+                                   ┌Help───────────────────────────────────────────────────────────────────────────────────┐
+                                   │ Current: Overview                                                                     │
+                                   │ ↑ / ↓ / j / k        select a resource row                                            │
+                                   │ ← / → / [ / ]        select an environment                                            │
+                                   │ Enter / Esc          show / hide preview; Esc returns from full plan                  │
+                                   │ 1–9                  open selected resource in the numbered environment's raw plan    │
+                                   │ Space                expand or collapse only on [+]/[-] group rows                    │
+                                   │ /                    filter full addresses                                            │
+                                   │ e                    filter compared environments                                     │
+                                   │                                                                                       │
+                                   │ Other                                                                                 │
+                                   │ PgUp / PgDn          move one page                                                    │
+                                   │ Home / End           go to the first or last row                                      │
+                                   │ v                    show the full plan from the top                                  │
+                                   │ y                    copy the selected environment's plan                             │
+                                   │ c                    show environment context                                         │
+                                   │ r                    retry a selected Error environment                               │
+                                   │ q                    quit; confirms first while acquiring                             │
+                                   │                                                                                       │
+                                   │ Matrix legend                                                                         │
+                                   │ + / ~ / -            create / update / delete                                         │
+                                   │ +/- / -/+            replace (create→delete / delete→create)                          │
+                                   │ blank                resource absent from this environment                            │
+                                   │ .                    resource present, with no change                                 │
+                                   │ ?                    plan unavailable; action unknown                                 │
+                                   │ read / move / import action shown by name                                             │
+                                   │ why: missing         resource present in only some Ready plans                        │
+                                   │                                                                                       │
+                                   │ Comparison                                                                            │
+                                   │ Same changes         no differences found in Ready plans; unknown values may differ   │
+                                   │ Scope                only Ready environments are compared                             │
+                                   │ Excluded             environments are not retried                                     │
+                                   │ ?/Esc close                                                                           │
+                                   └───────────────────────────────────────────────────────────────────────────────────────┘
 
 
 
@@ -61,4 +61,4 @@ Total       +0 ~0 -0  Error     Running     Pending     Excluded
 
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-Enter open selected raw plan  / filter  e env filter  ? help  q quit
+↑↓ row | ←→ env | Enter preview | / filter | e env filter | v full plan | ? help | q quit

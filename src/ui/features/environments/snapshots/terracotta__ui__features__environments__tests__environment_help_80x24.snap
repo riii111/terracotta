@@ -3,26 +3,26 @@ source: src/ui/features/environments/tests.rs
 expression: text
 ---
 0 Overview   1 a-ready  2 b-error  3 c-running  4 d-pending  5 e-hcp
-Re┌Help──────────────────────────────────────────────────────────────────────┐
-d-│ Current: Overview                                                      ▲ │
-──│ ↑ / ↓ / j / k        select a resource row                             ┃ │──
-a-│ ← / → / [ / ]        select an environment                             ┃ │
-  │ Enter                open selected resource in raw plan                ┃ │
-Ad│ 1–9                  open selected resource in the numbered            ┃ │
-No│                      environment                                       ┃ │
-To│ Space                expand or collapse only on [+]/[-] group rows     ┃ │
-  │ /                    filter full addresses                             ┃ │
-  │ e                    filter compared environments                      ┃ │
-  │                                                                        ┃ │
-  │ Other                                                                  ┃ │
-  │ PgUp / PgDn          move one page                                     │ │
-  │ Home / End           go to the first or last row                       │ │
-  │ v                    show the full plan from the top                   │ │
-  │ y                    copy the selected environment's plan              │ │
-  │ c                    show environment context                          │ │
-  │ r                    retry a selected Error environment                │ │
-  │ q                    quit; confirms first while acquiring              │ │
-  │                                                                        ▼ │
-  │ ↑/↓/PgUp/PgDn scroll | ?/Esc close                                       │
-──└──────────────────────────────────────────────────────────────────────────┘──
-Enter open selected raw plan  / filter  e env filter  ? help  q quit
+R┌Help────────────────────────────────────────────────────────────────────────┐
+d│ Current: Overview                                                        ▲ │
+─│ ↑ / ↓ / j / k        select a resource row                               ┃ │─
+ │ ← / → / [ / ]        select an environment                               ┃ │
+ │ Enter / Esc          show / hide preview; Esc returns from full plan     ┃ │
+A│ 1–9                  open selected resource in the numbered              ┃ │
+b│                      environment's raw plan                              ┃ │
+N│ Space                expand or collapse only on [+]/[-] group rows       ┃ │
+─│ /                    filter full addresses                               ┃ │─
+T│ e                    filter compared environments                        ┃ │
+ │                                                                          ┃ │
+ │ Other                                                                    ┃ │
+ │ PgUp / PgDn          move one page                                       │ │
+ │ Home / End           go to the first or last row                         │ │
+ │ v                    show the full plan from the top                     │ │
+ │ y                    copy the selected environment's plan                │ │
+ │ c                    show environment context                            │ │
+ │ r                    retry a selected Error environment                  │ │
+ │ q                    quit; confirms first while acquiring                │ │
+ │                                                                          ▼ │
+─│ ↑/↓/k/j/PgUp/PgDn scroll | ?/Esc close                                     │─
+↑└────────────────────────────────────────────────────────────────────────────┘p
+q quit

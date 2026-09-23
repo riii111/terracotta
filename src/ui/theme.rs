@@ -31,6 +31,10 @@ pub(crate) fn search_match_style() -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
+pub(crate) fn selected_row_style() -> Style {
+    body_style().bg(Color::Rgb(0x35, 0x35, 0x3d))
+}
+
 pub(crate) fn search_cursor_style() -> Style {
     Style::default()
         .fg(Color::Rgb(0x11, 0x14, 0x19))

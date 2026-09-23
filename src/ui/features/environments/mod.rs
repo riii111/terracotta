@@ -12,7 +12,7 @@ use super::{
 };
 use crate::{
     app::{
-        copy::CopyTarget,
+        copy::{self, CopyTarget},
         environments::{EnvironmentSession, EnvironmentState, comparison::CellState},
         session::{Action, ReviewSessionState},
     },
@@ -28,6 +28,7 @@ pub(crate) struct EnvironmentView {
     selection: EnvironmentSelection,
     selected_environments: Option<Vec<usize>>,
     matrix: MatrixView,
+    preview_open: bool,
     confirming_quit: bool,
     reviews: Vec<PlanReviewViewState>,
     notice: Option<String>,
@@ -46,6 +47,12 @@ pub(crate) enum EnvironmentInput {
     Review(usize, Box<Action>),
     Quit,
     Interrupt,
+}
+
+pub(crate) struct CellPreview {
+    pub(crate) title: String,
+    pub(crate) text: String,
+    pub(crate) is_raw: bool,
 }
 
 impl EnvironmentView {
@@ -82,8 +89,21 @@ impl EnvironmentView {
             return self.handle_filter_dialog_key(key, size, state);
         }
         if self.dialog.is_some() {
+            let is_help = matches!(self.dialog, Some(EnvironmentDialog::Help));
             match key.code {
                 KeyCode::Esc | KeyCode::Char('?') => self.dialog = None,
+                KeyCode::Up | KeyCode::Char('k') if is_help => {
+                    self.dialog_scroll = self.dialog_scroll.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') if is_help => {
+                    self.dialog_scroll = self.dialog_scroll.saturating_add(1);
+                }
+                KeyCode::PageUp if is_help => {
+                    self.dialog_scroll = self.dialog_scroll.saturating_sub(4);
+                }
+                KeyCode::PageDown if is_help => {
+                    self.dialog_scroll = self.dialog_scroll.saturating_add(4);
+                }
                 KeyCode::Up | KeyCode::PageUp => {
                     self.dialog_scroll = self.dialog_scroll.saturating_sub(4);
                 }
@@ -106,9 +126,21 @@ impl EnvironmentView {
             return self.handle_review_key(key, size, state, state.plans()[index].review()?);
         }
         let input = overview::key_to_input(key, self.matrix.searching(), self.matrix.filtered())?;
+        self.handle_overview_input(input, size, state)
+    }
+
+    fn handle_overview_input(
+        &mut self,
+        input: OverviewInput,
+        size: Size,
+        state: &EnvironmentSession,
+    ) -> Option<EnvironmentInput> {
         match input {
             OverviewInput::Quit => self.quit(state),
-            OverviewInput::Open => self.open(state, self.selection.column, false),
+            OverviewInput::Open => {
+                self.preview_open = true;
+                None
+            }
             OverviewInput::ViewPlan => self.open(state, self.selection.column, true),
             OverviewInput::Copy => Some(EnvironmentInput::Review(
                 self.selection.column,
@@ -192,6 +224,103 @@ impl EnvironmentView {
             .unwrap_or_else(|| (0..count).collect())
     }
 
+    fn selected_cell_preview(&self, state: &EnvironmentSession) -> CellPreview {
+        let Some(selected_plan) = state.plans().get(self.selection.column) else {
+            return CellPreview {
+                title: "No environment selected".to_owned(),
+                text: "Select an environment to preview its plan.".to_owned(),
+                is_raw: false,
+            };
+        };
+        let environment = environments::name(selected_plan);
+        let Some(address) = self.matrix.selected_address() else {
+            return CellPreview {
+                title: environment,
+                text: "No resource row is selected.".to_owned(),
+                is_raw: false,
+            };
+        };
+        if self.matrix.selected_is_group() {
+            return CellPreview {
+                title: format!("{environment} · {address}"),
+                text: "This row groups multiple resources. Press Space to expand it, then select a resource.".to_owned(),
+                is_raw: false,
+            };
+        }
+        let Some(cell) = self.matrix.cell(self.selection.column) else {
+            return CellPreview {
+                title: format!("{environment} · {address}"),
+                text: "No cell is available for this environment.".to_owned(),
+                is_raw: false,
+            };
+        };
+        let plan = cell
+            .source
+            .as_ref()
+            .and_then(|source| state.plans().get(source.environment))
+            .unwrap_or(selected_plan);
+        let title = format!("{} · {address}", environments::name(plan));
+        let text = match &cell.state {
+            CellState::Missing => {
+                "This resource is absent from the selected environment's plan.".to_owned()
+            }
+            CellState::NoOp => {
+                "This resource exists in the selected environment and has no changes.".to_owned()
+            }
+            CellState::Unavailable => match plan.state() {
+                EnvironmentState::Pending => "The plan has not been acquired yet.".to_owned(),
+                EnvironmentState::Running => "Plan acquisition is still in progress.".to_owned(),
+                EnvironmentState::Error => {
+                    "Plan acquisition failed. See the environment diagnostic above.".to_owned()
+                }
+                EnvironmentState::ExcludedHcp => {
+                    "This environment is excluded because it uses HCP execution.".to_owned()
+                }
+                EnvironmentState::Ready { .. } => {
+                    "No reviewable plan is available for this environment.".to_owned()
+                }
+            },
+            CellState::Change { .. } => {
+                let Some(review) = plan.review() else {
+                    return CellPreview {
+                        title,
+                        text: "The selected environment has no reviewable plan.".to_owned(),
+                        is_raw: false,
+                    };
+                };
+                let document = review.review().document();
+                let block = cell.source.as_ref().and_then(|source| {
+                    let block = document.block_for_address(address)?;
+                    (Some(block.lines().start) == source.line).then_some(block)
+                });
+                let Some(block) = block else {
+                    return CellPreview {
+                        title,
+                        text: "The selected cell has no matching raw block in this environment's plan.".to_owned(),
+                        is_raw: false,
+                    };
+                };
+                let range = block.lines().clone();
+                let lines = document.text().split('\n').collect::<Vec<_>>();
+                let Some(lines) = lines.get(range) else {
+                    return CellPreview {
+                        title,
+                        text: "The selected cell's raw block is unavailable.".to_owned(),
+                        is_raw: false,
+                    };
+                };
+                let raw = lines.join("\n");
+                copy::sanitize_text(&raw, review.review().metadata().sensitive_values())
+            }
+        };
+        let is_raw = matches!(&cell.state, CellState::Change { .. });
+        CellPreview {
+            title,
+            text,
+            is_raw,
+        }
+    }
+
     fn navigation(
         &mut self,
         key: KeyEvent,
@@ -209,6 +338,12 @@ impl EnvironmentView {
         {
             let index = adjacent_environment(self.selection.active(), delta, &visible);
             return ControlFlow::Break(self.open(state, index, false));
+        }
+
+        if self.selection.raw.is_none() && self.preview_open && key.code == KeyCode::Esc {
+            self.preview_open = false;
+            self.notice = None;
+            return ControlFlow::Break(None);
         }
 
         match key.code {
@@ -345,6 +480,16 @@ impl EnvironmentView {
                 KeyCode::Esc | KeyCode::Char('?') => view.close_overlay(),
                 KeyCode::Up => view.scroll_overlay(-1),
                 KeyCode::Down => view.scroll_overlay(1),
+                KeyCode::Char('k')
+                    if view.overlay() == Some(plan_review::PlanReviewOverlay::Help) =>
+                {
+                    view.scroll_overlay(-1);
+                }
+                KeyCode::Char('j')
+                    if view.overlay() == Some(plan_review::PlanReviewOverlay::Help) =>
+                {
+                    view.scroll_overlay(1);
+                }
                 KeyCode::PageUp => view.scroll_overlay(-8),
                 KeyCode::PageDown => view.scroll_overlay(8),
                 _ => {}

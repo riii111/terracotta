@@ -391,8 +391,11 @@ try:
             send_key(b" ")
             send_key(b"j")
             send_key(b"]")
-            send_key(b"\r")
-            wait_parts(["server[198]", "Esc overview"], "matrix_raw_member")
+            send_key(b"v")
+            wait_parts(
+                ["terraform_data.server[0]", "Esc overview"],
+                "matrix_full_plan",
+            )
             send_key(b"3")
             wait_new("c-prod", "matrix_digit_environment")
             send_key(b"\x1b")
@@ -403,13 +406,15 @@ try:
             wait_new("Ready: 12/12", "many_ready")
             for _ in range(11):
                 send_key(b"]")
-            wait_new("env-11 · terraform", "twelfth_column")
-            send_key(b"\r")
-            wait_parts(["terraform_data.api", "env-11"], "twelfth_environment")
+            wait_new("env-11", "twelfth_column")
+            send_key(b"v")
+            wait_parts(
+                ["terraform_data.api", "env-11", "Esc overview"], "twelfth_environment"
+            )
             send_key(b"[")
             wait_new("env-10", "eleventh_environment")
             send_key(b"0")
-            wait_new("env-11 · terraform", "restored_last_column")
+            wait_new("blank: absent", "restored_last_column")
             send_key(b"q")
             exit_code = wait_exit()
         elif scenario == "env_show_failure":

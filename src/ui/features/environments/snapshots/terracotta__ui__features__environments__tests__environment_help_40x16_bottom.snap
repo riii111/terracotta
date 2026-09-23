@@ -3,18 +3,18 @@ source: src/ui/features/environments/tests.rs
 expression: bottom_text
 ---
 0 Overview   1 a-ready  2 b-error  ›
-Re┌Help──────────────────────────────┐
-b-│ read / move /   action shown   ▲ │
-d-│ import          by name        │ │
-HC│ why: missing    resource       │ │
-a-│                 present in     │ │
-  │                 only some      │ │
-Ad│                 Ready plans    │ │
-No│ Only Ready environments are    │ │th
-To│ compared.                      │ │
-  │ Excluded environments are not  ┃ │
-  │ retried.                       ▼ │
-  │ ↑/↓/PgUp/PgDn scroll             │
-  │ ?/Esc close                      │
-  └──────────────────────────────────┘
-Enter open  e env filter  q quit
+R┌Help────────────────────────────────┐
+b│ Comparison                       ▲ │
+d│ Same changes                     │ │
+H│   no differences found in Ready  │ │
+ │   plans; unknown values may      │ │
+ │   differ                         │ │
+A│ Scope                            │ │
+b│   only Ready environments are    │ │
+?│   compared                       │ │
+N│ Excluded                         ┃ │h
+─│   environments are not retried   ▼ │─
+T│ ↑/↓/k/j/PgUp/PgDn scroll           │
+↑│ ?/Esc close                        │
+/└────────────────────────────────────┘
+? help  q quit

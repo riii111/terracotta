@@ -1,0 +1,28 @@
+---
+source: src/ui/features/plan_review/render.rs
+expression: buffer_text(buffer)
+---
+Target: main [PROD] Workspace: default Tool: terraform 1.9.0 Dir: ./envir...main
+Umain [PROD]  ws:default  terraform 1.9.0  ./environments/production/main
+────────────────────────────────────────────────────────────────────────────────
+  # terraform┌Apply help─────────────────────────────────────────┐             ▲
+  ~ resource │ Navigation                                        │             ┃
+ ┌───────────│ ↑ / ↓ / PgUp / PgDn scroll confirmation           │────────────┐┃
+ │           │ ← / →               move in confirmation input    │            │┃
+ │ Apply this│ Home / End          move to input start or end    │            │┃
+ │           │                                                   │            │┃
+ │ Target: ma│ Input                                             │            │┃
+ │ Workspace:│ Type                enter the confirmation text   │            │┃
+-│ Directory:│ Backspace           delete before the cursor      │            ││
+ │ Tool: terr│                                                   │            ││
+ │ Plan: +2 a│ Context                                           │            ││
+ │           │ Tab                 show execution context        │            ││
+ │ Type main │                                                   │            ││
+ │ > |       │ Apply                                             │            ││
+ │           │ Enter               confirm apply                 │            ││
+ └───────────│ Esc                 return to plan review         │────────────┘│
+ Enter confir│ ?/Esc close                                       │             │
+    }        └───────────────────────────────────────────────────┘             │
+◀︎═══════════════════════════════════════════════════════════════════───────────▶︎
+────────────────────────────────────────────────────────────────────────────────
+s overview | / filter | ? help | q quit                                Line 3/43
