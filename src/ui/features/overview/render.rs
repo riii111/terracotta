@@ -52,7 +52,7 @@ pub(crate) fn layout(
     view: &OverviewViewState,
 ) -> OverviewLayout {
     let content = OverviewContent::from_review(state.review(), view.filter(), view.expanded());
-    let footer_message = state.copy_notice().map(CopyNotice::message);
+    let footer_message = state.copy_feedback().notice().map(CopyNotice::message);
     let full_footer = footer::layout_with_notice(
         footer_items(view.searching(), !view.filter().is_empty()),
         area.width,
@@ -127,7 +127,7 @@ pub(crate) fn render(
     );
 
     let content = OverviewContent::from_review(state.review(), view.filter(), view.expanded());
-    let lines = if state.copy_flash_active(now) {
+    let lines = if state.copy_feedback().flash_active(now) {
         copy_flash_lines(&overview_lines(
             &content,
             state.review(),
@@ -153,7 +153,7 @@ pub(crate) fn render(
             usize::from(vertical),
         );
     }
-    let notice = state.copy_notice_at(now).map(|notice| {
+    let notice = state.copy_feedback().notice_at(now).map(|notice| {
         (
             notice.message(),
             if matches!(notice, CopyNotice::Failed) {

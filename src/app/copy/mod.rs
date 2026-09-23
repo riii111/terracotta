@@ -1,5 +1,5 @@
 use std::fmt::{Debug, Formatter};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::{
     execution::{Diagnostic, ExecutionStage, ExecutionState, SensitiveValue},
@@ -8,6 +8,7 @@ use super::{
 
 const REDACTION_TEXT: &str = "(sensitive value)";
 const PROTECTED_REDACTION: &str = "\u{0}terracotta-redacted\u{0}";
+const FLASH_DURATION: Duration = Duration::from_millis(200);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CopyTarget {
@@ -38,10 +39,73 @@ impl CopyNotice {
     }
 
     #[must_use]
-    pub(crate) const fn duration(self) -> Duration {
+    const fn duration(self) -> Duration {
         match self {
             Self::Copied { .. } => Duration::from_secs(3),
             Self::Failed => Duration::from_secs(5),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct CopyFeedback {
+    notice: Option<CopyNotice>,
+    notice_until: Option<Instant>,
+    flash_until: Option<Instant>,
+}
+
+impl CopyFeedback {
+    #[must_use]
+    pub(crate) const fn notice(&self) -> Option<CopyNotice> {
+        self.notice
+    }
+
+    #[must_use]
+    pub(crate) fn notice_at(&self, now: Instant) -> Option<CopyNotice> {
+        self.notice_until
+            .is_some_and(|until| now < until)
+            .then_some(self.notice)
+            .flatten()
+    }
+
+    #[must_use]
+    pub(crate) fn flash_active(&self, now: Instant) -> bool {
+        self.flash_until.is_some_and(|until| now < until)
+    }
+
+    #[must_use]
+    pub(crate) const fn flash_pending(&self) -> bool {
+        self.flash_until.is_some()
+    }
+
+    #[must_use]
+    pub(crate) const fn pending(&self) -> bool {
+        self.notice_until.is_some() || self.flash_pending()
+    }
+
+    pub(crate) fn record(
+        &mut self,
+        target: CopyTarget,
+        result: CopyResult,
+        now: Instant,
+        flash: bool,
+    ) {
+        let notice = match result {
+            CopyResult::Written => CopyNotice::Copied { target },
+            CopyResult::Failed => CopyNotice::Failed,
+        };
+        self.notice = Some(notice);
+        self.notice_until = Some(now + notice.duration());
+        self.flash_until = (flash && result == CopyResult::Written).then(|| now + FLASH_DURATION);
+    }
+
+    pub(crate) fn clear_expired(&mut self, now: Instant) {
+        if self.notice_until.is_some_and(|until| now >= until) {
+            self.notice = None;
+            self.notice_until = None;
+        }
+        if self.flash_until.is_some_and(|until| now >= until) {
+            self.flash_until = None;
         }
     }
 }
@@ -269,26 +333,46 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plan_copy_contains_diagnostics_then_exact_standard_text() {
-        let review = PlanReview::new(
-            PathBuf::from("/project"),
-            "default".to_owned(),
-            plan_document("Terraform plan body\n".to_owned()),
-            PlanMetadata::new(Vec::new(), Vec::new(), 0, 1, 0, true),
-            vec![Diagnostic {
-                severity: DiagnosticSeverity::Warning,
-                summary: "Provider warning".to_owned(),
+    fn plan_copy_prefixes_diagnostics_and_preserves_the_plan_text() {
+        struct Case {
+            name: &'static str,
+            detail: Option<&'static str>,
+            expected: &'static str,
+        }
+
+        let plan_text = "Terraform plan body\n";
+        for case in [
+            Case {
+                name: "summary_only",
                 detail: None,
-                address: None,
-                position: None,
-                source: DiagnosticSource::Terraform,
-            }],
-        );
+                expected: "Provider warning\nTerraform plan body\n",
+            },
+            Case {
+                name: "summary_and_detail",
+                detail: Some("warning detail"),
+                expected: "Provider warning\nwarning detail\nTerraform plan body\n",
+            },
+        ] {
+            let review = PlanReview::new(
+                PathBuf::from("/project"),
+                "default".to_owned(),
+                plan_document(plan_text.to_owned()),
+                PlanMetadata::new(Vec::new(), Vec::new(), 0, 1, 0, true),
+                vec![Diagnostic {
+                    severity: DiagnosticSeverity::Warning,
+                    summary: "Provider warning".to_owned(),
+                    detail: case.detail.map(str::to_owned),
+                    address: None,
+                    position: None,
+                    source: DiagnosticSource::Terraform,
+                }],
+            );
 
-        let effect = plan_effect(&review);
+            let effect = plan_effect(&review);
 
-        assert_eq!(effect.text(), "Provider warning\nTerraform plan body\n");
-        assert!(!format!("{effect:?}").contains("Terraform plan body"));
+            assert_eq!(effect.text(), case.expected, "case: {}", case.name);
+            assert!(!format!("{effect:?}").contains(plan_text));
+        }
     }
 
     #[test]
@@ -323,30 +407,6 @@ mod tests {
         );
 
         assert_eq!(plan_effect(&review).text(), source);
-    }
-
-    #[test]
-    fn plan_copy_prefixes_diagnostics_without_rewriting_the_plan_text() {
-        let source = "Plan: 0 to add, 0 to change, 0 to destroy.\n";
-        let review = PlanReview::new(
-            PathBuf::from("/project"),
-            "default".to_owned(),
-            plan_document(source.to_owned()),
-            PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
-            vec![Diagnostic {
-                severity: DiagnosticSeverity::Warning,
-                summary: "Provider warning".to_owned(),
-                detail: Some("warning detail".to_owned()),
-                address: None,
-                position: None,
-                source: DiagnosticSource::Terraform,
-            }],
-        );
-
-        assert_eq!(
-            plan_effect(&review).text(),
-            "Provider warning\nwarning detail\nPlan: 0 to add, 0 to change, 0 to destroy.\n"
-        );
     }
 
     #[test]

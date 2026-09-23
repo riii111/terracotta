@@ -1,8 +1,8 @@
 use std::fmt::{Debug, Formatter};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use super::{
-    copy::{self, CopyEffect, CopyNotice, CopyResult, CopyTarget},
+    copy::{self, CopyEffect, CopyFeedback, CopyResult, CopyTarget},
     execution::{
         ApplyStatus, ExecutionAction, ExecutionEvent, ExecutionStage, ExecutionState,
         SuccessfulTarget,
@@ -37,38 +37,32 @@ pub(crate) struct ReviewSessionState {
     review: PlanReview,
     from_overview: bool,
     restored_search_query: Option<String>,
-    copy_notice: Option<CopyNotice>,
-    copy_notice_until: Option<Instant>,
-    copy_flash_until: Option<Instant>,
+    copy_feedback: CopyFeedback,
 }
 
 impl ReviewSessionState {
     #[must_use]
-    pub(crate) const fn new(review: PlanReview) -> Self {
+    pub(crate) fn new(review: PlanReview) -> Self {
         Self {
             review,
             from_overview: false,
             restored_search_query: None,
-            copy_notice: None,
-            copy_notice_until: None,
-            copy_flash_until: None,
+            copy_feedback: CopyFeedback::default(),
         }
     }
 
     #[must_use]
-    pub(crate) const fn new_from_overview(review: PlanReview) -> Self {
+    pub(crate) fn new_from_overview(review: PlanReview) -> Self {
         Self {
             review,
             from_overview: true,
             restored_search_query: None,
-            copy_notice: None,
-            copy_notice_until: None,
-            copy_flash_until: None,
+            copy_feedback: CopyFeedback::default(),
         }
     }
 
     #[must_use]
-    pub(crate) const fn new_from_overview_with_search(
+    pub(crate) fn new_from_overview_with_search(
         review: PlanReview,
         restored_search_query: String,
     ) -> Self {
@@ -76,9 +70,7 @@ impl ReviewSessionState {
             review,
             from_overview: true,
             restored_search_query: Some(restored_search_query),
-            copy_notice: None,
-            copy_notice_until: None,
-            copy_flash_until: None,
+            copy_feedback: CopyFeedback::default(),
         }
     }
 
@@ -93,59 +85,23 @@ impl ReviewSessionState {
     }
 
     #[must_use]
-    pub(crate) const fn copy_notice(&self) -> Option<CopyNotice> {
-        self.copy_notice
-    }
-
-    #[must_use]
-    pub(crate) fn copy_notice_at(&self, now: Instant) -> Option<CopyNotice> {
-        self.copy_notice_until
-            .is_some_and(|until| now < until)
-            .then_some(self.copy_notice)
-            .flatten()
-    }
-
-    #[must_use]
-    pub(crate) const fn copy_notice_pending(&self) -> bool {
-        self.copy_notice_until.is_some()
-    }
-
-    pub(crate) const fn clear_copy_notice(&mut self) {
-        self.copy_notice = None;
-        self.copy_notice_until = None;
-    }
-
-    #[must_use]
-    pub(crate) fn copy_flash_active(&self, now: Instant) -> bool {
-        self.copy_flash_until.is_some_and(|until| now < until)
-    }
-
-    #[must_use]
-    pub(crate) const fn copy_flash_pending(&self) -> bool {
-        self.copy_flash_until.is_some()
-    }
-
-    pub(crate) const fn clear_copy_flash(&mut self) {
-        self.copy_flash_until = None;
+    pub(crate) const fn copy_feedback(&self) -> &CopyFeedback {
+        &self.copy_feedback
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OverviewSessionState {
     review: PlanReview,
-    copy_notice: Option<CopyNotice>,
-    copy_notice_until: Option<Instant>,
-    copy_flash_until: Option<Instant>,
+    copy_feedback: CopyFeedback,
 }
 
 impl OverviewSessionState {
     #[must_use]
-    pub(crate) const fn new(review: PlanReview) -> Self {
+    pub(crate) fn new(review: PlanReview) -> Self {
         Self {
             review,
-            copy_notice: None,
-            copy_notice_until: None,
-            copy_flash_until: None,
+            copy_feedback: CopyFeedback::default(),
         }
     }
 
@@ -155,40 +111,8 @@ impl OverviewSessionState {
     }
 
     #[must_use]
-    pub(crate) const fn copy_notice(&self) -> Option<CopyNotice> {
-        self.copy_notice
-    }
-
-    #[must_use]
-    pub(crate) fn copy_notice_at(&self, now: Instant) -> Option<CopyNotice> {
-        self.copy_notice_until
-            .is_some_and(|until| now < until)
-            .then_some(self.copy_notice)
-            .flatten()
-    }
-
-    #[must_use]
-    pub(crate) const fn copy_notice_pending(&self) -> bool {
-        self.copy_notice_until.is_some()
-    }
-
-    pub(crate) const fn clear_copy_notice(&mut self) {
-        self.copy_notice = None;
-        self.copy_notice_until = None;
-    }
-
-    #[must_use]
-    pub(crate) fn copy_flash_active(&self, now: Instant) -> bool {
-        self.copy_flash_until.is_some_and(|until| now < until)
-    }
-
-    #[must_use]
-    pub(crate) const fn copy_flash_pending(&self) -> bool {
-        self.copy_flash_until.is_some()
-    }
-
-    pub(crate) const fn clear_copy_flash(&mut self) {
-        self.copy_flash_until = None;
+    pub(crate) const fn copy_feedback(&self) -> &CopyFeedback {
+        &self.copy_feedback
     }
 }
 
@@ -276,6 +200,25 @@ impl SessionState {
     #[must_use]
     pub(crate) fn new(execution: ExecutionState) -> Self {
         Self::Execution(Box::new(execution))
+    }
+
+    #[must_use]
+    pub(crate) const fn copy_feedback(&self) -> Option<&CopyFeedback> {
+        match self {
+            Self::Execution(state) | Self::Apply(state) => Some(state.copy_feedback()),
+            Self::Review(state) => Some(state.copy_feedback()),
+            Self::Overview(state) => Some(state.copy_feedback()),
+            Self::ApplyConfirmation(_) => None,
+        }
+    }
+
+    pub(crate) fn copy_feedback_mut(&mut self) -> Option<&mut CopyFeedback> {
+        match self {
+            Self::Execution(state) | Self::Apply(state) => Some(state.copy_feedback_mut()),
+            Self::Review(state) => Some(&mut state.copy_feedback),
+            Self::Overview(state) => Some(&mut state.copy_feedback),
+            Self::ApplyConfirmation(_) => None,
+        }
     }
 
     #[must_use]
@@ -549,27 +492,15 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
         }
         .map(Effect::WriteClipboard),
         Action::CopyCompleted { target, result } => {
-            let notice = match result {
-                CopyResult::Written => CopyNotice::Copied { target },
-                CopyResult::Failed => CopyNotice::Failed,
+            let flash = match state {
+                SessionState::Execution(_) | SessionState::Apply(_) => {
+                    target == CopyTarget::Execution
+                }
+                SessionState::Review(_) | SessionState::Overview(_) => target == CopyTarget::Plan,
+                SessionState::ApplyConfirmation(_) => false,
             };
-            match state {
-                SessionState::Execution(execution) | SessionState::Apply(execution) => {
-                    execution.set_copy_notice(notice, now);
-                }
-                SessionState::Review(review) => {
-                    review.copy_notice = Some(notice);
-                    review.copy_notice_until = Some(now + notice.duration());
-                    review.copy_flash_until =
-                        (result == CopyResult::Written).then(|| now + Duration::from_millis(200));
-                }
-                SessionState::Overview(overview) => {
-                    overview.copy_notice = Some(notice);
-                    overview.copy_notice_until = Some(now + notice.duration());
-                    overview.copy_flash_until =
-                        (result == CopyResult::Written).then(|| now + Duration::from_millis(200));
-                }
-                SessionState::ApplyConfirmation(_) => {}
+            if let Some(feedback) = state.copy_feedback_mut() {
+                feedback.record(target, result, now, flash);
             }
             None
         }
@@ -615,9 +546,14 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::time::Duration;
 
+    use super::super::copy::CopyNotice;
     use super::super::execution::ExecutionContext;
-    use super::super::review::test_support::plan_document;
+    use super::super::review::{
+        PlanBlock, PlanBlockKind,
+        test_support::{plan_document, plan_document_with_blocks},
+    };
     use super::*;
 
     fn review() -> PlanReview {
@@ -735,41 +671,53 @@ mod tests {
     }
 
     #[test]
-    fn completed_review_copies_the_full_document_and_quits_without_apply() {
+    fn filtered_review_copies_the_full_document_and_quits_without_apply() {
         let now = Instant::now();
-        let mut state = SessionState::new(ExecutionState::with_context(
-            now,
-            ExecutionContext::loading("/project"),
-        ));
-        update(&mut state, Action::ReviewCompleted(review()), now);
-
-        let Some(Effect::WriteClipboard(effect)) =
-            update(&mut state, Action::Copy(CopyTarget::Plan), now)
-        else {
-            panic!("plan copy should be available");
-        };
-        assert_eq!(effect.text(), "No changes.\n");
-        assert!(matches!(
-            update(&mut state, Action::Quit, now),
-            Some(Effect::Finish(SessionOutcome::Reviewed(_)))
-        ));
-    }
-
-    #[test]
-    fn filtered_review_copies_the_full_document_and_quits() {
-        let now = Instant::now();
-        let mut filtered = review();
+        let source = "Terraform will perform actions.\n\n".to_owned()
+            + "  # terraform_data.api will be created\n"
+            + "  + resource \"terraform_data\" \"api\" {\n"
+            + "      input = \"api\"\n"
+            + "    }\n\n"
+            + "Plan: 1 to add, 0 to change, 0 to destroy.\n";
+        let mut filtered = PlanReview::new(
+            PathBuf::from("/project"),
+            "default".to_owned(),
+            plan_document_with_blocks(
+                source.clone(),
+                vec![
+                    PlanBlock::new(0..2, PlanBlockKind::Common),
+                    PlanBlock::with_addresses(
+                        2..6,
+                        PlanBlockKind::Resource,
+                        vec!["terraform_data.api".to_owned()],
+                    ),
+                    PlanBlock::new(6..9, PlanBlockKind::Common),
+                ],
+            ),
+            PlanMetadata::new(Vec::new(), Vec::new(), 1, 0, 0, false),
+            Vec::new(),
+        );
         filtered.set_search_query("not-present".to_owned());
+        let visible = filtered.document().filter(filtered.search_query());
+        assert_eq!(visible.matching_resources(), 0);
+        assert!(
+            visible
+                .lines_with_indices()
+                .all(|(_, line)| !line.contains("terraform_data.api"))
+        );
+
         let mut state = SessionState::new(ExecutionState::with_context(
             now,
             ExecutionContext::loading("/project"),
         ));
         update(&mut state, Action::ReviewCompleted(filtered), now);
 
-        assert!(matches!(
-            update(&mut state, Action::Copy(CopyTarget::Plan), now),
-            Some(Effect::WriteClipboard(_))
-        ));
+        let Some(Effect::WriteClipboard(effect)) =
+            update(&mut state, Action::Copy(CopyTarget::Plan), now)
+        else {
+            panic!("plan copy should be available");
+        };
+        assert_eq!(effect.text(), source);
         assert!(matches!(
             update(&mut state, Action::Quit, now),
             Some(Effect::Finish(SessionOutcome::Reviewed(_)))
@@ -797,16 +745,22 @@ mod tests {
         let SessionState::Review(review) = &state else {
             panic!("review should be visible");
         };
-        assert!(review.copy_flash_active(now + std::time::Duration::from_millis(100)));
-        assert!(review.copy_flash_pending());
-        assert!(review.copy_notice().is_some());
+        assert!(
+            review
+                .copy_feedback()
+                .flash_active(now + Duration::from_millis(100))
+        );
+        assert!(review.copy_feedback().flash_pending());
+        assert!(review.copy_feedback().notice().is_some());
 
         let SessionState::Review(review) = &mut state else {
             panic!("review should be visible");
         };
-        review.clear_copy_flash();
-        assert!(!review.copy_flash_pending());
-        assert!(review.copy_notice().is_some());
+        review
+            .copy_feedback
+            .clear_expired(now + Duration::from_millis(200));
+        assert!(!review.copy_feedback().flash_pending());
+        assert!(review.copy_feedback().notice().is_some());
     }
 
     #[test]
@@ -838,11 +792,15 @@ mod tests {
             panic!("review should remain visible");
         };
         assert_eq!(
-            review.copy_notice_at(started_at + Duration::from_millis(3_999)),
+            review
+                .copy_feedback()
+                .notice_at(started_at + Duration::from_millis(3_999)),
             Some(CopyNotice::Failed)
         );
         assert_eq!(
-            review.copy_notice_at(started_at + Duration::from_secs(6)),
+            review
+                .copy_feedback()
+                .notice_at(started_at + Duration::from_secs(6)),
             None
         );
     }
