@@ -153,7 +153,16 @@ fn press(view: &mut EnvironmentView, state: &mut EnvironmentSession, code: KeyCo
 }
 
 fn press_event(view: &mut EnvironmentView, state: &mut EnvironmentSession, key: KeyEvent) {
-    if let Some(input) = view.handle_key(key, Size::new(80, 24), state) {
+    press_event_at(view, state, key, Size::new(80, 24));
+}
+
+fn press_event_at(
+    view: &mut EnvironmentView,
+    state: &mut EnvironmentSession,
+    key: KeyEvent,
+    size: Size,
+) {
+    if let Some(input) = view.handle_key(key, size, state) {
         match input {
             EnvironmentInput::Review(index, action) => {
                 state.update_review(index, *action, Instant::now());
@@ -164,6 +173,29 @@ fn press_event(view: &mut EnvironmentView, state: &mut EnvironmentSession, key: 
             _ => panic!("unexpected exit"),
         }
     }
+}
+
+fn press_at(view: &mut EnvironmentView, state: &mut EnvironmentSession, code: KeyCode, size: Size) {
+    press_event_at(view, state, KeyEvent::new(code, KeyModifiers::NONE), size);
+}
+
+fn first_resource_index(rendered: &str) -> usize {
+    rendered
+        .lines()
+        .filter_map(|line| {
+            line.find("terraform_data.server_")
+                .map(|start| &line[start..])
+        })
+        .find_map(|address| {
+            address
+                .trim_start_matches("terraform_data.server_")
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect::<String>()
+                .parse()
+                .ok()
+        })
+        .expect("a rendered matrix resource")
 }
 
 #[test]
@@ -480,7 +512,6 @@ fn expanded_group_preview_keeps_full_plan_hint_at_narrow_widths(#[case] width: u
     press(&mut view, &mut state, KeyCode::Char(' '));
     assert_eq!(view.matrix.groups_expanded(), Some(true));
     press(&mut view, &mut state, KeyCode::Enter);
-    assert!(view.preview_focused);
 
     let rendered = text(&mut view, &state, (width, 24));
     assert!(rendered.contains("v plan"), "{rendered}");
@@ -638,22 +669,22 @@ fn plan_preview_follows_the_environment_and_survives_full_plan_round_trip() {
         api.lines()
             .nth(heading_line)
             .unwrap()
-            .find("> dev · Plan preview")
+            .find("dev · Plan preview")
             .unwrap(),
     )
     .unwrap();
     let heading_cell = api_buffer
         .cell((heading_column, u16::try_from(heading_line).unwrap()))
-        .expect("focused preview title");
+        .expect("preview title");
     assert_eq!(heading_cell.bg, Color::Rgb(0x30, 0x32, 0x2f));
-    assert_eq!(heading_cell.fg, Color::Rgb(0xef, 0xae, 0x6d));
-    assert!(heading_cell.modifier.contains(Modifier::BOLD));
+    assert_eq!(heading_cell.fg, Color::Rgb(0xde, 0xd8, 0xd1));
+    assert!(!heading_cell.modifier.contains(Modifier::BOLD));
+    assert!(!api.contains("> dev · Plan preview"), "{api}");
     press(&mut view, &mut state, KeyCode::Enter);
     assert!(view.selection.raw.is_none());
 
-    press(&mut view, &mut state, KeyCode::Tab);
+    press(&mut view, &mut state, KeyCode::Char(']'));
     press(&mut view, &mut state, KeyCode::Right);
-    press(&mut view, &mut state, KeyCode::Tab);
     let worker = text(&mut view, &state, (120, 40));
     assert!(worker.contains("prod · Plan preview"), "{worker}");
     assert!(
@@ -767,9 +798,8 @@ fn failed_plan_preview_shows_its_diagnostic_and_keeps_retry_available() {
     assert_eq!(environments::status(&state.plans()[index]), "Error");
     let mut view = EnvironmentView::default();
     press(&mut view, &mut state, KeyCode::Enter);
-    press(&mut view, &mut state, KeyCode::Tab);
+    press(&mut view, &mut state, KeyCode::Char(']'));
     press(&mut view, &mut state, KeyCode::Right);
-    press(&mut view, &mut state, KeyCode::Tab);
 
     let rendered = text(&mut view, &state, (80, 24));
     assert!(rendered.contains("failed · Plan preview"), "{rendered}");
@@ -844,7 +874,7 @@ fn plan_preview_shows_the_full_sanitized_environment_document() {
 }
 
 #[test]
-fn preview_focus_separates_matrix_and_plan_navigation() {
+fn preview_visibility_selects_navigation_target_and_brackets_switch_environments() {
     let mut state = session(&["dev", "prod"]);
     for name in ["dev", "prod"] {
         let plan_text = format!(
@@ -865,14 +895,34 @@ fn preview_focus_separates_matrix_and_plan_navigation() {
     let mut view = EnvironmentView::default();
 
     press(&mut view, &mut state, KeyCode::Enter);
-    assert!(view.preview_focused);
+    assert!(view.preview_open);
+    assert!(text(&mut view, &state, (80, 24)).contains("terraform_data.api"));
+    let (_, preview_visible, preview_page) =
+        view.overview_page_sizes(Size::new(80, 24), &state, true);
+    assert!(preview_visible);
+    assert!(preview_page > 0);
+    assert_ne!(preview_page, 10);
     press(&mut view, &mut state, KeyCode::PageDown);
+    assert_eq!(view.preview_vertical, preview_page);
+    assert!(text(&mut view, &state, (80, 24)).contains("terraform_data.api"));
     press(&mut view, &mut state, KeyCode::Right);
     assert!(view.preview_vertical > 0);
     assert!(view.preview_horizontal > 0);
+    assert_eq!(view.selection.column, 0);
+
+    let preview_vertical = view.preview_vertical;
+    let preview_horizontal = view.preview_horizontal;
     press(&mut view, &mut state, KeyCode::Tab);
-    assert!(!view.preview_focused);
-    press(&mut view, &mut state, KeyCode::Right);
+    press_event(
+        &mut view,
+        &mut state,
+        KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+    );
+    assert_eq!(view.selection.column, 0);
+    assert_eq!(view.preview_vertical, preview_vertical);
+    assert_eq!(view.preview_horizontal, preview_horizontal);
+
+    press(&mut view, &mut state, KeyCode::Char(']'));
     assert_eq!(view.selection.column, 1);
     assert_eq!(view.preview_vertical, 0);
     assert_eq!(view.preview_horizontal, 0);
@@ -880,11 +930,82 @@ fn preview_focus_separates_matrix_and_plan_navigation() {
     assert!(rendered.contains("prod · Plan preview"), "{rendered}");
     assert!(!rendered.contains("dev line"), "{rendered}");
 
-    press(&mut view, &mut state, KeyCode::Tab);
-    assert!(view.preview_focused);
+    press(&mut view, &mut state, KeyCode::Enter);
+    assert!(view.preview_open);
+    assert!(view.selection.raw.is_none());
+    press(&mut view, &mut state, KeyCode::Char('['));
+    assert_eq!(view.selection.column, 0);
     press(&mut view, &mut state, KeyCode::Esc);
     assert!(!view.preview_open);
-    assert!(!view.preview_focused);
+    assert_eq!(view.preview_vertical, 0);
+    assert_eq!(view.preview_horizontal, 0);
+}
+
+#[test]
+fn overview_pages_move_by_the_visible_matrix_and_preview_heights() {
+    let mut state = session(&["dev", "prod"]);
+    let changes: Vec<_> = (0..40)
+        .map(|index| {
+            change(
+                &format!("terraform_data.server_{index}"),
+                ResourceChangeKind::Update,
+            )
+        })
+        .collect();
+    let plan_text = (0..80)
+        .map(|index| format!("long plan line {index}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    for _ in 0..2 {
+        complete_with_plan_document(
+            &mut state,
+            changes.clone(),
+            plan_text.clone(),
+            Vec::new(),
+            Vec::new(),
+        );
+    }
+    let view = EnvironmentView::default();
+    let compact = Size::new(80, 24);
+    let tall = Size::new(80, 40);
+    let (compact_matrix_page, _, _) = view.overview_page_sizes(compact, &state, false);
+    let (tall_matrix_page, _, _) = view.overview_page_sizes(tall, &state, false);
+    assert_ne!(compact_matrix_page, 10);
+    assert!(tall_matrix_page > compact_matrix_page);
+
+    let mut compact_view = EnvironmentView::default();
+    press_at(&mut compact_view, &mut state, KeyCode::PageDown, compact);
+    let compact_first = first_resource_index(&text(&mut compact_view, &state, (80, 24)));
+    let mut tall_view = EnvironmentView::default();
+    press_at(&mut tall_view, &mut state, KeyCode::PageDown, tall);
+    let tall_first = first_resource_index(&text(&mut tall_view, &state, (80, 40)));
+    assert_ne!(
+        tall_first, compact_first,
+        "matrix pages should use their visible heights, {compact_matrix_page} and {tall_matrix_page}"
+    );
+
+    let mut view = EnvironmentView::default();
+    press_at(&mut view, &mut state, KeyCode::PageDown, compact);
+    let matrix_position = first_resource_index(&text(&mut view, &state, (80, 24)));
+    press_at(&mut view, &mut state, KeyCode::Enter, compact);
+    assert_eq!(
+        first_resource_index(&text(&mut view, &state, (80, 24))),
+        matrix_position
+    );
+
+    let (_, compact_preview_visible, compact_preview_page) =
+        view.overview_page_sizes(compact, &state, true);
+    let (_, tall_preview_visible, tall_preview_page) = view.overview_page_sizes(tall, &state, true);
+    assert!(compact_preview_visible);
+    assert!(tall_preview_visible);
+    assert_ne!(compact_preview_page, 10);
+    assert!(tall_preview_page > compact_preview_page);
+    press_at(&mut view, &mut state, KeyCode::PageDown, compact);
+    assert_eq!(view.preview_vertical, compact_preview_page);
+    assert_eq!(
+        first_resource_index(&text(&mut view, &state, (80, 24))),
+        matrix_position
+    );
 }
 
 #[test]
@@ -947,7 +1068,6 @@ fn reopening_preview_for_the_same_environment_keeps_its_scroll_position() {
     press(&mut view, &mut state, KeyCode::Enter);
 
     assert_eq!(view.preview_vertical, scroll);
-    assert!(view.preview_focused);
 }
 
 #[test]
@@ -1085,7 +1205,10 @@ fn preview_falls_back_when_it_would_shrink_the_matrix_below_minimum() {
     assert!(small.contains("Resize for preview"), "{small}");
     assert!(small.contains('v'), "{small}");
     assert!(small.contains("Address"), "{small}");
-    assert!(!view.preview_focused);
+    press_at(&mut view, &mut state, KeyCode::Right, Size::new(40, 12));
+    assert_eq!(view.selection.column, 1);
+    press_at(&mut view, &mut state, KeyCode::Char('['), Size::new(40, 12));
+    assert_eq!(view.selection.column, 0);
 
     let large = text(&mut view, &state, (80, 24));
     assert!(
@@ -1093,7 +1216,6 @@ fn preview_falls_back_when_it_would_shrink_the_matrix_below_minimum() {
         "{large}"
     );
     assert!(view.preview_open);
-    assert!(!view.preview_focused);
 }
 
 #[test]
@@ -1185,6 +1307,13 @@ fn matrix_search_edits_graphemes_and_restores_the_previous_filter_on_cancel() {
     press(&mut view, &mut state, KeyCode::Esc);
     assert_eq!(view.matrix.filter(), "terraform_data.beta");
     assert!(text(&mut view, &state, (80, 24)).contains("terraform_data.beta"));
+
+    press(&mut view, &mut state, KeyCode::Char('/'));
+    press(&mut view, &mut state, KeyCode::Char(']'));
+    assert_eq!(view.selection.column, 0);
+    assert_eq!(view.matrix.filter(), "terraform_data.beta]");
+    press(&mut view, &mut state, KeyCode::Esc);
+    assert_eq!(view.matrix.filter(), "terraform_data.beta");
 }
 
 #[test]

@@ -29,7 +29,6 @@ pub(crate) struct EnvironmentView {
     selected_environments: Option<Vec<usize>>,
     matrix: MatrixView,
     preview_open: bool,
-    preview_focused: bool,
     preview_vertical: usize,
     preview_horizontal: usize,
     confirming_quit: bool,
@@ -72,7 +71,7 @@ impl EnvironmentView {
                 return None;
             }
             if self.selection.raw.is_none() && self.matrix.searching() {
-                self.matrix.apply(OverviewInput::SearchCancel);
+                self.matrix.apply(OverviewInput::SearchCancel, 1);
                 return None;
             }
             return Some(EnvironmentInput::Interrupt);
@@ -125,9 +124,19 @@ impl EnvironmentView {
             && self.matrix.filtered()
             && !self.preview_open
             && key.code == KeyCode::Esc;
+        let (matrix_page, preview_visible, preview_page) = if !editing && !clearing_filter {
+            self.overview_page_sizes(
+                size,
+                state,
+                matches!(key.code, KeyCode::PageUp | KeyCode::PageDown),
+            )
+        } else {
+            (1, false, 0)
+        };
         if !editing
             && !clearing_filter
-            && let ControlFlow::Break(result) = self.navigation(key, state)
+            && let ControlFlow::Break(result) =
+                self.navigation(key, state, preview_visible, preview_page)
         {
             return result;
         }
@@ -135,7 +144,7 @@ impl EnvironmentView {
             return self.handle_review_key(key, size, state, state.plans()[index].review()?);
         }
         let input = overview::key_to_input(key, self.matrix.searching(), self.matrix.filtered())?;
-        self.handle_overview_input(input, size, state)
+        self.handle_overview_input(input, size, state, matrix_page)
     }
 
     fn handle_overview_input(
@@ -143,12 +152,12 @@ impl EnvironmentView {
         input: OverviewInput,
         size: Size,
         state: &EnvironmentSession,
+        matrix_page: usize,
     ) -> Option<EnvironmentInput> {
         match input {
             OverviewInput::Quit => self.quit(state),
             OverviewInput::Open => {
                 self.preview_open = true;
-                self.preview_focused = true;
                 None
             }
             OverviewInput::ViewPlan => self.open(state, self.selection.column),
@@ -179,7 +188,7 @@ impl EnvironmentView {
                 None
             }
             _ => {
-                self.matrix.apply(input);
+                self.matrix.apply(input, matrix_page);
                 None
             }
         }
@@ -279,6 +288,8 @@ impl EnvironmentView {
         &mut self,
         key: KeyEvent,
         state: &EnvironmentSession,
+        preview_visible: bool,
+        preview_page: usize,
     ) -> ControlFlow<Option<EnvironmentInput>> {
         let visible = self.visible_environments(state.plans().len());
         if let Some(index) = self.selection.raw {
@@ -286,24 +297,19 @@ impl EnvironmentView {
                 let index = adjacent_environment(index, delta, &visible);
                 return ControlFlow::Break(self.open(state, index));
             }
-        } else if self.navigate_preview(key) {
+        } else if self.navigate_preview(key, preview_visible, preview_page) {
             return ControlFlow::Break(None);
         }
         self.navigate_selection(key, state, &visible)
     }
 
-    fn navigate_preview(&mut self, key: KeyEvent) -> bool {
-        if self.preview_open && matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
-            self.preview_focused = !self.preview_focused;
-            return true;
-        }
+    fn navigate_preview(&mut self, key: KeyEvent, visible: bool, page_size: usize) -> bool {
         if self.preview_open && key.code == KeyCode::Esc {
             self.preview_open = false;
-            self.preview_focused = false;
             self.notice = None;
             return true;
         }
-        if !self.preview_focused {
+        if !visible {
             return false;
         }
         match key.code {
@@ -313,9 +319,11 @@ impl EnvironmentView {
             KeyCode::Down | KeyCode::Char('j') => {
                 self.preview_vertical = self.preview_vertical.saturating_add(1);
             }
-            KeyCode::PageUp => self.preview_vertical = self.preview_vertical.saturating_sub(10),
+            KeyCode::PageUp => {
+                self.preview_vertical = self.preview_vertical.saturating_sub(page_size);
+            }
             KeyCode::PageDown => {
-                self.preview_vertical = self.preview_vertical.saturating_add(10);
+                self.preview_vertical = self.preview_vertical.saturating_add(page_size);
             }
             KeyCode::Home => self.preview_vertical = 0,
             KeyCode::End => self.preview_vertical = usize::MAX,

@@ -86,7 +86,7 @@ impl MatrixView {
             .unwrap_or(0)
     }
 
-    pub(crate) fn apply(&mut self, input: OverviewInput) {
+    pub(crate) fn apply(&mut self, input: OverviewInput, page_size: usize) {
         if self.searching() {
             self.edit_search(input);
             return;
@@ -94,8 +94,12 @@ impl MatrixView {
         match input {
             OverviewInput::Up => self.vertical = self.vertical.saturating_sub(1),
             OverviewInput::Down => self.vertical = self.vertical.saturating_add(1),
-            OverviewInput::PageUp => self.vertical = self.vertical.saturating_sub(10),
-            OverviewInput::PageDown => self.vertical = self.vertical.saturating_add(10),
+            OverviewInput::PageUp => {
+                self.vertical = self.vertical.saturating_sub(page_size.max(1));
+            }
+            OverviewInput::PageDown => {
+                self.vertical = self.vertical.saturating_add(page_size.max(1));
+            }
             OverviewInput::Top => self.vertical = 0,
             OverviewInput::Bottom => self.vertical = usize::MAX,
             OverviewInput::ToggleExpand => {

@@ -6,22 +6,22 @@ expression: text
 R┌Help────────────────────────────────┐
 b│ Current: Overview                ▲ │
 d│ ↑ / ↓ / j / k                    ┃ │
-H│   scroll the matrix or preview   ┃ │
- │ ← / →                            ┃ │
- │   select env in matrix; scroll   ┃ │
- │   preview                        │ │
+H│   scroll matrix when preview is  ┃ │
+ │   closed; scroll preview when    ┃ │
+ │   open                           ┃ │
+ │ ← / →                            │ │
+ │   select env when preview is     │ │
+ │   closed; scroll preview when    │ │
+ │   open                           │ │
  │ [ / ]                            │ │
  │   select previous or next        │ │
  │   environment                    │ │
  │ Enter                            │ │
  │   open the selected              │ │
- │   environment's full plan        │ │
- │   preview                        │ │
- │ Tab                              │ │
- │   switch input between matrix    │ │
- │   and preview                    │ │
+ │   environment's plan preview     │ │
  │ Esc                              │ │
- │   close preview; return from     ▼ │
+ │   close preview; return from     │ │
+ │   full plan                      ▼ │
  │ ↑/↓/k/j/PgUp/PgDn scroll           │
  │ ?/Esc close                        │
  └────────────────────────────────────┘
