@@ -19,7 +19,7 @@ pub(crate) fn body_style() -> Style {
 pub(crate) fn overview_background_style() -> Style {
     Style::default()
         .fg(Color::Rgb(0xde, 0xd8, 0xd1))
-        .bg(Color::Rgb(0x39, 0x39, 0x38))
+        .bg(Color::Reset)
 }
 
 pub(crate) fn overview_text_style() -> Style {
@@ -29,13 +29,13 @@ pub(crate) fn overview_text_style() -> Style {
 pub(crate) fn overview_muted_style() -> Style {
     Style::default()
         .fg(Color::Rgb(0xb8, 0xb5, 0xae))
-        .bg(Color::Rgb(0x39, 0x39, 0x38))
+        .bg(Color::Reset)
 }
 
 pub(crate) fn overview_accent_style() -> Style {
     Style::default()
         .fg(Color::Rgb(0xef, 0xae, 0x6d))
-        .bg(Color::Rgb(0x39, 0x39, 0x38))
+        .bg(Color::Reset)
 }
 
 pub(crate) fn overview_header_style() -> Style {
@@ -96,7 +96,7 @@ pub(crate) fn overview_preview_title_style(focused: bool) -> Style {
 }
 
 pub(crate) fn overview_warning_style() -> Style {
-    warning_style().bg(Color::Rgb(0x39, 0x39, 0x38))
+    warning_style().bg(Color::Reset)
 }
 
 pub(crate) fn overview_header_warning_style() -> Style {
@@ -105,7 +105,7 @@ pub(crate) fn overview_header_warning_style() -> Style {
 
 pub(crate) fn overview_plan_line_style(line: &str) -> Style {
     if matches!(line.trim_start().chars().next(), Some('+' | '-' | '~')) {
-        plan_line_style(line).bg(Color::Rgb(0x39, 0x39, 0x38))
+        plan_line_style(line).bg(Color::Reset)
     } else {
         overview_text_style()
     }

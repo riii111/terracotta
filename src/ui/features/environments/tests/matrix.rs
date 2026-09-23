@@ -306,7 +306,7 @@ fn three_environments_show_groups_actions_and_totals(#[case] width: u16, #[case]
             .cell((2, u16::try_from(matrix_header).unwrap()))
             .expect("matrix background")
             .bg,
-        Color::Rgb(0x39, 0x39, 0x38)
+        Color::Reset
     );
     let total_line = rendered
         .lines()
@@ -321,7 +321,7 @@ fn three_environments_show_groups_actions_and_totals(#[case] width: u16, #[case]
     );
     assert_eq!(
         buffer.cell((width - 1, height - 1)).unwrap().bg,
-        Color::Rgb(0x39, 0x39, 0x38)
+        Color::Reset
     );
     assert!(rendered.contains("Space expand all"));
     insta::assert_snapshot!(format!("three_environments_{width}x{height}"), rendered);
