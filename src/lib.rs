@@ -40,6 +40,11 @@ pub fn run_terraform(arguments: &[std::ffi::OsString]) -> ExitCode {
 }
 
 #[must_use]
+pub fn run_default() -> Option<ExitCode> {
+    runtime::invocation::run_default()
+}
+
+#[must_use]
 pub fn run_tofu(arguments: &[std::ffi::OsString]) -> ExitCode {
     runtime::invocation::run(Tool::OpenTofu, arguments)
 }

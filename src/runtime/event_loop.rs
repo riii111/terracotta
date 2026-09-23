@@ -36,22 +36,25 @@ pub(crate) fn run_connected(
     messages: &Receiver<PlanReviewMessage>,
     plan_worker: &mut super::WorkerGuard,
     mut effects: RuntimeEffects<'_, ClipboardExecutor>,
+    initial_overview: bool,
 ) -> io::Result<SessionOutcome> {
     let mut execution_view = execution::ExecutionViewState::default();
     let mut review_view = plan_review::PlanReviewViewState::default();
     let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
     let mut state = SessionState::new(execution);
     let mut worker_disconnected = false;
+    let mut start_in_overview = initial_overview;
     let mut quit_confirmation = false;
     let mut dirty = true;
 
     loop {
-        let (outcome, received) = receive_messages(
+        let (outcome, received) = receive_messages_with_initial_overview(
             messages,
             &mut state,
             &mut execution_view,
             &mut worker_disconnected,
             &mut effects,
+            &mut start_in_overview,
         );
         dirty |= received;
         if let Some(outcome) = outcome {
@@ -59,12 +62,13 @@ pub(crate) fn run_connected(
         }
 
         let finished_workers = reap_workers(plan_worker, &mut effects)?;
-        let (outcome, received) = receive_messages(
+        let (outcome, received) = receive_messages_with_initial_overview(
             messages,
             &mut state,
             &mut execution_view,
             &mut worker_disconnected,
             &mut effects,
+            &mut start_in_overview,
         );
         dirty |= received;
         if let Some(outcome) = outcome {
@@ -639,24 +643,37 @@ fn draw_with_quit_confirmation<B: Backend>(
     Ok(())
 }
 
-fn receive_messages<C: ClipboardWriter>(
+fn receive_messages_with_initial_overview<C: ClipboardWriter>(
     messages: &Receiver<PlanReviewMessage>,
     state: &mut SessionState,
     execution_view: &mut execution::ExecutionViewState,
     worker_disconnected: &mut bool,
     effects: &mut RuntimeEffects<'_, C>,
+    start_in_overview: &mut bool,
 ) -> (Option<SessionOutcome>, bool) {
     let mut received = false;
     loop {
         match messages.try_recv() {
             Ok(message) => {
                 received = true;
+                let open_overview =
+                    *start_in_overview && matches!(message, PlanReviewMessage::Completed(_));
+                if open_overview {
+                    *start_in_overview = false;
+                }
                 if let Some(outcome) = dispatch(
                     state,
                     SessionState::from_message(message),
                     execution_view,
                     effects,
                 ) {
+                    return (Some(outcome), received);
+                }
+                if open_overview
+                    && state.review().is_some()
+                    && let Some(outcome) =
+                        dispatch(state, Action::OpenOverview, execution_view, effects)
+                {
                     return (Some(outcome), received);
                 }
             }
@@ -983,6 +1000,24 @@ mod tests {
     }
 
     struct TestClipboard;
+
+    fn receive_messages<C: ClipboardWriter>(
+        messages: &Receiver<PlanReviewMessage>,
+        state: &mut SessionState,
+        execution_view: &mut execution::ExecutionViewState,
+        worker_disconnected: &mut bool,
+        effects: &mut RuntimeEffects<'_, C>,
+    ) -> (Option<SessionOutcome>, bool) {
+        let mut start_in_overview = false;
+        super::receive_messages_with_initial_overview(
+            messages,
+            state,
+            execution_view,
+            worker_disconnected,
+            effects,
+            &mut start_in_overview,
+        )
+    }
 
     impl ClipboardWriter for TestClipboard {
         fn execute(&mut self, _effect: &CopyEffect) -> CopyResult {
