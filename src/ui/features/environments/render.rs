@@ -4,13 +4,14 @@ use crate::{
     ui::{
         features::{overview::matrix, plan_review},
         primitives::{atoms::separator, molecules::help_dialog},
-        shell::environments,
+        shell::{environments, footer},
         theme,
     },
 };
 use ratatui::{
     Frame,
     layout::Rect,
+    text::Line,
     widgets::{Clear, Paragraph, Wrap},
 };
 use std::time::Instant;
@@ -79,9 +80,15 @@ impl EnvironmentView {
         let Some(plan) = state.plans().get(self.selection.column) else {
             return;
         };
-        let context = overview_context(self, plan);
+        let context = overview_context(self);
         let detail = overview_detail(plan);
         let (context_height, detail_height) = section_heights(area, &context, &detail);
+        let footer = overview_footer(
+            area.width,
+            self.matrix.searching(),
+            self.matrix.selected_group_expanded(),
+        );
+        let footer_height = u16::try_from(footer.len()).unwrap_or(u16::MAX);
         frame.render_widget(
             Paragraph::new(context).wrap(Wrap { trim: false }),
             Rect::new(area.x, area.y, area.width, context_height),
@@ -101,28 +108,29 @@ impl EnvironmentView {
             area.x,
             area.y.saturating_add(context_height + detail_height),
             area.width,
-            area.height
-                .saturating_sub(context_height + 1 + detail_height + u16::from(show_boundaries)),
+            area.height.saturating_sub(
+                context_height + footer_height + detail_height + u16::from(show_boundaries),
+            ),
         );
         matrix::render(frame, body, state, &mut self.matrix, self.selection.column);
-        let footer = overview_footer(
-            area.width,
-            self.matrix.searching(),
-            self.matrix.selected_group_expanded(),
-        );
         if show_boundaries {
             frame.render_widget(
                 separator::render(area.width),
-                Rect::new(area.x, area.bottom().saturating_sub(2), area.width, 1),
+                Rect::new(
+                    area.x,
+                    area.bottom().saturating_sub(footer_height + 1),
+                    area.width,
+                    1,
+                ),
             );
         }
         frame.render_widget(
             Paragraph::new(footer),
             Rect::new(
                 area.x,
-                area.bottom().saturating_sub(1),
+                area.bottom().saturating_sub(footer_height),
                 area.width,
-                area.height.min(1),
+                footer_height,
             ),
         );
     }
@@ -132,13 +140,22 @@ impl EnvironmentView {
             return false;
         };
         let shell = environments::layout(area, state, self.notice.as_deref(), false);
-        let context = overview_context(self, plan);
+        let context = overview_context(self);
         let detail = overview_detail(plan);
         let (context_height, detail_height) = section_heights(shell.body, &context, &detail);
+        let footer_height = u16::try_from(
+            overview_footer(
+                area.width,
+                self.matrix.searching(),
+                self.matrix.selected_group_expanded(),
+            )
+            .len(),
+        )
+        .unwrap_or(u16::MAX);
         let matrix_height = shell
             .body
             .height
-            .saturating_sub(context_height + 1 + detail_height);
+            .saturating_sub(context_height + footer_height + detail_height);
 
         matrix_height >= 9
     }
@@ -161,49 +178,46 @@ impl EnvironmentView {
     }
 }
 
-fn overview_context(view: &EnvironmentView, plan: &EnvironmentPlan) -> String {
-    let selection = format!(
-        "{} · {}",
-        environments::name(plan),
-        plan.tool.display_name()
-    );
+fn overview_context(view: &EnvironmentView) -> String {
     if view.matrix.searching() || view.matrix.filtered() {
-        format!(
-            "Filter: /{}   (display only)\n{selection}",
-            view.matrix.filter()
-        )
+        format!("Filter: /{}   (display only)", view.matrix.filter())
     } else {
-        selection
+        String::new()
     }
 }
 
-fn overview_footer(width: u16, searching: bool, expanded: Option<bool>) -> String {
+fn overview_footer(width: u16, searching: bool, expanded: Option<bool>) -> Vec<Line<'static>> {
     if searching {
-        return "Enter confirm   Esc cancel".to_owned();
+        return footer::layout(
+            vec![
+                footer::hint(&["Enter"], "confirm"),
+                footer::hint(&["Esc"], "cancel"),
+            ],
+            width,
+        );
     }
-    let toggle = expanded.map(|expanded| {
-        if expanded {
-            "Space collapse"
-        } else {
-            "Space expand"
-        }
-    });
-    match (width, toggle) {
-        (..45, Some(toggle)) => format!("Enter open  {toggle}  q quit"),
-        (..45, None) => "Enter open resource  ? help  q quit".to_owned(),
-        (45..56, Some(toggle)) => format!("Enter open  {toggle}  ? help"),
-        (45..56, None) => "Enter open selected resource  ? help".to_owned(),
-        (56..64, Some(toggle)) => format!("Enter open  / filter  {toggle}  ? help"),
-        (56..64, None) => "Enter open selected resource in raw plan  ? help".to_owned(),
-        (64..80, Some(toggle)) => format!("Enter open selected  / filter  {toggle}  ? help"),
-        (64..80, None) => "Enter open selected resource in raw plan  ? help  q quit".to_owned(),
-        (_, Some(toggle)) => {
-            format!("Enter open selected  / filter  {toggle}  ? help  q quit")
-        }
-        (_, None) => {
-            "Enter open selected resource in raw plan  / filter  ? help  q quit".to_owned()
-        }
+    let (open, plan) = if width < 56 {
+        ("raw", "plan")
+    } else {
+        ("open raw", "full plan")
+    };
+    let mut items = vec![
+        footer::hint(&["↑↓"], "row"),
+        footer::hint(&["←→"], "env"),
+        footer::hint(&["Enter"], open),
+        footer::hint(&["/"], "filter"),
+    ];
+    if let Some(expanded) = expanded {
+        items.push(footer::hint(
+            &["Space"],
+            if expanded { "collapse" } else { "expand" },
+        ));
     }
+    if !(width < 45 && expanded == Some(true)) {
+        items.push(footer::hint(&["v"], plan));
+    }
+    items.extend([footer::hint(&["?"], "help"), footer::hint(&["q"], "quit")]);
+    footer::layout(items, width)
 }
 
 fn overview_detail(plan: &EnvironmentPlan) -> String {
@@ -223,21 +237,29 @@ fn overview_detail(plan: &EnvironmentPlan) -> String {
 }
 
 fn section_heights(area: Rect, context: &str, detail: &str) -> (u16, u16) {
-    let context_height = u16::try_from(
-        Paragraph::new(context)
-            .wrap(Wrap { trim: false })
-            .line_count(area.width.max(1)),
-    )
-    .unwrap_or(u16::MAX)
-    .min(area.height.saturating_sub(6));
-    let detail_height = u16::try_from(
-        Paragraph::new(detail)
-            .wrap(Wrap { trim: false })
-            .line_count(area.width.max(1)),
-    )
-    .unwrap_or(u16::MAX)
-    .min(3)
-    .min(area.height.saturating_sub(context_height + 6));
+    let context_height = if context.is_empty() {
+        0
+    } else {
+        u16::try_from(
+            Paragraph::new(context)
+                .wrap(Wrap { trim: false })
+                .line_count(area.width.max(1)),
+        )
+        .unwrap_or(u16::MAX)
+        .min(area.height.saturating_sub(6))
+    };
+    let detail_height = if detail.is_empty() {
+        0
+    } else {
+        u16::try_from(
+            Paragraph::new(detail)
+                .wrap(Wrap { trim: false })
+                .line_count(area.width.max(1)),
+        )
+        .unwrap_or(u16::MAX)
+        .min(3)
+        .min(area.height.saturating_sub(context_height + 6))
+    };
 
     (context_height, detail_height)
 }

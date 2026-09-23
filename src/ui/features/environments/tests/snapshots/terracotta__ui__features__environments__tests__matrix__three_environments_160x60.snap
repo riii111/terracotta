@@ -5,13 +5,14 @@ expression: rendered
 0 Overview   1 dev  2 prod [PROD]  3 stg
 Ready: 3/3
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-dev · terraform
-
-Address                        > dev     prod       stg        why
+Address                        dev       prod       stg        why
+blank: absent   .: unchanged   ?: plan unavailable
 Differs across envs
 > terraform_data.api           ~         +/-        -          action
+
 Same change across envs
   [+] terraform_data.server[*] ~ 20      ~ 200      ~ 20
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 Total                          +0 ~21 -0 +0 ~200 -0 +0 ~20 -1
                                0 replace 1 replace  0 replace
 
@@ -59,6 +60,5 @@ Total                          +0 ~21 -0 +0 ~200 -0 +0 ~20 -1
 
 
 
-
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-Enter open selected resource in raw plan  / filter  ? help  q quit
+↑↓ row | ←→ env | Enter open raw | / filter | v full plan | ? help | q quit

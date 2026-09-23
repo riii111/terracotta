@@ -190,9 +190,9 @@ fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
         }
         if (width, height) == (80, 24) {
             assert!(text.contains("1–9"));
-            assert!(
-                text.contains("Enter open selected resource in raw plan  / filter  ? help  q quit")
-            );
+            assert!(text.contains(
+                "↑↓ row | ←→ env | Enter open raw | / filter | v full plan | ? help | q quit"
+            ));
             assert!(text.contains("only on [+]/[-] group rows"));
         }
         assert_eq!(text.matches("close").count(), 1, "{width}x{height}: {text}");

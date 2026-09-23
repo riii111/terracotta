@@ -5,16 +5,16 @@ expression: rendered
 0 Overview   1 dev  2 prod [PROD]  ›
 Ready: 3/3
 ────────────────────────────────────────
-dev · terraform
-
-Address               > dev      why
+Address               dev        why
+blank: absent   .: unchanged
+?: plan unavailable
 Differs across envs
 > terraform_data.api  ~          action
+
 Same change across envs
   …orm_data.server[*] ~ 20
-Total                 +0 ~21 -0
-                      0 replace
-
-
 ────────────────────────────────────────
-Enter open resource  ? help  q quit
+Total                 +0 ~21 -0
+────────────────────────────────────────
+↑↓ row | ←→ env | Enter raw | / filter
+v plan | ? help | q quit

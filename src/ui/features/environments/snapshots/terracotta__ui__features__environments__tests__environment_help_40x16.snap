@@ -7,14 +7,14 @@ R┌Help────────────────────────
 b│ Current: Overview                ▲ │
 d│ ↑ / ↓ / j / k                    ┃ │
 H│   select a resource row          │ │
-a│ ← / → / [ / ]                    │ │
- │   select an environment          │ │
-A│ Enter                            │ │
-N│   open selected resource in the  │ │h
-T│   selected environment's raw     │ │
- │   plan                           │ │
- │ 1–9                              ▼ │
+─│ ← / → / [ / ]                    │ │─
+A│   select an environment          │ │
+b│ Enter                            │ │
+?│   open selected resource in the  │ │
+N│   selected environment's raw     │ │h
+─│   plan                           │ │─
+T│ 1–9                              ▼ │
  │ ↑/↓/k/j/PgUp/PgDn scroll           │
- │ ?/Esc close                        │
- └────────────────────────────────────┘
-Enter open resource  ? help  q quit
+─│ ?/Esc close                        │─
+↑└────────────────────────────────────┘
+v plan | ? help | q quit

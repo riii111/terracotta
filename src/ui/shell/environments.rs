@@ -186,7 +186,7 @@ pub(crate) fn render_tabs(
         }
         spans.push(Span::styled(
             label.clone(),
-            if index == active {
+            if selection.raw.is_some() && index == active {
                 theme::search_match_style()
             } else {
                 theme::secondary_style()
