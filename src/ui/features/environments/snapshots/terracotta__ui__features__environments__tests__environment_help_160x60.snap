@@ -33,7 +33,7 @@ Total       +0 ~0 -0  Error     Running     Pending     Excluded
                                           │                                                                        ┃ │
                                           │ Other                                                                  ┃ │
                                           │ PgUp / PgDn          move one page                                     ┃ │
-                                          │ Home / End           go to the first or last row                       │ │
+                                          │ Home / End           go to the first or last row                       ┃ │
                                           │ v                    show the full plan from the top                   │ │
                                           │ y                    copy the selected environment's plan              │ │
                                           │ c                    show environment context                          │ │

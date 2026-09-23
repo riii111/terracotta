@@ -4,16 +4,16 @@ expression: bottom_text
 ---
 0 Overview   1 a-ready  2 b-error  ›
 Re┌Help──────────────────────────────┐
-b-│                 Ready plans    ▲ │
-d-│ Only Ready environments are    │ │
-HC│ compared.                      │ │
-a-│ Excluded environments are not  │ │
-  │ retried.                       │ │
-Ad│                                │ │
-No│ Exit                           │ │th
-To│ q               quit; confirms │ │
-  │                 first while    ┃ │
-  │                 acquiring      ▼ │
+b-│ read / move /   action shown   ▲ │
+d-│ import          by name        │ │
+HC│ why: missing    resource       │ │
+a-│                 present in     │ │
+  │                 only some      │ │
+Ad│                 Ready plans    │ │
+No│ Only Ready environments are    │ │th
+To│ compared.                      │ │
+  │ Excluded environments are not  ┃ │
+  │ retried.                       ▼ │
   │ ↑/↓/PgUp/PgDn scroll             │
   │ ?/Esc close                      │
   └──────────────────────────────────┘

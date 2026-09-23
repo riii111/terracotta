@@ -265,7 +265,10 @@ fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
                     ),
                     help_dialog::HelpAction::new("blank", "resource absent from this environment"),
                     help_dialog::HelpAction::new(".", "resource present, with no change"),
-                    help_dialog::HelpAction::new("?", "plan unavailable or change unsupported"),
+                    help_dialog::HelpAction::new(
+                        "?",
+                        "plan unavailable; action unknown or unsupported",
+                    ),
                     help_dialog::HelpAction::new("read / move / import", "action shown by name"),
                     help_dialog::HelpAction::new(
                         "why: missing",
@@ -274,13 +277,6 @@ fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
                     help_dialog::HelpAction::note("Only Ready environments are compared."),
                     help_dialog::HelpAction::note("Excluded environments are not retried."),
                 ],
-            ),
-            help_dialog::HelpSection::new(
-                "Exit",
-                vec![help_dialog::HelpAction::new(
-                    "q",
-                    "quit; confirms first while acquiring",
-                )],
             ),
         ],
         scroll,

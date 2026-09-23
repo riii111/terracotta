@@ -131,7 +131,7 @@ fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
     view.dialog_scroll = u16::MAX;
     let bottom = render_to_buffer((40, 16), |frame| view.render(frame, &state));
     let bottom_text = buffer_text(&bottom);
-    assert!(bottom_text.contains("Exit"));
+    assert!(bottom_text.contains("Excluded"));
     assert!(bottom_text.contains("quit"));
     assert_eq!(bottom_text.matches("close").count(), 1);
     insta::assert_snapshot!("environment_help_40x16_bottom", bottom_text);
@@ -212,7 +212,7 @@ fn help_explains_matrix_symbols_and_missing_rows() {
         "resource absent from this environment",
         ".",
         "resource present, with no change",
-        "plan unavailable or change unsupported",
+        "action unknown or unsupported",
         "why: missing",
         "some Ready plans",
     ] {
