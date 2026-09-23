@@ -195,8 +195,13 @@ fn run_review_with_dependencies(
         .unwrap_or_else(|| configuration_comparisons.working_tree());
     add_unsupported_comparison_changes(&mut analysis_issues, &git_diff, unsupported_comparison);
 
-    let mut attributions =
-        attribute_changes(&plan.changes, &source_files, git_diff.changed_lines());
+    let mut attributions = attribute_changes(
+        plan.resource_changes
+            .iter()
+            .filter(|change| change.kind.is_standard_change()),
+        &source_files,
+        git_diff.changed_lines(),
+    );
     mark_analysis_incomplete(&mut attributions, &analysis_issues);
     if cancellation.is_cancelled() {
         return Err(ReviewError::Interrupted);

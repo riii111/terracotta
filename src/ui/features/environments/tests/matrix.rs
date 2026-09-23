@@ -121,7 +121,6 @@ fn complete(state: &mut EnvironmentSession, changes: Vec<ResourceChange>) {
     .with_apply_allowed(false)
     .with_apply_entry(false)
     .with_plan(Plan {
-        changes: Vec::new(),
         resource_changes: changes,
         value_addresses: BTreeSet::new(),
         summary,

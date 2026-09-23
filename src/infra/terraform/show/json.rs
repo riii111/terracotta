@@ -54,17 +54,11 @@ pub(super) fn parse_plan_document(document: &Value) -> Result<Plan, PlanParseErr
     parse_format_version(root)?;
     let resources = optional_array(root, "resource_changes")?;
 
-    let mut changes = Vec::new();
     let mut resource_changes = Vec::new();
     let mut unsupported_changes = Vec::new();
 
     for resource in resources {
-        parse_resource_change(
-            resource,
-            &mut changes,
-            &mut resource_changes,
-            &mut unsupported_changes,
-        )?;
+        parse_resource_change(resource, &mut resource_changes, &mut unsupported_changes)?;
     }
 
     if let Some(deferred_changes) = root.get("deferred_changes") {
@@ -92,7 +86,6 @@ pub(super) fn parse_plan_document(document: &Value) -> Result<Plan, PlanParseErr
     let summary = summarize(&resource_changes);
 
     Ok(Plan {
-        changes,
         resource_changes,
         value_addresses: parse_value_addresses(root)?,
         summary,
@@ -211,7 +204,6 @@ const fn unsupported_kind(kind: ResourceChangeKind) -> Option<UnsupportedChangeK
 
 fn parse_resource_change(
     resource: &Value,
-    changes: &mut Vec<ResourceChange>,
     resource_changes: &mut Vec<ResourceChange>,
     unsupported_changes: &mut Vec<UnsupportedChange>,
 ) -> Result<(), PlanParseError> {
@@ -253,9 +245,6 @@ fn parse_resource_change(
         importing,
     };
 
-    if kind.is_standard_change() {
-        changes.push(resource_change.clone());
-    }
     resource_changes.push(resource_change);
     if let Some(kind) = unsupported_kind(kind) {
         unsupported_changes.push(UnsupportedChange {
@@ -685,7 +674,10 @@ mod tests {
 
     impl Plan {
         fn has_changes(&self) -> bool {
-            !self.changes.is_empty() || !self.unsupported_changes.is_empty()
+            self.resource_changes
+                .iter()
+                .any(|change| change.kind.is_standard_change())
+                || !self.unsupported_changes.is_empty()
         }
 
         fn unsupported_change_count(&self) -> usize {
@@ -740,12 +732,12 @@ mod tests {
 
         let plan = parse_plan_json(&input).expect("plan should parse");
 
-        assert_eq!(plan.changes.len(), 4);
-        assert_eq!(plan.changes[0].kind, ResourceChangeKind::Create);
-        assert_eq!(plan.changes[1].kind, ResourceChangeKind::Update);
-        assert_eq!(plan.changes[2].kind, ResourceChangeKind::Replace);
-        assert_eq!(plan.changes[3].kind, ResourceChangeKind::Delete);
-        assert_eq!(plan.changes[3].mode, ResourceMode::Data);
+        assert_eq!(plan.resource_changes.len(), 4);
+        assert_eq!(plan.resource_changes[0].kind, ResourceChangeKind::Create);
+        assert_eq!(plan.resource_changes[1].kind, ResourceChangeKind::Update);
+        assert_eq!(plan.resource_changes[2].kind, ResourceChangeKind::Replace);
+        assert_eq!(plan.resource_changes[3].kind, ResourceChangeKind::Delete);
+        assert_eq!(plan.resource_changes[3].mode, ResourceMode::Data);
         assert_eq!(plan.summary.creates, 1);
         assert_eq!(plan.summary.updates, 1);
         assert_eq!(plan.summary.replaces, 1);
@@ -773,11 +765,11 @@ mod tests {
         assert_eq!(plan.summary.replaces, 2);
         assert_eq!(plan.summary.total(), 2);
         assert_eq!(
-            plan.changes[0].actions,
+            plan.resource_changes[0].actions,
             vec![PlanAction::Create, PlanAction::Delete]
         );
         assert_eq!(
-            plan.changes[1].actions,
+            plan.resource_changes[1].actions,
             vec![PlanAction::Delete, PlanAction::Create]
         );
     }
@@ -791,7 +783,7 @@ mod tests {
         )]));
 
         let plan = parse_plan_json(&input).expect("plan should parse");
-        let change = &plan.changes[0];
+        let change = &plan.resource_changes[0];
 
         assert_eq!(change.before, Some(PlanValue::Null));
         assert_eq!(
@@ -820,7 +812,7 @@ mod tests {
             parse_plan_json(&plan_with_resources(json!([resource]))).expect("plan should parse");
 
         assert_eq!(
-            plan.changes[0].action_reason,
+            plan.resource_changes[0].action_reason,
             Some("replace_because_cannot_update".to_owned())
         );
     }
@@ -852,7 +844,12 @@ mod tests {
         let plan = parse_plan_json(&plan_with_resources(json!([moved, imported, empty_import])))
             .expect("plan should parse");
 
-        assert!(plan.changes.is_empty());
+        assert!(
+            !plan
+                .resource_changes
+                .iter()
+                .any(|change| change.kind.is_standard_change())
+        );
         assert_eq!(plan.unsupported_change_count(), 3);
         assert_eq!(
             plan.unsupported_changes[0].kind,
@@ -899,7 +896,7 @@ mod tests {
         });
 
         let plan = parse_plan_json(&input.to_string()).expect("plan should parse");
-        let change = &plan.changes[0];
+        let change = &plan.resource_changes[0];
         assert_eq!(
             change.provider.as_deref(),
             Some("registry.terraform.io/hashicorp/example")
@@ -946,7 +943,6 @@ mod tests {
         });
 
         let plan = parse_plan_json(&input.to_string()).expect("plan should parse");
-        assert!(plan.changes.is_empty());
         assert_eq!(plan.resource_changes.len(), 1);
         assert_eq!(plan.resource_changes[0].kind, ResourceChangeKind::NoOp);
         assert_eq!(plan.output_changes.len(), 1);
@@ -963,7 +959,9 @@ mod tests {
         let mut document = json!({
             "format_version": "1.0",
             "resource_changes": [
+                resource("aws_instance.create", "managed", json!(["create"])),
                 resource("aws_instance.read", "managed", json!(["read"])),
+                resource("aws_instance.update", "managed", json!(["update"])),
                 resource("aws_instance.move", "managed", json!(["move"])),
                 resource("aws_instance.import", "managed", json!(["import"])),
                 resource("aws_instance.unknown", "managed", json!(["future-action"]))
@@ -976,7 +974,21 @@ mod tests {
 
         let plan = parse_plan_json(&document.to_string()).expect("plan should parse");
 
-        assert!(plan.changes.is_empty());
+        assert_eq!(plan.resource_changes.len(), 6);
+        assert_eq!(
+            plan.resource_changes
+                .iter()
+                .map(|change| change.kind)
+                .collect::<Vec<_>>(),
+            vec![
+                ResourceChangeKind::Create,
+                ResourceChangeKind::Read,
+                ResourceChangeKind::Update,
+                ResourceChangeKind::Move,
+                ResourceChangeKind::Import,
+                ResourceChangeKind::Unknown,
+            ]
+        );
         assert!(plan.has_changes());
         assert_eq!(plan.unsupported_change_count(), 5);
         assert_eq!(
@@ -1032,7 +1044,6 @@ mod tests {
 
         let plan = parse_plan_json(&input.to_string()).expect("extended plan should parse");
 
-        assert!(plan.changes.is_empty());
         assert!(plan.has_changes());
         assert_eq!(plan.unsupported_change_count(), 3);
 
@@ -1073,7 +1084,6 @@ mod tests {
 
         let plan = parse_plan_json(&input.to_string()).expect("output-only plan should parse");
 
-        assert!(plan.changes.is_empty());
         assert!(plan.has_changes());
         assert_eq!(plan.unsupported_change_count(), 1);
         assert_eq!(
@@ -1097,7 +1107,6 @@ mod tests {
 
         let plan = parse_plan_json(&input.to_string()).expect("plan should parse");
 
-        assert!(plan.changes.is_empty());
         assert_eq!(plan.unsupported_change_count(), 1);
         assert_eq!(
             plan.unsupported_changes[0].scope,
@@ -1119,7 +1128,7 @@ mod tests {
             parse_plan_json(&plan_with_resources(json!([resource]))).expect("plan should parse");
 
         assert_eq!(
-            plan.changes[0].replace_paths,
+            plan.resource_changes[0].replace_paths,
             Some(vec![vec![
                 ReplacePathSegment::Attribute("disks".to_owned()),
                 ReplacePathSegment::Index(0),
@@ -1155,7 +1164,7 @@ mod tests {
 
             let plan = parse_plan_json(&plan_with_resources(json!([resource])))
                 .unwrap_or_else(|error| panic!("case {name}: plan should parse: {error}"));
-            let Some(PlanValue::Number(actual)) = &plan.changes[0].after else {
+            let Some(PlanValue::Number(actual)) = &plan.resource_changes[0].after else {
                 panic!("case {name}: number should remain a number");
             };
             assert_eq!(actual, expected, "case: {name}");
@@ -1177,7 +1186,12 @@ mod tests {
         .expect("no-op plan should parse");
         assert!(!noops.has_changes());
         assert_eq!(noops.summary.total(), 0);
-        assert!(noops.changes.is_empty());
+        assert!(
+            noops
+                .resource_changes
+                .iter()
+                .all(|change| !change.kind.is_standard_change())
+        );
         assert!(noops.unsupported_changes.is_empty());
     }
 
@@ -1194,8 +1208,8 @@ mod tests {
 
         let plan = parse_plan_json(&input.to_string()).expect("Terraform plan should parse");
 
-        assert_eq!(plan.changes.len(), 1);
-        assert_eq!(plan.changes[0].replace_paths, None);
+        assert_eq!(plan.resource_changes.len(), 1);
+        assert_eq!(plan.resource_changes[0].replace_paths, None);
         assert!(plan.unsupported_changes.is_empty());
     }
 
