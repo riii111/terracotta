@@ -4,6 +4,16 @@ This scenario uses local state and the built-in `terraform_data` resource. No
 provider download, cloud account, or remote backend is needed. All files are
 created in a new temporary directory.
 
+For a ready-to-review three-environment demo, run:
+
+```sh
+python3 fixtures/environments/scenario.py demo
+```
+
+It builds Terracotta, opens the `dev`, `prod`, and `stg` comparison with every
+environment Ready, and removes the temporary scenario when the review exits.
+Use `--tool tofu` to run the demo with OpenTofu.
+
 ```sh
 scenario_dir=$(python3 fixtures/environments/scenario.py setup)
 terracotta terraform -chdir="$scenario_dir" plan
