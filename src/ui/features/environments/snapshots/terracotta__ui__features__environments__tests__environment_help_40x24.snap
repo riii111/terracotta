@@ -1,0 +1,28 @@
+---
+source: src/ui/features/environments/tests.rs
+expression: narrow
+---
+0 Overview   1 a-ready  2 b-error  ›
+Re┌Help──────────────────────────────┐
+b-│Navigation                        │
+d-│↑ / ↓ / j / select a resource row │
+HC│k                                 │
+a-│                                  │
+te│← / → / [ / select an environment │
+Di│]                                 │
+  │                                  │
+Ad│PgUp / PgDn move one page         │
+No│                                  │th
+  │Home / End  go to the first or    │
+  │            last row              │
+  │                                  │
+  │Review                            │
+  │Enter       open the selected     │
+  │            resource              │
+  │                                  │
+  │1–9         open the resource in  │
+  │            that environment      │
+  │                                  │
+To│?/Esc close                       │
+  └──────────────────────────────────┘
+Enter open  / filter  ? help  q quit

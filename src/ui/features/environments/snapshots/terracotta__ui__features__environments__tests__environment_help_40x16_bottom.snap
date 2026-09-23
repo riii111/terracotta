@@ -1,0 +1,20 @@
+---
+source: src/ui/features/environments/tests.rs
+expression: bottom_text
+---
+0 Overview   1 a-ready  2 b-error  ›
+Re┌Help──────────────────────────────┐
+b-│Unknown values remain unknown.    │
+d-│                                  │
+HC│Only Ready environments are       │
+a-│compared.                         │
+te│                                  │
+Di│Excluded environments are not     │
+  │retried.                          │
+Ad│                                  │
+No│Exit                              │th
+  │q           quit; confirms first  │
+  │            while acquiring       │
+To│?/Esc close                       │
+  └──────────────────────────────────┘
+Enter open  / filter  ? help  q quit

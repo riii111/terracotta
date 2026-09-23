@@ -10,7 +10,10 @@ use ratatui::{
 
 use crate::app::{copy::CopyNotice, review::PlanReview, session::OverviewSessionState};
 use crate::ui::{
-    primitives::{atoms::scrollbar, molecules::terminal_notice},
+    primitives::{
+        atoms::scrollbar,
+        molecules::{help_dialog, terminal_notice},
+    },
     shell::{context, footer, header, layout as shell_layout},
     theme,
 };
@@ -396,26 +399,51 @@ fn render_overlay(
     let Some(overlay) = view.overlay() else {
         return;
     };
-    let lines = match overlay {
-        OverviewOverlay::Help => vec![
-            footer::hint(&["↑", "↓", "j", "k"], "select row"),
-            footer::hint(&["Space"], "expand/collapse group"),
-            footer::hint(&["Enter"], "open selected raw block"),
-            footer::hint(&["/"], "filter full addresses"),
-            footer::hint(&["v"], "full plan from the top"),
-            footer::hint(&["y"], "copy full plan"),
-            footer::hint(&["c"], "context"),
-            footer::hint(&["?", "Esc"], "close help"),
-        ],
-        OverviewOverlay::Context => context::context_lines(review.context()),
-    };
-    render_dialog(
-        frame,
-        area,
-        overlay_title(overlay),
-        lines,
-        view.overlay_scroll(),
-    );
+    match overlay {
+        OverviewOverlay::Help => help_dialog::render(
+            frame,
+            area,
+            overlay_title(overlay),
+            &[
+                help_dialog::HelpSection::new(
+                    "Navigation",
+                    vec![
+                        help_dialog::HelpAction::new("↑ / ↓ / j / k", "select a row"),
+                        help_dialog::HelpAction::new("PgUp / PgDn", "move one page"),
+                        help_dialog::HelpAction::new("Home / End", "go to the first or last row"),
+                    ],
+                ),
+                help_dialog::HelpSection::new(
+                    "Review",
+                    vec![
+                        help_dialog::HelpAction::new("Enter", "open the selected raw block"),
+                        help_dialog::HelpAction::new("/", "filter full addresses"),
+                        help_dialog::HelpAction::new("Space", "expand or collapse a group"),
+                        help_dialog::HelpAction::new("v", "show the full plan from the top"),
+                    ],
+                ),
+                help_dialog::HelpSection::new(
+                    "Actions",
+                    vec![
+                        help_dialog::HelpAction::new("y", "copy the full plan"),
+                        help_dialog::HelpAction::new("c", "show execution context"),
+                    ],
+                ),
+                help_dialog::HelpSection::new(
+                    "Exit",
+                    vec![help_dialog::HelpAction::new("q", "quit")],
+                ),
+            ],
+            view.overlay_scroll(),
+        ),
+        OverviewOverlay::Context => render_dialog(
+            frame,
+            area,
+            overlay_title(overlay),
+            context::context_lines(review.context()),
+            view.overlay_scroll(),
+        ),
+    }
 }
 
 fn render_dialog(
@@ -487,6 +515,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::ui::features::overview::OverviewInput;
     use crate::{
         app::{
             plan::{
@@ -566,5 +595,44 @@ mod tests {
         });
 
         insta::assert_snapshot!(buffer_text(&buffer));
+    }
+
+    #[test]
+    fn renders_help_as_a_grouped_modal_that_scrolls_on_small_terminals() {
+        let state = OverviewSessionState::new(review());
+        let mut view = OverviewViewState::default();
+        let content = OverviewContent::from_review(state.review(), "", view.expanded());
+        view.apply(
+            OverviewInput::OpenHelp,
+            Rect::new(0, 0, 80, 24),
+            0,
+            &content,
+        );
+
+        let buffer = render_to_buffer((80, 24), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        let text = buffer_text(&buffer);
+        assert!(text.contains("Help"));
+        assert!(text.contains("Navigation"));
+        assert!(text.contains("open the selected raw block"));
+        assert_eq!(text.matches("close").count(), 1);
+        assert!(
+            buffer
+                .cell((0, 0))
+                .expect("dimmed background")
+                .modifier
+                .contains(ratatui::style::Modifier::DIM)
+        );
+        insta::assert_snapshot!("overview_help_80x24", text);
+
+        view.overlay_bottom();
+        let bottom = render_to_buffer((40, 16), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        let bottom_text = buffer_text(&bottom);
+        assert!(bottom_text.contains("Exit"));
+        assert!(bottom_text.contains("quit"));
+        assert_eq!(bottom_text.matches("close").count(), 1);
     }
 }

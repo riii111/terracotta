@@ -1,0 +1,29 @@
+---
+source: src/ui/features/plan_review/render.rs
+assertion_line: 1901
+expression: buffer_text(buffer)
+---
+main [PROD]  ws:default  terraform loading...  /repo/environme...production/main
+Unique targets: +2┌Help─────────────────────────────────────┐
+──────────────────│                                         │───────────────────
+  # terraform_data│PgUp / PgDn   scroll one page            │                  ▲
+  ~ resource "terr│                                         │                  ┃
+      id       = "│Home / End    go to the top or bottom    │                  ┃
+      ~ input  = "│                                         │                  ┃
+      # (4 unchang│s             overview                   │                  ┃
+    }             │                                         │                  ┃
+                  │Review                                   │                  ┃
+  # terraform_data│/             filter the full plan       │                  ┃
+-/+ resource "terr│                                         │                  ┃
+      ~ input = "w│Actions                                  │placement         │
+      - old_checks│c             show execution context     │ef0123456789abcdef│
+      + new_checks│                                         │                  │
+    }             │y             copy the full plan         │                  │
+                  │                                         │                  │
+  # terraform_data│a             apply the full plan        │                  │
+  - resource "terr│                                         │                  │
+      id = "old-20│Exit                                     │                  │
+    }             │q             quit                       │                  │
+                  │?/Esc close                              │                  │
+◀︎═════════════════└─────────────────────────────────────────┘═══════───────────▶︎
+/ filter | a apply | ? help | q quit | s overview                      Line 3/43
