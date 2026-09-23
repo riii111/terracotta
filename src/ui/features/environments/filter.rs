@@ -23,7 +23,6 @@ const MAX_WIDTH: u16 = 76;
 const MAX_HEIGHT: u16 = 20;
 const MIN_WIDTH: u16 = 24;
 const MIN_HEIGHT: u16 = 8;
-const FOOTER_HEIGHT: u16 = 3;
 
 #[derive(Default)]
 pub(crate) struct EnvironmentFilterDialog {
@@ -67,7 +66,7 @@ impl EnvironmentFilterDialog {
                 .unwrap_or(0),
             ..Self::default()
         };
-        dialog.keep_focus_visible(visible.len(), list_viewport(size));
+        dialog.keep_focus_visible(visible.len(), list_viewport(size, dialog.notice, false));
         dialog
     }
 
@@ -84,11 +83,14 @@ impl EnvironmentFilterDialog {
         let key = normalize_key(key);
         if self.searching() {
             self.search_key(key, plans);
+            let candidates = visible_candidates(plans, &self.query);
+            let viewport = list_viewport(size, self.notice, self.searching());
+            self.keep_focus_visible(candidates.len(), viewport);
             return None;
         }
 
         let candidates = visible_candidates(plans, &self.query);
-        let viewport = list_viewport(size);
+        let viewport = list_viewport(size, self.notice, self.searching());
         self.keep_focus_visible(candidates.len(), viewport);
         match (key.code, key.modifiers) {
             (KeyCode::Esc, KeyModifiers::NONE) => {
@@ -143,7 +145,11 @@ impl EnvironmentFilterDialog {
             }
             _ => {}
         }
-        self.keep_focus_visible(candidates.len(), viewport);
+        let candidates = visible_candidates(plans, &self.query);
+        self.keep_focus_visible(
+            candidates.len(),
+            list_viewport(size, self.notice, self.searching()),
+        );
         None
     }
 
@@ -211,8 +217,9 @@ impl EnvironmentFilterDialog {
     }
 
     pub(crate) fn render(&self, frame: &mut Frame<'_>, area: Rect, plans: &[EnvironmentPlan]) {
-        let width = area.width.saturating_sub(2).min(MAX_WIDTH);
-        let height = area.height.saturating_sub(2).min(MAX_HEIGHT);
+        let dimensions = dialog_dimensions(Size::new(area.width, area.height));
+        let width = dimensions.width;
+        let height = dimensions.height;
         if width < MIN_WIDTH || height < MIN_HEIGHT {
             terminal_notice::render_wrapped(
                 frame,
@@ -258,7 +265,9 @@ impl EnvironmentFilterDialog {
         );
 
         let list_y = inner.y.saturating_add(2);
-        let footer_y = inner.bottom().saturating_sub(FOOTER_HEIGHT);
+        let footer_lines = footer_lines(self.notice, self.searching(), inner.width);
+        let footer_height = u16::try_from(footer_lines.len()).unwrap_or(u16::MAX);
+        let footer_y = inner.bottom().saturating_sub(footer_height);
         let list_height = footer_y.saturating_sub(list_y);
         let list_area = Rect::new(inner.x, list_y, inner.width, list_height);
         let candidates = visible_candidates(plans, &self.query);
@@ -306,29 +315,62 @@ impl EnvironmentFilterDialog {
             vertical,
         );
 
-        let footer = Rect::new(inner.x, footer_y, inner.width, FOOTER_HEIGHT);
-        render_footer(frame, footer, self.notice);
+        let footer = Rect::new(inner.x, footer_y, inner.width, footer_height);
+        frame.render_widget(Paragraph::new(footer_lines), footer);
     }
 }
 
-fn render_footer(frame: &mut Frame<'_>, area: Rect, notice: Option<&'static str>) {
-    let lines = notice.map_or_else(
-        || {
-            vec![
-                Line::from("↑↓ move  PgUp/PgDn page"),
-                Line::from("Space toggle  a all"),
-                Line::from("Enter apply  Esc cancel  / search"),
-            ]
-        },
-        |notice| {
-            vec![
-                Line::styled(notice, theme::warning_style()),
-                Line::from("Space toggle  a all"),
-                Line::from("Enter apply  Esc cancel"),
-            ]
-        },
-    );
-    frame.render_widget(Paragraph::new(lines), area);
+fn dialog_dimensions(size: Size) -> Size {
+    Size::new(
+        size.width.saturating_sub(2).min(MAX_WIDTH),
+        size.height.saturating_sub(2).min(MAX_HEIGHT),
+    )
+}
+
+fn footer_lines(notice: Option<&'static str>, searching: bool, width: u16) -> Vec<Line<'static>> {
+    let mut lines = notice
+        .map(|notice| wrap_notice(notice, width))
+        .unwrap_or_default();
+    if searching {
+        lines.extend([
+            Line::from("Enter keep search"),
+            Line::from("Esc restore search"),
+        ]);
+    } else if width < 29 {
+        lines.extend([
+            Line::from("Space toggle  a all"),
+            Line::from("/ search"),
+            Line::from("Enter apply Esc cancel"),
+        ]);
+    } else {
+        lines.extend([
+            Line::from("Space toggle  a all  / search"),
+            Line::from("Enter apply  Esc cancel"),
+        ]);
+    }
+    lines
+}
+
+fn wrap_notice(notice: &'static str, width: u16) -> Vec<Line<'static>> {
+    let width = usize::from(width.max(1));
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in notice.split_whitespace() {
+        if !current.is_empty() && current.chars().count() + 1 + word.chars().count() > width {
+            lines.push(Line::styled(
+                std::mem::take(&mut current),
+                theme::warning_style(),
+            ));
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(word);
+    }
+    if !current.is_empty() {
+        lines.push(Line::styled(current, theme::warning_style()));
+    }
+    lines
 }
 
 fn visible_candidates(plans: &[EnvironmentPlan], query: &str) -> Vec<usize> {
@@ -411,12 +453,16 @@ fn fit_text(text: &str, width: usize) -> String {
     value
 }
 
-fn list_viewport(size: Size) -> usize {
-    usize::from(
-        size.height
-            .saturating_sub(9)
-            .min(MAX_HEIGHT.saturating_sub(7)),
-    )
+fn list_viewport(size: Size, notice: Option<&'static str>, searching: bool) -> usize {
+    let dimensions = dialog_dimensions(size);
+    if dimensions.width < MIN_WIDTH || dimensions.height < MIN_HEIGHT {
+        return 0;
+    }
+    let inner_width = dimensions.width.saturating_sub(2);
+    let inner_height = dimensions.height.saturating_sub(2);
+    let footer_height =
+        u16::try_from(footer_lines(notice, searching, inner_width).len()).unwrap_or(u16::MAX);
+    usize::from(inner_height.saturating_sub(2).saturating_sub(footer_height))
 }
 
 #[cfg(test)]
@@ -579,11 +625,15 @@ mod tests {
         let size = Size::new(40, 16);
         let mut dialog = EnvironmentFilterDialog::new(plans, None, 0, size);
 
+        assert_eq!(list_viewport(size, None, false), 8);
+        assert_eq!(list_viewport(Size::new(120, 40), None, false), 14);
         assert!(press(&mut dialog, KeyCode::PageDown, size, plans).is_none());
+        assert_eq!(dialog.focused, 8);
+        assert_eq!(dialog.vertical, 1);
         assert!(press(&mut dialog, KeyCode::PageDown, size, plans).is_none());
 
         assert_eq!(dialog.focused, 11);
-        assert!(dialog.vertical > 0);
+        assert_eq!(dialog.vertical, 4);
     }
 
     #[test]
@@ -634,8 +684,8 @@ mod tests {
         for marker in [
             "Environment filter",
             "Search:",
-            "PgUp/PgDn",
             "Space toggle",
+            "/ search",
             "Enter apply",
             "Esc cancel",
             "┃",
@@ -659,8 +709,8 @@ mod tests {
             for marker in [
                 "Environment filter",
                 "Search:",
-                "PgUp/PgDn",
                 "Space toggle",
+                "/ search",
                 "Enter apply",
                 "Esc cancel",
                 "┃",
@@ -671,5 +721,60 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn filter_search_footer_explains_search_confirmation_and_cancel() {
+        let state = session(&["dev".to_owned(), "prod".to_owned()]);
+        let plans = state.plans();
+        let size = Size::new(40, 16);
+        let mut dialog = EnvironmentFilterDialog::new(plans, None, 0, size);
+        assert!(press(&mut dialog, KeyCode::Char('/'), size, plans).is_none());
+
+        let text = buffer_text(&render_to_buffer((40, 16), |frame| {
+            dialog.render(frame, frame.area(), plans);
+        }));
+
+        assert!(text.contains("Enter keep search"), "{text}");
+        assert!(text.contains("Esc restore search"), "{text}");
+        assert!(!text.contains("Enter apply"), "{text}");
+        assert!(!text.contains("↑↓"), "{text}");
+        assert!(!text.contains("PgUp/PgDn"), "{text}");
+    }
+
+    #[test]
+    fn narrow_search_footer_keeps_notice_and_both_actions_visible() {
+        let state = session(&["dev".to_owned(), "prod".to_owned()]);
+        let plans = state.plans();
+        let size = Size::new(26, 16);
+        let mut dialog = EnvironmentFilterDialog::new(plans, None, 0, size);
+
+        let normal_footer = buffer_text(&render_to_buffer((26, 16), |frame| {
+            dialog.render(frame, frame.area(), plans);
+        }));
+        for marker in ["Space toggle", "/ search", "Enter apply Esc cancel"] {
+            assert!(
+                normal_footer.contains(marker),
+                "missing {marker:?}:\n{normal_footer}"
+            );
+        }
+
+        assert!(press(&mut dialog, KeyCode::Char('/'), size, plans).is_none());
+        assert!(press_char(&mut dialog, 'x', size, plans).is_none());
+
+        let text = buffer_text(&render_to_buffer((26, 16), |frame| {
+            dialog.render(frame, frame.area(), plans);
+        }));
+
+        for marker in [
+            "No environments match",
+            "this search.",
+            "Enter keep search",
+            "Esc restore search",
+        ] {
+            assert!(text.contains(marker), "missing {marker:?}:\n{text}");
+        }
+        assert_eq!(dialog.notice, Some("No environments match this search."));
+        assert_eq!(list_viewport(size, dialog.notice, dialog.searching()), 6);
     }
 }

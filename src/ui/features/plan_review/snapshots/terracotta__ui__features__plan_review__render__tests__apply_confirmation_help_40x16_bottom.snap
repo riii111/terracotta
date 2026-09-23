@@ -4,17 +4,17 @@ expression: buffer_text(buffer)
 ---
 Target: main [PROD] Workspace: default
 U┌Apply help──────────────────────────┐~
-─│                                  ▲ │─
- │ Context                          │ │▲
+─│   delete before the cursor       ▲ │─
+ │                                  │ │▲
+ │ Context                          │ │┃
  │ Tab                              │ │┃
- │   show execution context         │ │┃
+ │   show execution context         │ ││
  │                                  │ ││
- │ Apply                            │ ││
+ │ Apply                            ┃ ││
  │ Enter                            ┃ ││
  │   confirm apply                  ┃ ││
- │ Esc                              ┃ ││
--│   return to plan review          ▼ ││
-◀︎│ ↑/↓/k/j/PgUp/PgDn scroll           │▶︎
+-│ Esc                              ┃ ││
+◀︎│   return to plan review          ▼ │▶︎
 ─│ ?/Esc close                        │─
 s└────────────────────────────────────┘
 q quit                             L3/43

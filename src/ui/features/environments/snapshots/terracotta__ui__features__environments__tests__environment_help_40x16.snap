@@ -6,15 +6,15 @@ expression: text
 R┌Help────────────────────────────────┐
 b│ Current: Overview                ▲ │
 d│ ↑ / ↓ / j / k                    ┃ │
-H│   scroll matrix when preview is  │ │
- │   closed; scroll preview when    │ │
- │   open                           │ │
+H│   scroll matrix or preview; move │ │
+ │   through filter candidates      │ │
  │ ← / →                            │ │
- │   select env when preview is     │ │
- │   closed; scroll preview when    │ │
- │   open                           │ │
- │ [ / ]                            ▼ │
- │ ↑/↓/k/j/PgUp/PgDn scroll           │
+ │   select env or scroll preview;  │ │
+ │   move in filter search          │ │
+ │ [ / ]                            │ │
+ │   select previous or next        │ │
+ │   environment                    │ │
+ │ Enter                            ▼ │
  │ ?/Esc close                        │
  └────────────────────────────────────┘
- ? help  q quit
+ v full plan  ? help  q quit

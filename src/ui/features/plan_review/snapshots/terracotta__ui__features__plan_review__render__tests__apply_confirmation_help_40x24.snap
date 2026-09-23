@@ -18,11 +18,11 @@ U┌Apply help──────────────────────
  │ Backspace                        ┃ ││
  │   delete before the cursor       ┃ ││
  │                                  ┃ ││
- │ Context                          │ ││
+ │ Context                          ┃ ││
  │ Tab                              │ ││
  │   show execution context         │ ││
- │                                  ▼ ││
-◀︎│ ↑/↓/k/j/PgUp/PgDn scroll           │▶︎
+ │                                  │ ││
+◀︎│ Apply                            ▼ │▶︎
 ─│ ?/Esc close                        │─
 s└────────────────────────────────────┘
 q quit                             L3/43

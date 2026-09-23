@@ -168,7 +168,7 @@ impl EnvironmentView {
             OverviewInput::OpenContext => {
                 if let Some(plan) = state.plans().get(self.selection.column) {
                     self.show_dialog(format!(
-                        "Context\n{}\n\n↑↓ scroll   Esc close",
+                        "Context\n{}\n\nEsc close",
                         environments::context(plan)
                     ));
                 }

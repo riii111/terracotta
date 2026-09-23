@@ -79,22 +79,8 @@ pub(crate) fn render(
     let content_height = content_height(sections, action_layout);
     let inner_width = width.saturating_sub(2);
     let footer_width = inner_width.saturating_sub(HORIZONTAL_PADDING.saturating_mul(2));
-    let close_footer = footer::layout(vec![footer::hint(&["?", "Esc"], "close")], footer_width);
-    let scroll_footer = footer::layout(
-        vec![
-            footer::hint(&["↑/↓/k/j", "PgUp/PgDn"], "scroll"),
-            footer::hint(&["?", "Esc"], "close"),
-        ],
-        footer_width,
-    );
+    let footer_lines = footer::layout(vec![footer::hint(&["?", "Esc"], "close")], footer_width);
     let available_height = area.height.saturating_sub(2);
-    let needs_scroll =
-        content_height.saturating_add(2 + close_footer.len()) > usize::from(available_height);
-    let footer_lines = if needs_scroll {
-        &scroll_footer
-    } else {
-        &close_footer
-    };
     let footer_height = u16::try_from(footer_lines.len()).unwrap_or(u16::MAX);
     let height = u16::try_from(content_height)
         .unwrap_or(u16::MAX)
@@ -146,7 +132,7 @@ pub(crate) fn render(
             scroll,
         );
     }
-    footer::render(frame, footer_area, footer_lines, None);
+    footer::render(frame, footer_area, &footer_lines, None);
 }
 
 fn dialog_width(area: Rect, sections: &[HelpSection]) -> u16 {

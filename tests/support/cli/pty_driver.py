@@ -577,11 +577,23 @@ try:
         wait_new("Applying...", "apply_started")
         if scenario == "apply_log_view":
             send_key(b"\t")
-            wait_new("scroll log", "apply_logs_focused")
+            wait_screen(
+                lambda current: "Targets" in current and "Targets *" not in current,
+                "apply_logs_focused",
+                "Targets panel not focused",
+            )
             send_key(b"\t")
-            wait_new("select", "apply_targets_focused")
+            wait_screen(
+                lambda current: "Targets *" in current,
+                "apply_targets_focused",
+                "Targets panel focused",
+            )
             send_key(b"\t")
-            wait_new("scroll log", "apply_logs_refocused")
+            wait_screen(
+                lambda current: "Targets" in current and "Targets *" not in current,
+                "apply_logs_refocused",
+                "Targets panel not focused",
+            )
             wait_parts(
                 ["Apply complete", "terraform_data.api", "y yank result"],
                 "apply_success",

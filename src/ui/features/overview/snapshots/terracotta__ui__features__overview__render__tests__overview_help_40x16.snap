@@ -13,8 +13,8 @@ O│   select a row                   ┃ │u
  │   go to the first or last row    │ │
  │                                  │ │
  │ Review                           │ │
- │ Enter                            ▼ │
- │ ↑/↓/k/j/PgUp/PgDn scroll           │
+ │ Enter                            │ │
+ │   open the selected raw block    ▼ │
 ─│ ?/Esc close                        │─
 /└────────────────────────────────────┘
 ? help | q quit

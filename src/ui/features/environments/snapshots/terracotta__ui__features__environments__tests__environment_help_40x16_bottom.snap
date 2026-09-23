@@ -4,9 +4,10 @@ expression: bottom_text
 ---
 0 Overview   1 a-ready  2 b-error  ›
 R┌Help────────────────────────────────┐
-b│ Comparison                       ▲ │
-d│ Same changes                     │ │
-H│   no differences found in Ready  │ │
+b│                                  ▲ │
+d│ Comparison                       │ │
+H│ Same changes                     │ │
+ │   no differences found in Ready  │ │
  │   plans; unknown values may      │ │
  │   differ                         │ │
  │ Scope                            │ │
@@ -14,7 +15,6 @@ H│   no differences found in Ready  │ │
  │   compared                       │ │
  │ Excluded                         ┃ │
  │   environments are not retried   ▼ │
- │ ↑/↓/k/j/PgUp/PgDn scroll           │
  │ ?/Esc close                        │
  └────────────────────────────────────┘
- ? help  q quit
+ v full plan  ? help  q quit

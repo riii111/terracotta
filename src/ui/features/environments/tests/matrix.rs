@@ -280,7 +280,7 @@ fn three_environments_show_groups_actions_and_totals(#[case] width: u16, #[case]
         assert!(bottom.contains("blank: absent"), "{bottom}");
         assert!(bottom.contains("?: plan unavailable"), "{bottom}");
         assert!(bottom.contains("Total"), "{bottom}");
-        assert!(rendered.contains("v plan"), "{rendered}");
+        assert!(rendered.contains("v full plan"), "{rendered}");
     } else {
         assert!(rendered.contains("blank: absent"));
         assert!(rendered.contains("?: plan unavailable"));
@@ -460,19 +460,30 @@ fn space_toggles_all_groups_independently_of_matrix_scroll() {
     assert!(text(&mut view, &state, (40, 16)).contains("Space expand"));
     for (width, height) in [(40, 16), (80, 24), (120, 40), (160, 60)] {
         let rendered = text(&mut view, &state, (width, height));
+        let environment_hint = if width == 40 {
+            "[ ] env"
+        } else {
+            "[ ] environment"
+        };
+        let filter_hint = if width == 40 {
+            "e env filter"
+        } else {
+            "e environments"
+        };
         for hint in [
-            "↑↓",
-            "←→",
+            environment_hint,
             "/ filter",
+            filter_hint,
             "Space expand all",
             "? help",
             "q quit",
         ] {
             assert!(rendered.contains(hint), "{width}x{height}: {hint}");
         }
-        let plan = if width < 56 { "v plan" } else { "v full plan" };
         assert!(rendered.contains("Enter preview"), "{width}x{height}");
-        assert!(rendered.contains(plan), "{width}x{height}: {plan}");
+        assert!(rendered.contains("v full plan"), "{width}x{height}");
+        assert!(!rendered.contains("↑↓"), "{width}x{height}");
+        assert!(!rendered.contains("←→"), "{width}x{height}");
     }
 
     press(&mut view, &mut state, KeyCode::Char(' '));
@@ -531,19 +542,51 @@ fn expanded_group_preview_keeps_full_plan_hint_at_narrow_widths(#[case] width: u
     press(&mut view, &mut state, KeyCode::Enter);
 
     let rendered = text(&mut view, &state, (width, 24));
-    assert!(rendered.contains("v plan"), "{rendered}");
+    assert!(rendered.contains("v full plan"), "{rendered}");
 }
 
 #[test]
-fn short_terminal_keeps_environment_actions_and_total_band() {
+fn preview_footer_prioritizes_environment_close_and_full_plan_actions() {
+    let mut state = session(&["dev", "prod", "stg"]);
+    for _ in 0..3 {
+        complete(
+            &mut state,
+            vec![change("terraform_data.api", ResourceChangeKind::Update)],
+        );
+    }
+    let mut view = EnvironmentView::default();
+    press(&mut view, &mut state, KeyCode::Enter);
+
+    for size in [(40, 16), (80, 24), (120, 40), (160, 60)] {
+        let rendered = text(&mut view, &state, size);
+        let environment_hint = if size.0 == 40 {
+            "[ ] env"
+        } else {
+            "[ ] environment"
+        };
+        for hint in [
+            environment_hint,
+            "Esc close",
+            "v full plan",
+            "? help",
+            "q quit",
+        ] {
+            assert!(rendered.contains(hint), "{size:?}: {hint}\n{rendered}");
+        }
+        assert!(!rendered.contains("↑↓"), "{size:?}\n{rendered}");
+        assert!(!rendered.contains("←→"), "{size:?}\n{rendered}");
+    }
+}
+
+#[test]
+fn short_terminal_keeps_major_environment_actions_without_movement_hints() {
     let state = session(&["dev", "prod", "stg"]);
     let mut view = EnvironmentView::default();
     let rendered = text(&mut view, &state, (40, 14));
 
     assert!(rendered.contains("Enter preview"));
     for hint in [
-        "↑↓ rows",
-        "←→ env",
+        "[ ] env",
         "Enter preview",
         "/ filter",
         "e env filter",
@@ -552,6 +595,8 @@ fn short_terminal_keeps_environment_actions_and_total_band() {
     ] {
         assert!(rendered.contains(hint), "{hint}");
     }
+    assert!(!rendered.contains("↑↓"));
+    assert!(!rendered.contains("←→"));
     let lines = rendered.lines().collect::<Vec<_>>();
     assert!(
         lines

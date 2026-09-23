@@ -539,15 +539,7 @@ fn execution_layout_with_content(
     quit_confirmation: bool,
 ) -> ExecutionLayout {
     if state.is_apply() {
-        return applying_layout(
-            area,
-            state,
-            view,
-            content,
-            status,
-            notice,
-            quit_confirmation,
-        );
+        return applying_layout(area, state, content, status, notice, quit_confirmation);
     }
     let panel_width = shell_layout::centered_width(area);
     let compact = compact_apply(state, view);
@@ -659,14 +651,13 @@ fn execution_layout_with_content(
 fn applying_layout(
     area: Rect,
     state: &ExecutionState,
-    view: ExecutionViewState,
     content: &PreparedContent<'_>,
     status: &[Line<'static>],
     notice: Option<&str>,
     quit_confirmation: bool,
 ) -> ExecutionLayout {
     let panel_width = shell_layout::centered_width(area);
-    let normal_footer_lines = apply_footer_lines(state, view, panel_width, notice);
+    let normal_footer_lines = apply_footer_lines(state, panel_width, notice);
     let normal_required_footer_lines = apply_required_footer_lines(state, panel_width, notice);
     let footer_lines = if quit_confirmation {
         footer::pad_lines(
@@ -1195,7 +1186,6 @@ fn footer_lines(
     } else if state.stage() == ExecutionStage::Failed || finished_apply(state) {
         vec![
             footer::hint(&["q", "Ctrl-C"], "quit"),
-            footer::hint(&["↑", "↓", "PgUp", "PgDn"], "scroll"),
             footer::hint(
                 &["y"],
                 if finished_apply(state) {
@@ -1209,13 +1199,11 @@ fn footer_lines(
         vec![
             footer::hint(&["Ctrl-C"], "cancel"),
             footer::hint(&["Esc"], "close"),
-            footer::hint(&["↑", "↓", "PgUp", "PgDn"], "scroll"),
             footer::hint(&["End"], "follow latest"),
         ]
     } else {
         vec![
             footer::hint(&["Ctrl-C"], "cancel"),
-            footer::hint(&["↑", "↓", "PgUp", "PgDn"], "scroll"),
             footer::hint(&["End"], "follow latest"),
         ]
     };
@@ -1224,35 +1212,18 @@ fn footer_lines(
 
 fn apply_footer_lines(
     state: &ExecutionState,
-    view: ExecutionViewState,
     width: u16,
     notice: Option<&str>,
 ) -> Vec<Line<'static>> {
     let items = if finished_apply(state) {
         vec![
             footer::hint(&["q", "Ctrl-C"], "quit"),
-            footer::hint(
-                &["↑", "↓"],
-                if view.logs_open() {
-                    "scroll log"
-                } else {
-                    "select"
-                },
-            ),
             footer::hint(&["Tab"], "focus"),
             footer::hint(&["y"], "yank result"),
         ]
     } else {
         vec![
             footer::hint(&["Ctrl-C"], "cancel"),
-            footer::hint(
-                &["↑", "↓", "j", "k"],
-                if view.logs_open() {
-                    "scroll log"
-                } else {
-                    "select"
-                },
-            ),
             footer::hint(&["Tab"], "focus"),
             footer::hint(&["End"], "follow latest"),
         ]
@@ -1944,16 +1915,20 @@ mod tests {
             let normal = execution_layout(area, &state);
             let waiting = execution_layout_with_quit_confirmation(area, &state, true);
 
-            assert!(
-                footer_lines(
-                    &state,
-                    ExecutionViewState::default(),
-                    shell_layout::centered_width(area),
-                    None,
-                )
-                .len()
-                    >= 2
-            );
+            let footer = footer_lines(
+                &state,
+                ExecutionViewState::default(),
+                shell_layout::centered_width(area),
+                None,
+            )
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join(" | ");
+            assert!(footer.contains("q/Ctrl-C quit"), "{footer}");
+            assert!(footer.contains("y yank result"), "{footer}");
+            assert!(!footer.contains("↑"), "{footer}");
+            assert!(!footer.contains("PgUp"), "{footer}");
             assert_eq!(waiting.body(), normal.body());
             assert_eq!(waiting.max_vertical(), normal.max_vertical());
             assert_eq!(waiting.max_horizontal(), normal.max_horizontal());

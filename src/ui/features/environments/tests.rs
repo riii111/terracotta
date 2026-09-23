@@ -189,9 +189,9 @@ fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
         }
         if (width, height) == (80, 24) {
             assert!(text.contains("1–9"));
-            assert!(text.contains("open the selected environment's plan preview"));
+            assert!(text.contains("open plan preview"));
             assert!(!text.contains("Tab"));
-            assert!(text.contains("expand all collapsed groups, or collapse all groups"));
+            assert!(text.contains("expand or collapse groups"));
             assert!(text.contains("filter compared environments"));
         }
         assert!(text.contains("Esc"), "{width}x{height}: {text}");
@@ -212,6 +212,10 @@ fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
     }));
     assert!(wide.contains("numbered"), "{wide}");
     assert!(wide.contains("environment"), "{wide}");
+    assert!(
+        wide.contains("clear filter search and select all"),
+        "{wide}"
+    );
 
     view.dialog_scroll = u16::MAX;
     let bottom = render_to_buffer((40, 16), |frame| view.render(frame, &state));

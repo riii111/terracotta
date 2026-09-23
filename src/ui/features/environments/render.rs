@@ -371,38 +371,48 @@ fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
                 vec![
                     help_dialog::HelpAction::new(
                         "↑ / ↓ / j / k",
-                        "scroll matrix when preview is closed; scroll preview when open",
+                        "scroll matrix or preview; move through filter candidates",
                     ),
                     help_dialog::HelpAction::new(
                         "← / →",
-                        "select env when preview is closed; scroll preview when open",
+                        "select env or scroll preview; move in filter search",
                     ),
                     help_dialog::HelpAction::new("[ / ]", "select previous or next environment"),
                     help_dialog::HelpAction::new(
                         "Enter",
-                        "open the selected environment's plan preview",
+                        "open plan preview; apply filter or accept search",
                     ),
-                    help_dialog::HelpAction::new("Esc", "close preview; return from full plan"),
+                    help_dialog::HelpAction::new(
+                        "Esc",
+                        "close preview; return from plan; cancel filter; restore search",
+                    ),
                     help_dialog::HelpAction::new(
                         "1–9",
                         "open the numbered environment's full plan",
                     ),
                     help_dialog::HelpAction::new(
                         "Space",
-                        "expand all collapsed groups, or collapse all groups",
+                        "expand or collapse groups; toggle a filter candidate",
                     ),
-                    help_dialog::HelpAction::new("/", "filter full addresses"),
+                    help_dialog::HelpAction::new(
+                        "/",
+                        "filter addresses; search environment names in filter",
+                    ),
                     help_dialog::HelpAction::new("e", "filter compared environments"),
                 ],
             ),
             help_dialog::HelpSection::new(
                 "Other",
                 vec![
-                    help_dialog::HelpAction::new("PgUp / PgDn", "move one page in the active view"),
+                    help_dialog::HelpAction::new(
+                        "PgUp / PgDn",
+                        "move a page in the active view or candidate list",
+                    ),
                     help_dialog::HelpAction::new(
                         "Home / End",
-                        "go to the start or end of the active view",
+                        "go to an endpoint or the start/end of search text",
                     ),
+                    help_dialog::HelpAction::new("a", "clear filter search and select all"),
                     help_dialog::HelpAction::new("v", "show the full plan from the top"),
                     help_dialog::HelpAction::new("y", "copy the selected environment's plan"),
                     help_dialog::HelpAction::new("c", "show environment context"),
@@ -485,9 +495,6 @@ fn overview_footer_layout(items: Vec<Line<'static>>, width: u16) -> Vec<Line<'st
             row_widths[row_index] += separator_width + item_width;
             continue;
         }
-        if rows.len() == 2 {
-            continue;
-        }
         rows.push(item);
         row_widths.push(item_width);
     }
@@ -517,102 +524,25 @@ fn overview_footer(
         );
     }
     if width < 45 {
-        return compact_overview_footer(preview_open, expanded);
+        return compact_overview_footer(preview_open, expanded, width);
     }
-    let (preview_action, plan_action) = if width < 71 {
-        if preview_open {
-            ("close preview", "plan")
-        } else {
-            ("preview", "plan")
-        }
-    } else {
-        if preview_open {
-            ("close preview", "full plan")
-        } else {
-            ("preview", "full plan")
-        }
-    };
-    let mut items = vec![
-        overview_footer_hint(
-            &["↑↓"],
-            if preview_open {
-                "scroll preview"
-            } else {
-                "scroll rows"
-            },
-        ),
-        overview_footer_hint(
-            &["←→"],
-            if preview_open {
-                "scroll preview"
-            } else {
-                "select env"
-            },
-        ),
-        overview_footer_hint(
-            &[if preview_open { "Esc" } else { "Enter" }],
-            preview_action,
-        ),
-        overview_footer_hint(&["[ ]"], "env"),
-        overview_footer_hint(&["/"], "filter"),
-        overview_footer_hint(&["e"], "env filter"),
-    ];
-    if let Some(expanded) = expanded {
-        items.push(overview_footer_hint(
-            &["Space"],
-            if expanded {
-                "collapse all"
-            } else {
-                "expand all"
-            },
-        ));
-    }
-    if preview_open || !(width < 45 && expanded == Some(true)) {
-        items.push(overview_footer_hint(&["v"], plan_action));
-    }
-    items.extend([
-        overview_footer_hint(&["?"], "help"),
-        overview_footer_hint(&["q"], "quit"),
-    ]);
-    overview_footer_layout(items, width)
-}
-
-fn compact_overview_footer(preview_open: bool, expanded: Option<bool>) -> Vec<Line<'static>> {
-    let movement = [
-        overview_footer_hint(&["↑↓"], if preview_open { "preview" } else { "rows" }),
-        overview_footer_hint(&["←→"], if preview_open { "preview" } else { "env" }),
-    ];
-    if preview_open {
+    let mut items = if preview_open {
         vec![
-            join_footer_items(
-                [
-                    movement[0].clone(),
-                    movement[1].clone(),
-                    overview_footer_hint(&["Esc"], "close"),
-                    overview_footer_hint(&["[ ]"], "env"),
-                ],
-                "  ",
-            ),
-            join_footer_items(
-                [
-                    overview_footer_hint(&["/"], "filter"),
-                    overview_footer_hint(&["e"], "env filter"),
-                    overview_footer_hint(&["v"], "plan"),
-                ],
-                "  ",
-            ),
-            join_footer_items(
-                [
-                    overview_footer_hint(&["?"], "help"),
-                    overview_footer_hint(&["q"], "quit"),
-                ],
-                "  ",
-            ),
+            overview_footer_hint(&["[ ]"], "environment"),
+            overview_footer_hint(&["Esc"], "close"),
+            overview_footer_hint(&["v"], "full plan"),
         ]
     } else {
-        let mut actions = Vec::new();
+        vec![
+            overview_footer_hint(&["[ ]"], "environment"),
+            overview_footer_hint(&["Enter"], "preview"),
+            overview_footer_hint(&["/"], "filter"),
+            overview_footer_hint(&["e"], "environments"),
+        ]
+    };
+    if !preview_open {
         if let Some(expanded) = expanded {
-            actions.push(overview_footer_hint(
+            items.push(overview_footer_hint(
                 &["Space"],
                 if expanded {
                     "collapse all"
@@ -621,44 +551,97 @@ fn compact_overview_footer(preview_open: bool, expanded: Option<bool>) -> Vec<Li
                 },
             ));
         }
-        actions.extend([
+        items.push(overview_footer_hint(&["v"], "full plan"));
+    }
+    items.extend([
+        overview_footer_hint(&["?"], "help"),
+        overview_footer_hint(&["q"], "quit"),
+    ]);
+    overview_footer_layout(items, width)
+}
+
+fn compact_overview_footer(
+    preview_open: bool,
+    expanded: Option<bool>,
+    width: u16,
+) -> Vec<Line<'static>> {
+    if width < 32 {
+        let mut items = vec![
+            overview_footer_hint(&["[ ]"], "env"),
+            overview_footer_hint(&["Enter"], "preview"),
+            overview_footer_hint(&["/"], "filter"),
+        ];
+        if preview_open {
+            items[1] = overview_footer_hint(&["Esc"], "close");
+        } else {
+            items.push(overview_footer_hint(&["e"], "env filter"));
+            if let Some(expanded) = expanded {
+                items.push(overview_footer_hint(
+                    &["Space"],
+                    if expanded {
+                        "collapse all"
+                    } else {
+                        "expand all"
+                    },
+                ));
+            }
+        }
+        items.extend([
+            overview_footer_hint(&["v"], "plan"),
             overview_footer_hint(&["?"], "help"),
             overview_footer_hint(&["q"], "quit"),
         ]);
-        vec![
-            join_footer_items(
-                [
-                    movement[0].clone(),
-                    movement[1].clone(),
-                    overview_footer_hint(&["Enter"], "preview"),
-                    overview_footer_hint(&["[ ]"], "env"),
-                ],
-                "  ",
-            ),
-            join_footer_items(
-                [
-                    overview_footer_hint(&["/"], "filter"),
-                    overview_footer_hint(&["e"], "env filter"),
-                    overview_footer_hint(&["v"], "plan"),
-                ],
-                "  ",
-            ),
-            join_footer_items(actions, "  "),
-        ]
+        return overview_footer_layout(items, width);
     }
+
+    let environment = if width < 40 { "env" } else { "environment" };
+    let plan = "full plan";
+    if preview_open {
+        return vec![
+            join_footer_items([
+                overview_footer_hint(&["[ ]"], environment),
+                overview_footer_hint(&["Esc"], "close"),
+            ]),
+            join_footer_items([
+                overview_footer_hint(&["v"], plan),
+                overview_footer_hint(&["?"], "help"),
+                overview_footer_hint(&["q"], "quit"),
+            ]),
+        ];
+    }
+
+    let items = vec![
+        overview_footer_hint(&["[ ]"], environment),
+        overview_footer_hint(&["Enter"], "preview"),
+        overview_footer_hint(&["/"], "filter"),
+    ];
+    let mut row_two = vec![overview_footer_hint(&["e"], "env filter")];
+    if let Some(expanded) = expanded {
+        row_two.push(overview_footer_hint(
+            &["Space"],
+            if expanded {
+                "collapse all"
+            } else {
+                "expand all"
+            },
+        ));
+    }
+    vec![
+        join_footer_items(items),
+        join_footer_items(row_two),
+        join_footer_items([
+            overview_footer_hint(&["v"], plan),
+            overview_footer_hint(&["?"], "help"),
+            overview_footer_hint(&["q"], "quit"),
+        ]),
+    ]
 }
 
-fn join_footer_items(
-    items: impl IntoIterator<Item = Line<'static>>,
-    separator: &'static str,
-) -> Line<'static> {
+fn join_footer_items(items: impl IntoIterator<Item = Line<'static>>) -> Line<'static> {
     let mut line = Line::default();
     for item in items {
         if !line.spans.is_empty() {
-            line.push_span(Span::styled(
-                separator,
-                theme::overview_footer_separator_style(),
-            ));
+            line.push_span(Span::styled("  ", theme::overview_footer_separator_style()));
         }
         line.extend(item.spans);
     }
@@ -677,31 +660,19 @@ fn preview_unavailable_footer(width: u16, searching: bool) -> Vec<Line<'static>>
         );
     }
     if width < 45 {
-        return vec![
-            join_footer_items(
-                [
-                    overview_footer_hint(&["↑↓"], "row"),
-                    overview_footer_hint(&["←→"], "env"),
-                    overview_footer_hint(&["[ ]"], "env"),
-                ],
-                "  ",
-            ),
-            join_footer_items(
-                [
-                    Line::from("Resize for preview"),
-                    overview_footer_hint(&["v"], "plan"),
-                ],
-                "  ",
-            ),
-            join_footer_items(
-                [
-                    overview_footer_hint(&["e"], "env filter"),
-                    overview_footer_hint(&["?"], "help"),
-                    overview_footer_hint(&["q"], "quit"),
-                ],
-                "  ",
-            ),
-        ];
+        return overview_footer_layout(
+            vec![
+                overview_footer_hint(&["[ ]"], "environment"),
+                overview_footer_hint(&["Esc"], "close"),
+                overview_footer_hint(&["/"], "filter"),
+                overview_footer_hint(&["e"], "environments"),
+                Line::from("Resize for preview"),
+                overview_footer_hint(&["v"], "full plan"),
+                overview_footer_hint(&["?"], "help"),
+                overview_footer_hint(&["q"], "quit"),
+            ],
+            width,
+        );
     }
     let preview_message = if width >= 56 {
         "Preview needs more room"
@@ -710,13 +681,14 @@ fn preview_unavailable_footer(width: u16, searching: bool) -> Vec<Line<'static>>
     };
     overview_footer_layout(
         vec![
-            overview_footer_hint(&["↑↓"], "row"),
-            overview_footer_hint(&["←→"], "env"),
-            overview_footer_hint(&["[ ]"], "env"),
+            overview_footer_hint(&["[ ]"], "environment"),
+            overview_footer_hint(&["Esc"], "close"),
+            overview_footer_hint(&["/"], "filter"),
+            overview_footer_hint(&["e"], "environments"),
             Line::from(preview_message),
-            overview_footer_hint(&["v"], if width < 56 { "plan" } else { "full plan" }),
-            overview_footer_hint(&["q"], "quit"),
+            overview_footer_hint(&["v"], "full plan"),
             overview_footer_hint(&["?"], "help"),
+            overview_footer_hint(&["q"], "quit"),
         ],
         width,
     )
