@@ -3,21 +3,22 @@ source: src/ui/features/environments/tests.rs
 expression: text
 ---
 0 Overview   1 a-ready  2 b-error  3 c-running  4 d-pending  5 e-hcp
-Ready: 1/5   Compared: a-ready   b-error: Error   c-running: Running   d-pending: Pending   e-hcp: Excluded: HCP
-execution
-───────────────┌Help───────────────────────────────────────────────────────────────────────────────────┐────────────────
-               │ Current: Overview                                                                     │
-               │ ↑ / ↓ / j / k        select a resource row                                            │
-Address     a-r│ ← / → / [ / ]        select an environment                                            │
-blank: absent  │ Enter / Esc          show / hide preview; Esc returns from full plan                  │
-No matching res│ 1–9                  open selected resource in the numbered environment's raw plan    │
-───────────────│ Space                expand or collapse only on [+]/[-] group rows                    │────────────────
-Total       +0 │ /                    filter full addresses                                            │
-            0 r│ e                    filter compared environments                                     │
+Ready: 1/5   Co┌Help───────────────────────────────────────────────────────────────────────────────────┐ded: HCP
+execution      │ Current: Overview                                                                     │
+───────────────│ ↑ / ↓ / j / k        scroll the matrix or preview                                     │────────────────
+               │ ← / →                select env in matrix; scroll preview                             │
+               │ [ / ]                select previous or next environment                              │
+Address     > a│ Enter                open the selected environment's full plan preview                │
+blank: absent  │ Tab                  switch input between matrix and preview                          │
+No matching res│ Esc                  close preview; return from full plan                             │
+───────────────│ 1–9                  open the numbered environment's full plan                        │────────────────
+Total       +0 │ Space                expand all collapsed groups, or collapse all groups              │
+            0 r│ /                    filter full addresses                                            │
+               │ e                    filter compared environments                                     │
                │                                                                                       │
                │ Other                                                                                 │
                │ PgUp / PgDn          move one page                                                    │
-               │ Home / End           go to the first or last row                                      │
+               │ Home / End           go to the start or end of the matrix or preview                  │
                │ v                    show the full plan from the top                                  │
                │ y                    copy the selected environment's plan                             │
                │ c                    show environment context                                         │
@@ -38,7 +39,6 @@ Total       +0 │ /                    filter full addresses                   
                │ Scope                only Ready environments are compared                             │
                │ Excluded             environments are not retried                                     │
                │ ?/Esc close                                                                           │
-               └───────────────────────────────────────────────────────────────────────────────────────┘
-
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-↑↓ row | ←→ env | Enter preview | / filter | e env filter | v full plan | ? help | q quit
+───────────────└───────────────────────────────────────────────────────────────────────────────────────┘────────────────
+↑↓ scroll rows | ←→ select env | Enter preview | [ ] select env | / filter | e env filter | v full plan | ? help
+q quit

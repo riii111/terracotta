@@ -6,22 +6,22 @@ expression: text
 R┌Help────────────────────────────────┐
 b│ Current: Overview                ▲ │
 d│ ↑ / ↓ / j / k                    ┃ │
-H│   select a resource row          ┃ │
-─│ ← / → / [ / ]                    ┃ │─
- │   select an environment          ┃ │
- │ Enter / Esc                      │ │
-A│   show / hide preview; Esc       │ │
-b│   returns from full plan         │ │
-?│ 1–9                              │ │
-N│   open selected resource in the  │ │h
-─│   numbered environment's raw     │ │─
-T│   plan                           │ │
- │ Space                            │ │
- │   expand or collapse only on     │ │
- │   [+]/[-] group rows             │ │
- │ /                                │ │
- │   filter full addresses          │ │
- │ e                                ▼ │
+H│   scroll the matrix or preview   ┃ │
+─│ ← / →                            ┃ │─
+ │   select env in matrix; scroll   ┃ │
+ │   preview                        │ │
+A│ [ / ]                            │ │
+b│   select previous or next        │ │
+?│   environment                    │ │
+N│ Enter                            │ │h
+─│   open the selected              │ │─
+T│   environment's full plan        │ │
+ │   preview                        │ │
+ │ Tab                              │ │
+ │   switch input between matrix    │ │
+ │   and preview                    │ │
+ │ Esc                              │ │
+ │   close preview; return from     ▼ │
 ─│ ↑/↓/k/j/PgUp/PgDn scroll           │─
 ↑│ ?/Esc close                        │
 /└────────────────────────────────────┘

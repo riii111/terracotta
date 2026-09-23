@@ -194,15 +194,6 @@ pub(crate) fn layout(area: Rect, searching: bool, state: &ReviewSessionState) ->
     layout_with_quit_confirmation(area, searching, state, false)
 }
 
-pub(crate) fn source_offset(review: &ReviewSessionState, line: usize) -> usize {
-    let content = prepare_content(review, false, "");
-    content
-        .sources
-        .iter()
-        .position(|source| source.is_some_and(|source| source.line_number == line))
-        .unwrap_or(0)
-}
-
 pub(crate) fn environment_layout(
     area: Rect,
     searching: bool,

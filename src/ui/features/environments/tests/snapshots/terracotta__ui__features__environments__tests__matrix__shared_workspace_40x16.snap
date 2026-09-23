@@ -7,14 +7,14 @@ Ready: 0/2   Compared: none   staging:
 Error   staging: Error
 
 Synthetic acquisition error
-Address     staging   staging    why
+Address     > staging    why
 blank: absent   .: unchanged
 ?: plan unavailable
 Waiting for environment plans.
 ────────────────────────────────────────
-Total       Error     Error
+Total       Error
 
 
-↑↓ row  ←→ env  Enter preview
+↑↓ rows  ←→ env  Enter preview
 / filter  e env filter  v plan
 ? help  q quit

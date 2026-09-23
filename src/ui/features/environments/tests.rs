@@ -185,16 +185,16 @@ fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
         if height <= 24 {
             assert!(text.contains("scroll"), "{width}x{height}: {text}");
         } else {
-            assert!(!text.contains("scroll"), "{width}x{height}: {text}");
             assert!(text.contains("Comparison"), "{width}x{height}: {text}");
         }
         if (width, height) == (80, 24) {
             assert!(text.contains("1–9"));
-            assert!(text.contains("show / hide preview"));
-            assert!(text.contains("only on [+]/[-] group rows"));
+            assert!(text.contains("full plan preview"));
+            assert!(text.contains("switch input between matrix and preview"));
+            assert!(text.contains("expand all collapsed groups, or collapse all groups"));
             assert!(text.contains("filter compared environments"));
         }
-        assert_eq!(text.matches("close").count(), 1, "{width}x{height}: {text}");
+        assert!(text.contains("Esc"), "{width}x{height}: {text}");
         if width == 80 {
             assert!(
                 buffer
@@ -407,7 +407,7 @@ fn plan_scroll_resets_when_resize_makes_the_full_document_fit() {
 }
 
 #[test]
-fn overview_round_trip_reopens_the_selected_plan_line_when_content_overflows() {
+fn overview_round_trip_opens_the_full_plan_from_the_top() {
     let state = overview_plan_session();
 
     for size in [(80, 24), (120, 40), (160, 60)] {
@@ -419,14 +419,8 @@ fn overview_round_trip_reopens_the_selected_plan_line_when_content_overflows() {
             &state,
         );
         let opened = buffer_text(&render_to_buffer(size, |frame| view.render(frame, &state)));
-        assert!(opened.contains("PLAN LINE 20"), "{size:?}: {opened}");
-        let position = match size {
-            (80, 24) => "Line 21/45",
-            (120, 40) => "Line 13/45",
-            (160, 60) => "Line 1/45",
-            _ => unreachable!("the supported sizes are listed above"),
-        };
-        assert!(opened.contains(position), "{size:?}: {opened}");
+        assert!(opened.contains("PLAN LINE 00"), "{size:?}: {opened}");
+        assert!(opened.contains("Line 1/45"), "{size:?}: {opened}");
 
         view.handle_key(
             KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
@@ -445,8 +439,8 @@ fn overview_round_trip_reopens_the_selected_plan_line_when_content_overflows() {
         );
 
         let reopened = buffer_text(&render_to_buffer(size, |frame| view.render(frame, &state)));
-        assert!(reopened.contains("PLAN LINE 20"), "{size:?}: {reopened}");
-        assert!(reopened.contains(position), "{size:?}: {reopened}");
+        assert!(reopened.contains("PLAN LINE 00"), "{size:?}: {reopened}");
+        assert!(reopened.contains("Line 1/45"), "{size:?}: {reopened}");
     }
 }
 

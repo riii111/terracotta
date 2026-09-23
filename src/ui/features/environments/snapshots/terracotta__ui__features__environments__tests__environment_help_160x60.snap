@@ -7,27 +7,28 @@ Ready: 1/5   Compared: a-ready   b-error: Error   c-running: Running   d-pending
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
-Address     a-ready   b-error   c-running   d-pending   e-hcp      why
+Address     > a-ready     b-error     c-running     d-pending     e-hcp      why
 blank: absent   .: unchanged   ?: plan unavailable
 No matching resource changes. v opens the full plan.
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-Total       +0 ~0 -0  Error     Running     Pending     Excluded
+Total       +0 ~0 -0    Error       Running       Pending       Excluded
             0 replace
-
-
                                    ┌Help───────────────────────────────────────────────────────────────────────────────────┐
                                    │ Current: Overview                                                                     │
-                                   │ ↑ / ↓ / j / k        select a resource row                                            │
-                                   │ ← / → / [ / ]        select an environment                                            │
-                                   │ Enter / Esc          show / hide preview; Esc returns from full plan                  │
-                                   │ 1–9                  open selected resource in the numbered environment's raw plan    │
-                                   │ Space                expand or collapse only on [+]/[-] group rows                    │
+                                   │ ↑ / ↓ / j / k        scroll the matrix or preview                                     │
+                                   │ ← / →                select env in matrix; scroll preview                             │
+                                   │ [ / ]                select previous or next environment                              │
+                                   │ Enter                open the selected environment's full plan preview                │
+                                   │ Tab                  switch input between matrix and preview                          │
+                                   │ Esc                  close preview; return from full plan                             │
+                                   │ 1–9                  open the numbered environment's full plan                        │
+                                   │ Space                expand all collapsed groups, or collapse all groups              │
                                    │ /                    filter full addresses                                            │
                                    │ e                    filter compared environments                                     │
                                    │                                                                                       │
                                    │ Other                                                                                 │
                                    │ PgUp / PgDn          move one page                                                    │
-                                   │ Home / End           go to the first or last row                                      │
+                                   │ Home / End           go to the start or end of the matrix or preview                  │
                                    │ v                    show the full plan from the top                                  │
                                    │ y                    copy the selected environment's plan                             │
                                    │ c                    show environment context                                         │
@@ -59,6 +60,5 @@ Total       +0 ~0 -0  Error     Running     Pending     Excluded
 
 
 
-
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-↑↓ row | ←→ env | Enter preview | / filter | e env filter | v full plan | ? help | q quit
+↑↓ scroll rows | ←→ select env | Enter preview | [ ] select env | / filter | e env filter | v full plan | ? help | q quit

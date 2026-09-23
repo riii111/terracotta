@@ -46,7 +46,15 @@ pub(crate) fn render(
         usize::from(area.width).saturating_sub(address_width + WHY_WIDTH + COLUMN_GAP);
     let columns = visible_columns(view, &column_widths, column_budget, selected_column);
 
-    render_column_headers(frame, area, state, view, &columns, address_width);
+    render_column_headers(
+        frame,
+        area,
+        state,
+        view,
+        &columns,
+        address_width,
+        selected_column,
+    );
 
     render_content(
         frame,
@@ -74,9 +82,8 @@ fn render_content(
         .as_ref()
         .is_none_or(|overview| !matches!(overview.scope, ComparisonScope::All { .. }));
     let mut lines = Vec::new();
-    let mut row_lines = Vec::new();
     let mut section = None;
-    for (index, row) in view.rows.iter().enumerate() {
+    for row in &view.rows {
         if !row.child && section != Some(row.difference.is_some()) {
             if section.is_some() {
                 lines.push(Line::default());
@@ -105,15 +112,7 @@ fn render_content(
             };
             lines.push(Line::styled(title, theme::accent_style()));
         }
-        row_lines.push(lines.len());
-        lines.push(row_line(
-            row,
-            index == view.selected,
-            view,
-            columns,
-            address_width,
-            selected_column,
-        ));
+        lines.push(row_line(row, view, columns, address_width, selected_column));
     }
     if lines.is_empty() {
         let waiting = view
@@ -140,14 +139,6 @@ fn render_content(
         area.height.saturating_sub(1 + legend_height),
     );
     render_legend(frame, area, &legend);
-    if let Some(&line) = row_lines.get(view.selected) {
-        if line < view.vertical {
-            view.vertical = line;
-        }
-        if line >= view.vertical + usize::from(body.height) {
-            view.vertical = line + 1 - usize::from(body.height);
-        }
-    }
     view.vertical = view
         .vertical
         .min(lines.len().saturating_sub(usize::from(body.height)));
@@ -164,14 +155,28 @@ fn render_column_headers(
     view: &MatrixView,
     columns: &[(usize, usize)],
     address_width: usize,
+    selected_column: usize,
 ) {
     let mut header = vec![Span::styled("Address", theme::secondary_style())];
     header.push(Span::raw(" ".repeat(address_width.saturating_sub(7))));
     for &(column, column_width) in columns {
         let environment = view.environments[column];
         let label = name(&state.plans()[environment]);
-        let (label, padding) = fit_parts(&label, column_width - COLUMN_GAP, false);
-        header.push(Span::styled(label, theme::secondary_style()));
+        let selected = column == selected_column;
+        let marker = if selected { "> " } else { "  " };
+        let (label, padding) = fit_parts(
+            &label,
+            column_width.saturating_sub(COLUMN_GAP + marker.len()),
+            false,
+        );
+        header.push(Span::styled(
+            format!("{marker}{label}"),
+            if selected {
+                theme::accent_style().add_modifier(Modifier::BOLD)
+            } else {
+                theme::secondary_style()
+            },
+        ));
         header.push(Span::raw(format!("{} ", " ".repeat(padding))));
     }
     header.push(Span::raw(" "));
@@ -206,7 +211,7 @@ fn address_width(area: Rect, view: &MatrixView) -> usize {
                 .group
                 .as_ref()
                 .map_or(if row.child { 2 } else { 0 }, |_| 4);
-            3 + expansion + Line::from(row.address.as_str()).width()
+            1 + expansion + Line::from(row.address.as_str()).width()
         })
         .max()
         .unwrap_or(0)
@@ -235,7 +240,7 @@ fn column_widths(state: &EnvironmentSession, view: &MatrixView) -> Vec<usize> {
                 .max(Line::from(first_total.as_str()).width())
                 .max(Line::from(second_total.as_str()).width())
                 .max(MIN_CELL_WIDTH)
-                + COLUMN_GAP
+                + COLUMN_GAP * 3
         })
         .collect()
 }
@@ -368,13 +373,11 @@ fn symbol_legend(width: u16) -> Vec<Line<'static>> {
 
 fn row_line(
     row: &Row,
-    selected: bool,
     view: &MatrixView,
     columns: &[(usize, usize)],
     address_width: usize,
     selected_environment: usize,
 ) -> Line<'static> {
-    let marker = if selected { ">" } else { " " };
     let expansion = row
         .group
         .as_ref()
@@ -385,21 +388,16 @@ fn row_line(
                 "[+] "
             }
         });
-    let row_style = if selected {
-        theme::selected_row_style()
-    } else {
-        theme::body_style()
-    };
     let mut spans = vec![Span::styled(
         format!(
-            "{marker} {} ",
+            "{} ",
             fit(
                 &format!("{expansion}{}", row.address),
-                address_width.saturating_sub(3),
+                address_width.saturating_sub(1),
                 true
             )
         ),
-        row_style,
+        theme::body_style(),
     )];
     for &(index, column_width) in columns {
         let cell = &row.cells[index];
@@ -408,11 +406,10 @@ fn row_line(
             column_width - COLUMN_GAP,
             false,
         );
-        let selected_cell = selected && index == selected_environment;
-        let style = if selected_cell {
-            row_style.add_modifier(Modifier::REVERSED)
+        let style = if index == selected_environment {
+            theme::selected_row_style()
         } else {
-            row_style
+            theme::body_style()
         };
         spans.push(Span::styled(
             format!("{text}{} ", " ".repeat(padding)),
@@ -427,14 +424,10 @@ fn row_line(
         Some(DifferenceReason::Value) => "value",
         None => "",
     };
-    spans.push(Span::styled(" ", row_style));
+    spans.push(Span::styled(" ", theme::body_style()));
     spans.push(Span::styled(
         fit(reason, WHY_WIDTH, false),
-        if selected {
-            row_style
-        } else {
-            theme::secondary_style()
-        },
+        theme::secondary_style(),
     ));
     Line::from(spans)
 }
