@@ -67,9 +67,7 @@ pub(crate) struct ExecutionState {
     progress: ExecutionProgress,
     cancellation_requested: bool,
     failure_message: Option<String>,
-    copy_notice: Option<copy::CopyNotice>,
-    copy_notice_until: Option<Instant>,
-    copy_flash_until: Option<Instant>,
+    copy_feedback: copy::CopyFeedback,
     result: Option<ExecutionResult>,
 }
 
@@ -141,7 +139,7 @@ impl ExecutionState {
     }
 
     #[must_use]
-    const fn at_stage_with_progress(
+    fn at_stage_with_progress(
         started_at: Instant,
         context: ExecutionContext,
         stage: ExecutionStage,
@@ -156,9 +154,7 @@ impl ExecutionState {
             progress,
             cancellation_requested: false,
             failure_message: None,
-            copy_notice: None,
-            copy_notice_until: None,
-            copy_flash_until: None,
+            copy_feedback: copy::CopyFeedback::default(),
             result: None,
         }
     }
@@ -304,51 +300,12 @@ impl ExecutionState {
     }
 
     #[must_use]
-    pub(crate) const fn copy_notice(&self) -> Option<copy::CopyNotice> {
-        self.copy_notice
+    pub(crate) const fn copy_feedback(&self) -> &copy::CopyFeedback {
+        &self.copy_feedback
     }
 
-    #[must_use]
-    pub(crate) fn copy_notice_at(&self, now: Instant) -> Option<copy::CopyNotice> {
-        self.copy_notice_until
-            .is_some_and(|until| now < until)
-            .then_some(self.copy_notice)
-            .flatten()
-    }
-
-    #[must_use]
-    pub(crate) const fn copy_notice_pending(&self) -> bool {
-        self.copy_notice_until.is_some()
-    }
-
-    pub(crate) const fn clear_copy_notice(&mut self) {
-        self.copy_notice = None;
-        self.copy_notice_until = None;
-    }
-
-    pub(crate) fn set_copy_notice(&mut self, notice: copy::CopyNotice, now: Instant) {
-        self.copy_notice = Some(notice);
-        self.copy_notice_until = Some(now + notice.duration());
-        self.copy_flash_until = match notice {
-            copy::CopyNotice::Copied {
-                target: copy::CopyTarget::Execution,
-            } => Some(now + Duration::from_millis(200)),
-            _ => None,
-        };
-    }
-
-    #[must_use]
-    pub(crate) fn copy_flash_active(&self, now: Instant) -> bool {
-        self.copy_flash_until.is_some_and(|until| now < until)
-    }
-
-    #[must_use]
-    pub(crate) const fn copy_flash_pending(&self) -> bool {
-        self.copy_flash_until.is_some()
-    }
-
-    pub(crate) const fn clear_copy_flash(&mut self) {
-        self.copy_flash_until = None;
+    pub(crate) const fn copy_feedback_mut(&mut self) -> &mut copy::CopyFeedback {
+        &mut self.copy_feedback
     }
 
     #[must_use]
