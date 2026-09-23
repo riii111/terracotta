@@ -194,6 +194,18 @@ impl EnvironmentSession {
         })
     }
 
+    pub(crate) fn clear_expired_copy_feedback(&mut self, now: std::time::Instant) -> bool {
+        let mut cleared = false;
+        for plan in &mut self.plans {
+            if let EnvironmentState::Ready { session, .. } = &mut plan.state
+                && let Some(feedback) = session.copy_feedback_mut()
+            {
+                cleared |= feedback.clear_expired(now);
+            }
+        }
+        cleared
+    }
+
     pub(crate) const fn interrupt(&mut self) {
         self.interrupted = true;
     }
@@ -301,6 +313,7 @@ impl EnvironmentPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::copy::{CopyResult, CopyTarget};
     use crate::app::review::{PlanMetadata, test_support::plan_document};
 
     fn available(name: &str) -> Environment {
@@ -324,6 +337,26 @@ mod tests {
             )),
             changed,
         }
+    }
+
+    fn record_plan_copy(state: &mut EnvironmentSession, index: usize, now: std::time::Instant) {
+        let Some(Effect::WriteClipboard(effect)) =
+            state.update_review(index, Action::Copy(CopyTarget::Plan), now)
+        else {
+            panic!("plan copy should produce a clipboard effect");
+        };
+        assert!(
+            state
+                .update_review(
+                    index,
+                    Action::CopyCompleted {
+                        target: effect.target(),
+                        result: CopyResult::Written,
+                    },
+                    now,
+                )
+                .is_none()
+        );
     }
 
     #[test]
@@ -403,6 +436,24 @@ mod tests {
                 .is_none()
         );
         assert!(state.plans()[0].review().is_some());
+    }
+
+    #[test]
+    fn clears_expired_copy_feedback_across_ready_environments() {
+        let mut state = EnvironmentSession::new(vec![available("b"), available("a")], false);
+        for _ in 0..2 {
+            let index = state.start_next().unwrap();
+            assert!(state.complete(index, ready(false), Vec::new()));
+        }
+
+        let copied_at = std::time::Instant::now();
+        record_plan_copy(&mut state, 0, copied_at);
+        record_plan_copy(&mut state, 1, copied_at + std::time::Duration::from_secs(1));
+
+        assert!(state.clear_expired_copy_feedback(copied_at + std::time::Duration::from_secs(3)));
+        assert!(!state.clear_expired_copy_feedback(copied_at + std::time::Duration::from_secs(3)));
+        assert!(state.clear_expired_copy_feedback(copied_at + std::time::Duration::from_secs(4)));
+        assert!(!state.clear_expired_copy_feedback(copied_at + std::time::Duration::from_secs(5)));
     }
 
     #[test]

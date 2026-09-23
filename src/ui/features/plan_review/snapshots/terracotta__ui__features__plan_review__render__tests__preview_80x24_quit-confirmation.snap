@@ -3,7 +3,7 @@ source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
 main [PROD]  ws:default  terraform loading...  /repo/environme...production/main
-Plan: +2 add  ~2 update  0 replace  -1 destroy
+Unique targets: +2 add  ~2 update  0 replace  -1 destroy
 ────────────────────────────────────────────────────────────────────────────────
   # terraform_data.api will be updated in-place                                ▲
   ~ resource "terraform_data" "api" {                                          ┃

@@ -1,9 +1,10 @@
 ---
 source: src/ui/features/plan_review/render.rs
+assertion_line: 1901
 expression: buffer_text(buffer)
 ---
 main [PROD]  ws:default  terraform loading...  /repo/environme...production/main
-Plan: +2 add  ~2 u┌Help─────────────────────────────────────┐
+Unique targets: +2┌Help─────────────────────────────────────┐
 ──────────────────│                                         │───────────────────
   # terraform_data│PgUp / PgDn   scroll one page            │                  ▲
   ~ resource "terr│                                         │                  ┃
@@ -25,4 +26,4 @@ Plan: +2 add  ~2 u┌Help──────────────────�
     }             │q             quit                       │                  │
                   │?/Esc close                              │                  │
 ◀︎═════════════════└─────────────────────────────────────────┘═══════───────────▶︎
-/ filter | a apply | ? help | q quit                                        3/43
+/ filter | a apply | ? help | q quit | s overview                      Line 3/43

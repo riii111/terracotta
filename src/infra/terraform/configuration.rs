@@ -348,25 +348,27 @@ mod tests {
         assert!(execution_location(&fixture.0, Some(data.as_os_str())).is_err());
     }
 
-    #[test]
-    fn opentofu_prefers_tofu_configuration_over_same_named_terraform_file() {
-        let fixture = Fixture::new("main.tf", "terraform {\n  backend \"s3\" {}\n}\n");
-        fs::write(fixture.0.join("main.tofu"), "terraform {\n  cloud {}\n}\n").unwrap();
-
-        assert_eq!(
-            execution_location_for_tool(&fixture.0, Tool::OpenTofu, None).unwrap(),
-            ExecutionLocation::HcpCandidate
-        );
-    }
-
-    #[test]
-    fn opentofu_prefers_tofu_json_over_same_named_terraform_json_file() {
-        let fixture = Fixture::new("main.tf.json", r#"{"terraform":{"backend":{"s3":{}}}}"#);
-        fs::write(
-            fixture.0.join("main.tofu.json"),
-            r#"{"terraform":{"cloud":{}}}"#,
-        )
-        .unwrap();
+    #[rstest]
+    #[case::hcl(
+        "main.tf",
+        "terraform {\n  backend \"s3\" {}\n}\n",
+        "main.tofu",
+        "terraform {\n  cloud {}\n}\n"
+    )]
+    #[case::json(
+        "main.tf.json",
+        r#"{"terraform":{"backend":{"s3":{}}}}"#,
+        "main.tofu.json",
+        r#"{"terraform":{"cloud":{}}}"#
+    )]
+    fn opentofu_prefers_tofu_configuration_over_same_named_terraform_file(
+        #[case] terraform_name: &str,
+        #[case] terraform_source: &str,
+        #[case] tofu_name: &str,
+        #[case] tofu_source: &str,
+    ) {
+        let fixture = Fixture::new(terraform_name, terraform_source);
+        fs::write(fixture.0.join(tofu_name), tofu_source).unwrap();
 
         assert_eq!(
             execution_location_for_tool(&fixture.0, Tool::OpenTofu, None).unwrap(),

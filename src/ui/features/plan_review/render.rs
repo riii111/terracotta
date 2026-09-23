@@ -300,6 +300,7 @@ fn layout_with_content(
                                     content,
                                     0,
                                     state.review().document().text().split('\n').count(),
+                                    panel_width,
                                 ),
                             ),
                             theme::secondary_style(),
@@ -311,6 +312,7 @@ fn layout_with_content(
                             content,
                             0,
                             state.review().document().text().split('\n').count(),
+                            panel_width,
                         ),
                         theme::secondary_style(),
                     ))
@@ -1443,7 +1445,7 @@ const fn terminal_notice_message(
 fn plan_status_line(state: &ReviewSessionState) -> Line<'static> {
     Line::from(Span::styled(
         format!(
-            "Plan: +{} add  ~{} update  {} replace  -{} destroy",
+            "Unique targets: +{} add  ~{} update  {} replace  -{} destroy",
             state.review().metadata().additions(),
             state.review().metadata().changes(),
             state.review().metadata().replacements(),
@@ -1508,13 +1510,16 @@ fn filter_footer_status(query: &str, match_count: usize, width: u16) -> Option<S
     }
 }
 
-fn position_status(position: u16, total: usize) -> String {
+const COMPACT_POSITION_STATUS_WIDTH: u16 = 72;
+
+fn position_status(position: u16, total: usize, width: u16) -> String {
     let total = total.max(1);
     let position = usize::from(position).saturating_add(1).min(total);
-    format!(
-        "{position:>width$}/{total}",
-        width = total.to_string().len()
-    )
+    if width >= COMPACT_POSITION_STATUS_WIDTH {
+        format!("Line {position}/{total}")
+    } else {
+        format!("L{position}/{total}")
+    }
 }
 
 fn review_footer_status(
@@ -1527,6 +1532,7 @@ fn review_footer_status(
         content,
         view.scroll().0,
         state.review().document().text().split('\n').count(),
+        width,
     );
     filter_footer_status(state.review().search_query(), content.matches.len(), width).map_or_else(
         || position.clone(),
@@ -1538,6 +1544,7 @@ fn position_status_for_content(
     content: &PreparedContent<'_>,
     position: u16,
     total: usize,
+    width: u16,
 ) -> String {
     let display_index = usize::from(position);
     let source_position = content
@@ -1551,6 +1558,7 @@ fn position_status_for_content(
     position_status(
         u16::try_from(source_position.saturating_sub(1)).unwrap_or(u16::MAX),
         total,
+        width,
     )
 }
 
@@ -1630,6 +1638,8 @@ fn footer_items(
     };
     if navigation == ReviewNavigation::Environments && !searching && !filtered {
         items.insert(0, footer::hint(&["Esc"], "overview"));
+    } else if navigation == ReviewNavigation::Standalone && !searching && !filtered {
+        items.push(footer::hint(&["s"], "overview"));
     }
     items
 }
@@ -4035,7 +4045,7 @@ End of synthetic plan body."#;
             assert!(
                 position("Warning: Deprecated configuration") < position("warning detail line 1")
             );
-            assert!(position("Plan: +1 add") < position("Error: Invalid configuration"));
+            assert!(position("Unique targets: +1 add") < position("Error: Invalid configuration"));
             assert_text_prefix_uses_style(
                 &buffer,
                 "Error: Invalid configuration",
@@ -4075,6 +4085,45 @@ End of synthetic plan body."#;
             assert!(footer_text.contains("/ filter"), "{footer_text}");
             assert!(!footer_text.contains("y copy plan"), "{footer_text}");
             assert!(footer_text.contains("q quit"), "{footer_text}");
+        }
+
+        #[test]
+        fn single_environment_footer_shows_overview_when_it_fits() {
+            let wide = footer::layout_with_notice(
+                footer_items(false, true, 0, false, ReviewNavigation::Standalone),
+                80,
+                Some("Line 1/43"),
+            );
+            let wide_text = wide
+                .iter()
+                .flat_map(|line| line.spans.iter())
+                .map(|span| span.content.as_ref())
+                .collect::<String>();
+
+            assert!(wide_text.contains("s overview"), "{wide_text}");
+
+            let narrow = footer::layout_with_notice(
+                footer_items(false, true, 0, false, ReviewNavigation::Standalone),
+                24,
+                Some("L1/43"),
+            );
+            let narrow_text = narrow
+                .iter()
+                .flat_map(|line| line.spans.iter())
+                .map(|span| span.content.as_ref())
+                .collect::<String>();
+
+            assert!(narrow_text.contains("/ filter"), "{narrow_text}");
+            assert!(narrow_text.contains("a apply"), "{narrow_text}");
+            assert!(narrow_text.contains("? help"), "{narrow_text}");
+            assert!(narrow_text.contains("q quit"), "{narrow_text}");
+            assert!(!narrow_text.contains("s overview"), "{narrow_text}");
+        }
+
+        #[test]
+        fn position_status_names_the_source_line_at_wide_and_narrow_widths() {
+            assert_eq!(position_status(10, 47, 80), "Line 11/47");
+            assert_eq!(position_status(10, 47, 40), "L11/47");
         }
 
         #[test]

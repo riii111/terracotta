@@ -526,26 +526,6 @@ mod tests {
     }
 
     #[test]
-    fn failed_elapsed_stays_at_the_termination_time() {
-        let started_at = Instant::now();
-        let finished_at = started_at + Duration::from_secs(2);
-        let mut state = ExecutionState::new(started_at);
-
-        state.record(event(
-            finished_at,
-            ExecutionEventKind::Terminated(ProcessTermination {
-                status: ProcessExitStatus::Exited(1),
-                interrupted: false,
-            }),
-        ));
-
-        assert_eq!(
-            state.elapsed_at(started_at + Duration::from_secs(10)),
-            Duration::from_secs(2)
-        );
-    }
-
-    #[test]
     fn successful_termination_does_not_stop_elapsed_time_before_later_phases() {
         let started_at = Instant::now();
         let termination_at = started_at + Duration::from_secs(2);
@@ -570,7 +550,7 @@ mod tests {
     }
 
     #[test]
-    fn failure_keeps_termination_time_when_diagnostic_arrives_later() {
+    fn failure_elapsed_stays_at_termination_after_a_late_diagnostic() {
         let started_at = Instant::now();
         let termination_at = started_at + Duration::from_secs(2);
         let diagnostic_at = started_at + Duration::from_secs(4);
@@ -583,6 +563,12 @@ mod tests {
                 interrupted: false,
             }),
         ));
+
+        assert_eq!(
+            state.elapsed_at(started_at + Duration::from_secs(3)),
+            Duration::from_secs(2)
+        );
+
         state.fail("Terraform failed".to_owned(), diagnostic_at);
 
         assert_eq!(
