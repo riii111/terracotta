@@ -457,6 +457,35 @@ fn space_toggles_all_groups_independently_of_matrix_scroll() {
     assert_eq!(text(&mut view, &state, (80, 24)), filtered);
 }
 
+#[rstest]
+#[case::seventy(70)]
+#[case::seventy_three(73)]
+fn expanded_group_preview_keeps_full_plan_hint_at_narrow_widths(#[case] width: u16) {
+    let mut state = session(&["dev", "prod", "stg"]);
+    for _ in 0..3 {
+        complete(
+            &mut state,
+            (0..2)
+                .map(|index| {
+                    change(
+                        &format!("terraform_data.server[{index}]"),
+                        ResourceChangeKind::Update,
+                    )
+                })
+                .collect(),
+        );
+    }
+    let mut view = EnvironmentView::default();
+
+    press(&mut view, &mut state, KeyCode::Char(' '));
+    assert_eq!(view.matrix.groups_expanded(), Some(true));
+    press(&mut view, &mut state, KeyCode::Enter);
+    assert!(view.preview_focused);
+
+    let rendered = text(&mut view, &state, (width, 24));
+    assert!(rendered.contains("v plan"), "{rendered}");
+}
+
 #[test]
 fn short_terminal_keeps_environment_actions_and_total_band() {
     let state = session(&["dev", "prod", "stg"]);

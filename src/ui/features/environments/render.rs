@@ -452,7 +452,7 @@ fn overview_footer(
     if width < 45 {
         return compact_overview_footer(preview_open, preview_focused, expanded);
     }
-    let (preview_action, plan_action) = if width < 56 {
+    let (preview_action, plan_action) = if width < 71 {
         if preview_open {
             ("close preview", "plan")
         } else {
