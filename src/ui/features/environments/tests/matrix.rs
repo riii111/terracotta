@@ -293,6 +293,75 @@ fn filter_uses_complete_member_addresses_and_raw_return_preserves_expansion() {
 }
 
 #[test]
+fn matrix_search_edits_graphemes_and_restores_the_selected_anchor_on_cancel() {
+    let mut state = session(&["a"]);
+    complete(
+        &mut state,
+        vec![
+            change("terraform_data.alpha", ResourceChangeKind::Update),
+            change("terraform_data.beta", ResourceChangeKind::Update),
+        ],
+    );
+    let mut view = EnvironmentView::default();
+    press(&mut view, &mut state, KeyCode::Down);
+    assert_eq!(
+        view.matrix.cell(0).unwrap().members,
+        ["terraform_data.beta"]
+    );
+
+    press(&mut view, &mut state, KeyCode::Char('/'));
+    for character in "aあe\u{301}👩💻".chars() {
+        press(&mut view, &mut state, KeyCode::Char(character));
+    }
+    press(&mut view, &mut state, KeyCode::Home);
+    press(&mut view, &mut state, KeyCode::Right);
+    press(&mut view, &mut state, KeyCode::Right);
+    press(&mut view, &mut state, KeyCode::Backspace);
+    assert_eq!(view.matrix.filter(), "ae\u{301}👩💻");
+
+    press(&mut view, &mut state, KeyCode::End);
+    press(&mut view, &mut state, KeyCode::Left);
+    press(&mut view, &mut state, KeyCode::Char('\u{200d}'));
+    press(&mut view, &mut state, KeyCode::Char('x'));
+    assert_eq!(view.matrix.filter(), "ae\u{301}👩\u{200d}💻x");
+
+    press(&mut view, &mut state, KeyCode::Backspace);
+    press(&mut view, &mut state, KeyCode::Backspace);
+    press(&mut view, &mut state, KeyCode::Backspace);
+    assert_eq!(view.matrix.filter(), "a");
+    press(&mut view, &mut state, KeyCode::Home);
+    press(&mut view, &mut state, KeyCode::Char('X'));
+    press(&mut view, &mut state, KeyCode::End);
+    press(&mut view, &mut state, KeyCode::Char('Y'));
+    press(&mut view, &mut state, KeyCode::Esc);
+    assert_eq!(view.matrix.filter(), "");
+    assert_eq!(
+        view.matrix.cell(0).unwrap().members,
+        ["terraform_data.beta"]
+    );
+
+    press(&mut view, &mut state, KeyCode::Char('/'));
+    for character in "terraform_data.beta".chars() {
+        press(&mut view, &mut state, KeyCode::Char(character));
+    }
+    press(&mut view, &mut state, KeyCode::Enter);
+    assert_eq!(view.matrix.filter(), "terraform_data.beta");
+    assert_eq!(
+        view.matrix.cell(0).unwrap().members,
+        ["terraform_data.beta"]
+    );
+
+    press(&mut view, &mut state, KeyCode::Char('/'));
+    press(&mut view, &mut state, KeyCode::Char('x'));
+    press(&mut view, &mut state, KeyCode::Esc);
+    assert_eq!(view.matrix.filter(), "terraform_data.beta");
+    assert_eq!(
+        view.matrix.cell(0).unwrap().members,
+        ["terraform_data.beta"]
+    );
+}
+
+#[test]
 fn retry_and_new_ready_environment_keep_member_when_group_disappears() {
     let mut state = session(&["a", "b", "c"]);
     for _ in 0..2 {

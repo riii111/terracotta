@@ -6,6 +6,7 @@ use crate::app::environments::{
     overview::{EnvironmentOverview, GroupId, OverviewRow},
 };
 use crate::ui::features::overview::OverviewInput;
+use crate::ui::text_input;
 
 #[derive(Clone)]
 pub(crate) struct MatrixCell {
@@ -109,7 +110,7 @@ impl MatrixView {
                 self.search = Some(Search {
                     previous: self.filter.clone(),
                     anchor: self.anchor(environment),
-                    cursor: self.filter.len(),
+                    cursor: text_input::last_grapheme_boundary(&self.filter),
                 });
             }
             OverviewInput::SearchCancel => {
@@ -187,27 +188,21 @@ impl MatrixView {
             }
             OverviewInput::SearchChar(character) => {
                 self.filter.insert(search.cursor, character);
-                search.cursor += character.len_utf8();
+                search.cursor = text_input::next_grapheme_boundary_at_or_after(
+                    &self.filter,
+                    search.cursor + character.len_utf8(),
+                );
             }
             OverviewInput::SearchBackspace if search.cursor > 0 => {
-                let previous = self.filter[..search.cursor]
-                    .char_indices()
-                    .next_back()
-                    .map_or(0, |(index, _)| index);
+                let previous = text_input::previous_grapheme_boundary(&self.filter, search.cursor);
                 self.filter.drain(previous..search.cursor);
                 search.cursor = previous;
             }
             OverviewInput::SearchLeft => {
-                search.cursor = self.filter[..search.cursor]
-                    .char_indices()
-                    .next_back()
-                    .map_or(0, |(index, _)| index);
+                search.cursor = text_input::previous_grapheme_boundary(&self.filter, search.cursor);
             }
             OverviewInput::SearchRight => {
-                search.cursor = self.filter[search.cursor..]
-                    .char_indices()
-                    .nth(1)
-                    .map_or(self.filter.len(), |(index, _)| search.cursor + index);
+                search.cursor = text_input::next_grapheme_boundary(&self.filter, search.cursor);
             }
             OverviewInput::SearchHome => search.cursor = 0,
             OverviewInput::SearchEnd => search.cursor = self.filter.len(),

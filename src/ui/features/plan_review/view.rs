@@ -1,6 +1,6 @@
-use ratatui::{layout::Rect, style::Style, text::Line};
+use ratatui::layout::Rect;
 
-use crate::ui::features::overview::OverviewViewState;
+use crate::ui::{features::overview::OverviewViewState, text_input};
 
 use super::PlanReviewInput;
 
@@ -75,7 +75,7 @@ impl PlanReviewViewState {
             PlanReviewInput::SearchStart => {
                 let query = current_query.to_owned();
                 self.search = Some(SearchInputState {
-                    cursor: last_grapheme_boundary(&query),
+                    cursor: text_input::last_grapheme_boundary(&query),
                     previous_query: query.clone(),
                     query,
                     previous_vertical: self.vertical,
@@ -275,7 +275,7 @@ impl PlanReviewViewState {
         match input {
             PlanReviewInput::SearchChar(character) => {
                 search.query.insert(search.cursor, character);
-                search.cursor = next_grapheme_boundary_at_or_after(
+                search.cursor = text_input::next_grapheme_boundary_at_or_after(
                     &search.query,
                     search.cursor + character.len_utf8(),
                 );
@@ -286,7 +286,8 @@ impl PlanReviewViewState {
             }
             PlanReviewInput::SearchBackspace => {
                 if search.cursor > 0 {
-                    let previous = previous_grapheme_boundary(&search.query, search.cursor);
+                    let previous =
+                        text_input::previous_grapheme_boundary(&search.query, search.cursor);
                     search.query.drain(previous..search.cursor);
                     search.cursor = previous;
                     self.selected = None;
@@ -296,11 +297,12 @@ impl PlanReviewViewState {
                 Some(search.query.clone())
             }
             PlanReviewInput::SearchLeft => {
-                search.cursor = previous_grapheme_boundary(&search.query, search.cursor);
+                search.cursor =
+                    text_input::previous_grapheme_boundary(&search.query, search.cursor);
                 None
             }
             PlanReviewInput::SearchRight => {
-                search.cursor = next_grapheme_boundary(&search.query, search.cursor);
+                search.cursor = text_input::next_grapheme_boundary(&search.query, search.cursor);
                 None
             }
             PlanReviewInput::SearchHome => {
@@ -402,48 +404,6 @@ impl PlanReviewViewState {
         };
         None
     }
-}
-
-fn grapheme_boundaries(query: &str) -> Vec<usize> {
-    let mut boundaries = vec![0];
-    let mut offset = 0;
-    for grapheme in Line::from(query).styled_graphemes(Style::default()) {
-        offset += grapheme.symbol.len();
-        boundaries.push(offset);
-    }
-    if boundaries.last().copied() != Some(query.len()) {
-        boundaries.push(query.len());
-    }
-    boundaries
-}
-
-fn last_grapheme_boundary(query: &str) -> usize {
-    grapheme_boundaries(query)
-        .into_iter()
-        .next_back()
-        .unwrap_or(0)
-}
-
-fn previous_grapheme_boundary(query: &str, cursor: usize) -> usize {
-    grapheme_boundaries(query)
-        .into_iter()
-        .rev()
-        .find(|&boundary| boundary < cursor)
-        .unwrap_or(0)
-}
-
-fn next_grapheme_boundary(query: &str, cursor: usize) -> usize {
-    grapheme_boundaries(query)
-        .into_iter()
-        .find(|&boundary| boundary > cursor)
-        .unwrap_or(query.len())
-}
-
-fn next_grapheme_boundary_at_or_after(query: &str, cursor: usize) -> usize {
-    grapheme_boundaries(query)
-        .into_iter()
-        .find(|&boundary| boundary >= cursor)
-        .unwrap_or(query.len())
 }
 
 #[cfg(test)]
