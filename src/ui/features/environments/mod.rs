@@ -135,6 +135,19 @@ impl EnvironmentView {
         key: KeyEvent,
         state: &EnvironmentSession,
     ) -> ControlFlow<Option<EnvironmentInput>> {
+        let tab_delta = match (key.code, key.modifiers) {
+            (KeyCode::Tab, KeyModifiers::NONE) => Some(1),
+            (KeyCode::BackTab, KeyModifiers::NONE | KeyModifiers::SHIFT)
+            | (KeyCode::Tab, KeyModifiers::SHIFT) => Some(-1),
+            _ => None,
+        };
+        if self.selection.raw.is_some()
+            && let Some(delta) = tab_delta
+        {
+            let index = self.selection.adjacent(delta, state.plans().len());
+            return ControlFlow::Break(self.open(state, index, false));
+        }
+
         match key.code {
             KeyCode::Char('0' | 's') => {
                 self.selection.raw = None;

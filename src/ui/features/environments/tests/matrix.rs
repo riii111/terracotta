@@ -138,11 +138,11 @@ fn complete(state: &mut EnvironmentSession, changes: Vec<ResourceChange>) {
 }
 
 fn press(view: &mut EnvironmentView, state: &mut EnvironmentSession, code: KeyCode) {
-    if let Some(input) = view.handle_key(
-        KeyEvent::new(code, KeyModifiers::NONE),
-        Size::new(80, 24),
-        state,
-    ) {
+    press_event(view, state, KeyEvent::new(code, KeyModifiers::NONE));
+}
+
+fn press_event(view: &mut EnvironmentView, state: &mut EnvironmentSession, key: KeyEvent) {
+    if let Some(input) = view.handle_key(key, Size::new(80, 24), state) {
         match input {
             EnvironmentInput::Review(index, action) => {
                 state.update_review(index, *action, Instant::now());
@@ -153,6 +153,39 @@ fn press(view: &mut EnvironmentView, state: &mut EnvironmentSession, code: KeyCo
             _ => panic!("unexpected exit"),
         }
     }
+}
+
+#[test]
+fn tab_keys_open_the_same_target_in_adjacent_environments_from_raw_plan() {
+    let mut state = session(&["dev", "prod", "stg"]);
+    for _ in 0..3 {
+        complete(
+            &mut state,
+            vec![change("terraform_data.api", ResourceChangeKind::Update)],
+        );
+    }
+    let mut view = EnvironmentView::default();
+
+    press(&mut view, &mut state, KeyCode::Right);
+    assert_eq!(view.selection.column, 1);
+    press(&mut view, &mut state, KeyCode::Tab);
+    assert_eq!(view.selection.column, 1);
+
+    press(&mut view, &mut state, KeyCode::Enter);
+    assert_eq!(view.selection.raw, Some(1));
+    let selected = view.matrix.cell(1).unwrap().members.clone();
+
+    press(&mut view, &mut state, KeyCode::Tab);
+    assert_eq!(view.selection.raw, Some(2));
+    assert_eq!(view.matrix.cell(2).unwrap().members, selected);
+
+    press_event(
+        &mut view,
+        &mut state,
+        KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+    );
+    assert_eq!(view.selection.raw, Some(1));
+    assert_eq!(view.matrix.cell(1).unwrap().members, selected);
 }
 
 fn text(view: &mut EnvironmentView, state: &EnvironmentSession, size: (u16, u16)) -> String {
