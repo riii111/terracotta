@@ -23,6 +23,7 @@ Total       +0 ~0 -0  Error     Running     Pending     Excluded
                                    │ 1–9                  open selected resource in the numbered environment's raw plan    │
                                    │ Space                expand or collapse only on [+]/[-] group rows                    │
                                    │ /                    filter full addresses                                            │
+                                   │ e                    filter compared environments                                     │
                                    │                                                                                       │
                                    │ Other                                                                                 │
                                    │ PgUp / PgDn          move one page                                                    │
@@ -59,6 +60,5 @@ Total       +0 ~0 -0  Error     Running     Pending     Excluded
 
 
 
-
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-↑↓ row | ←→ env | Enter preview | / filter | v full plan | ? help | q quit
+↑↓ row | ←→ env | Enter preview | / filter | e env filter | v full plan | ? help | q quit

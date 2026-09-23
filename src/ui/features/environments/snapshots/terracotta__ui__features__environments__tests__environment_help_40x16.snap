@@ -15,6 +15,6 @@ b│   show / hide preview; Esc       │ │
 N│ 1–9                              │ │h
 ─│   open selected resource in the  ▼ │─
 T│ ↑/↓/k/j/PgUp/PgDn scroll           │
- │ ?/Esc close                        │
-↑└────────────────────────────────────┘
-v plan  ? help  q quit
+↑│ ?/Esc close                        │
+/└────────────────────────────────────┘
+? help  q quit

@@ -26,10 +26,12 @@ pub(crate) fn layout(
     area: Rect,
     state: &EnvironmentSession,
     notice: Option<&str>,
+    filter_active: bool,
     show_header_separator: bool,
 ) -> EnvironmentLayout {
     let tabs = Rect::new(area.x, area.y, area.width, area.height.min(1));
-    let summary_height = wrapped_height(&summary(state), area.width).min(area.height / 3);
+    let summary_height =
+        wrapped_height(&summary(state, filter_active), area.width).min(area.height / 3);
     let summary = Rect::new(area.x, tabs.bottom(), area.width, summary_height);
     let remaining = area.bottom().saturating_sub(summary.bottom());
     let notice_height = notice
@@ -60,12 +62,6 @@ pub(crate) fn layout(
 impl EnvironmentSelection {
     pub(crate) fn active(&self) -> usize {
         self.raw.unwrap_or(self.column)
-    }
-
-    pub(crate) fn adjacent(&self, delta: isize, count: usize) -> usize {
-        self.active()
-            .saturating_add_signed(delta)
-            .min(count.saturating_sub(1))
     }
 }
 
@@ -103,13 +99,24 @@ pub(crate) const fn status(plan: &EnvironmentPlan) -> &'static str {
     }
 }
 
-pub(crate) fn summary(state: &EnvironmentSession) -> String {
+pub(crate) fn summary(state: &EnvironmentSession, filter_active: bool) -> String {
     let ready = state
         .plans()
         .iter()
         .filter(|plan| plan.review().is_some())
         .count();
     let mut parts = vec![format!("Ready: {ready}/{}", state.plans().len())];
+    if filter_active {
+        if state
+            .plans()
+            .iter()
+            .any(|plan| matches!(plan.state(), EnvironmentState::Error))
+        {
+            parts.push("Error present".to_owned());
+        }
+        parts.push("[Env filter ON]".to_owned());
+        return parts.join("   ");
+    }
     if ready < state.plans().len() {
         let names: Vec<_> = state
             .plans()
@@ -137,28 +144,33 @@ pub(crate) fn render_tabs(
     area: Rect,
     state: &EnvironmentSession,
     selection: &EnvironmentSelection,
+    visible_environments: &[usize],
 ) {
     let active = selection.active();
-    let labels: Vec<_> = state
-        .plans()
+    let labels: Vec<_> = visible_environments
         .iter()
         .enumerate()
-        .map(|(index, plan)| {
+        .map(|(position, index)| {
+            let plan = &state.plans()[*index];
             let production = plan
                 .review()
                 .is_some_and(|review| review.review().context().is_production() == Some(true));
             format!(
                 " {} {}{} ",
-                index + 1,
+                position + 1,
                 name(plan),
                 if production { " [PROD]" } else { "" }
             )
         })
         .collect();
     let mut first = 0;
+    let active_position = visible_environments
+        .iter()
+        .position(|index| *index == active)
+        .unwrap_or(0);
     let available = usize::from(area.width.saturating_sub(16));
-    while first < active
-        && labels[first..=active]
+    while first < active_position
+        && labels[first..=active_position]
             .iter()
             .map(|label| Line::from(label.as_str()).width())
             .sum::<usize>()
@@ -178,15 +190,15 @@ pub(crate) fn render_tabs(
         spans.push(Span::raw("‹ "));
     }
     let mut used = spans.iter().map(Span::width).sum::<usize>();
-    for (index, label) in labels.iter().enumerate().skip(first) {
+    for (position, label) in labels.iter().enumerate().skip(first) {
         let width = Line::from(label.as_str()).width();
-        if used + width > usize::from(area.width) && index > active {
+        if used + width > usize::from(area.width) && position > active_position {
             spans.push(Span::raw(" ›"));
             break;
         }
         spans.push(Span::styled(
             label.clone(),
-            if selection.raw.is_some() && index == active {
+            if selection.raw.is_some() && visible_environments[position] == active {
                 theme::search_match_style()
             } else {
                 theme::secondary_style()

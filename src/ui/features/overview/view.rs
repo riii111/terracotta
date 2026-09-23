@@ -211,7 +211,8 @@ impl OverviewViewState {
             | OverviewInput::SearchRight
             | OverviewInput::SearchHome
             | OverviewInput::SearchEnd
-            | OverviewInput::SearchConfirm => None,
+            | OverviewInput::SearchConfirm
+            | OverviewInput::OpenEnvironmentFilter => None,
         }
     }
 

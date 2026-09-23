@@ -23,14 +23,30 @@ impl EnvironmentView {
     pub(crate) fn render(&mut self, frame: &mut Frame<'_>, state: &EnvironmentSession) {
         self.sync(state);
         let area = frame.area();
+        let visible_environments = self.visible_environments(state.plans().len());
         let show_boundaries =
             self.selection.raw.is_none() && self.has_room_for_boundaries(area, state);
-        let layout = environments::layout(area, state, self.notice.as_deref(), show_boundaries);
-        environments::render_tabs(frame, layout.tabs, state, &self.selection);
+        let layout = environments::layout(
+            area,
+            state,
+            self.notice.as_deref(),
+            self.selected_environments.is_some(),
+            show_boundaries,
+        );
+        environments::render_tabs(
+            frame,
+            layout.tabs,
+            state,
+            &self.selection,
+            &visible_environments,
+        );
         frame.render_widget(
-            Paragraph::new(environments::summary(state))
-                .wrap(Wrap { trim: false })
-                .style(theme::secondary_style()),
+            Paragraph::new(environments::summary(
+                state,
+                self.selected_environments.is_some(),
+            ))
+            .wrap(Wrap { trim: false })
+            .style(theme::secondary_style()),
             layout.summary,
         );
         if let Some(notice) = &self.notice {
@@ -70,6 +86,8 @@ impl EnvironmentView {
                 }
                 EnvironmentDialog::Message(text) => self.render_dialog(frame, text),
             }
+        } else if let Some(dialog) = &self.filter_dialog {
+            dialog.render(frame, frame.area(), state.plans());
         }
     }
 
@@ -171,7 +189,13 @@ impl EnvironmentView {
         let Some(plan) = state.plans().get(self.selection.column) else {
             return false;
         };
-        let shell = environments::layout(area, state, self.notice.as_deref(), false);
+        let shell = environments::layout(
+            area,
+            state,
+            self.notice.as_deref(),
+            self.selected_environments.is_some(),
+            false,
+        );
         let context = overview_context(self);
         let detail = overview_detail(plan);
         let (context_height, detail_height) = section_heights(shell.body, &context, &detail);
@@ -279,6 +303,7 @@ fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
                         "expand or collapse only on [+]/[-] group rows",
                     ),
                     help_dialog::HelpAction::new("/", "filter full addresses"),
+                    help_dialog::HelpAction::new("e", "filter compared environments"),
                 ],
             ),
             help_dialog::HelpSection::new(
@@ -372,6 +397,7 @@ fn overview_footer(
             preview_action,
         ),
         footer::hint(&["/"], "filter"),
+        footer::hint(&["e"], "env filter"),
     ];
     if let Some(expanded) = expanded {
         items.push(footer::hint(
@@ -400,11 +426,14 @@ fn compact_overview_footer(preview_open: bool, expanded: Option<bool>) -> Vec<Li
             ),
             join_footer_items(
                 [
-                    footer::hint(&["v"], "plan"),
                     footer::hint(&["/"], "filter"),
-                    footer::hint(&["?"], "help"),
-                    footer::hint(&["q"], "quit"),
+                    footer::hint(&["e"], "env filter"),
+                    footer::hint(&["v"], "plan"),
                 ],
+                "  ",
+            ),
+            join_footer_items(
+                [footer::hint(&["?"], "help"), footer::hint(&["q"], "quit")],
                 "  ",
             ),
         ]
@@ -416,9 +445,6 @@ fn compact_overview_footer(preview_open: bool, expanded: Option<bool>) -> Vec<Li
                 if expanded { "collapse" } else { "expand" },
             ));
         }
-        if expanded != Some(true) {
-            actions.push(footer::hint(&["v"], "plan"));
-        }
         actions.extend([footer::hint(&["?"], "help"), footer::hint(&["q"], "quit")]);
         vec![
             join_footer_items(
@@ -426,7 +452,14 @@ fn compact_overview_footer(preview_open: bool, expanded: Option<bool>) -> Vec<Li
                     movement[0].clone(),
                     movement[1].clone(),
                     footer::hint(&["Enter"], "preview"),
+                ],
+                "  ",
+            ),
+            join_footer_items(
+                [
                     footer::hint(&["/"], "filter"),
+                    footer::hint(&["e"], "env filter"),
+                    footer::hint(&["v"], "plan"),
                 ],
                 "  ",
             ),
@@ -470,6 +503,13 @@ fn preview_unavailable_footer(width: u16, searching: bool) -> Vec<Line<'static>>
                 [
                     Line::from("Resize for preview"),
                     footer::hint(&["v"], "plan"),
+                ],
+                "  ",
+            ),
+            join_footer_items(
+                [
+                    footer::hint(&["e"], "env filter"),
+                    footer::hint(&["?"], "help"),
                     footer::hint(&["q"], "quit"),
                 ],
                 "  ",

@@ -14,7 +14,7 @@ Differs across envs
 > terraform_data.api  ~          action
 
 Same change across envs
-  …orm_data.server[*] ~ 20
 ────────────────────────────────────────
-↑↓ row  ←→ env  Enter preview  / filter
-v plan  ? help  q quit
+↑↓ row  ←→ env  Enter preview
+/ filter  e env filter  v plan
+? help  q quit

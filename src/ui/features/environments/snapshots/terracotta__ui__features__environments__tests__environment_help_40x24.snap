@@ -21,8 +21,8 @@ T│   plan                           │ │
  │   [+]/[-] group rows             │ │
  │ /                                │ │
  │   filter full addresses          │ │
- │                                  ▼ │
- │ ↑/↓/k/j/PgUp/PgDn scroll           │
-─│ ?/Esc close                        │─
-↑└────────────────────────────────────┘
-v plan  ? help  q quit
+ │ e                                ▼ │
+─│ ↑/↓/k/j/PgUp/PgDn scroll           │─
+↑│ ?/Esc close                        │
+/└────────────────────────────────────┘
+? help  q quit
