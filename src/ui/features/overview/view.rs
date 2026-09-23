@@ -458,7 +458,6 @@ mod tests {
         };
         review = review.with_plan(Plan {
             value_addresses: BTreeSet::new(),
-            changes: Vec::new(),
             resource_changes: vec![
                 change("aws_instance.web[0]"),
                 change("aws_instance.web[1]"),

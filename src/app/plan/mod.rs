@@ -228,7 +228,6 @@ impl std::fmt::Debug for OutputChange {
 
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Plan {
-    pub(crate) changes: Vec<ResourceChange>,
     pub(crate) resource_changes: Vec<ResourceChange>,
     pub(crate) value_addresses: BTreeSet<String>,
     pub(crate) summary: PlanSummary,
@@ -240,7 +239,6 @@ impl std::fmt::Debug for Plan {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("Plan")
-            .field("changes", &self.changes)
             .field("resource_changes", &self.resource_changes)
             .field("value_addresses", &self.value_addresses)
             .field("summary", &self.summary)
@@ -254,7 +252,6 @@ impl Plan {
     #[must_use]
     pub(crate) const fn empty() -> Self {
         Self {
-            changes: Vec::new(),
             resource_changes: Vec::new(),
             value_addresses: BTreeSet::new(),
             summary: PlanSummary {

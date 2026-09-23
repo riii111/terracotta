@@ -534,7 +534,6 @@ mod tests {
         )
         .with_plan(Plan {
             value_addresses: BTreeSet::new(),
-            changes: Vec::new(),
             resource_changes: addresses.into_iter().map(change).collect(),
             summary: PlanSummary {
                 creates: 0,

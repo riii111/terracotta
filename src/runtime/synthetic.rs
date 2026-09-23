@@ -302,7 +302,6 @@ fn synthetic_review() -> ReviewSessionState {
     )
     .with_plan(Plan {
         value_addresses: BTreeSet::new(),
-        changes: Vec::new(),
         resource_changes: vec![
             synthetic_change(
                 "terraform_data.example",
@@ -821,7 +820,6 @@ fn synthetic_environment_review(directory: &Path, count: usize) -> PlanReview {
     )
     .with_plan(Plan {
         value_addresses: BTreeSet::new(),
-        changes: Vec::new(),
         resource_changes: changes,
         summary: PlanSummary {
             creates: 0,

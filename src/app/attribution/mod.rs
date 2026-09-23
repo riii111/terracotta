@@ -290,13 +290,13 @@ impl ResourceAttribution {
     }
 }
 
-pub(crate) fn attribute_changes(
-    changes: &[ResourceChange],
+pub(crate) fn attribute_changes<'a>(
+    changes: impl IntoIterator<Item = &'a ResourceChange>,
     source_files: &[SourceFileAnalysis],
     changed_lines: &[SourceLineChange],
 ) -> Vec<ResourceAttribution> {
     changes
-        .iter()
+        .into_iter()
         .map(|change| attribute_change(change, source_files, changed_lines))
         .collect()
 }
@@ -569,7 +569,7 @@ mod tests {
                 case.changed_end_line,
             )];
 
-            let result = attribute_changes(&changes, &sources, &changed_lines);
+            let result = attribute_changes(changes.iter(), &sources, &changed_lines);
             let attribution = &result[0];
 
             assert_eq!(
@@ -669,7 +669,7 @@ mod tests {
             changed_line("worker.tf", SourceSide::After, 11, 11),
         ];
 
-        let result = attribute_changes(&changes, &sources, &changed_lines);
+        let result = attribute_changes(changes.iter(), &sources, &changed_lines);
 
         assert_eq!(result[0].status(), AttributionStatus::Direct);
         assert_eq!(result[0].evidence().len(), 2);
@@ -698,7 +698,7 @@ mod tests {
         )];
         let changed_lines = [changed_line("main.tf", SourceSide::After, 3, 3)];
 
-        let result = attribute_changes(&changes, &sources, &changed_lines);
+        let result = attribute_changes(changes.iter(), &sources, &changed_lines);
 
         assert!(
             result
@@ -728,7 +728,7 @@ mod tests {
         )];
         let changed_lines = [changed_line("main.tf", SourceSide::After, 3, 3)];
 
-        let result = attribute_changes(&changes, &sources, &changed_lines);
+        let result = attribute_changes(changes.iter(), &sources, &changed_lines);
 
         assert_eq!(result[0].status(), AttributionStatus::NoMatch);
         assert!(matches!(
@@ -757,7 +757,7 @@ mod tests {
         )];
         let changed_lines = [changed_line("main.tf", SourceSide::After, 21, 21)];
 
-        let result = attribute_changes(&changes, &sources, &changed_lines);
+        let result = attribute_changes(changes.iter(), &sources, &changed_lines);
 
         assert_eq!(result[0].status(), AttributionStatus::NoMatch);
         assert!(result[0].analysis().is_complete());
@@ -793,7 +793,7 @@ mod tests {
         ];
         let changed_lines = [changed_line("main.tf", SourceSide::After, 3, 3)];
 
-        let result = attribute_changes(&changes, &sources, &changed_lines);
+        let result = attribute_changes(changes.iter(), &sources, &changed_lines);
 
         assert_eq!(result[0].status(), AttributionStatus::Direct);
         assert_eq!(result[0].evidence().len(), 1);
@@ -842,7 +842,7 @@ mod tests {
             changed_line("extra.tf", SourceSide::After, 10, 10),
         ];
 
-        let result = attribute_changes(&changes, &sources, &changed_lines);
+        let result = attribute_changes(changes.iter(), &sources, &changed_lines);
 
         assert_eq!(result[0].status(), AttributionStatus::Direct);
         assert_eq!(result[0].evidence().len(), 2);
@@ -867,7 +867,7 @@ mod tests {
         )];
         let changed_lines = [changed_line("main.tf", SourceSide::After, 3, 3)];
 
-        let result = attribute_changes(&[resource_change], &sources, &changed_lines);
+        let result = attribute_changes([&resource_change], &sources, &changed_lines);
 
         assert_eq!(result[0].status(), AttributionStatus::NoMatch);
         assert!(matches!(
