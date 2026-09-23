@@ -6,6 +6,7 @@ use crate::app::{
     plan::{PlanAction, ResourceChange, ResourceChangeKind},
     review::PlanReview,
 };
+use crate::ui::text_input;
 
 use super::OverviewInput;
 
@@ -173,7 +174,7 @@ impl OverviewViewState {
             OverviewInput::SearchStart => {
                 let query = self.filter.clone();
                 self.search = Some(SearchState {
-                    cursor: query.len(),
+                    cursor: text_input::last_grapheme_boundary(&query),
                     previous_query: query.clone(),
                     query,
                     previous_vertical: self.vertical,
@@ -228,20 +229,18 @@ impl OverviewViewState {
             }
             OverviewInput::SearchChar(character) => {
                 search.query.insert(search.cursor, character);
-                search.cursor += character.len_utf8();
+                search.cursor = text_input::next_grapheme_boundary_at_or_after(
+                    &search.query,
+                    search.cursor + character.len_utf8(),
+                );
                 self.filter = search.query.clone();
                 self.selected = (row_count > 0).then_some(0);
                 self.vertical = 0;
             }
             OverviewInput::SearchBackspace => {
                 if search.cursor > 0 {
-                    let start = search
-                        .query
-                        .char_indices()
-                        .map(|(index, _)| index)
-                        .take_while(|index| *index < search.cursor)
-                        .last()
-                        .unwrap_or(0);
+                    let start =
+                        text_input::previous_grapheme_boundary(&search.query, search.cursor);
                     search.query.drain(start..search.cursor);
                     search.cursor = start;
                     self.filter = search.query.clone();
@@ -250,16 +249,11 @@ impl OverviewViewState {
                 }
             }
             OverviewInput::SearchLeft => {
-                search.cursor = search.query[..search.cursor]
-                    .char_indices()
-                    .next_back()
-                    .map_or(0, |(index, _)| index);
+                search.cursor =
+                    text_input::previous_grapheme_boundary(&search.query, search.cursor);
             }
             OverviewInput::SearchRight => {
-                search.cursor = search.query[search.cursor..]
-                    .char_indices()
-                    .nth(1)
-                    .map_or(search.query.len(), |(index, _)| search.cursor + index);
+                search.cursor = text_input::next_grapheme_boundary(&search.query, search.cursor);
             }
             OverviewInput::SearchHome => search.cursor = 0,
             OverviewInput::SearchEnd => search.cursor = search.query.len(),
@@ -402,6 +396,10 @@ mod tests {
     use crate::app::plan::{Plan, PlanSummary, PlanValue, ResourceMode};
     use crate::app::review::{PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata};
 
+    fn apply_search(view: &mut OverviewViewState, input: OverviewInput, content: &OverviewContent) {
+        view.apply(input, Rect::new(0, 0, 40, 5), 0, content);
+    }
+
     fn review() -> PlanReview {
         let mut review = PlanReview::new(
             PathBuf::from("/project"),
@@ -510,5 +508,49 @@ mod tests {
 
         assert_eq!(view.selected(), Some(5));
         assert_eq!(view.scroll(), 3);
+    }
+
+    #[test]
+    fn search_cursor_edits_graphemes_and_cancel_restores_the_confirmed_filter() {
+        let content = OverviewContent {
+            rows: Vec::new(),
+            repeated: 0,
+            unsupported: 0,
+        };
+        let mut view = OverviewViewState::default();
+
+        apply_search(&mut view, OverviewInput::SearchStart, &content);
+        for character in "aあe\u{301}👩💻".chars() {
+            apply_search(&mut view, OverviewInput::SearchChar(character), &content);
+        }
+        apply_search(&mut view, OverviewInput::SearchHome, &content);
+        apply_search(&mut view, OverviewInput::SearchRight, &content);
+        apply_search(&mut view, OverviewInput::SearchRight, &content);
+        apply_search(&mut view, OverviewInput::SearchBackspace, &content);
+        assert_eq!(view.search_query(), Some("ae\u{301}👩💻"));
+
+        apply_search(&mut view, OverviewInput::SearchEnd, &content);
+        apply_search(&mut view, OverviewInput::SearchLeft, &content);
+        apply_search(&mut view, OverviewInput::SearchChar('\u{200d}'), &content);
+        apply_search(&mut view, OverviewInput::SearchChar('x'), &content);
+        assert_eq!(view.search_query(), Some("ae\u{301}👩\u{200d}💻x"));
+
+        apply_search(&mut view, OverviewInput::SearchBackspace, &content);
+        apply_search(&mut view, OverviewInput::SearchBackspace, &content);
+        apply_search(&mut view, OverviewInput::SearchBackspace, &content);
+        assert_eq!(view.search_query(), Some("a"));
+
+        apply_search(&mut view, OverviewInput::SearchHome, &content);
+        apply_search(&mut view, OverviewInput::SearchChar('X'), &content);
+        apply_search(&mut view, OverviewInput::SearchEnd, &content);
+        apply_search(&mut view, OverviewInput::SearchChar('Y'), &content);
+        apply_search(&mut view, OverviewInput::SearchConfirm, &content);
+        assert_eq!(view.filter(), "XaY");
+        assert!(!view.searching());
+
+        apply_search(&mut view, OverviewInput::SearchStart, &content);
+        apply_search(&mut view, OverviewInput::SearchChar('Z'), &content);
+        apply_search(&mut view, OverviewInput::SearchCancel, &content);
+        assert_eq!(view.filter(), "XaY");
     }
 }
