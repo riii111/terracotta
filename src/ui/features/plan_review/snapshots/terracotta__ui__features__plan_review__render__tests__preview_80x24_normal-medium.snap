@@ -2,8 +2,8 @@
 source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
-repo  ws:default  terraform loading...  /repo
-Unique targets: +0 add  ~0 update  0 replace  -0 destroy
+Target: repo Workspace: default Tool: terraform loading... Dir: /repo
+Unique targets (replace once): +0 add  ~0 update  0 replace  -0 destroy
 ────────────────────────────────────────────────────────────────────────────────
 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx                               ▲
 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx                               ┃
@@ -25,4 +25,4 @@ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx                               �
 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx                               │
 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx                               ▼
 ────────────────────────────────────────────────────────────────────────────────
-/ filter | ? help | q quit | y copy plan | s overview                  Line 1/25
+s overview | / filter | ? help | q quit                                Line 1/25

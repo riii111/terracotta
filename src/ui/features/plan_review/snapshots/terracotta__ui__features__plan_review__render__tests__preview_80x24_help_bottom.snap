@@ -2,8 +2,8 @@
 source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
-main [PROD]  ws:default  terraform loading...  /repo/environme...production/main
-Unique targets: +2┌Help─────────────────────────────────────┐
+Target: main [PROD] Workspace: default Tool: terraform loading... Dir: /re...ain
+Unique targets (re┌Help─────────────────────────────────────┐-1 destroy
 ──────────────────│                                         │───────────────────
   # terraform_data│PgUp / PgDn   scroll one page            │                  ▲
   ~ resource "terr│                                         │                  ┃
@@ -25,4 +25,4 @@ Unique targets: +2┌Help──────────────────�
     }             │q             quit                       │                  │
 ◀︎═════════════════│?/Esc close                              │═══════───────────▶︎
 ──────────────────└─────────────────────────────────────────┘───────────────────
-/ filter | a apply | ? help | q quit | y copy plan | s overview        Line 3/43
+s overview | / filter | a apply | ? help | q quit                      Line 3/43

@@ -1120,7 +1120,7 @@ fn render_for_navigation(
         );
         return;
     }
-    header::render_review(frame, layout.shell.header(), state.review());
+    header::render_plan_review(frame, layout.shell.header(), state.review());
     frame.render_widget(
         Block::new().style(theme::body_style()),
         layout.shell.content(),
@@ -1472,7 +1472,7 @@ const fn terminal_notice_message(
 fn plan_status_line(state: &ReviewSessionState) -> Line<'static> {
     Line::from(Span::styled(
         format!(
-            "Unique targets: +{} add  ~{} update  {} replace  -{} destroy",
+            "Unique targets (replace once): +{} add  ~{} update  {} replace  -{} destroy",
             state.review().metadata().additions(),
             state.review().metadata().changes(),
             state.review().metadata().replacements(),
@@ -1657,29 +1657,18 @@ fn footer_items(
         items.extend([footer::hint(&["?"], "help"), footer::hint(&["q"], "quit")]);
         items
     } else {
-        let mut items = vec![footer::hint(&["/"], "filter")];
+        let mut items = if navigation == ReviewNavigation::Standalone && width >= 29 {
+            vec![
+                footer::hint(&["s"], "overview"),
+                footer::hint(&["/"], "filter"),
+            ]
+        } else {
+            vec![footer::hint(&["/"], "filter")]
+        };
         if applyable {
             items.push(footer::hint(&["a"], "apply"));
         }
         items.extend([footer::hint(&["?"], "help"), footer::hint(&["q"], "quit")]);
-        let copy_plan = footer::hint(&["y"], "copy plan");
-        items.push(copy_plan.clone());
-        if navigation == ReviewNavigation::Standalone {
-            let overview = footer::hint(&["s"], "overview");
-            let mut preferred_order = items.clone();
-            preferred_order.push(overview.clone());
-            let overview_fits = footer::layout(preferred_order, width)
-                .iter()
-                .flat_map(|line| line.spans.iter())
-                .any(|span| span.content.contains("overview"));
-            if overview_fits {
-                items.push(overview);
-            } else {
-                items.pop();
-                items.push(overview);
-                items.push(copy_plan);
-            }
-        }
         items
     };
     if navigation == ReviewNavigation::Environments && !searching && !filtered {
@@ -1974,8 +1963,26 @@ End of synthetic plan body."#;
         background: Color,
         modifier: Modifier,
     ) {
+        assert_text_segment_uses_style_from(
+            buffer,
+            buffer.area().y,
+            text,
+            segment_start,
+            segment_length,
+            (foreground, background, modifier),
+        );
+    }
+
+    fn assert_text_segment_uses_style_from(
+        buffer: &Buffer,
+        first_line: u16,
+        text: &str,
+        segment_start: usize,
+        segment_length: usize,
+        expected: (Color, Color, Modifier),
+    ) {
         let area = buffer.area();
-        for y in area.y..area.bottom() {
+        for y in first_line.max(area.y)..area.bottom() {
             let symbols = (area.x..area.right())
                 .map(|x| buffer.cell((x, y)).expect("search cell").symbol())
                 .collect::<Vec<_>>();
@@ -1995,9 +2002,9 @@ End of synthetic plan body."#;
                         y,
                     ))
                     .expect("search cell");
-                assert_eq!(cell.fg, foreground, "{text}");
-                assert_eq!(cell.bg, background, "{text}");
-                assert_eq!(cell.modifier, modifier, "{text}");
+                assert_eq!(cell.fg, expected.0, "{text}");
+                assert_eq!(cell.bg, expected.1, "{text}");
+                assert_eq!(cell.modifier, expected.2, "{text}");
             }
             return;
         }
@@ -2014,6 +2021,33 @@ End of synthetic plan body."#;
             });
 
             snapshot(&format!("preview_{width}x{height}_normal"), &buffer);
+        }
+    }
+
+    #[test]
+    fn renders_plan_apply_entry_at_all_supported_sizes() {
+        for &(width, height) in &SIZES {
+            let state = review_state(review().with_apply_entry(true));
+            let view = PlanReviewViewState::default();
+            let buffer = render_to_buffer((width, height), |frame| {
+                render(frame, &state, &view, Instant::now());
+            });
+            let text = buffer_text(&buffer);
+            let footer = text
+                .lines()
+                .find(|line| line.contains("s overview"))
+                .expect("overview navigation should be visible");
+
+            assert!(
+                footer.starts_with("s overview"),
+                "{width}x{height}\n{footer}"
+            );
+            assert!(footer.contains("a apply"), "{width}x{height}\n{footer}");
+            assert!(
+                !footer.contains("y copy plan"),
+                "{width}x{height}\n{footer}"
+            );
+            snapshot(&format!("preview_{width}x{height}_apply-entry"), &buffer);
         }
     }
 
@@ -2074,6 +2108,29 @@ End of synthetic plan body."#;
             render(frame, &state, &view, Instant::now());
         });
         snapshot("preview_120x40_long-target", &normal);
+        for (width, height) in [(80, 24), (160, 60)] {
+            let buffer = render_to_buffer((width, height), |frame| {
+                render(
+                    frame,
+                    &state,
+                    &PlanReviewViewState::default(),
+                    Instant::now(),
+                );
+            });
+            let text = buffer_text(&buffer);
+            assert!(text.contains("Target: "), "{width}x{height}\n{text}");
+            assert!(text.contains("[PROD]"), "{width}x{height}\n{text}");
+            assert!(
+                text.contains("Workspace: default"),
+                "{width}x{height}\n{text}"
+            );
+            assert!(
+                text.contains("Tool: terraform 1.9.0"),
+                "{width}x{height}\n{text}"
+            );
+            assert!(text.contains("Dir: ./"), "{width}x{height}\n{text}");
+            snapshot(&format!("preview_{width}x{height}_long-target"), &buffer);
+        }
         view.apply_with_matches(
             PlanReviewInput::OpenHelp,
             layout.body(),
@@ -2104,7 +2161,7 @@ End of synthetic plan body."#;
         let context_text = buffer_text(&context);
         let compact_context = context_text.replace('\n', "");
         assert!(context_text.contains("very-long-target-name-for-review [PROD]"));
-        assert!(context_text.contains("ws:default"));
+        assert!(context_text.contains("Workspace: default"));
         assert!(context_text.contains("terraform 1.9.0"));
         assert!(
             compact_context
@@ -3734,32 +3791,49 @@ End of synthetic plan body."#;
             let buffer = render_to_buffer((120, 40), |frame| {
                 render_apply_confirmation(frame, &state, &ApplyConfirmationViewState::default());
             });
-            assert_text_segment_uses_style(
+            let dialog_y = (buffer.area().y..buffer.area().bottom())
+                .find(|&y| {
+                    (buffer.area().x..buffer.area().right())
+                        .map(|x| buffer.cell((x, y)).expect("dialog cell").symbol())
+                        .collect::<String>()
+                        .contains("Apply this reviewed plan?")
+                })
+                .expect("confirmation dialog title");
+            assert_text_segment_uses_style_from(
                 &buffer,
+                dialog_y,
                 "Target: main [PROD]",
                 0,
                 "Target: ".chars().count(),
-                Color::Rgb(0xc0, 0xb8, 0xb8),
-                Color::Reset,
-                Modifier::empty(),
+                (
+                    Color::Rgb(0xc0, 0xb8, 0xb8),
+                    Color::Reset,
+                    Modifier::empty(),
+                ),
             );
-            assert_text_segment_uses_style(
+            assert_text_segment_uses_style_from(
                 &buffer,
+                dialog_y,
                 "Target: main [PROD]",
                 "Target: ".chars().count(),
                 "main [PROD]".chars().count(),
-                Color::Rgb(0xe9, 0xdb, 0xdb),
-                Color::Reset,
-                Modifier::empty(),
+                (
+                    Color::Rgb(0xe9, 0xdb, 0xdb),
+                    Color::Reset,
+                    Modifier::empty(),
+                ),
             );
-            assert_text_segment_uses_style(
+            assert_text_segment_uses_style_from(
                 &buffer,
+                dialog_y,
                 "Workspace: default",
                 0,
                 "Workspace: ".chars().count(),
-                Color::Rgb(0xc0, 0xb8, 0xb8),
-                Color::Reset,
-                Modifier::empty(),
+                (
+                    Color::Rgb(0xc0, 0xb8, 0xb8),
+                    Color::Reset,
+                    Modifier::empty(),
+                ),
             );
         }
 
@@ -4098,7 +4172,10 @@ End of synthetic plan body."#;
             assert!(
                 position("Warning: Deprecated configuration") < position("warning detail line 1")
             );
-            assert!(position("Unique targets: +1 add") < position("Error: Invalid configuration"));
+            assert!(
+                position("Unique targets (replace once): +1 add")
+                    < position("Error: Invalid configuration")
+            );
             assert_text_prefix_uses_style(
                 &buffer,
                 "Error: Invalid configuration",
@@ -4136,7 +4213,8 @@ End of synthetic plan body."#;
 
             assert!(!footer_text.contains("a apply"), "{footer_text}");
             assert!(footer_text.contains("/ filter"), "{footer_text}");
-            assert!(footer_text.contains("y copy plan"), "{footer_text}");
+            assert!(footer_text.contains("s overview"), "{footer_text}");
+            assert!(!footer_text.contains("y copy plan"), "{footer_text}");
             assert!(footer_text.contains("q quit"), "{footer_text}");
         }
 
@@ -4202,6 +4280,8 @@ End of synthetic plan body."#;
                 .collect::<String>();
 
             assert!(wide_text.contains("s overview"), "{wide_text}");
+            assert!(wide_text.starts_with("s overview"), "{wide_text}");
+            assert!(!wide_text.contains("y copy plan"), "{wide_text}");
 
             let narrow = footer::layout_with_notice(
                 footer_items(
@@ -4221,11 +4301,11 @@ End of synthetic plan body."#;
                 .map(|span| span.content.as_ref())
                 .collect::<String>();
 
+            assert!(!narrow_text.contains("s overview"), "{narrow_text}");
             assert!(narrow_text.contains("/ filter"), "{narrow_text}");
             assert!(narrow_text.contains("a apply"), "{narrow_text}");
             assert!(narrow_text.contains("? help"), "{narrow_text}");
             assert!(narrow_text.contains("q quit"), "{narrow_text}");
-            assert!(!narrow_text.contains("s overview"), "{narrow_text}");
         }
 
         #[test]
@@ -4270,10 +4350,9 @@ End of synthetic plan body."#;
                 footer_lines.iter().any(|line| line.contains("? help")),
                 "{footer_lines:?}"
             );
+            assert!(footer_lines[0].contains("s overview"), "{footer_lines:?}");
             assert!(
-                footer_lines
-                    .iter()
-                    .any(|line| line.contains("q quit") && line.contains("s overview")),
+                footer_lines.iter().any(|line| line.contains("q quit")),
                 "{footer_lines:?}"
             );
             assert!(footer_lines.iter().any(|line| line.contains(position)));

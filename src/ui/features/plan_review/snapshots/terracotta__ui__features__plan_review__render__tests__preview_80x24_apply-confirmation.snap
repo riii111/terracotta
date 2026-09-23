@@ -2,7 +2,7 @@
 source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
-main [PROD]  ws:default  terraform loading...  /repo/environme...production/main
+Target: main [PROD] Workspace: default Tool: terraform loading... Dir: /re...ain
 Umain [PROD]  ws:default  terraform loading...  /repo/environm...roduction/main
 ────────────────────────────────────────────────────────────────────────────────
   # terraform_data.api will be updated in-place                                ▲
@@ -25,4 +25,4 @@ Umain [PROD]  ws:default  terraform loading...  /repo/environm...roduction/main
     }                                                                          │
 ◀︎═══════════════════════════════════════════════════════════════════───────────▶︎
 ────────────────────────────────────────────────────────────────────────────────
-/ filter | ? help | q quit | y copy plan | s overview                  Line 3/43
+s overview | / filter | ? help | q quit                                Line 3/43
