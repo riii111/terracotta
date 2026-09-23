@@ -94,14 +94,17 @@ impl CopyFeedback {
         self.flash_until = (flash && result == CopyResult::Written).then(|| now + FLASH_DURATION);
     }
 
-    pub(crate) fn clear_expired(&mut self, now: Instant) {
-        if self.notice_until.is_some_and(|until| now >= until) {
+    pub(crate) fn clear_expired(&mut self, now: Instant) -> bool {
+        let clear_notice = self.notice_until.is_some_and(|until| now >= until);
+        let clear_flash = self.flash_until.is_some_and(|until| now >= until);
+        if clear_notice {
             self.notice = None;
             self.notice_until = None;
         }
-        if self.flash_until.is_some_and(|until| now >= until) {
+        if clear_flash {
             self.flash_until = None;
         }
+        clear_notice || clear_flash
     }
 }
 
@@ -463,5 +466,27 @@ mod tests {
 
         assert_eq!(text, "(sensitive value)");
         assert_eq!(sanitize_text(&text, &sensitive), text);
+    }
+
+    #[test]
+    fn clearing_feedback_reports_flash_and_notice_expiration() {
+        let started_at = Instant::now();
+        let mut feedback = CopyFeedback::default();
+        feedback.record(CopyTarget::Execution, CopyResult::Written, started_at, true);
+
+        let flash_expired_at = started_at + FLASH_DURATION;
+        assert!(feedback.clear_expired(flash_expired_at));
+        assert!(feedback.pending());
+        assert!(!feedback.flash_active(flash_expired_at));
+        assert!(!feedback.clear_expired(flash_expired_at));
+
+        let notice_expired_at = started_at
+            + CopyNotice::Copied {
+                target: CopyTarget::Execution,
+            }
+            .duration();
+        assert!(feedback.clear_expired(notice_expired_at));
+        assert!(!feedback.pending());
+        assert!(!feedback.clear_expired(notice_expired_at));
     }
 }
