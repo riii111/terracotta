@@ -233,6 +233,10 @@ fn rows(overview: &EnvironmentOverview, filter: &str, expanded: &BTreeSet<GroupI
                 if children.is_empty() {
                     continue;
                 }
+                if children.len() == 1 {
+                    rows.push(individual(children[0], false));
+                    continue;
+                }
                 let cells = group
                     .cells
                     .iter()

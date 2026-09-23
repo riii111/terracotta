@@ -198,7 +198,7 @@ fn overview_footer(width: u16, searching: bool, expanded: Option<bool>) -> Strin
         (64..80, Some(toggle)) => format!("Enter open selected  / filter  {toggle}  ? help"),
         (64..80, None) => "Enter open selected resource in raw plan  ? help  q quit".to_owned(),
         (_, Some(toggle)) => {
-            format!("Enter open selected resource in raw plan  / filter  {toggle}  ? help  q quit")
+            format!("Enter open selected  / filter  {toggle}  ? help  q quit")
         }
         (_, None) => {
             "Enter open selected resource in raw plan  / filter  ? help  q quit".to_owned()

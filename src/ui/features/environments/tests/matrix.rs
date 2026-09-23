@@ -260,6 +260,7 @@ fn selected_group_footer_tracks_expansion_children_and_filtered_rows() {
     assert!(expanded.contains("[-] terraform_data.server[*]"));
     assert!(expanded.contains("terraform_data.server[0]"));
     assert!(expanded.contains("Space collapse"));
+    assert!(expanded.contains("q quit"));
 
     press(&mut view, &mut state, KeyCode::Char('j'));
     let child = text(&mut view, &state, (80, 24));
@@ -282,8 +283,12 @@ fn selected_group_footer_tracks_expansion_children_and_filtered_rows() {
     }
     press(&mut view, &mut state, KeyCode::Enter);
     let filtered = text(&mut view, &state, (80, 24));
-    assert!(filtered.contains("[+] terraform_data.server[*]"));
-    assert!(filtered.contains("Space expand"));
+    assert!(filtered.contains("terraform_data.server[1]"));
+    assert!(!filtered.contains("terraform_data.server[*]"));
+    assert!(!filtered.contains("Space expand"));
+    assert!(!filtered.contains("Space collapse"));
+    press(&mut view, &mut state, KeyCode::Char(' '));
+    assert_eq!(text(&mut view, &state, (80, 24)), filtered);
 }
 
 #[test]
