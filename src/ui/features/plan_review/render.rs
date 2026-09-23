@@ -1113,6 +1113,10 @@ fn render_for_navigation(
             .as_ref()
             .map(|(message, style)| (message.as_str(), *style)),
     );
+    frame.render_widget(
+        separator::render(layout.shell.footer_separator().width),
+        layout.shell.footer_separator(),
+    );
     render_overlay(frame, area, state.review(), view);
 }
 
@@ -2471,7 +2475,15 @@ End of synthetic plan body."#;
                 render(frame, &state, &view, Instant::now());
             });
 
-            assert_eq!(layout.shell.content().bottom(), layout.shell.footer().y);
+            assert_eq!(
+                layout.shell.content().bottom(),
+                layout.shell.footer_separator().y
+            );
+            assert_eq!(
+                layout.shell.footer_separator().bottom(),
+                layout.shell.footer().y
+            );
+            assert_eq!(layout.shell.footer_separator().height, 1);
             assert!(layout.shell.content().height >= 2);
             assert!(buffer_text(&buffer).contains("q quit"));
             let text = buffer_text(&buffer);

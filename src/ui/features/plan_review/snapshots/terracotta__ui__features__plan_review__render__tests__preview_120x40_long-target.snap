@@ -35,10 +35,10 @@ Changes to Outputs:                                                             
                                                                                                                        ┃
 Warning: Value for "pending" is not known until apply                                                                  ┃
                                                                                                                        ┃
-Plan: 2 to add, 2 to change, 1 to destroy.                                                                             ┃
-                                                                                                                       ┃
+Plan: 2 to add, 2 to change, 1 to destroy.                                                                             │
+                                                                                                                       │
 Synthetic review text continues below so the viewport and scrollbar remain meaningful.                                 │
 The same long body is intentionally reused across every review state and terminal size.                                │
-No Terraform process, provider, state file, or cloud credential is used by this fixture.                               │
-The review surface preserves Terraform order, attributes, output values, and diagnostics.                              ▼
+No Terraform process, provider, state file, or cloud credential is used by this fixture.                               ▼
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 / filter | a apply | ? help | q quit                                                                                4/43

@@ -290,6 +290,7 @@ impl EnvironmentView {
             Rect::new(0, 0, size.width, size.height),
             state,
             self.notice.as_deref(),
+            false,
         )
         .body;
         let layout = plan_review::environment_layout(area, view.searching(), review);

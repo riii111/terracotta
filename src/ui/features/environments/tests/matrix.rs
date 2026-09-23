@@ -198,6 +198,16 @@ fn three_environments_show_groups_actions_and_totals(#[case] width: u16, #[case]
 }
 
 #[test]
+fn short_terminal_keeps_environment_actions_without_boundary_rows() {
+    let state = session(&["dev", "prod", "stg"]);
+    let mut view = EnvironmentView::default();
+    let rendered = text(&mut view, &state, (40, 14));
+
+    assert!(rendered.contains("Enter open  / filter  ? help  q quit"));
+    assert!(!rendered.contains(&"─".repeat(40)));
+}
+
+#[test]
 fn columns_remain_selectable_without_rows_and_scroll_beyond_nine() {
     let names: Vec<_> = (0..12).map(|index| format!("env-{index:02}")).collect();
     let mut state = session(&names.iter().map(String::as_str).collect::<Vec<_>>());

@@ -36,9 +36,9 @@ Warning: Value for "pending" is not known until apply                           
 Plan: 2 to add, 2 to change, 1 to destroy.                                                                             ┃
                                                                                                                        ┃
 Synthetic review text continues below so the viewport and scrollbar remain meaningful.                                 ┃
-The same long body is intentionally reused across every review state and terminal size.                                ┃
-No Terraform process, provider, state file, or cloud credential is used by this fixture.                               ┃
+The same long body is intentionally reused across every review state and terminal size.                                │
+No Terraform process, provider, state file, or cloud credential is used by this fixture.                               │
 The review surface preserves Terraform order, attributes, output values, and diagnostics.                              │
-Long lines remain unwrapped in the plan body; horizontal movement exposes the hidden suffix.                           │
-Vertical movement exposes later lines in this synthetic plan body.                                                     ▼
+Long lines remain unwrapped in the plan body; horizontal movement exposes the hidden suffix.                           ▼
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 Enter confirm | Esc cancel                                                                             8 matches    3/43
