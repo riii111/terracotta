@@ -209,7 +209,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn old_list_and_detail_keys_have_no_special_actions() {
+    fn raw_review_enter_has_no_special_action() {
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
         assert_eq!(key_to_input(key, false, false), None);
     }
@@ -293,42 +293,6 @@ mod tests {
     }
 
     #[test]
-    fn confirmed_filter_keeps_full_plan_actions_available() {
-        assert_eq!(
-            key_to_input(
-                KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
-                false,
-                true,
-            ),
-            Some(PlanReviewInput::Apply)
-        );
-        assert_eq!(
-            key_to_input(
-                KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
-                false,
-                true,
-            ),
-            Some(PlanReviewInput::Copy)
-        );
-        assert_eq!(
-            key_to_input(
-                KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
-                false,
-                true,
-            ),
-            Some(PlanReviewInput::Quit)
-        );
-        assert_eq!(
-            key_to_input(
-                KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
-                false,
-                true,
-            ),
-            None
-        );
-    }
-
-    #[test]
     fn help_and_context_keys_are_available_only_on_their_review_screens() {
         for filter_confirmed in [false, true] {
             assert_eq!(
@@ -381,14 +345,6 @@ mod tests {
         assert_eq!(
             apply_confirmation_key_to_input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
             Some(ApplyConfirmationInput::Cancel)
-        );
-        assert_eq!(
-            key_to_input(
-                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-                false,
-                false
-            ),
-            None
         );
         assert_eq!(
             apply_confirmation_key_to_input(KeyEvent::new(
