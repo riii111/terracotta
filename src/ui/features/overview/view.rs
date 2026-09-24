@@ -149,7 +149,8 @@ pub(crate) struct OverviewViewState {
     focus: OverviewPane,
     maximized: Option<OverviewPane>,
     vertical: u16,
-    changes_horizontal: u16,
+    changes_horizontal: Cell<u16>,
+    max_changes_horizontal: Cell<Option<u16>>,
     relations_scroll: Cell<RelationGraphScroll>,
     selected: Option<usize>,
     expanded: BTreeSet<usize>,
@@ -252,7 +253,8 @@ impl OverviewViewState {
             }
             OverviewInput::Left => {
                 if self.active_pane() == OverviewPane::Changes {
-                    self.changes_horizontal = self.changes_horizontal.saturating_sub(1);
+                    self.changes_horizontal
+                        .set(self.changes_horizontal.get().saturating_sub(1));
                 } else {
                     self.update_relations_scroll(|scroll| {
                         scroll.horizontal = scroll.horizontal.saturating_sub(1);
@@ -262,7 +264,12 @@ impl OverviewViewState {
             }
             OverviewInput::Right => {
                 if self.active_pane() == OverviewPane::Changes {
-                    self.changes_horizontal = self.changes_horizontal.saturating_add(1);
+                    let horizontal = self.changes_horizontal.get().saturating_add(1);
+                    self.changes_horizontal.set(
+                        self.max_changes_horizontal
+                            .get()
+                            .map_or(horizontal, |max| horizontal.min(max)),
+                    );
                 } else {
                     self.update_relations_scroll(|scroll| {
                         scroll.horizontal = scroll.horizontal.saturating_add(1);
@@ -522,7 +529,13 @@ impl OverviewViewState {
     }
 
     pub(crate) const fn changes_horizontal(&self) -> u16 {
+        self.changes_horizontal.get()
+    }
+
+    pub(crate) fn set_max_changes_horizontal(&self, max: u16) {
+        self.max_changes_horizontal.set(Some(max));
         self.changes_horizontal
+            .set(self.changes_horizontal.get().min(max));
     }
 
     pub(crate) const fn expanded(&self) -> &BTreeSet<usize> {

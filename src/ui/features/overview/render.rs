@@ -321,6 +321,13 @@ fn render_changes_panel(
         return;
     }
     let vertical = view.scroll().min(max_vertical);
+    let max_horizontal = lines
+        .iter()
+        .map(Line::width)
+        .max()
+        .unwrap_or_default()
+        .saturating_sub(usize::from(body.width));
+    view.set_max_changes_horizontal(u16::try_from(max_horizontal).unwrap_or(u16::MAX));
     frame.render_widget(
         Paragraph::new(lines.to_owned())
             .style(theme::overview_text_style())
@@ -875,6 +882,50 @@ mod tests {
             render_changes_panel(frame, frame.area(), &lines, &view, 0);
         });
         assert!(buffer_text(&scrolled).contains("tail-marker"));
+        let max_horizontal = view.changes_horizontal();
+        for _ in 0..100 {
+            view.apply(
+                OverviewInput::Right,
+                Rect::default(),
+                Rect::default(),
+                0,
+                &content,
+            );
+        }
+        assert_eq!(view.changes_horizontal(), max_horizontal);
+
+        let mut short_content = content;
+        short_content.rows.truncate(1);
+        short_content.rows[0].display_address = "terraform_data.short".to_owned();
+        short_content.unsupported = 0;
+        assert_eq!(short_content.rows.len(), 1);
+        let short_lines = overview_lines(&short_content, state.review(), &view);
+        for _ in 0..100 {
+            view.apply(
+                OverviewInput::Right,
+                Rect::default(),
+                Rect::default(),
+                0,
+                &short_content,
+            );
+        }
+        let short = render_to_buffer((40, 5), |frame| {
+            render_changes_panel(frame, frame.area(), &short_lines, &view, 0);
+        });
+        assert!(
+            buffer_text(&short).contains("terraform_data.short"),
+            "{}",
+            buffer_text(&short)
+        );
+        assert_eq!(view.changes_horizontal(), 0);
+        view.apply(
+            OverviewInput::Right,
+            Rect::default(),
+            Rect::default(),
+            0,
+            &short_content,
+        );
+        assert_eq!(view.changes_horizontal(), 0);
     }
 
     #[test]
@@ -999,7 +1050,7 @@ mod tests {
         assert_eq!(filtered_content.rows.len(), 1);
         assert_eq!(view.selected_group_expanded(&filtered_content), None);
         scroll_filtered_row_into_view(&state, &mut view, &filtered_content);
-        let filtered = render_to_buffer((40, 16), |frame| {
+        let filtered = render_to_buffer((50, 16), |frame| {
             render(frame, &state, &view, Instant::now());
         });
         let filtered_text = buffer_text(&filtered);
