@@ -956,7 +956,7 @@ fn unknown_same_change_summary_and_group_row_keep_the_annotation_visible() {
     };
     let mut state = session(&["dev", "stg", "prod"]);
     for count in [2, 2, 4] {
-        let changes = (0..count)
+        let mut changes: Vec<_> = (0..count)
             .map(|index| {
                 let mut change = change(
                     &format!("terraform_data.server[{index}]"),
@@ -978,6 +978,12 @@ fn unknown_same_change_summary_and_group_row_keep_the_annotation_visible() {
                 change
             })
             .collect();
+        changes.extend((0..20).map(|index| {
+            let address = format!("terraform_data.zz_extra_{index:02}");
+            let mut change = change(&address, ResourceChangeKind::Update);
+            change.resource_name = Some(format!("zz_extra_{index:02}"));
+            change
+        }));
         complete_with_schemas(
             &mut state,
             changes,
@@ -992,7 +998,7 @@ fn unknown_same_change_summary_and_group_row_keep_the_annotation_visible() {
     press(&mut view, &mut state, KeyCode::End);
     let collapsed = text(&mut view, &state, (165, 50));
     assert!(
-        collapsed.contains("Same change across envs: 1 changes [unknown values]"),
+        collapsed.contains("Same change across envs: 21 changes [unknown values]"),
         "{collapsed}"
     );
 
@@ -1004,16 +1010,22 @@ fn unknown_same_change_summary_and_group_row_keep_the_annotation_visible() {
         "{expanded}"
     );
 
+    press(&mut view, &mut state, KeyCode::End);
+    let bottom = text(&mut view, &state, (40, 16));
+    assert!(bottom.contains("zz_extra_19"), "{bottom}");
+    for _ in 0..20 {
+        press(&mut view, &mut state, KeyCode::Up);
+    }
     let narrow = text(&mut view, &state, (40, 16));
     let narrow_lines = narrow.lines().collect::<Vec<_>>();
-    assert!(
-        narrow_lines.iter().any(|line| line.contains("server[*]")),
-        "{narrow}"
-    );
+    let selected_group = narrow_lines
+        .iter()
+        .position(|line| line.contains("> [+]") && line.contains("server[*]"));
+    assert!(selected_group.is_some(), "{narrow}");
     assert!(
         narrow_lines
-            .iter()
-            .any(|line| line.contains("[unknown values]")),
+            .get(selected_group.unwrap() + 1)
+            .is_some_and(|line| line.contains("[unknown values]")),
         "{narrow}"
     );
 }
