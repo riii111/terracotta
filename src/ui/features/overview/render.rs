@@ -80,14 +80,18 @@ fn prepare(
     quit_confirmation: bool,
 ) -> PreparedOverview {
     let footer_message = state.copy_feedback().notice().map(CopyNotice::message);
+    let full_footer =
+        footer::layout_with_notice(footer_items(view, content), area.width, footer_message);
+    let required_footer =
+        footer::layout_with_notice(required_footer_items(view), area.width, footer_message);
     let (full_footer, required_footer) = if quit_confirmation {
         let lines = footer::quit_confirmation_lines(area.width, footer_message);
-        (lines.clone(), lines)
-    } else {
         (
-            footer::layout_with_notice(footer_items(view, content), area.width, footer_message),
-            footer::layout_with_notice(required_footer_items(view), area.width, footer_message),
+            footer::pad_lines(lines.clone(), full_footer.len()),
+            footer::pad_lines(lines, required_footer.len()),
         )
+    } else {
+        (full_footer, required_footer)
     };
     let shell = shell_layout::full_width_layout(area, full_footer, required_footer);
     let inner = shell.content_inner();
@@ -784,13 +788,25 @@ mod tests {
     fn quit_confirmation_replaces_overview_actions_at_supported_sizes() {
         let state = OverviewSessionState::new(review());
         let view = OverviewViewState::default();
+        let content = OverviewContent::from_review(state.review(), view.filter(), view.expanded());
 
         for (width, height) in [(40, 16), (80, 24), (120, 40)] {
+            let area = Rect::new(0, 0, width, height);
+            let normal_layout = layout(area, &state, &view, &content);
+            let confirmation_layout = prepare(area, &state, &view, &content, true).layout;
             let buffer = render_to_buffer((width, height), |frame| {
                 render_with_quit_confirmation(frame, &state, &view, Instant::now(), true);
             });
             let text = buffer_text(&buffer);
 
+            assert_eq!(
+                confirmation_layout.changes, normal_layout.changes,
+                "{width}x{height}"
+            );
+            assert_eq!(
+                confirmation_layout.relations, normal_layout.relations,
+                "{width}x{height}"
+            );
             assert!(text.contains("[Enter]"), "{width}x{height}: {text}");
             assert!(text.contains("[Esc]"), "{width}x{height}: {text}");
             assert!(text.contains("Quit"), "{width}x{height}: {text}");
