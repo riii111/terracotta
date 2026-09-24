@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::{
     ConfigurationRelationStatus, PlanRelations, RelationEndpoint, RelationEvidence, RelationSource,
     RelationUnresolvedReason, ResourceChangeKind, StateRelationStatus,
-    path::normalize_resource_address,
+    path::{normalize_resource_address, resource_address_matches_block},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -296,7 +296,7 @@ fn connected_groups(
 
 struct RelationAddressIndex {
     instances: BTreeMap<String, BTreeSet<RelationNodeId>>,
-    blocks: BTreeMap<String, BTreeSet<RelationNodeId>>,
+    blocks: BTreeMap<String, BTreeMap<RelationNodeId, BTreeSet<String>>>,
 }
 
 impl RelationAddressIndex {
@@ -317,7 +317,9 @@ impl RelationAddressIndex {
                         .blocks
                         .entry(normalized.normalized().to_owned())
                         .or_default()
-                        .insert(id.clone());
+                        .entry(id.clone())
+                        .or_default()
+                        .insert(address.clone());
                 }
             }
         }
@@ -335,8 +337,13 @@ impl RelationAddressIndex {
                     .blocks
                     .get(normalized.normalized())
                     .into_iter()
-                    .flatten()
-                    .cloned()
+                    .flat_map(|candidates| candidates.iter())
+                    .filter(|(_, addresses)| {
+                        addresses
+                            .iter()
+                            .any(|candidate| resource_address_matches_block(address, candidate))
+                    })
+                    .map(|(id, _)| id.clone())
                     .collect();
             }
         };
@@ -688,6 +695,67 @@ mod tests {
                 (id("aws_instance.web[1]"), id("aws_security_group.web")),
                 (id("aws_security_group.web"), id("aws_instance.web[0]")),
                 (id("aws_security_group.web"), id("aws_instance.web[1]")),
+            ]
+        );
+    }
+
+    #[test]
+    fn block_evidence_preserves_fixed_keys_while_expanding_omitted_keys() {
+        let nodes = [
+            individual_node(
+                "module.outer[0].module.inner[0].terraform_data.inside[2]",
+                ResourceChangeKind::Update,
+            ),
+            individual_node(
+                "module.outer[0].module.inner[1].terraform_data.inside[2]",
+                ResourceChangeKind::Update,
+            ),
+            individual_node(
+                "module.outer[0].module.inner[1].terraform_data.inside[3]",
+                ResourceChangeKind::Update,
+            ),
+            individual_node(
+                "module.outer[1].module.inner[0].terraform_data.inside[2]",
+                ResourceChangeKind::Update,
+            ),
+            individual_node("aws_security_group.target", ResourceChangeKind::Update),
+        ];
+        let graph = graph(
+            ConfigurationRelationStatus::Available,
+            vec![relation(
+                RelationEndpoint::Block(
+                    "module.outer[0].module.inner.terraform_data.inside[2]".to_owned(),
+                ),
+                RelationEndpoint::Instance("aws_security_group.target".to_owned()),
+                RelationSource::Configuration,
+            )],
+            StateRelationStatus::NoPriorState,
+            Vec::new(),
+            &nodes,
+        );
+
+        assert_eq!(
+            graph
+                .links
+                .iter()
+                .map(|link| (link.from.clone(), link.to.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    id("aws_security_group.target"),
+                    id("module.outer[0].module.inner[0].terraform_data.inside[2]")
+                ),
+                (
+                    id("aws_security_group.target"),
+                    id("module.outer[0].module.inner[1].terraform_data.inside[2]")
+                ),
+            ]
+        );
+        assert_eq!(
+            graph.no_links_shown,
+            vec![
+                id("module.outer[0].module.inner[1].terraform_data.inside[3]"),
+                id("module.outer[1].module.inner[0].terraform_data.inside[2]"),
             ]
         );
     }
