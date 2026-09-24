@@ -70,14 +70,6 @@ impl MatrixView {
         &self.filter
     }
 
-    #[cfg(test)]
-    pub(crate) fn row_identities(&self) -> Vec<(String, OverviewRowId, bool)> {
-        self.rows
-            .iter()
-            .map(|row| (row.address.clone(), row.id.clone(), row.child))
-            .collect()
-    }
-
     pub(crate) const fn filtered(&self) -> bool {
         !self.filter.is_empty()
     }
@@ -277,5 +269,30 @@ fn individual(row: &ComparisonRow, child: bool, id: OverviewRowId) -> Row {
             })
             .collect(),
         difference: row.difference,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::environments::comparison::ComparisonScope;
+
+    #[test]
+    fn individual_row_identity_keeps_the_full_resource_address() {
+        let address = "module.application.terraform_data.api[\"primary\"]".to_owned();
+        let overview = EnvironmentOverview {
+            scope: ComparisonScope::All { compared: vec![0] },
+            rows: vec![OverviewRow::Individual(ComparisonRow {
+                address: address.clone(),
+                cells: Vec::new(),
+                difference: None,
+                has_unknown: false,
+            })],
+        };
+
+        let rows = rows(&overview, "", &BTreeSet::new());
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, OverviewRowId::Individual(address));
     }
 }

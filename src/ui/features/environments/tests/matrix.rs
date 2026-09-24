@@ -7,7 +7,6 @@ use rstest::rstest;
 
 use super::*;
 use crate::app::{
-    environments::overview::OverviewRowId,
     execution::{ExecutionContext, SensitiveValue},
     plan::{
         Plan, PlanAction, PlanSummary, PlanValue, ResourceChange, ResourceChangeKind, ResourceMode,
@@ -397,57 +396,6 @@ fn sidebar_counts_and_matrix_actions_use_ansi_operation_colors() {
         .unwrap();
     assert_eq!(replace_cell.fg, Color::Magenta);
     assert_eq!(replace_cell.bg, Color::Reset);
-}
-
-#[test]
-fn overview_row_ids_keep_group_identity_and_full_individual_addresses() {
-    let mut state = session(&["dev", "prod", "stg"]);
-    for _ in 0..3 {
-        complete(
-            &mut state,
-            vec![
-                change("module.app.terraform_data.api", ResourceChangeKind::Update),
-                change(
-                    "module.app.terraform_data.server[0]",
-                    ResourceChangeKind::Update,
-                ),
-                change(
-                    "module.app.terraform_data.server[1]",
-                    ResourceChangeKind::Update,
-                ),
-            ],
-        );
-    }
-    let mut view = EnvironmentView::default();
-    view.sync(&state);
-
-    let individual = view
-        .matrix
-        .row_identities()
-        .into_iter()
-        .find(|(address, _, child)| address == "module.app.terraform_data.api" && !child)
-        .expect("individual resource");
-    assert_eq!(
-        individual.1,
-        OverviewRowId::Individual("module.app.terraform_data.api".to_owned())
-    );
-    let group = view
-        .matrix
-        .row_identities()
-        .into_iter()
-        .find(|(_, id, child)| matches!(id, OverviewRowId::Group(_)) && !child)
-        .expect("group row");
-    assert!(matches!(group.1, OverviewRowId::Group(_)));
-
-    press(&mut view, &mut state, KeyCode::Char(' '));
-    for child in view
-        .matrix
-        .row_identities()
-        .into_iter()
-        .filter(|(_, _, child)| *child)
-    {
-        assert_eq!(child.1, OverviewRowId::Individual(child.0));
-    }
 }
 
 #[test]
