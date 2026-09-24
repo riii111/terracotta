@@ -525,10 +525,6 @@ impl PlanReview {
     }
 
     #[must_use]
-    #[expect(
-        dead_code,
-        reason = "relation evidence is consumed by the planned graph review"
-    )]
     pub(crate) const fn relations(&self) -> &PlanRelations {
         &self.relations
     }
