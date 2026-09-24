@@ -36,7 +36,7 @@ pub(crate) fn parse_plan_json_bytes(input: &[u8]) -> Result<Plan, PlanParseError
 pub(super) fn parse_plan_json_with_metadata(
     input: &[u8],
     detailed_exit_has_changes: bool,
-) -> Result<(Plan, PlanMetadata), PlanParseError> {
+) -> Result<(Plan, PlanMetadata, super::relations::ConfigurationAnalysis), PlanParseError> {
     let document =
         serde_json::from_slice::<Value>(input).map_err(|_| PlanParseError::InvalidJson)?;
     let root = document
@@ -44,7 +44,16 @@ pub(super) fn parse_plan_json_with_metadata(
         .ok_or(PlanParseError::RootMustBeObject)?;
     let plan = parse_plan_document(&document)?;
     let metadata = super::metadata::metadata_from_document(root, &plan, detailed_exit_has_changes);
-    Ok((plan, metadata))
+    let planned_addresses = parse_value_addresses(root, false)?;
+    let deleted_addresses = plan
+        .resource_changes
+        .iter()
+        .filter(|change| change.kind == ResourceChangeKind::Delete)
+        .map(|change| change.address.clone())
+        .collect();
+    let relations =
+        super::relations::parse_configuration(&document, &planned_addresses, &deleted_addresses);
+    Ok((plan, metadata, relations))
 }
 
 pub(super) fn parse_plan_document(document: &Value) -> Result<Plan, PlanParseError> {
@@ -87,19 +96,26 @@ pub(super) fn parse_plan_document(document: &Value) -> Result<Plan, PlanParseErr
 
     Ok(Plan {
         resource_changes,
-        value_addresses: parse_value_addresses(root)?,
+        value_addresses: parse_value_addresses(root, true)?,
         summary,
         unsupported_changes,
         output_changes,
     })
 }
 
-fn parse_value_addresses(root: &Map<String, Value>) -> Result<BTreeSet<String>, PlanParseError> {
+fn parse_value_addresses(
+    root: &Map<String, Value>,
+    include_prior_state: bool,
+) -> Result<BTreeSet<String>, PlanParseError> {
     let mut addresses = BTreeSet::new();
-    let prior = optional_object(root, "prior_state")?
-        .map(|state| optional_object(state, "values"))
-        .transpose()?
-        .flatten();
+    let prior = if include_prior_state {
+        optional_object(root, "prior_state")?
+            .map(|state| optional_object(state, "values"))
+            .transpose()?
+            .flatten()
+    } else {
+        None
+    };
     for values in [prior, optional_object(root, "planned_values")?]
         .into_iter()
         .flatten()

@@ -6,7 +6,7 @@ use std::{
 
 use crate::app::{
     execution::Tool,
-    plan::Plan,
+    plan::{Plan, PlanRelations},
     review::{PlanDocument, PlanMetadata},
 };
 use crate::infra::CancellationToken;
@@ -18,6 +18,7 @@ use super::command::{
 
 mod json;
 mod metadata;
+mod relations;
 mod text;
 
 use text::parse_document;
@@ -62,7 +63,7 @@ pub(super) fn read_review_with_arguments(
     plan_changed: bool,
     cancellation: &CancellationToken,
     runner: &dyn ProcessRunner,
-) -> Result<(PlanDocument, PlanMetadata, Plan), TerraformExecutionError> {
+) -> Result<(PlanDocument, PlanMetadata, Plan, PlanRelations, bool), TerraformExecutionError> {
     let text = run_show(
         tool,
         root,
@@ -81,15 +82,22 @@ pub(super) fn read_review_with_arguments(
         cancellation,
         runner,
     )?;
-    let (plan, metadata) = json::parse_plan_json_with_metadata(&json.output.stdout, plan_changed)
-        .map_err(|error| invalid_plan(tool, error))?;
+    let (plan, metadata, relation_analysis) =
+        json::parse_plan_json_with_metadata(&json.output.stdout, plan_changed)
+            .map_err(|error| invalid_plan(tool, error))?;
     let document = parse_document(
         text.output.stdout,
         metadata.resource_addresses(),
         metadata.output_names(),
     )
     .map_err(|error| invalid_plan(tool, error))?;
-    Ok((document, metadata, plan))
+    Ok((
+        document,
+        metadata,
+        plan,
+        relation_analysis.relations,
+        relation_analysis.has_prior_state,
+    ))
 }
 
 fn run_show(
