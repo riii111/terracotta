@@ -625,7 +625,11 @@ fn overview_help_sections(
         help_dialog::HelpAction::new("f", "maximize or restore the focused pane"),
         help_dialog::HelpAction::new(
             "Enter",
-            "[1] or [3] opens the plan from the top; [2] opens the selected source",
+            if sidebar_available {
+                "[1] or [3] opens the plan from the top; [2] opens the selected source"
+            } else {
+                "[3] opens the plan from the top; [2] opens the selected source"
+            },
         ),
         help_dialog::HelpAction::new(
             "/",
@@ -633,8 +637,13 @@ fn overview_help_sections(
         ),
         help_dialog::HelpAction::new("r", "retry the selected Error environment"),
     ]);
+    let current_title = if sidebar_enabled {
+        "Current: Multi-environment Overview"
+    } else {
+        "Current: Overview"
+    };
     vec![
-        help_dialog::HelpSection::new("Current: Multi-environment Overview", current_actions),
+        help_dialog::HelpSection::new(current_title, current_actions),
         other_overview_help(),
         matrix_legend_help(),
         comparison_help(),

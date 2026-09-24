@@ -878,9 +878,16 @@ fn single_environment_hides_sidebar_and_its_shortcuts() {
     }));
     assert!(!help.contains("1 opens Envs"), "{help}");
     assert!(!help.contains("toggle the Envs sidebar"), "{help}");
+    assert!(help.contains("Current: Overview"), "{help}");
+    assert!(!help.contains("Multi-environment Overview"), "{help}");
     assert!(help.contains("2 / 3"), "{help}");
     assert!(help.contains("scroll [3]"), "{help}");
     assert!(help.contains("scroll columns in [2] or [3]"), "{help}");
+    assert!(
+        help.contains("[3] opens the plan from the top; [2] opens the selected source"),
+        "{help}"
+    );
+    assert!(!help.contains("[1] or [3] opens"), "{help}");
 }
 
 #[test]
