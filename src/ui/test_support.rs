@@ -31,6 +31,39 @@ pub(super) fn buffer_text(buffer: &Buffer) -> String {
         .join("\n")
 }
 
+pub(super) fn buffer_visual_snapshot(buffer: &Buffer) -> String {
+    let area = buffer.area();
+    let mut snapshot = format!("{}x{}\n", area.width, area.height);
+    for y in area.y..area.bottom() {
+        let mut runs = Vec::new();
+        let mut run_start = area.x;
+        let mut run_style = None;
+        let mut run_text = String::new();
+        for x in area.x..area.right() {
+            let cell = buffer.cell((x, y)).expect("snapshot cell");
+            let style = (cell.fg, cell.bg, cell.modifier);
+            if run_style.is_some_and(|active| active != style) {
+                let (foreground, background, modifier) = run_style.expect("active style");
+                runs.push(format!(
+                    "{run_start}..{x} fg={foreground:?} bg={background:?} modifier={modifier:?} text={run_text:?}"
+                ));
+                run_text.clear();
+                run_start = x;
+            }
+            run_style = Some(style);
+            run_text.push_str(cell.symbol());
+        }
+        if let Some((foreground, background, modifier)) = run_style {
+            runs.push(format!(
+                "{run_start}..{} fg={foreground:?} bg={background:?} modifier={modifier:?} text={run_text:?}",
+                area.right()
+            ));
+        }
+        let _ = writeln!(snapshot, "row {y}: {}", runs.join(" | "));
+    }
+    snapshot
+}
+
 pub(super) fn buffer_terminal_capture(buffer: &Buffer) -> String {
     let area = buffer.area();
     let mut capture = String::new();

@@ -6,10 +6,10 @@ terracotta ▸ dev                                                              
 ┌* [1] Envs────────────┐┌  [2] Compare─────────────────────────────────────────────────────────────────────────────────┐
 │> [x] dev             ││                                                                                              │
 │    Ready     ~21     ││                                                                                              │
-│                      ││Address             dev         stg         prod         why                                  │
+│                      ││Address                       dev         stg         prod         why                        │
 │  [x] stg             ││                                                                                              │
 │    Ready     ~200    ││Differs across envs                                                                           │
-│        1 replace     ││> terraform_data.api~           +/-         -            action                               │
+│        1 replace     ││> terraform_data.api          ~           +/-         -            action                     │
 │  [x] prod [PROD]     ││                                                                                              │
 │    Ready     ~20     ││  Same change across envs: 1 changes ~1  Space expand                                         │
 │    -1                ││                                                                                              │

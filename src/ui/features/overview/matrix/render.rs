@@ -6,7 +6,10 @@ use ratatui::{
     widgets::Paragraph,
 };
 
-use super::{MatrixCell, MatrixView, view::Row};
+use super::{
+    MatrixCell, MatrixView,
+    view::{Row, address_widths},
+};
 use crate::app::{
     environments::{
         EnvironmentSession,
@@ -243,42 +246,18 @@ fn render_column_headers(
 }
 
 fn address_width(area: Rect, view: &MatrixView) -> usize {
-    let content_width = view
-        .rows
-        .iter()
-        .filter(|row| row.summary.is_none())
-        .map(|row| {
-            let expansion = row
-                .group
-                .as_ref()
-                .map_or(if row.child { 2 } else { 0 }, |_| 4);
-            let unknown_width = if row.has_unknown && usize::from(area.width) >= 64 {
-                Line::from(" [unknown values]").width()
-            } else {
-                0
-            };
-            2 + expansion + Line::from(row.address.as_str()).width() + unknown_width
-        })
-        .max()
-        .unwrap_or(0)
-        .max(Line::from("Address").width());
+    let (visible_content_width, visible_unknown_width) = address_widths(&view.rows);
+    let content_width = view.address_content_width.max(visible_content_width);
+    let unknown_label_width = if usize::from(area.width) >= 64 {
+        view.unknown_address_width.max(visible_unknown_width)
+    } else {
+        0
+    };
+    let content_width = content_width.max(unknown_label_width);
     let max_width = usize::from(area.width)
         .saturating_sub(WHY_WIDTH + MIN_CELL_WIDTH + COLUMN_GAP * 2)
         .clamp(MIN_ADDRESS_WIDTH, MAX_ADDRESS_WIDTH);
     let address_width = content_width.clamp(MIN_ADDRESS_WIDTH, max_width);
-    let unknown_label_width = view
-        .rows
-        .iter()
-        .filter(|row| row.summary.is_none() && row.has_unknown && usize::from(area.width) >= 64)
-        .map(|row| {
-            let expansion = row
-                .group
-                .as_ref()
-                .map_or(if row.child { 2 } else { 0 }, |_| 4);
-            2 + expansion + Line::from(" [unknown values]").width()
-        })
-        .max()
-        .unwrap_or(0);
     address_width.max(unknown_label_width)
 }
 

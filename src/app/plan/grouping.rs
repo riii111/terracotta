@@ -139,7 +139,8 @@ pub(crate) fn grouping_candidate(
         let after = attribute.after.grouping_value()?;
         let value_type =
             if has_changed_unknown && (attribute.after.is_unknown() || attribute.path.len() > 1) {
-                let value_type = grouping_attribute_type(change, &attribute.path, schemas)?;
+                let value_type = grouping_attribute_type(change, &attribute.path, schemas)
+                    .or_else(|| dynamic_scalar_unknown_type(attribute, change, schemas))?;
                 if let GroupingValue::Unknown(shape) = &after
                     && !unknown_shape_matches_type(shape, value_type)
                 {
@@ -223,7 +224,11 @@ fn is_comparable_attribute(
     }
 
     if has_changed_unknown {
-        if attribute.after.is_unknown() || attribute.path.len() > 1 {
+        if attribute.after.is_unknown() {
+            return grouping_attribute_type(change, &attribute.path, schemas).is_some()
+                || dynamic_scalar_unknown_type(attribute, change, schemas).is_some();
+        }
+        if attribute.path.len() > 1 {
             return grouping_attribute_type(change, &attribute.path, schemas).is_some();
         }
         return matches!(attribute.path.as_slice(), [AttributePathSegment::Key(_)]);
@@ -237,6 +242,31 @@ fn is_comparable_attribute(
         ] => is_simple_map_attribute(change, attribute_name, schemas),
         _ => false,
     }
+}
+
+fn dynamic_scalar_unknown_type<'a>(
+    attribute: &AttributeDiff,
+    change: &ResourceChange,
+    schemas: Option<&'a ProviderSchemas>,
+) -> Option<&'a AttributeType> {
+    let [AttributePathSegment::Key(name)] = attribute.path.as_slice() else {
+        return None;
+    };
+    if !attribute.after.is_unknown()
+        || !matches!(
+            attribute.after.grouping_value(),
+            Some(GroupingValue::Unknown(UnknownShape::Bool(true)))
+        )
+        || !matches!(
+            attribute.before.grouping_value(),
+            Some(GroupingValue::Bool(_) | GroupingValue::Number(_) | GroupingValue::String(_))
+        )
+    {
+        return None;
+    }
+
+    let attribute_type = resource_schema(change, schemas)?.attributes.get(name)?;
+    matches!(attribute_type, AttributeType::Dynamic).then_some(attribute_type)
 }
 
 fn grouping_attribute_type<'a>(
@@ -421,7 +451,7 @@ mod tests {
     fn unknown_output_change(address: &str, input_before: &str) -> ResourceChange {
         let mut change = change(
             address,
-            json!({"input": input_before}),
+            json!({"input": input_before, "output": "old"}),
             json!({"input": "new", "output": null}),
         );
         change.after_unknown = Some(plan_value(json!({"output": true})));
@@ -633,6 +663,89 @@ mod tests {
         assert_eq!(grouping.groups.len(), 1);
         assert_eq!(grouping.groups[0].display_address, "aws_instance.server[*]");
         assert!(grouping.groups[0].has_unknown);
+    }
+
+    #[test]
+    fn groups_a_dynamic_attribute_when_its_whole_value_is_unknown_after_a_known_scalar() {
+        let mut changes = (0..4)
+            .map(|index| unknown_output_change(&format!("terraform_data.server[{index}]"), "old"))
+            .collect::<Vec<_>>();
+        let schemas = schema_for_changes(
+            &mut changes,
+            BTreeMap::from([
+                ("input".to_owned(), AttributeType::String),
+                ("output".to_owned(), AttributeType::Dynamic),
+            ]),
+        );
+
+        let grouping = group_resource_changes(&changes, Some(&schemas));
+
+        assert_eq!(grouping.repeated, 4);
+        assert_eq!(grouping.groups.len(), 1);
+        assert_eq!(
+            grouping.groups[0].display_address,
+            "terraform_data.server[*]"
+        );
+        assert!(grouping.groups[0].has_unknown);
+    }
+
+    #[test]
+    fn keeps_dynamic_unknowns_individual_without_schema_or_with_partial_shape() {
+        let mut whole_unknown = (0..2)
+            .map(|index| unknown_output_change(&format!("terraform_data.server[{index}]"), "old"))
+            .collect::<Vec<_>>();
+        assert_eq!(group_resource_changes(&whole_unknown, None).repeated, 0);
+
+        for change in &mut whole_unknown {
+            change.before = Some(plan_value(json!({
+                "input": "old",
+                "output": {"value": "old"}
+            })));
+            change.after = Some(plan_value(json!({
+                "input": "new",
+                "output": {"value": null}
+            })));
+            change.after_unknown = Some(plan_value(json!({
+                "output": {"value": true}
+            })));
+        }
+        let schemas = schema_for_changes(
+            &mut whole_unknown,
+            BTreeMap::from([
+                ("input".to_owned(), AttributeType::String),
+                ("output".to_owned(), AttributeType::Dynamic),
+            ]),
+        );
+
+        let grouping = group_resource_changes(&whole_unknown, Some(&schemas));
+
+        assert_eq!(grouping.repeated, 0);
+        assert_eq!(grouping.groups.len(), 2);
+    }
+
+    #[test]
+    fn keeps_dynamic_unknowns_individual_when_before_is_null_or_complex() {
+        let mut changes = vec![
+            unknown_output_change("terraform_data.server[0]", "old"),
+            unknown_output_change("terraform_data.server[1]", "old"),
+        ];
+        changes[0].before = Some(plan_value(json!({"input": "old", "output": null})));
+        changes[1].before = Some(plan_value(json!({
+            "input": "old",
+            "output": {"value": "old"}
+        })));
+        let schemas = schema_for_changes(
+            &mut changes,
+            BTreeMap::from([
+                ("input".to_owned(), AttributeType::String),
+                ("output".to_owned(), AttributeType::Dynamic),
+            ]),
+        );
+
+        let grouping = group_resource_changes(&changes, Some(&schemas));
+
+        assert_eq!(grouping.repeated, 0);
+        assert_eq!(grouping.groups.len(), 2);
     }
 
     #[test]
