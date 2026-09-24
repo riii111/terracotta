@@ -7,13 +7,16 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Size;
 
 use super::{
-    overview::{self, OverviewInput, matrix::MatrixView},
+    overview::{
+        self, OverviewInput,
+        matrix::{MatrixCell, MatrixSelectedItem, MatrixView},
+    },
     plan_review::{self, PlanReviewInput, PlanReviewViewState},
 };
 use crate::{
     app::{
         copy::CopyTarget,
-        environments::{EnvironmentSession, EnvironmentState},
+        environments::{EnvironmentSession, EnvironmentState, comparison::CellState},
         session::{Action, ReviewSessionState},
     },
     ui::{
@@ -162,7 +165,8 @@ impl EnvironmentView {
         self.reviews
             .resize_with(state.plans().len(), PlanReviewViewState::default);
         let environments = self.compared_environments(state.plans().len());
-        self.matrix.sync(state, &environments);
+        self.matrix
+            .sync(state, &environments, self.selection.column);
     }
 
     fn is_editing(&self) -> bool {
@@ -197,7 +201,14 @@ impl EnvironmentView {
                 self.maximized = None;
                 return ControlFlow::Break(None);
             }
-            KeyCode::Char('3') => return ControlFlow::Break(None),
+            KeyCode::Left | KeyCode::Right
+                if self.active_pane(size.width) == EnvironmentPane::Matrix =>
+            {
+                return ControlFlow::Continue(());
+            }
+            KeyCode::Char('3') | KeyCode::Left | KeyCode::Right => {
+                return ControlFlow::Break(None);
+            }
             KeyCode::Char('b') if self.maximized.is_none() => {
                 if self.sidebar_enabled && size.width >= 90 {
                     if self.sidebar == SidebarSetting::Open {
@@ -250,14 +261,6 @@ impl EnvironmentView {
                 self.maximized = None;
                 return ControlFlow::Break(None);
             }
-            KeyCode::Left | KeyCode::Right
-                if self.active_pane(size.width) == EnvironmentPane::Matrix =>
-            {
-                let delta = if key.code == KeyCode::Left { -1 } else { 1 };
-                let index = adjacent_environment(self.selection.column, delta, state.plans().len());
-                self.select_environment(index);
-                return ControlFlow::Break(None);
-            }
             _ => {}
         }
         ControlFlow::Continue(())
@@ -291,7 +294,6 @@ impl EnvironmentView {
                     .is_some_and(|review| review.review().search_query().is_empty()) =>
             {
                 self.selection.raw = None;
-                self.notice = None;
                 return ControlFlow::Break(None);
             }
             _ => {}
@@ -351,11 +353,11 @@ impl EnvironmentView {
         state: &EnvironmentSession,
         matrix_page: usize,
     ) -> Option<EnvironmentInput> {
+        self.notice = None;
         match input {
             OverviewInput::Quit => self.quit(state),
-            OverviewInput::Open | OverviewInput::ViewPlan => {
-                self.open(state, self.selection.column)
-            }
+            OverviewInput::Open => self.open_selected_matrix_row(state, matrix_page),
+            OverviewInput::ViewPlan => self.open(state, self.selection.column),
             OverviewInput::Copy => Some(EnvironmentInput::Review(
                 self.selection.column,
                 Box::new(Action::Copy(CopyTarget::Plan)),
@@ -476,6 +478,7 @@ impl EnvironmentView {
     fn select_environment(&mut self, index: usize) {
         if self.selection.column != index {
             self.selection.column = index;
+            self.matrix.reveal_environment(index);
             self.notice = None;
         }
     }
@@ -532,13 +535,125 @@ impl EnvironmentView {
             ));
             return None;
         }
-        self.notice = None;
+        Some(self.open_at(index, 0, None))
+    }
+
+    fn open_at(&mut self, index: usize, line: usize, notice: Option<String>) -> EnvironmentInput {
+        self.notice = notice;
         self.selection.raw = Some(index);
-        self.reviews[index].jump_to_line(0, u16::MAX);
-        Some(EnvironmentInput::Review(
-            index,
-            Box::new(Action::ReviewSearchChanged(String::new())),
-        ))
+        self.reviews[index].jump_to_line(line, u16::MAX);
+        EnvironmentInput::Review(index, Box::new(Action::ReviewSearchChanged(String::new())))
+    }
+
+    fn open_selected_matrix_row(
+        &mut self,
+        state: &EnvironmentSession,
+        matrix_page: usize,
+    ) -> Option<EnvironmentInput> {
+        match self.matrix.selected_item(self.selection.column)? {
+            MatrixSelectedItem::SameChanges => {
+                self.matrix.apply(OverviewInput::ToggleExpand, matrix_page);
+                None
+            }
+            MatrixSelectedItem::Resource {
+                addresses,
+                cell,
+                grouped,
+            } => self.open_selected_resource(state, &addresses, cell.as_ref(), grouped),
+        }
+    }
+
+    fn open_selected_resource(
+        &mut self,
+        state: &EnvironmentSession,
+        addresses: &[String],
+        cell: Option<&MatrixCell>,
+        grouped: bool,
+    ) -> Option<EnvironmentInput> {
+        let index = self.selection.column;
+        let Some(plan) = state.plans().get(index) else {
+            self.notice = Some("The selected environment has no plan.".to_owned());
+            return None;
+        };
+        if cell.is_none()
+            && matches!(
+                plan.state(),
+                EnvironmentState::Pending | EnvironmentState::Running
+            )
+        {
+            self.notice = Some(format!(
+                "{} has not finished plan acquisition.",
+                environments::name(plan)
+            ));
+            return None;
+        }
+        if let Some(cell) = cell {
+            match &cell.state {
+                CellState::Unavailable => {
+                    self.notice = Some(format!(
+                        "{} has not finished plan acquisition.",
+                        environments::name(plan)
+                    ));
+                    return None;
+                }
+                CellState::Missing => {
+                    self.notice = Some(format!(
+                        "{} has no resource in this row.",
+                        environments::name(plan)
+                    ));
+                    return None;
+                }
+                CellState::Change { .. } | CellState::NoOp => {}
+            }
+            if cell
+                .source
+                .as_ref()
+                .is_some_and(|source| source.environment != index)
+            {
+                self.notice = Some("The matrix source belongs to another environment.".to_owned());
+                return None;
+            }
+            if !grouped
+                && cell
+                    .source
+                    .as_ref()
+                    .is_none_or(|source| source.line.is_none())
+            {
+                self.notice = Some("The selected row has no source block.".to_owned());
+                return None;
+            }
+        }
+        let Some(review) = plan.review() else {
+            self.notice = Some(format!(
+                "{} has no ready plan for this row.",
+                environments::name(plan)
+            ));
+            return None;
+        };
+        let document = review.review().document();
+        let matches = addresses
+            .iter()
+            .filter_map(|address| {
+                document
+                    .block_for_address(address)
+                    .map(|block| (address.as_str(), block.lines().start))
+            })
+            .collect::<Vec<_>>();
+        let Some((address, line)) = matches.first().copied() else {
+            let row = addresses.first().map_or("the selected row", String::as_str);
+            self.notice = Some(format!(
+                "No source block for {row} in {}.",
+                environments::name(plan)
+            ));
+            return None;
+        };
+        let notice = grouped.then(|| {
+            format!(
+                "Opening the first of {} matching resources: {address}.",
+                matches.len()
+            )
+        });
+        Some(self.open_at(index, line, notice))
     }
 
     fn handle_dialog_key(

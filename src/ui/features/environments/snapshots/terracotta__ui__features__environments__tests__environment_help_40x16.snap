@@ -6,15 +6,15 @@ terracotta ▸ a-ready           terraform
 a┌Help────────────────────────────────┐
 ┌│ Current: Multi-environment       ▲ │┐
 ││ ↑ / ↓ / j / k                    ┃ ││
-││   scroll [2]                     │ ││
+││   select rows in [2]             │ ││
 ││ Space                            │ ││
-││   expand or collapse groups in   │ ││
-││   [2]                            │ ││
+││   expand or collapse the         │ ││
+││   selected group or Same change  │ ││
+││   summary in [2]                 │ ││
 ││ [ / ]                            │ ││
 ││   select the previous or next    │ ││
 ││   environment                    │ ││
-││ 2                                │ ││
-││   focus Differs                  ▼ ││
+││ 2                                ▼ ││
 └│ ?/Esc close                        │┘
 [└────────────────────────────────────┘
-/ filter | ?/q help/quit
+?/q help/quit

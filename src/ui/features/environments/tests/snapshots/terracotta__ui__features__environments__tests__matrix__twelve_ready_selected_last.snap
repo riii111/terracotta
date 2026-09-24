@@ -7,22 +7,22 @@ env-11 Ready ~1
 ┌* [2] Differs across envs─────────────────────────────────────────────────────┐
 │                                                                              │
 │                                                                              │
-│Address            env-08      env-09      env-10      env-11       why       │
+│Address     env-11       why                                                  │
 │                                                                              │
-│Same change across envs                                                       │
-│terraform_data.api ~           ~           ~           ~                      │
+│> Same change across envs: 1 changes ~1  Space expand                         │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
 │                                                                              │
 │blank: absent   .: unchanged   ?: plan unavailable                            │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
-[/] env | Enter open plan | v full plan | / filter | ? help | q quit | 2 focus
-f maximize
+[/] env | Enter toggle same changes | v full plan | / filter
+Space expand selected | ? help | q quit | 2 focus | f maximize

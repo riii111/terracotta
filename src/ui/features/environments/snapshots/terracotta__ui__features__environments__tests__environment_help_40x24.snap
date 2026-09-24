@@ -6,10 +6,11 @@ terracotta ▸ a-ready           terraform
 a┌Help────────────────────────────────┐
 ┌│ Current: Multi-environment       ▲ │┐
 ││ ↑ / ↓ / j / k                    ┃ ││
-││   scroll [2]                     ┃ ││
+││   select rows in [2]             ┃ ││
 ││ Space                            ┃ ││
-││   expand or collapse groups in   ┃ ││
-││   [2]                            ┃ ││
+││   expand or collapse the         ┃ ││
+││   selected group or Same change  │ ││
+││   summary in [2]                 │ ││
 ││ [ / ]                            │ ││
 ││   select the previous or next    │ ││
 ││   environment                    │ ││
@@ -19,10 +20,9 @@ a┌Help────────────────────────
 ││   maximize or restore the        │ ││
 ││   focused pane                   │ ││
 ││ Enter                            │ ││
-││   open the selected              │ ││
-││   environment's full plan        │ ││
-││ /                                │ ││
-││   filter matrix addresses;       ▼ ││
+││   open the selected row at its   │ ││
+││   source in [2]                  │ ││
+││ /                                ▼ ││
 └│ ?/Esc close                        │┘
 [└────────────────────────────────────┘
-/ filter | ?/q help/quit
+?/q help/quit

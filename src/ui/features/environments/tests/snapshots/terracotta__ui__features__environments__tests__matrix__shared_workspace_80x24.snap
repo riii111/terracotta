@@ -4,25 +4,24 @@ expression: output
 ---
 terracotta ▸ prod                                                           tofu
 staging Error  │  staging Error
-┌* [2] Differs across envs─────────────────────────────────────────────────────┐
+┌* [2] Differs across envs · Ready 0/2─────────────────────────────────────────┐
 │                                                                              │
 │Synthetic acquisition error                                                   │
-│Address     staging     staging      why                                      │
+│Address     staging      why                                                  │
 │                                                                              │
 │Waiting for environment plans.                                                │
 │                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
 │blank: absent   .: unchanged   ?: plan unavailable                            │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
-[/] env | Enter open plan | v full plan | / filter | ? help | q quit | 2 focus
-f maximize
+[/] env | v full plan | / filter | ? help | q quit | 2 focus | f maximize
