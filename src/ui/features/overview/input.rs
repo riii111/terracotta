@@ -75,10 +75,12 @@ const fn navigation_key_to_input(key: KeyEvent) -> Option<OverviewInput> {
         (KeyCode::Down | KeyCode::Char('j'), _) => Some(OverviewInput::Down),
         (KeyCode::PageUp, _) => Some(OverviewInput::PageUp),
         (KeyCode::PageDown, _) => Some(OverviewInput::PageDown),
-        (KeyCode::Home, _) => Some(OverviewInput::Top),
-        (KeyCode::End, _) => Some(OverviewInput::Bottom),
-        (KeyCode::Left, _) => Some(OverviewInput::Left),
-        (KeyCode::Right, _) => Some(OverviewInput::Right),
+        (KeyCode::Home, _) | (KeyCode::Char('g'), KeyModifiers::NONE) => Some(OverviewInput::Top),
+        (KeyCode::End, _) | (KeyCode::Char('G'), KeyModifiers::NONE) => Some(OverviewInput::Bottom),
+        (KeyCode::Left, _) | (KeyCode::Char('h'), KeyModifiers::NONE) => Some(OverviewInput::Left),
+        (KeyCode::Right, _) | (KeyCode::Char('l'), KeyModifiers::NONE) => {
+            Some(OverviewInput::Right)
+        }
         _ => None,
     }
 }
@@ -141,8 +143,36 @@ mod tests {
     }
 
     #[test]
+    fn vim_navigation_keys_match_arrows_and_home_end() {
+        for (character, expected) in [
+            ('h', OverviewInput::Left),
+            ('l', OverviewInput::Right),
+            ('g', OverviewInput::Top),
+            ('G', OverviewInput::Bottom),
+        ] {
+            assert_eq!(
+                key_to_input(
+                    KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+                    false,
+                    false,
+                ),
+                Some(expected),
+                "key: {character}"
+            );
+        }
+        assert_eq!(
+            key_to_input(
+                KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT),
+                false,
+                false,
+            ),
+            Some(OverviewInput::Bottom)
+        );
+    }
+
+    #[test]
     fn search_keeps_vim_navigation_keys_as_query_text() {
-        for character in ['j', 'k'] {
+        for character in ['h', 'j', 'k', 'l', 'g', 'G'] {
             assert_eq!(
                 key_to_input(
                     KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
@@ -152,6 +182,14 @@ mod tests {
                 Some(OverviewInput::SearchChar(character))
             );
         }
+        assert_eq!(
+            key_to_input(
+                KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT),
+                true,
+                false,
+            ),
+            Some(OverviewInput::SearchChar('G'))
+        );
     }
 
     #[test]
