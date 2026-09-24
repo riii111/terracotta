@@ -421,7 +421,7 @@ try:
                 os.environ["TERRACOTTA_REAL_PLAN_GATE"] + "-2",
                 "prod_retry_plan_complete",
             )
-            wait_environment("prod", "Ready", row_only=True)
+            wait_sidebar_statuses(["Ready", "Ready", "Ready"])
             send_key(b"v")
             wait_parts(["terraform_data.api", "prod"], "real_retried_plan_review")
             send_key(b"0")
