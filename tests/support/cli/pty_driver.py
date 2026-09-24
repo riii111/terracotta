@@ -425,8 +425,11 @@ try:
         elif scenario == "env_default_matrix":
             for name in ("a-dev", "b-stg", "c-prod"):
                 wait_environment(name, "Ready")
+            observe_current_or_wait("Same change across envs: 2 changes", "default_matrix_summary")
+            send_key(b"2")
+            send_key(b" ")
             observe_current_or_wait("terraform_data.server[*]", "default_matrix")
-            observed.append("default_matrix")
+            observed.extend(("default_matrix_summary", "default_matrix"))
             send_key(b"q")
             exit_code = wait_exit()
         elif scenario == "env_matrix":

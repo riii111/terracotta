@@ -910,6 +910,14 @@ fn same_change_summary_counts_matrix_rows_and_replacements_once() {
     assert!(rendered.contains("Same change across envs: 2 changes ~1 1 replace"));
     assert!(!rendered.contains("changes ~3"));
     assert!(!rendered.contains("3 replace"));
+
+    press(&mut view, &mut state, KeyCode::Char(' '));
+    press(&mut view, &mut state, KeyCode::Down);
+    press(&mut view, &mut state, KeyCode::Down);
+    press(&mut view, &mut state, KeyCode::Char(' '));
+    let expanded = text(&mut view, &state, (80, 24));
+    assert!(expanded.contains("Same change across envs: 2 changes ~1 1 replace"));
+    assert!(expanded.contains("terraform_data.server[0]"), "{expanded}");
 }
 
 #[test]

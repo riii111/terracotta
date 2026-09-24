@@ -296,6 +296,12 @@ impl MatrixView {
             return;
         };
 
+        let collapsed_rows = rows(overview, &self.filter, &BTreeSet::new());
+        let summary_start = collapsed_rows
+            .iter()
+            .position(|row| row.difference.is_none())
+            .unwrap_or(collapsed_rows.len());
+        let summary_rows = &collapsed_rows[summary_start..];
         let mut visible = rows(overview, &self.filter, &self.expanded);
         if self.environments.len() > 1 {
             let same_start = visible
@@ -304,7 +310,7 @@ impl MatrixView {
                 .unwrap_or(visible.len());
             let same_rows = visible.split_off(same_start);
             if !same_rows.is_empty() {
-                let summary = same_change_summary(&same_rows);
+                let summary = same_change_summary(summary_rows);
                 visible.push(Row::same_summary(summary));
                 if self.same_expanded {
                     visible.extend(same_rows);
