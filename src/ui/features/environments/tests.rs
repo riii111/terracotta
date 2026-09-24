@@ -813,6 +813,7 @@ fn single_environment_hides_sidebar_and_its_shortcuts() {
     assert!(text.contains("only-env Pending"), "{text}");
     assert!(!text.contains("toggle envs"), "{text}");
     assert!(!text.contains("1/2 focus"), "{text}");
+    assert!(!text.contains("[/] env"), "{text}");
     assert!(text.contains("2 focus"), "{text}");
 
     for key in [KeyCode::Char('1'), KeyCode::Char('b')] {

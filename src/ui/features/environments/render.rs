@@ -136,7 +136,13 @@ impl EnvironmentView {
             expanded: self.matrix.groups_expanded(),
             selected: state.plans().get(self.selection.column),
             maximized: self.maximized.is_some(),
-            sidebar_available: self.sidebar_enabled && layout.body.width >= 90,
+            environment_navigation: if self.sidebar_enabled {
+                EnvironmentNavigation::Multiple {
+                    sidebar_available: layout.body.width >= 90,
+                }
+            } else {
+                EnvironmentNavigation::Single
+            },
             resize_guidance: layout.body.height < 3
                 || (focus == environments::EnvironmentPane::Matrix && layout.matrix.width < 3),
         });
@@ -522,6 +528,27 @@ enum MatrixFooterState {
 }
 
 #[derive(Clone, Copy)]
+enum EnvironmentNavigation {
+    Single,
+    Multiple { sidebar_available: bool },
+}
+
+impl EnvironmentNavigation {
+    const fn is_multiple(self) -> bool {
+        matches!(self, Self::Multiple { .. })
+    }
+
+    const fn sidebar_available(self) -> bool {
+        matches!(
+            self,
+            Self::Multiple {
+                sidebar_available: true
+            }
+        )
+    }
+}
+
+#[derive(Clone, Copy)]
 struct OverviewFooterContext<'a> {
     width: u16,
     focus: environments::EnvironmentPane,
@@ -529,7 +556,7 @@ struct OverviewFooterContext<'a> {
     expanded: Option<bool>,
     selected: Option<&'a EnvironmentPlan>,
     maximized: bool,
-    sidebar_available: bool,
+    environment_navigation: EnvironmentNavigation,
     resize_guidance: bool,
 }
 
@@ -541,9 +568,10 @@ fn overview_footer(context: OverviewFooterContext<'_>) -> Vec<Line<'static>> {
         expanded,
         selected,
         maximized,
-        sidebar_available,
+        environment_navigation,
         resize_guidance,
     } = context;
+    let sidebar_available = environment_navigation.sidebar_available();
     if resize_guidance {
         return footer::layout(
             vec![
@@ -563,9 +591,12 @@ fn overview_footer(context: OverviewFooterContext<'_>) -> Vec<Line<'static>> {
         );
     }
     if width < 45 {
-        return compact_overview_footer(width, matrix, expanded);
+        return compact_overview_footer(width, matrix, expanded, environment_navigation);
     }
-    let mut items = vec![overview_footer_hint(&["[", "]"], "env")];
+    let mut items = Vec::new();
+    if environment_navigation.is_multiple() {
+        items.push(overview_footer_hint(&["[", "]"], "env"));
+    }
     if focus == environments::EnvironmentPane::Environments {
         items.extend([
             overview_footer_hint(&["Enter"], "open plan"),
@@ -622,13 +653,17 @@ fn compact_overview_footer(
     width: u16,
     matrix: MatrixFooterState,
     expanded: Option<bool>,
+    environment_navigation: EnvironmentNavigation,
 ) -> Vec<Line<'static>> {
-    let mut items = vec![
-        overview_footer_hint(&["[", "]"], "env"),
+    let mut items = Vec::new();
+    if environment_navigation.is_multiple() {
+        items.push(overview_footer_hint(&["[", "]"], "env"));
+    }
+    items.extend([
         overview_footer_hint(&["Enter"], "open plan"),
         overview_footer_hint(&["v"], "full plan"),
         overview_footer_hint(&["/"], "filter"),
-    ];
+    ]);
     if matches!(matrix, MatrixFooterState::Unfiltered)
         && let Some(expanded) = expanded
     {
