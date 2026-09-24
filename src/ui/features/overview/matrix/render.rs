@@ -252,7 +252,6 @@ fn column_widths(state: &EnvironmentSession, view: &MatrixView) -> Vec<usize> {
 fn visible_columns(view: &mut MatrixView, widths: &[usize], budget: usize) -> Vec<(usize, usize)> {
     if widths.is_empty() {
         view.first_column = 0;
-        view.take_environment_reveal();
         return Vec::new();
     }
     if budget == 0 {
@@ -260,7 +259,8 @@ fn visible_columns(view: &mut MatrixView, widths: &[usize], budget: usize) -> Ve
     }
 
     let mut first = view.first_column.min(widths.len() - 1);
-    if let Some(environment) = view.take_environment_reveal()
+    if !view.manual_horizontal_scroll
+        && let Some(environment) = view.selected_environment
         && let Some(selected) = view.selected_column(environment)
         && !visible_columns_from(first, widths, budget)
             .iter()
@@ -591,13 +591,13 @@ mod tests {
         let mut view = MatrixView::default();
         view.first_column = first_column;
         view.environments = vec![0, 1, 2];
+        view.selected_environment = Some(2);
         view
     }
 
     #[test]
     fn selected_right_column_shifts_only_enough_to_keep_the_previous_column() {
         let mut view = matrix_view(0);
-        view.request_environment_reveal(2);
 
         let columns = visible_columns(&mut view, &[12, 12, 12], 25);
 
@@ -608,7 +608,6 @@ mod tests {
     #[test]
     fn selected_visible_column_keeps_the_current_start() {
         let mut view = matrix_view(0);
-        view.request_environment_reveal(2);
 
         let columns = visible_columns(&mut view, &[12, 12, 12], 36);
 
@@ -619,7 +618,7 @@ mod tests {
     #[test]
     fn selected_left_column_becomes_the_start_when_it_is_hidden() {
         let mut view = matrix_view(2);
-        view.request_environment_reveal(0);
+        view.selected_environment = Some(0);
 
         let columns = visible_columns(&mut view, &[12, 12, 12], 25);
 
@@ -632,7 +631,7 @@ mod tests {
         let mut view = MatrixView::default();
         view.first_column = 1;
         view.environments = vec![0, 1];
-        view.request_environment_reveal(2);
+        view.selected_environment = Some(2);
 
         let columns = visible_columns(&mut view, &[12, 12], 12);
 
@@ -641,14 +640,26 @@ mod tests {
     }
 
     #[test]
-    fn manual_scroll_cancels_a_pending_environment_reveal() {
+    fn manual_scroll_keeps_its_start_when_the_selected_column_is_hidden() {
         let mut view = matrix_view(0);
-        view.request_environment_reveal(2);
         view.apply(OverviewInput::Right, 1);
+        view.apply(OverviewInput::Left, 1);
 
         let columns = visible_columns(&mut view, &[12, 12, 12], 12);
 
+        assert_eq!(view.first_column, 0);
+        assert_eq!(columns, [(0, 12)]);
+    }
+
+    #[test]
+    fn a_narrower_view_keeps_the_selected_column_visible_after_a_wide_render() {
+        let mut view = matrix_view(0);
+
+        let wide = visible_columns(&mut view, &[12, 12, 12], 36);
+        let narrow = visible_columns(&mut view, &[12, 12, 12], 25);
+
+        assert_eq!(wide, [(0, 12), (1, 12), (2, 12)]);
         assert_eq!(view.first_column, 1);
-        assert_eq!(columns, [(1, 12)]);
+        assert_eq!(narrow, [(1, 12), (2, 12)]);
     }
 }

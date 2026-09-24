@@ -611,6 +611,13 @@ fn selecting_visible_environments_preserves_matrix_columns_across_layout_changes
     for environment in ["dev", "stg", "prod"] {
         assert!(matrix_header(&returned).contains(environment), "{returned}");
     }
+
+    let narrowed = buffer_text(&render_to_buffer((55, 24), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(matrix_header(&narrowed).contains("stg"), "{narrowed}");
+    assert!(matrix_header(&narrowed).contains("prod"), "{narrowed}");
+    assert!(!matrix_header(&narrowed).contains("dev"), "{narrowed}");
 }
 
 #[test]
@@ -670,6 +677,41 @@ fn narrow_selection_keeps_the_previous_column_and_manual_scroll_position() {
     }));
     assert!(matrix_header(&returned).contains("prod"), "{returned}");
     assert!(!matrix_header(&returned).contains("stg"), "{returned}");
+
+    for _ in 0..2 {
+        view.handle_key(
+            KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
+            narrow,
+            &state,
+        );
+    }
+    let manually_scrolled = buffer_text(&render_to_buffer((55, 24), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(
+        matrix_header(&manually_scrolled).contains("dev"),
+        "{manually_scrolled}"
+    );
+    assert!(
+        matrix_header(&manually_scrolled).contains("stg"),
+        "{manually_scrolled}"
+    );
+    assert!(
+        !matrix_header(&manually_scrolled).contains("prod"),
+        "{manually_scrolled}"
+    );
+
+    let resized_after_manual_scroll = buffer_text(&render_to_buffer((50, 24), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(
+        matrix_header(&resized_after_manual_scroll).contains("dev"),
+        "{resized_after_manual_scroll}"
+    );
+    assert!(
+        !matrix_header(&resized_after_manual_scroll).contains("prod"),
+        "{resized_after_manual_scroll}"
+    );
 }
 
 #[test]
