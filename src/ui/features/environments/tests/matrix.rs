@@ -193,7 +193,16 @@ fn tab_keys_open_the_adjacent_full_plan_from_raw_plan() {
 
     press(&mut view, &mut state, KeyCode::Char('v'));
     assert_eq!(view.selection.raw, Some(1));
-    assert!(text(&mut view, &state, (80, 24)).contains("# terraform_data.api will change"));
+    let buffer = render_to_buffer((80, 24), |frame| view.render(frame, &state));
+    let rendered = buffer_text(&buffer);
+    assert!(rendered.contains("# terraform_data.api will change"));
+    assert!(rendered.lines().next().unwrap().contains("> 2 stg"));
+    let selected_tab =
+        u16::try_from(rendered.lines().next().unwrap().find("> 2 stg").unwrap()).unwrap();
+    let selected_tab_marker = buffer.cell((selected_tab, 0)).unwrap();
+    assert_eq!(selected_tab_marker.bg, Color::Reset);
+    assert_eq!(selected_tab_marker.fg, Color::Rgb(0xef, 0xae, 0x6d));
+    assert!(selected_tab_marker.modifier.contains(Modifier::BOLD));
 
     press(&mut view, &mut state, KeyCode::Tab);
     assert_eq!(view.selection.raw, Some(2));
@@ -265,7 +274,8 @@ fn three_environments_show_groups_actions_and_totals(#[case] width: u16, #[case]
     assert!(rendered.contains("> dev"));
     assert!(!rendered.contains("> terraform_data.api"));
     let overview_tab = buffer.cell((0, 0)).expect("overview tab");
-    assert_eq!(overview_tab.bg, Color::Rgb(0x2c, 0x2d, 0x2b));
+    assert!(rendered.lines().next().unwrap().starts_with("> 0 Overview"));
+    assert_eq!(overview_tab.bg, Color::Reset);
     assert_eq!(overview_tab.fg, Color::Rgb(0xef, 0xae, 0x6d));
     assert!(overview_tab.modifier.contains(Modifier::BOLD));
     let environment_header = rendered.lines().next().unwrap();
@@ -275,7 +285,7 @@ fn three_environments_show_groups_actions_and_totals(#[case] width: u16, #[case]
             .cell((environment_column, 0))
             .expect("environment tab")
             .bg,
-        Color::Rgb(0x2c, 0x2d, 0x2b)
+        Color::Reset
     );
     let matrix_header = rendered
         .lines()
@@ -904,8 +914,8 @@ fn environment_filter_updates_comparison_columns_and_preserves_global_ready_prog
         output.contains("Same change across selected envs"),
         "{output}"
     );
-    assert!(output.contains("1 dev  2 prod"), "{output}");
-    assert!(!output.contains("3 stg"), "{output}");
+    assert!(output.contains("1 dev  2 stg"), "{output}");
+    assert!(!output.contains("3 prod"), "{output}");
     assert!(!output.contains("Compared:"), "{output}");
 }
 
@@ -987,9 +997,9 @@ fn filter_can_narrow_a_three_environment_matrix_to_one_selected_environment() {
     let output = text(&mut view, &state, (80, 24));
     assert!(output.contains("Ready: 3/3"), "{output}");
     assert!(output.contains("[Env filter ON]"), "{output}");
-    assert!(output.contains("1 prod"), "{output}");
+    assert!(output.contains("1 stg"), "{output}");
     assert!(!output.contains("1 dev"), "{output}");
-    assert!(!output.contains("2 stg"), "{output}");
+    assert!(!output.contains("2 prod"), "{output}");
     assert_eq!(view.selection.column, 1);
     press(&mut view, &mut state, KeyCode::Enter);
     assert_eq!(view.selection.raw, Some(1));

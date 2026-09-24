@@ -527,10 +527,10 @@ mod tests {
             assert!(press_char(&mut dialog, character, size, plans).is_none());
         }
         assert!(press(&mut dialog, KeyCode::Enter, size, plans).is_none());
-        assert_eq!(visible_candidates(plans, &dialog.query), vec![1, 2]);
+        assert_eq!(visible_candidates(plans, &dialog.query), vec![2, 3]);
         assert!(press(&mut dialog, KeyCode::Char(' '), size, plans).is_none());
 
-        assert_eq!(dialog.selected, BTreeSet::from([2, 3]));
+        assert_eq!(dialog.selected, BTreeSet::from([1, 3]));
         assert_eq!(dialog.query, "prod");
     }
 

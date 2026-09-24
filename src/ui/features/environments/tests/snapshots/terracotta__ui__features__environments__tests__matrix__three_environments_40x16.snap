@@ -2,7 +2,7 @@
 source: src/ui/features/environments/tests/matrix.rs
 expression: rendered
 ---
-0 Overview   1 dev  2 prod [PROD]  ›
+> 0 Overview  1 dev  2 stg ›
 Ready: 3/3
 
 

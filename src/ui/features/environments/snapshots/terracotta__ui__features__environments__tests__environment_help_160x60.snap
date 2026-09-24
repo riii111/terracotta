@@ -2,7 +2,7 @@
 source: src/ui/features/environments/tests.rs
 expression: text
 ---
-0 Overview   1 a-ready  2 b-error  3 c-running  4 d-pending  5 e-hcp                                                                                  Ready: 1/5
+> 0 Overview  1 a-ready  2 b-error  3 c-running  4 d-pending  5 e-hcp                                                                                 Ready: 1/5
 Compared: a-ready   b-error: Error   c-running: Running   d-pending: Pending   e-hcp: Excluded: HCP execution
 
 

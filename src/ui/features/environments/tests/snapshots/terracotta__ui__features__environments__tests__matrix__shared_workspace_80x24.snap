@@ -2,7 +2,7 @@
 source: src/ui/features/environments/tests/matrix.rs
 expression: output
 ---
-0 Overview   1 staging  2 staging                                     Ready: 0/2
+> 0 Overview  1 staging  2 staging                                    Ready: 0/2
 Compared: none   staging: Error   staging: Error
 
 

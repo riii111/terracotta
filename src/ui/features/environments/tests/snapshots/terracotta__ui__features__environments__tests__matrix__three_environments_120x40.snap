@@ -2,11 +2,11 @@
 source: src/ui/features/environments/tests/matrix.rs
 expression: rendered
 ---
-0 Overview   1 dev  2 prod [PROD]  3 stg                                                                      Ready: 3/3
+> 0 Overview  1 dev  2 stg  3 prod [PROD]                                                                     Ready: 3/3
 
 
 
-  Address                      > dev         prod             stg        why
+  Address                      > dev         stg              prod       why
 
   Differs across envs
   terraform_data.api           ~           +/-              -            action

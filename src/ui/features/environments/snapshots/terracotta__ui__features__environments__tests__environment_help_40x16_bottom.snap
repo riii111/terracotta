@@ -2,7 +2,7 @@
 source: src/ui/features/environments/tests.rs
 expression: bottom_text
 ---
-0 Overview   1 a-ready  2 b-error  ›
+> 0 Overview  1 a-ready  2 b-error ›
 R┌Help────────────────────────────────┐
 b│   environments are not retried   ▲ │
 d│                                  │ │

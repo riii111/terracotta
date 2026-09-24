@@ -41,19 +41,19 @@ pub(crate) fn overview_accent_style() -> Style {
 pub(crate) fn overview_header_style() -> Style {
     Style::default()
         .fg(Color::Rgb(0xde, 0xd8, 0xd1))
-        .bg(Color::Rgb(0x2c, 0x2d, 0x2b))
+        .bg(Color::Reset)
 }
 
 pub(crate) fn overview_header_muted_style() -> Style {
     Style::default()
         .fg(Color::Rgb(0xb8, 0xb5, 0xae))
-        .bg(Color::Rgb(0x2c, 0x2d, 0x2b))
+        .bg(Color::Reset)
 }
 
 pub(crate) fn overview_header_accent_style() -> Style {
     Style::default()
         .fg(Color::Rgb(0xef, 0xae, 0x6d))
-        .bg(Color::Rgb(0x2c, 0x2d, 0x2b))
+        .bg(Color::Reset)
 }
 
 pub(crate) fn overview_header_selected_style() -> Style {

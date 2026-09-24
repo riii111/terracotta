@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    cmp::Ordering,
+    path::{Path, PathBuf},
+};
 
 use crate::app::{
     copy::{self, CopyEffect},
@@ -9,6 +12,12 @@ use crate::app::{
 
 pub(crate) mod comparison;
 pub(crate) mod overview;
+
+const DEVELOPMENT_ENVIRONMENT_NAMES: &[&str] =
+    &["dev", "develop", "development", "local", "sandbox"];
+const TEST_ENVIRONMENT_NAMES: &[&str] = &["test", "qa", "int", "integration"];
+const STAGING_ENVIRONMENT_NAMES: &[&str] = &["stg", "stage", "staging", "preprod", "uat"];
+const PRODUCTION_ENVIRONMENT_NAMES: &[&str] = &["prod", "production", "prd"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct EnvironmentIdentity {
@@ -77,7 +86,15 @@ impl Environment {
 impl EnvironmentSession {
     pub(crate) fn new(environments: Vec<Environment>, detailed_exitcode: bool) -> Self {
         let mut plans: Vec<_> = environments.into_iter().map(EnvironmentPlan::new).collect();
-        plans.sort_by(|a, b| a.directory.cmp(&b.directory));
+        plans.sort_by(|a, b| {
+            let left_name = a.display_name();
+            let right_name = b.display_name();
+            environment_stage(&left_name)
+                .cmp(&environment_stage(&right_name))
+                .then_with(|| natural_cmp(&left_name, &right_name))
+                .then_with(|| left_name.cmp(&right_name))
+                .then_with(|| a.directory.cmp(&b.directory))
+        });
         Self {
             overview: overview::environment_overview(&plans),
             revision: 0,
@@ -273,6 +290,21 @@ impl EnvironmentPlan {
         &self.directory
     }
 
+    pub(crate) fn display_name(&self) -> String {
+        self.workspace()
+            .filter(|workspace| *workspace != "default")
+            .map_or_else(
+                || {
+                    self.directory
+                        .file_name()
+                        .unwrap_or_else(|| self.directory.as_os_str())
+                        .to_string_lossy()
+                        .into_owned()
+                },
+                str::to_owned,
+            )
+    }
+
     pub(crate) fn workspace(&self) -> Option<&str> {
         self.identity
             .as_ref()
@@ -310,6 +342,93 @@ impl EnvironmentPlan {
     }
 }
 
+pub(crate) fn is_production_token(token: &str) -> bool {
+    PRODUCTION_ENVIRONMENT_NAMES
+        .iter()
+        .any(|name| token.eq_ignore_ascii_case(name))
+}
+
+fn environment_stage(name: &str) -> u8 {
+    let mut stage = None;
+    for token in name.split(['-', '_', '/']) {
+        let current = if has_stage_token(token, DEVELOPMENT_ENVIRONMENT_NAMES) {
+            Some(0)
+        } else if has_stage_token(token, TEST_ENVIRONMENT_NAMES) {
+            Some(1)
+        } else if has_stage_token(token, STAGING_ENVIRONMENT_NAMES) {
+            Some(2)
+        } else if has_stage_token(token, PRODUCTION_ENVIRONMENT_NAMES) {
+            Some(4)
+        } else {
+            None
+        };
+        stage = stage.max(current);
+    }
+    stage.unwrap_or(3)
+}
+
+fn has_stage_token(token: &str, names: &[&str]) -> bool {
+    let name = token.trim_end_matches(|character: char| character.is_ascii_digit());
+    !name.is_empty() && names.iter().any(|known| name.eq_ignore_ascii_case(known))
+}
+
+fn natural_cmp(left: &str, right: &str) -> Ordering {
+    let left = left.as_bytes();
+    let right = right.as_bytes();
+    let (mut left_index, mut right_index) = (0, 0);
+
+    while left_index < left.len() && right_index < right.len() {
+        if left[left_index].is_ascii_digit() && right[right_index].is_ascii_digit() {
+            let left_end = digit_run_end(left, left_index);
+            let right_end = digit_run_end(right, right_index);
+            let left_digits = significant_digits(&left[left_index..left_end]);
+            let right_digits = significant_digits(&right[right_index..right_end]);
+            let numeric_order = left_digits
+                .len()
+                .cmp(&right_digits.len())
+                .then_with(|| left_digits.cmp(right_digits));
+            if numeric_order != Ordering::Equal {
+                return numeric_order;
+            }
+            let width_order = (left_end - left_index).cmp(&(right_end - right_index));
+            if width_order != Ordering::Equal {
+                return width_order;
+            }
+            left_index = left_end;
+            right_index = right_end;
+            continue;
+        }
+
+        let order = left[left_index]
+            .to_ascii_lowercase()
+            .cmp(&right[right_index].to_ascii_lowercase());
+        if order != Ordering::Equal {
+            return order;
+        }
+        left_index += 1;
+        right_index += 1;
+    }
+
+    left.len()
+        .saturating_sub(left_index)
+        .cmp(&right.len().saturating_sub(right_index))
+}
+
+fn digit_run_end(bytes: &[u8], start: usize) -> usize {
+    bytes[start..]
+        .iter()
+        .position(|byte| !byte.is_ascii_digit())
+        .map_or(bytes.len(), |offset| start + offset)
+}
+
+fn significant_digits(digits: &[u8]) -> &[u8] {
+    let first_significant = digits
+        .iter()
+        .position(|digit| *digit != b'0')
+        .unwrap_or(digits.len());
+    &digits[first_significant..]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,11 +436,15 @@ mod tests {
     use crate::app::review::{PlanMetadata, test_support::plan_document};
 
     fn available(name: &str) -> Environment {
+        available_named("default", name)
+    }
+
+    fn available_named(workspace: &str, directory: impl Into<PathBuf>) -> Environment {
         Environment {
             tool: Tool::Terraform,
             availability: EnvironmentAvailability::Available(EnvironmentIdentity {
-                directory: PathBuf::from(name),
-                workspace: "default".to_owned(),
+                directory: directory.into(),
+                workspace: workspace.to_owned(),
             }),
         }
     }
@@ -382,6 +505,154 @@ mod tests {
             state.plans()[1].state(),
             EnvironmentState::Running
         ));
+    }
+
+    #[test]
+    fn environment_order_uses_stage_natural_names_and_a_stable_path_tie_breaker() {
+        let names = [
+            "prod10",
+            "dev10",
+            "DEV",
+            "prod",
+            "tokyo",
+            "stg",
+            "dev2",
+            "test",
+            "production",
+            "preprod",
+            "local",
+            "dev",
+            "prd",
+            "qa",
+            "integration",
+            "uat",
+            "prod-mirror-dev",
+            "PROD",
+            "development",
+            "sandbox",
+            "live",
+            "nonprod",
+            "int",
+            "stage",
+            "develop",
+            "prod2",
+        ];
+        let environments = names
+            .iter()
+            .map(|name| available_named(name, format!("/synthetic/{name}")))
+            .chain([
+                available_named("dev", "/synthetic/z-dev"),
+                available_named("dev", "/synthetic/a-dev"),
+            ])
+            .collect();
+
+        let state = EnvironmentSession::new(environments, false);
+
+        let ordered = state
+            .plans()
+            .iter()
+            .map(EnvironmentPlan::display_name)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ordered,
+            [
+                "DEV",
+                "dev",
+                "dev",
+                "dev",
+                "dev2",
+                "dev10",
+                "develop",
+                "development",
+                "local",
+                "sandbox",
+                "int",
+                "integration",
+                "qa",
+                "test",
+                "preprod",
+                "stage",
+                "stg",
+                "uat",
+                "live",
+                "nonprod",
+                "tokyo",
+                "prd",
+                "PROD",
+                "prod",
+                "prod-mirror-dev",
+                "prod2",
+                "prod10",
+                "production",
+            ]
+        );
+        assert_eq!(state.plans()[0].directory(), Path::new("/synthetic/DEV"));
+        assert_eq!(state.plans()[1].directory(), Path::new("/synthetic/a-dev"));
+        assert_eq!(state.plans()[2].directory(), Path::new("/synthetic/dev"));
+        assert_eq!(state.plans()[3].directory(), Path::new("/synthetic/z-dev"));
+    }
+
+    #[test]
+    fn environment_stage_matches_complete_case_insensitive_tokens_and_numeric_suffixes() {
+        for (name, expected) in [
+            ("DEV", 0),
+            ("dev2", 0),
+            ("devops", 3),
+            ("preprod", 2),
+            ("prod-mirror-dev", 4),
+            ("prod2", 4),
+            ("nonprod", 3),
+            ("live", 3),
+        ] {
+            assert_eq!(environment_stage(name), expected, "environment: {name}");
+        }
+    }
+
+    #[test]
+    fn default_workspace_orders_by_directory_name_without_parent_tokens() {
+        let environments = [
+            ("/repo/prod/dev", "default"),
+            ("/repo/dev/prod", "default"),
+            ("/repo/stg", "default"),
+        ]
+        .map(|(directory, workspace)| available_named(workspace, directory));
+
+        let state = EnvironmentSession::new(environments.into(), false);
+
+        assert_eq!(
+            state
+                .plans()
+                .iter()
+                .map(EnvironmentPlan::display_name)
+                .collect::<Vec<_>>(),
+            ["dev", "stg", "prod"]
+        );
+    }
+
+    #[test]
+    fn environment_order_stays_fixed_as_plan_acquisition_completes() {
+        let environments = ["prod", "stg", "dev"]
+            .map(|workspace| available_named(workspace, format!("/synthetic/{workspace}")));
+        let mut state = EnvironmentSession::new(environments.into(), false);
+        let original_order = state
+            .plans()
+            .iter()
+            .map(|plan| plan.directory().to_owned())
+            .collect::<Vec<_>>();
+
+        for expected in ["dev", "stg", "prod"] {
+            let index = state.start_next().unwrap();
+            assert_eq!(state.plans()[index].display_name(), expected);
+            assert!(state.complete(index, ready(false), Vec::new()));
+            assert_eq!(
+                state
+                    .plans()
+                    .iter()
+                    .map(|plan| plan.directory().to_owned())
+                    .collect::<Vec<_>>(),
+                original_order
+            );
+        }
     }
 
     #[test]

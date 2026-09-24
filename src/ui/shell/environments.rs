@@ -74,18 +74,7 @@ impl EnvironmentSelection {
 }
 
 pub(crate) fn name(plan: &EnvironmentPlan) -> String {
-    plan.workspace()
-        .filter(|name| *name != "default")
-        .map_or_else(
-            || {
-                plan.directory()
-                    .file_name()
-                    .unwrap_or_else(|| plan.directory().as_os_str())
-                    .to_string_lossy()
-                    .into_owned()
-            },
-            str::to_owned,
-        )
+    plan.display_name()
 }
 
 pub(crate) fn context(plan: &EnvironmentPlan) -> String {
@@ -179,24 +168,11 @@ fn overview_tabs_width(
     selection: &EnvironmentSelection,
     visible_environments: &[usize],
 ) -> usize {
-    let mut width = Line::from("0 Overview  ").width();
+    let mut width = Line::from(overview_tab_label(selection.raw.is_none())).width();
     for (position, index) in visible_environments.iter().enumerate() {
         let plan = &state.plans()[*index];
-        let production = plan
-            .review()
-            .is_some_and(|review| review.review().context().is_production() == Some(true));
-        width = width.saturating_add(
-            Line::from(
-                format!(
-                    " {} {}{} ",
-                    position + 1,
-                    name(plan),
-                    if production { " [PROD]" } else { "" }
-                )
-                .as_str(),
-            )
-            .width(),
-        );
+        let label = environment_tab_label(position, plan, selection.raw == Some(*index));
+        width = width.saturating_add(2 + Line::from(label).width());
     }
     let active = selection.active();
     let visible_position = visible_environments
@@ -204,7 +180,7 @@ fn overview_tabs_width(
         .position(|index| *index == active)
         .unwrap_or(0);
     if visible_position > 0 {
-        width = width.saturating_add(2);
+        width = width.saturating_add(3);
     }
     if visible_position + 1 < visible_environments.len() {
         width = width.saturating_add(2);
@@ -225,50 +201,56 @@ pub(crate) fn render_overview_header(
         .enumerate()
         .map(|(position, index)| {
             let plan = &state.plans()[*index];
-            let production = plan
-                .review()
-                .is_some_and(|review| review.review().context().is_production() == Some(true));
-            format!(
-                " {} {}{} ",
-                position + 1,
-                name(plan),
-                if production { " [PROD]" } else { "" }
-            )
+            environment_tab_label(position, plan, selection.raw == Some(*index))
         })
         .collect::<Vec<_>>();
     let active_position = visible_environments
         .iter()
         .position(|index| *index == selection.active())
         .unwrap_or(0);
-    let available = usize::from(layout.tabs.width.saturating_sub(16));
+    let ready_width = if layout.ready_on_tabs {
+        Line::from(ready_summary(state).as_str()).width() + 2
+    } else {
+        0
+    };
+    let overview_width = Line::from(overview_tab_label(selection.raw.is_none())).width();
+    let available = usize::from(layout.tabs.width)
+        .saturating_sub(ready_width)
+        .saturating_sub(overview_width)
+        .saturating_sub(5);
     let mut first = 0;
     while first < active_position
         && labels[first..=active_position]
             .iter()
             .map(|label| Line::from(label.as_str()).width())
             .sum::<usize>()
+            .saturating_add((active_position - first + 1) * 2)
             > available
     {
         first += 1;
     }
     let mut spans = vec![Span::styled(
-        "0 Overview  ",
+        overview_tab_label(selection.raw.is_none()),
         if selection.raw.is_none() {
             theme::overview_header_accent_style().add_modifier(Modifier::BOLD)
         } else {
             theme::overview_header_muted_style()
         },
     )];
-    if first > 0 {
-        spans.push(Span::styled("‹ ", theme::overview_header_muted_style()));
-    }
     let mut used = spans.iter().map(Span::width).sum::<usize>();
+    let tab_limit = usize::from(layout.tabs.width).saturating_sub(ready_width);
+    if first > 0 {
+        spans.push(Span::styled("  ‹", theme::overview_header_muted_style()));
+        used += 3;
+    }
     for (position, label) in labels.iter().enumerate().skip(first) {
         let width = Line::from(label.as_str()).width();
-        if used + width > usize::from(layout.tabs.width) && position > active_position {
+        if used + 2 + width > tab_limit && position > active_position {
             spans.push(Span::styled(" ›", theme::overview_header_muted_style()));
             break;
         }
+        spans.push(Span::styled("  ", theme::overview_header_muted_style()));
+        used += 2;
         spans.push(Span::styled(
             label.clone(),
             if selection.raw == Some(visible_environments[position]) {
@@ -303,6 +285,27 @@ pub(crate) fn render_overview_header(
             layout.summary,
         );
     }
+}
+
+const fn overview_tab_label(selected: bool) -> &'static str {
+    if selected {
+        "> 0 Overview"
+    } else {
+        "0 Overview"
+    }
+}
+
+fn environment_tab_label(position: usize, plan: &EnvironmentPlan, selected: bool) -> String {
+    let marker = if selected { "> " } else { "" };
+    let production = plan
+        .review()
+        .is_some_and(|review| review.review().context().is_production() == Some(true));
+    format!(
+        "{marker}{} {}{}",
+        position + 1,
+        name(plan),
+        if production { " [PROD]" } else { "" }
+    )
 }
 
 fn wrapped_height(text: &str, width: u16) -> u16 {
