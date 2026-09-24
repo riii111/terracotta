@@ -156,7 +156,21 @@ fn content_lines(
         if selected {
             selected_line = Some(lines.len());
         }
-        lines.push(row_line(row, view, selected, columns, address_width));
+        lines.push(row_line(
+            row,
+            view,
+            selected,
+            columns,
+            address_width,
+            width >= 64,
+        ));
+        if width < 64 && row.has_unknown {
+            let note_line = lines.len();
+            lines.push(unknown_note_line(row));
+            if selected {
+                selected_line = Some(note_line);
+            }
+        }
     }
     if lines.is_empty() {
         let waiting = view
@@ -217,7 +231,7 @@ fn address_width(area: Rect, view: &MatrixView) -> usize {
                 .group
                 .as_ref()
                 .map_or(if row.child { 2 } else { 0 }, |_| 4);
-            let unknown_width = if row.has_unknown {
+            let unknown_width = if row.has_unknown && usize::from(area.width) >= 64 {
                 Line::from(" [unknown values]").width()
             } else {
                 0
@@ -234,7 +248,7 @@ fn address_width(area: Rect, view: &MatrixView) -> usize {
     let unknown_label_width = view
         .rows
         .iter()
-        .filter(|row| row.summary.is_none() && row.has_unknown)
+        .filter(|row| row.summary.is_none() && row.has_unknown && usize::from(area.width) >= 64)
         .map(|row| {
             let expansion = row
                 .group
@@ -371,6 +385,7 @@ fn row_line(
     selected: bool,
     columns: &[(usize, usize)],
     address_width: usize,
+    include_unknown_label: bool,
 ) -> Line<'static> {
     let expansion = row
         .group
@@ -383,7 +398,7 @@ fn row_line(
             }
         });
     let address_budget = address_width.saturating_sub(2 + expansion.len());
-    let unknown_label = row.has_unknown.then_some("[unknown values]");
+    let unknown_label = (row.has_unknown && include_unknown_label).then_some("[unknown values]");
     let label_width = unknown_label.map_or(0, |label| Line::from(Span::raw(label)).width() + 1);
     let address_text_budget = address_budget.saturating_sub(label_width);
     let (address, address_padding) = fit_parts(&row.address, address_text_budget, true);
@@ -436,6 +451,17 @@ fn row_line(
         theme::overview_text_style(),
     ));
     Line::from(spans)
+}
+
+fn unknown_note_line(row: &Row) -> Line<'static> {
+    let expansion = row
+        .group
+        .as_ref()
+        .map_or(if row.child { 2 } else { 0 }, |_| 4);
+    Line::from(vec![
+        Span::raw(" ".repeat(2 + expansion)),
+        Span::styled("[unknown values]", theme::overview_muted_style()),
+    ])
 }
 
 fn summary_line(
@@ -644,9 +670,11 @@ mod tests {
         let address_width = address_width(Rect::new(0, 0, 40, 16), &view);
 
         assert!(address_width >= 19);
-        let line = row_line(&view.rows[0], &view, false, &[], address_width).to_string();
+        let line = row_line(&view.rows[0], &view, false, &[], address_width, false).to_string();
 
-        assert!(line.contains("[unknown values]"), "{line}");
+        assert!(line.contains("server[*]"), "{line}");
+        let note = unknown_note_line(&view.rows[0]).to_string();
+        assert!(note.contains("[unknown values]"), "{note}");
     }
 
     #[test]

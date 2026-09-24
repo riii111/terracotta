@@ -1005,7 +1005,17 @@ fn unknown_same_change_summary_and_group_row_keep_the_annotation_visible() {
     );
 
     let narrow = text(&mut view, &state, (40, 16));
-    assert!(narrow.contains("[unknown values]"), "{narrow}");
+    let narrow_lines = narrow.lines().collect::<Vec<_>>();
+    assert!(
+        narrow_lines.iter().any(|line| line.contains("server[*]")),
+        "{narrow}"
+    );
+    assert!(
+        narrow_lines
+            .iter()
+            .any(|line| line.contains("[unknown values]")),
+        "{narrow}"
+    );
 }
 
 fn assert_matrix_footer_actions(view: &mut EnvironmentView, state: &EnvironmentSession) {
