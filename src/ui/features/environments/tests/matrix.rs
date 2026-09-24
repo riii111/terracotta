@@ -949,6 +949,11 @@ fn short_terminal_keeps_major_environment_actions_without_movement_hints() {
 fn narrow_matrix_keeps_why_visible_with_a_long_selected_environment_name() {
     let state = session(&["production-eu-west-1"]);
     let mut view = EnvironmentView::default();
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE),
+        Size::new(40, 16),
+        &state,
+    );
     let rendered = text(&mut view, &state, (40, 16));
     let header = rendered
         .lines()
@@ -1618,6 +1623,41 @@ fn matrix_search_edits_graphemes_and_restores_the_previous_filter_on_cancel() {
     assert_eq!(view.matrix.filter(), "terraform_data.beta]");
     press(&mut view, &mut state, KeyCode::Esc);
     assert_eq!(view.matrix.filter(), "terraform_data.beta");
+}
+
+#[rstest]
+#[case::matrix('2', EnvironmentPane::Matrix)]
+#[case::relations('3', EnvironmentPane::Relations)]
+fn escape_restores_maximized_filtered_pane_before_clearing_filter(
+    #[case] pane_key: char,
+    #[case] pane: EnvironmentPane,
+) {
+    let mut state = relation_session();
+    let size = Size::new(120, 40);
+    let mut view = EnvironmentView::default();
+    let _ = text(&mut view, &state, (size.width, size.height));
+    press_at(&mut view, &mut state, KeyCode::Char('2'), size);
+    press_at(&mut view, &mut state, KeyCode::Char('/'), size);
+    for character in "terraform_data.api".chars() {
+        press_at(&mut view, &mut state, KeyCode::Char(character), size);
+    }
+    press_at(&mut view, &mut state, KeyCode::Enter, size);
+    assert_eq!(view.matrix.filter(), "terraform_data.api");
+
+    if pane_key != '2' {
+        press_at(&mut view, &mut state, KeyCode::Char(pane_key), size);
+    }
+    assert_eq!(view.active_pane(size.width), pane);
+    press_at(&mut view, &mut state, KeyCode::Char('f'), size);
+    assert_eq!(view.maximized, Some(pane));
+
+    press_at(&mut view, &mut state, KeyCode::Esc, size);
+    assert_eq!(view.maximized, None);
+    assert_eq!(view.matrix.filter(), "terraform_data.api");
+    assert_eq!(view.active_pane(size.width), pane);
+
+    press_at(&mut view, &mut state, KeyCode::Esc, size);
+    assert!(view.matrix.filter().is_empty());
 }
 
 #[test]
