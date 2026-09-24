@@ -1,0 +1,21 @@
+---
+source: src/ui/features/environments/tests/matrix.rs
+expression: buffer_visual_snapshot(&narrow_buffer)
+---
+40x16
+row 0: 0..31 fg=Reset bg=Reset modifier=NONE text="terracotta ▸ dev               " | 31..40 fg=DarkGray bg=Reset modifier=NONE text="terraform"
+row 1: 0..3 fg=Cyan bg=Reset modifier=NONE text="┌* " | 3..14 fg=Reset bg=Reset modifier=BOLD text="[2] Compare" | 14..40 fg=Cyan bg=Reset modifier=NONE text="─────────────────────────┐"
+row 2: 0..1 fg=Cyan bg=Reset modifier=NONE text="│" | 1..39 fg=DarkGray bg=Reset modifier=NONE text="                                      " | 39..40 fg=Cyan bg=Reset modifier=NONE text="│"
+row 3: 0..1 fg=Cyan bg=Reset modifier=NONE text="│" | 1..39 fg=Yellow bg=Reset modifier=NONE text="                                      " | 39..40 fg=Cyan bg=Reset modifier=NONE text="│"
+row 4: 0..1 fg=Cyan bg=Reset modifier=NONE text="│" | 1..39 fg=Reset bg=Reset modifier=NONE text="Address             dev        why    " | 39..40 fg=Cyan bg=Reset modifier=NONE text="│"
+row 5: 0..1 fg=Cyan bg=Reset modifier=NONE text="│" | 1..39 fg=Reset bg=Reset modifier=NONE text="                                      " | 39..40 fg=Cyan bg=Reset modifier=NONE text="│"
+row 6: 0..1 fg=Cyan bg=Reset modifier=NONE text="│" | 1..20 fg=Green bg=Reset modifier=NONE text="Differs across envs" | 20..39 fg=Reset bg=Reset modifier=NONE text="                   " | 39..40 fg=Cyan bg=Reset modifier=NONE text="│"
+row 7: 0..1 fg=Cyan bg=Reset modifier=NONE text="│" | 1..21 fg=Reset bg=Reset modifier=NONE text="  …orm_data.dev_only" | 21..31 fg=Green bg=Reset modifier=NONE text="+         " | 31..39 fg=Reset bg=Reset modifier=NONE text=" missing" | 39..40 fg=Cyan bg=Reset modifier=NONE text="│"
+row 8: 0..1 fg=Cyan bg=Reset modifier=NONE text="│" | 1..39 fg=Reset bg=Reset modifier=NONE text="                                      " | 39..40 fg=Cyan bg=Reset modifier=NONE text="│"
+row 9: 0..1 fg=Cyan bg=Reset modifier=NONE text="│" | 1..18 fg=Reset bg=Reset modifier=NONE text="> Same: 2 changes" | 18..35 fg=DarkGray bg=Reset modifier=NONE text=" [unknown values]" | 35..38 fg=Yellow bg=Reset modifier=NONE text=" ~2" | 38..39 fg=DarkGray bg=Reset modifier=NONE text=" " | 39..40 fg=Cyan bg=Reset modifier=NONE text="│"
+row 10: 0..1 fg=Cyan bg=Reset modifier=NONE text="│" | 1..21 fg=Reset bg=Reset modifier=NONE text="  terraform_data.api" | 21..31 fg=Yellow bg=Reset modifier=NONE text="~         " | 31..39 fg=Reset bg=Reset modifier=NONE text="        " | 39..40 fg=Cyan bg=Reset modifier=NONE text="│"
+row 11: 0..1 fg=Cyan bg=Reset modifier=NONE text="│" | 1..39 fg=Reset bg=Reset modifier=NONE text="blank: absent   .: unchanged          " | 39..40 fg=Cyan bg=Reset modifier=NONE text="│"
+row 12: 0..1 fg=Cyan bg=Reset modifier=NONE text="│" | 1..39 fg=Reset bg=Reset modifier=NONE text="?: plan unavailable                   " | 39..40 fg=Cyan bg=Reset modifier=NONE text="│"
+row 13: 0..40 fg=Cyan bg=Reset modifier=NONE text="└──────────────────────────────────────┘"
+row 14: 0..5 fg=Yellow bg=Reset modifier=NONE text="Enter" | 5..12 fg=Reset bg=Reset modifier=NONE text=" toggle" | 12..15 fg=Rgb(192, 184, 184) bg=Reset modifier=NONE text=" | " | 15..20 fg=Yellow bg=Reset modifier=NONE text="Space" | 20..40 fg=Reset bg=Reset modifier=NONE text=" collapse           "
+row 15: 0..1 fg=Yellow bg=Reset modifier=NONE text="v" | 1..11 fg=Reset bg=Reset modifier=NONE text=" full plan" | 11..14 fg=Rgb(192, 184, 184) bg=Reset modifier=NONE text=" | " | 14..15 fg=Yellow bg=Reset modifier=NONE text="[" | 15..16 fg=DarkGray bg=Reset modifier=NONE text="/" | 16..17 fg=Yellow bg=Reset modifier=NONE text="]" | 17..21 fg=Reset bg=Reset modifier=NONE text=" env" | 21..24 fg=Rgb(192, 184, 184) bg=Reset modifier=NONE text=" | " | 24..25 fg=Yellow bg=Reset modifier=NONE text="?" | 25..30 fg=Reset bg=Reset modifier=NONE text=" help" | 30..33 fg=Rgb(192, 184, 184) bg=Reset modifier=NONE text=" | " | 33..34 fg=Yellow bg=Reset modifier=NONE text="q" | 34..40 fg=Reset bg=Reset modifier=NONE text=" quit "

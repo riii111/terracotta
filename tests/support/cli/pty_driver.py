@@ -413,9 +413,13 @@ try:
             send_key(b"]")
             send_key(b"]")
             send_key(b"\r")
-            wait_new("required variable", "real_error_diagnostic")
+            wait_new("prod: Error", "real_error_diagnostic")
             send_key(b"\x1b")
-            wait_new("Address", "real_error_dialog_closed")
+            wait_screen(
+                lambda current: "prod: Error" not in current and "Address" in current,
+                "real_error_dialog_closed",
+                "closed prod error dialog",
+            )
             with open(os.path.join(root, "prod/retry.auto.tfvars"), "w") as repair:
                 repair.write('release = "new"\n')
             send_key(b"r")

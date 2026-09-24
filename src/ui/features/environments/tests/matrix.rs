@@ -13,6 +13,7 @@ use crate::app::{
         AttributeType, ConfigurationRelationStatus, Plan, PlanAction, PlanRelations, PlanSummary,
         PlanValue, ProviderSchema, ProviderSchemas, RelationEndpoint, RelationEvidence,
         RelationSource, ResourceChange, ResourceChangeKind, ResourceMode, ResourceSchema,
+        StateRelationStatus,
     },
     review::{PlanBlock, PlanBlockKind, PlanDocument},
 };
@@ -323,6 +324,83 @@ fn relation_session() -> EnvironmentSession {
     state
 }
 
+fn multi_demo_session() -> EnvironmentSession {
+    let provider = "terraform.io/builtin/terraform".to_owned();
+    let schemas = ProviderSchemas {
+        providers: BTreeMap::from([(
+            provider.clone(),
+            ProviderSchema {
+                resources: BTreeMap::from([(
+                    "terraform_data".to_owned(),
+                    ResourceSchema {
+                        attributes: BTreeMap::from([
+                            ("input".to_owned(), AttributeType::Dynamic),
+                            ("output".to_owned(), AttributeType::Dynamic),
+                        ]),
+                        block_types: BTreeMap::new(),
+                    },
+                )]),
+            },
+        )]),
+    };
+    let mut state = session(&["dev", "stg", "prod"]);
+    for (name, count) in [("dev", 2), ("stg", 2), ("prod", 4)] {
+        let mut changes = vec![unknown_terraform_data_update(
+            "terraform_data.api",
+            &provider,
+        )];
+        changes.extend((0..count).map(|index| {
+            unknown_terraform_data_update(&format!("terraform_data.server[{index}]"), &provider)
+        }));
+        if name == "dev" {
+            let mut dev_only = change("terraform_data.dev_only", ResourceChangeKind::Create);
+            dev_only.provider = Some(provider.clone());
+            dev_only.before = Some(PlanValue::Null);
+            dev_only.after = Some(PlanValue::Object(BTreeMap::from([(
+                "input".to_owned(),
+                PlanValue::String("new".to_owned()),
+            )])));
+            changes.push(dev_only);
+        }
+
+        let mut evidence = vec![RelationEvidence::resolved(
+            RelationEndpoint::Instance("terraform_data.api".to_owned()),
+            RelationEndpoint::Instance("terraform_data.server[0]".to_owned()),
+            RelationSource::Configuration,
+        )];
+        if name == "dev" {
+            evidence.push(RelationEvidence::resolved(
+                RelationEndpoint::Block("terraform_data.dev_only".to_owned()),
+                RelationEndpoint::Block("terraform_data.api".to_owned()),
+                RelationSource::Configuration,
+            ));
+        }
+        let relations =
+            PlanRelations::from_saved_plan(ConfigurationRelationStatus::Available, evidence, false)
+                .with_state(StateRelationStatus::Available, Vec::new());
+        complete_with_schemas(&mut state, changes, relations, Some(schemas.clone()));
+    }
+    state
+}
+
+fn unknown_terraform_data_update(address: &str, provider: &str) -> ResourceChange {
+    let mut change = change(address, ResourceChangeKind::Update);
+    change.provider = Some(provider.to_owned());
+    change.before = Some(PlanValue::Object(BTreeMap::from([
+        ("input".to_owned(), PlanValue::String("old".to_owned())),
+        ("output".to_owned(), PlanValue::String("old".to_owned())),
+    ])));
+    change.after = Some(PlanValue::Object(BTreeMap::from([
+        ("input".to_owned(), PlanValue::String("new".to_owned())),
+        ("output".to_owned(), PlanValue::Null),
+    ])));
+    change.after_unknown = Some(PlanValue::Object(BTreeMap::from([(
+        "output".to_owned(),
+        PlanValue::Bool(true),
+    )])));
+    change
+}
+
 #[rstest]
 #[case::memo(165, 50)]
 #[case::medium(120, 40)]
@@ -356,6 +434,120 @@ fn relations_pane_shows_the_selected_environment_at_supported_sizes(
             "{width}x{height}: {rendered}"
         );
     }
+}
+
+#[test]
+fn multi_demo_compare_and_relations_have_cell_style_snapshots() {
+    let mut state = multi_demo_session();
+    let wide = Size::new(165, 50);
+    let mut compare = EnvironmentView::default();
+    press_at(&mut compare, &mut state, KeyCode::Char('2'), wide);
+    press_at(&mut compare, &mut state, KeyCode::Char('f'), wide);
+    press_at(&mut compare, &mut state, KeyCode::End, wide);
+
+    let collapsed = render_to_buffer((wide.width, wide.height), |frame| {
+        compare.render(frame, &state);
+    });
+    let collapsed_text = buffer_text(&collapsed);
+    assert!(
+        collapsed_text.contains("Same change across envs"),
+        "{collapsed_text}"
+    );
+    insta::assert_snapshot!(
+        "multi_demo_compare_same_closed_165x50",
+        buffer_visual_snapshot(&collapsed)
+    );
+
+    press_at(&mut compare, &mut state, KeyCode::Char(' '), wide);
+    let expanded_summary = render_to_buffer((wide.width, wide.height), |frame| {
+        compare.render(frame, &state);
+    });
+    let expanded_summary_text = buffer_text(&expanded_summary);
+    assert!(
+        expanded_summary_text.contains("terraform_data.server[*]"),
+        "{expanded_summary_text}"
+    );
+    assert!(expanded_summary_text.contains("[unknown values]"));
+    assert!(
+        expanded_summary_text.contains("~ 2         ~ 2         ~ 4"),
+        "{expanded_summary_text}"
+    );
+    assert_eq!(
+        matrix_header(&collapsed_text),
+        matrix_header(&expanded_summary_text),
+        "opening Same change must keep environment columns anchored"
+    );
+    insta::assert_snapshot!(
+        "multi_demo_compare_same_open_165x50",
+        buffer_visual_snapshot(&expanded_summary)
+    );
+
+    press_at(&mut compare, &mut state, KeyCode::Down, wide);
+    press_at(&mut compare, &mut state, KeyCode::Down, wide);
+    press_at(&mut compare, &mut state, KeyCode::Char(' '), wide);
+    let expanded_group = render_to_buffer((wide.width, wide.height), |frame| {
+        compare.render(frame, &state);
+    });
+    let expanded_group_text = buffer_text(&expanded_group);
+    assert!(
+        expanded_group_text.contains("terraform_data.server[0]"),
+        "{expanded_group_text}"
+    );
+    assert_eq!(
+        matrix_header(&expanded_summary_text),
+        matrix_header(&expanded_group_text),
+        "expanding a resource group must keep environment columns anchored"
+    );
+    insta::assert_snapshot!(
+        "multi_demo_compare_group_open_165x50",
+        buffer_visual_snapshot(&expanded_group)
+    );
+
+    let mut narrow_view = EnvironmentView::default();
+    let narrow = Size::new(40, 16);
+    press_at(&mut narrow_view, &mut state, KeyCode::Char('2'), narrow);
+    press_at(&mut narrow_view, &mut state, KeyCode::Char('f'), narrow);
+    press_at(&mut narrow_view, &mut state, KeyCode::End, narrow);
+    press_at(&mut narrow_view, &mut state, KeyCode::Char(' '), narrow);
+    let narrow_buffer = render_to_buffer((narrow.width, narrow.height), |frame| {
+        narrow_view.render(frame, &state);
+    });
+    assert!(buffer_text(&narrow_buffer).contains("[unknown values]"));
+    insta::assert_snapshot!(
+        "multi_demo_compare_narrow_40x16",
+        buffer_visual_snapshot(&narrow_buffer)
+    );
+
+    let mut relations = EnvironmentView::default();
+    press_at(&mut relations, &mut state, KeyCode::Char('3'), wide);
+    let dev = render_to_buffer((wide.width, wide.height), |frame| {
+        relations.render(frame, &state);
+    });
+    let dev_text = buffer_text(&dev);
+    assert!(dev_text.contains("terraform_data.server[*]"), "{dev_text}");
+    assert!(dev_text.contains("terraform_data.dev_only"), "{dev_text}");
+    assert!(dev_text.contains("─(config)─>"), "{dev_text}");
+    assert!(dev_text.contains("┄(config)┄>"), "{dev_text}");
+    insta::assert_snapshot!(
+        "multi_demo_relations_dev_165x50",
+        buffer_visual_snapshot(&dev)
+    );
+
+    let mut stg_view = EnvironmentView::default();
+    press_at(&mut stg_view, &mut state, KeyCode::Char('1'), wide);
+    press_at(&mut stg_view, &mut state, KeyCode::Down, wide);
+    press_at(&mut stg_view, &mut state, KeyCode::Char('3'), wide);
+    let stg = render_to_buffer((wide.width, wide.height), |frame| {
+        stg_view.render(frame, &state);
+    });
+    let stg_text = buffer_text(&stg);
+    assert!(stg_text.contains("stg · whole env"));
+    assert!(stg_text.contains("─(config)─>"), "{stg_text}");
+    assert!(!stg_text.contains("┄(config)┄>"), "{stg_text}");
+    insta::assert_snapshot!(
+        "multi_demo_relations_stg_165x50",
+        buffer_visual_snapshot(&stg)
+    );
 }
 
 #[test]
@@ -946,7 +1138,7 @@ fn unknown_same_change_summary_and_group_row_keep_the_annotation_visible() {
                     ResourceSchema {
                         attributes: BTreeMap::from([
                             ("input".to_owned(), AttributeType::String),
-                            ("output".to_owned(), AttributeType::String),
+                            ("output".to_owned(), AttributeType::Dynamic),
                         ]),
                         block_types: BTreeMap::new(),
                     },
@@ -963,10 +1155,10 @@ fn unknown_same_change_summary_and_group_row_keep_the_annotation_visible() {
                     ResourceChangeKind::Update,
                 );
                 change.provider = Some(provider.clone());
-                change.before = Some(PlanValue::Object(BTreeMap::from([(
-                    "input".to_owned(),
-                    PlanValue::String("old".to_owned()),
-                )])));
+                change.before = Some(PlanValue::Object(BTreeMap::from([
+                    ("input".to_owned(), PlanValue::String("old".to_owned())),
+                    ("output".to_owned(), PlanValue::String("old".to_owned())),
+                ])));
                 change.after = Some(PlanValue::Object(BTreeMap::from([
                     ("input".to_owned(), PlanValue::String("new".to_owned())),
                     ("output".to_owned(), PlanValue::Null),

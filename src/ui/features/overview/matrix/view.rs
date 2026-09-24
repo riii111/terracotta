@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
 
+use ratatui::text::Line;
+
 use crate::app::environments::{
     EnvironmentSession,
     comparison::{CellState, ComparisonRow, DifferenceReason, SourceReference},
@@ -84,6 +86,8 @@ pub(crate) struct MatrixView {
     pub(super) filter: String,
     pub(super) overview: Option<EnvironmentOverview>,
     pub(super) environments: Vec<usize>,
+    pub(super) address_content_width: usize,
+    pub(super) unknown_address_width: usize,
     pub(super) selected: Option<SelectionKey>,
     search: Option<Search>,
     revision: Option<u64>,
@@ -280,10 +284,23 @@ impl MatrixView {
         let old_selection = self.selected.clone();
         let Some(overview) = &self.overview else {
             self.rows.clear();
+            self.address_content_width = 0;
+            self.unknown_address_width = 0;
             self.selected = None;
             self.vertical = 0;
             return;
         };
+
+        let all_groups = overview
+            .rows
+            .iter()
+            .filter_map(|row| match row {
+                OverviewRow::Group(group) => Some(group.id.clone()),
+                OverviewRow::Individual(_) => None,
+            })
+            .collect();
+        let layout_rows = rows(overview, &self.filter, &all_groups);
+        (self.address_content_width, self.unknown_address_width) = address_widths(&layout_rows);
 
         let collapsed_rows = rows(overview, &self.filter, &BTreeSet::new());
         let summary_start = collapsed_rows
@@ -362,6 +379,27 @@ impl MatrixView {
         }
         self.rebuild();
     }
+}
+
+pub(super) fn address_widths(rows: &[Row]) -> (usize, usize) {
+    rows.iter().filter(|row| row.summary.is_none()).fold(
+        (Line::from("Address").width(), 0),
+        |(content, unknown), row| {
+            let expansion = row
+                .group
+                .as_ref()
+                .map_or(if row.child { 2 } else { 0 }, |_| 4);
+            let row_width = 2 + expansion + Line::from(row.address.as_str()).width();
+            (
+                content.max(row_width),
+                if row.has_unknown {
+                    unknown.max(row_width + Line::from(" [unknown values]").width())
+                } else {
+                    unknown
+                },
+            )
+        },
+    )
 }
 
 impl Row {

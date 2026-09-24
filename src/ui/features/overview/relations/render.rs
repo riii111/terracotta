@@ -847,7 +847,7 @@ mod tests {
             ResourceChangeKind,
         },
         ui::{
-            test_support::{buffer_text, render_to_buffer},
+            test_support::{buffer_text, buffer_visual_snapshot, render_to_buffer},
             theme,
         },
     };
@@ -907,6 +907,9 @@ mod tests {
         let mut aggregate = node("aws_instance.web[*]", ResourceChangeKind::Update);
         aggregate.change_count = 2;
         aggregate.has_unknown = true;
+        aggregate
+            .unresolved
+            .insert(RelationUnresolvedReason::ConfigurationUnavailable);
         let target = node("aws_subnet.web", ResourceChangeKind::Create);
         let graph = graph(
             vec![aggregate.clone(), target.clone()],
@@ -916,6 +919,18 @@ mod tests {
                 RelationGraphLinkKind::Solid,
                 &[RelationSource::Configuration],
             )],
+        );
+        let output = render_to_buffer((165, 50), |frame| {
+            render(
+                frame,
+                Rect::new(0, 0, 165, 50),
+                &graph,
+                &view("whole env", None, false, 0, 0),
+            );
+        });
+        insta::assert_snapshot!(
+            "grouped_link_unknown_node_styles_165x50",
+            buffer_visual_snapshot(&output)
         );
 
         let rendered_node = node_line(&aggregate, None, false).to_string();
@@ -936,12 +951,13 @@ mod tests {
             rendered_node.contains("[unknown values]"),
             "{rendered_node}"
         );
-        assert!(!rendered_node.contains(" ?"), "{rendered_node}");
+        assert!(rendered_node.contains(" ?"), "{rendered_node}");
         assert_eq!(
             legend,
             [
                 "A ──> B  B uses A",
                 "Grouped links may apply to only some members",
+                "? unresolved means a relationship could not be determined",
             ]
         );
         assert!(
@@ -986,6 +1002,10 @@ mod tests {
             );
         });
         let text = buffer_text(&output);
+        insta::assert_snapshot!(
+            "branch_graph_styles_165x50",
+            buffer_visual_snapshot(&output)
+        );
 
         assert!(text.contains("terraform_data.db"), "{text}");
         assert!(text.contains("aws_ecs_service.api"));
@@ -1050,6 +1070,56 @@ mod tests {
     }
 
     #[test]
+    fn overlapping_branch_and_merge_fall_back_to_directional_uses_rows() {
+        let graph = branch_merge_graph();
+        let output = render_to_buffer((165, 50), |frame| {
+            render(
+                frame,
+                Rect::new(0, 0, 165, 50),
+                &graph,
+                &view("dev · whole env", None, false, 0, 0),
+            );
+        });
+        let text = buffer_text(&output);
+        insta::assert_snapshot!(
+            "branch_merge_fallback_styles_165x50",
+            buffer_visual_snapshot(&output)
+        );
+
+        for address in [
+            "terraform_data.source",
+            "aws_service.left",
+            "aws_service.right",
+            "aws_listener.target",
+            "aws_route53_record.tail",
+        ] {
+            assert_eq!(
+                text.lines()
+                    .filter(|line| line
+                        .split("  uses:")
+                        .next()
+                        .is_some_and(|row| row.contains(address)))
+                    .count(),
+                1,
+                "{address}\n{text}"
+            );
+        }
+        assert!(
+            text.contains(
+                "aws_listener.target  uses: aws_service.left (config), aws_service.right (state)"
+            ),
+            "{text}"
+        );
+        assert!(text.contains("aws_service.left  uses: terraform_data.source (config)"));
+        assert!(
+            text.contains(
+                "aws_service.right  uses: terraform_data.source (config, block candidate)"
+            )
+        );
+        assert!(text.contains("aws_route53_record.tail  uses: aws_listener.target (config)"));
+    }
+
+    #[test]
     fn unsupported_cycles_fall_back_to_incoming_uses_rows() {
         let graph = cycle_graph();
         let text = buffer_text(&render_to_buffer((120, 40), |frame| {
@@ -1070,14 +1140,19 @@ mod tests {
     #[test]
     fn unknown_reasons_precede_no_links_and_remain_distinct() {
         let graph = isolated_graph();
-        let text = buffer_text(&render_to_buffer((80, 24), |frame| {
+        let output = render_to_buffer((80, 24), |frame| {
             render(
                 frame,
                 Rect::new(0, 0, 80, 24),
                 &graph,
                 &view("whole env", None, false, 0, 0),
             );
-        }));
+        });
+        let text = buffer_text(&output);
+        insta::assert_snapshot!(
+            "unknown_and_no_links_styles_80x24",
+            buffer_visual_snapshot(&output)
+        );
 
         assert!(text.find("Links unknown").unwrap() < text.find("No links shown").unwrap());
         assert!(text.contains("configuration unavailable"));
@@ -1237,6 +1312,10 @@ mod tests {
             );
         });
         let text = buffer_text(&output);
+        insta::assert_snapshot!(
+            "narrow_relation_styles_40x16",
+            buffer_visual_snapshot(&output)
+        );
 
         assert!(returned.vertical > 0);
         assert!(returned.horizontal > 0);
@@ -1440,6 +1519,55 @@ mod tests {
                     &record,
                     RelationGraphLinkKind::Dotted,
                     &[RelationSource::Configuration, RelationSource::State],
+                ),
+            ],
+        )
+    }
+
+    fn branch_merge_graph() -> RelationGraph {
+        let source = node("terraform_data.source", ResourceChangeKind::Replace);
+        let left = node("aws_service.left", ResourceChangeKind::Update);
+        let right = node("aws_service.right", ResourceChangeKind::Update);
+        let target = node("aws_listener.target", ResourceChangeKind::Update);
+        let tail = node("aws_route53_record.tail", ResourceChangeKind::Update);
+        graph(
+            vec![
+                source.clone(),
+                left.clone(),
+                right.clone(),
+                target.clone(),
+                tail.clone(),
+            ],
+            vec![
+                link(
+                    &source,
+                    &left,
+                    RelationGraphLinkKind::Solid,
+                    &[RelationSource::Configuration],
+                ),
+                link(
+                    &source,
+                    &right,
+                    RelationGraphLinkKind::Dotted,
+                    &[RelationSource::Configuration],
+                ),
+                link(
+                    &left,
+                    &target,
+                    RelationGraphLinkKind::Solid,
+                    &[RelationSource::Configuration],
+                ),
+                link(
+                    &right,
+                    &target,
+                    RelationGraphLinkKind::Solid,
+                    &[RelationSource::State],
+                ),
+                link(
+                    &target,
+                    &tail,
+                    RelationGraphLinkKind::Solid,
+                    &[RelationSource::Configuration],
                 ),
             ],
         )

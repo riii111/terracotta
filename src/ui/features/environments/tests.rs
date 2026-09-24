@@ -8,7 +8,7 @@ use crate::{
         session::Effect,
     },
     ui::{
-        test_support::{buffer_text, render_to_buffer},
+        test_support::{buffer_text, buffer_visual_snapshot, render_to_buffer},
         theme,
     },
 };

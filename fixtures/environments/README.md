@@ -1,22 +1,24 @@
-# Three-environment demo and acceptance
+# Multi-environment demo
 
-Run the multi-environment TUI demo from the repository root:
+Run from the repository root:
 
 ```sh
 python3 fixtures/demo.py multi
 ```
 
-The demo prepares `dev`, `prod`, and `stg` with local state and the built-in
-`terraform_data` resource. All three environments start Ready. The script builds
-Terracotta and removes the temporary directories after the TUI exits.
+Compare groups the `server[*]` updates across `dev`, `stg`, and `prod` (2/2/4
+instances) and marks their computed `output` as `[unknown values]`. The `dev`
+only `dev_only` resource stays separate. Relations shows the configuration
+reference from `server[0]` to `api`, plus a dotted block-level reference from
+`api` to `dev_only` in `dev`. These links describe configuration evidence, not
+change causes or apply order; the `server[0]` link may cover only part of the
+grouped `server[*]` node.
 
-Use `↑`/`↓` to select a resource row and `←`/`→` to select an environment.
-`Enter` opens the original plan; `Esc` or `s` returns to Overview. Press `q` to
-exit.
+Press `2`/`3` to focus Compare/Relations, `[`/`]` to change environment, and
+`↑`/`↓` to select rows. Press `Space` to expand a selected summary or group,
+`Enter` to open the plan, `Esc` to return to Overview, and `q` to quit.
 
-The cloudless PTY acceptance exercises an initial `prod` error, repairs its
-missing variable, retries only `prod`, and checks plan cleanup, unchanged state,
-and terminal restoration against the real command-line binary:
+Run the cloudless CLI acceptance with Terraform or OpenTofu after building:
 
 ```sh
 cargo build --locked

@@ -31,16 +31,21 @@ def configuration(name, changed, ready=False):
         if changed and name == "prod" and not ready
         else ""
     )
-    release = "var.release" if required else json.dumps(value)
+    if required:
+        api_input = "var.release"
+    elif changed:
+        api_input = "terraform_data.server[0].input"
+    else:
+        api_input = json.dumps(value)
     extra = (
-        'resource "terraform_data" "dev_only" { input = "new" }\n'
+        'resource "terraform_data" "dev_only" { input = terraform_data.api.input }\n'
         if changed and name == "dev"
         else ""
     )
     return f'''terraform {{
   backend "local" {{}}
 }}
-{required}resource "terraform_data" "api" {{ input = {release} }}
+{required}resource "terraform_data" "api" {{ input = {api_input} }}
 resource "terraform_data" "unchanged" {{ input = "baseline" }}
 resource "terraform_data" "server" {{
   count = {4 if name == "prod" else 2}
