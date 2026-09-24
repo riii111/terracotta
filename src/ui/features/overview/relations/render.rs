@@ -16,7 +16,7 @@ use crate::{
     ui::theme,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct RelationGraphScroll {
     pub(crate) vertical: u16,
     pub(crate) horizontal: u16,

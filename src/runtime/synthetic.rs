@@ -496,15 +496,16 @@ fn synthetic_overview_key(
         return Ok(None);
     }
     let size = terminal.size()?;
-    let layout = overview::layout(
-        ratatui::layout::Rect::new(0, 0, size.width, size.height),
-        overview_state,
-        view.overview(),
-    );
     let content = overview::OverviewContent::from_review(
         overview_state.review(),
         view.overview().filter(),
         view.overview().expanded(),
+    );
+    let layout = overview::layout(
+        ratatui::layout::Rect::new(0, 0, size.width, size.height),
+        overview_state,
+        view.overview(),
+        &content,
     );
     let Some(input) = overview::key_to_input(
         key,
@@ -513,9 +514,13 @@ fn synthetic_overview_key(
     ) else {
         return Ok(None);
     };
-    let command = view
-        .overview_mut()
-        .apply(input, layout.body(), layout.max_vertical(), &content);
+    let command = view.overview_mut().apply(
+        input,
+        layout.changes_body(),
+        layout.relations(),
+        layout.max_vertical(),
+        &content,
+    );
     let Some(command) = command else {
         return Ok(None);
     };

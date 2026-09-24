@@ -553,7 +553,39 @@ try:
     elif scenario == "overview_navigation":
         wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
         send_key(b"s")
-        wait_parts(["Overview", "terraform_data.server[*]", "Repeated: 2"], "overview_opened")
+        wait_parts(
+            ["Ready", "[2] Changes", "[3] Relations", "terraform_data.server[*]", "Repeated: 2"],
+            "overview_opened",
+        )
+        send_key(b"3")
+        wait_new("* [3] Relations", "overview_relations_focused")
+        send_key(b"f")
+        wait_screen(
+            lambda current: "[3] Relations" in current and "[2] Changes" not in current,
+            "overview_relations_maximized",
+            "maximized Relations pane",
+        )
+        send_key(b"\x1b")
+        wait_screen(
+            lambda current: "[2] Changes" in current
+            and "[3] Relations" in current
+            and "* [3] Relations" in current,
+            "overview_split_restored",
+            "split Overview with Relations focus",
+        )
+        send_key(b"\r")
+        wait_parts(["Plan:", "terraform_data.api"], "overview_relations_raw")
+        send_key(b"\x1b")
+        wait_screen(
+            lambda current: "[2] Changes" in current
+            and "[3] Relations" in current
+            and "* [3] Relations" in current,
+            "overview_relations_restored",
+            "Overview after Relations raw-plan roundtrip",
+        )
+        send_key(b"2")
+        wait_new("* [2] Changes", "overview_changes_focused")
+        send_key(b"j")
         send_key(b"j")
         send_key(b" ")
         wait_new('terraform_data.server["one"]', "overview_expanded")
@@ -572,7 +604,7 @@ try:
         send_key(b"\r")
         wait_new("y copy all", "overview_raw_filter_confirmed")
         send_key(b"\x1b")
-        wait_new("Overview", "overview_restored")
+        wait_new("Ready", "overview_restored")
         send_key(b"/")
         wait_new("Filter: /", "overview_filter_input")
         send_text("two")
@@ -582,7 +614,10 @@ try:
         wait_parts(["Plan:", "terraform_data.api"], "overview_full_plan")
         exit_code = quit_with_enter()
     elif scenario == "default_overview":
-        wait_parts(["Overview", "terraform_data.server[*]"], "default_overview")
+        wait_parts(
+            ["Ready", "[2] Changes", "[3] Relations", "terraform_data.server[*]"],
+            "default_overview",
+        )
         send_key(b"q")
         send_key(b"\r")
         exit_code = wait_exit()

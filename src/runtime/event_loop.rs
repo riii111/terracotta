@@ -114,15 +114,16 @@ pub(crate) fn run_connected(
                         );
                     }
                     if let Some(overview_state) = state.overview() {
-                        let layout = overview::layout(
-                            Rect::new(0, 0, width, height),
-                            overview_state,
-                            review_view.overview(),
-                        );
                         let content = overview::OverviewContent::from_review(
                             overview_state.review(),
                             review_view.overview().filter(),
                             review_view.overview().expanded(),
+                        );
+                        let layout = overview::layout(
+                            Rect::new(0, 0, width, height),
+                            overview_state,
+                            review_view.overview(),
+                            &content,
                         );
                         review_view
                             .overview_mut()
@@ -427,15 +428,16 @@ fn handle_overview_key_event<B: Backend>(
         return Ok(None);
     }
     let size = terminal.size()?;
-    let layout = overview::layout(
-        Rect::new(0, 0, size.width, size.height),
-        overview_state,
-        review_view.overview(),
-    );
     let content = overview::OverviewContent::from_review(
         overview_state.review(),
         review_view.overview().filter(),
         review_view.overview().expanded(),
+    );
+    let layout = overview::layout(
+        Rect::new(0, 0, size.width, size.height),
+        overview_state,
+        review_view.overview(),
+        &content,
     );
     let input = overview::key_to_input(
         key,
@@ -445,10 +447,13 @@ fn handle_overview_key_event<B: Backend>(
     let Some(input) = input else {
         return Ok(None);
     };
-    let command =
-        review_view
-            .overview_mut()
-            .apply(input, layout.body(), layout.max_vertical(), &content);
+    let command = review_view.overview_mut().apply(
+        input,
+        layout.changes_body(),
+        layout.relations(),
+        layout.max_vertical(),
+        &content,
+    );
     if let Some(overview::OverviewCommand::Open(address)) = command.as_ref() {
         jump_to_overview_address(terminal, review_view, overview_state, address.as_deref())?;
     }

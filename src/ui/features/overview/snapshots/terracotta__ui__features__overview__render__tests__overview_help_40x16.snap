@@ -3,18 +3,18 @@ source: src/ui/features/overview/render.rs
 expression: text
 ---
 infra  ws:default  ...ng...  /repo/infra
-O┌Help────────────────────────────────┐
+R┌Help────────────────────────────────┐
 ─│ Navigation                       ▲ │─
- │ ↑ / ↓ / j / k                    ┃ │
-O│   select a row                   ┃ │u
- │ PgUp / PgDn                      ┃ │
- │   move one page                  │ │
- │ Home / End                       │ │
- │   go to the first or last row    │ │
- │                                  │ │
- │ Review                           │ │
- │ Enter                            │ │
- │   open the selected raw block    ▼ │
+┌│ 2 / 3                            ┃ │┐
+││   focus Changes / Relations      ┃ ││
+││ ↑ / ↓ / j / k                    ┃ ││
+││   select a Changes row or scroll │ ││
+└│   Relations                      │ │┘
+┌│ ← / →                            │ │┐
+││   scroll Relations horizontally  │ ││
+││ PgUp / PgDn                      │ ││
+││   move one page                  │ ││
+└│ Home / End                       ▼ │┘
 ─│ ?/Esc close                        │─
 /└────────────────────────────────────┘
-? help | q quit
+2/3 focus | f maximize | ? help | q quit

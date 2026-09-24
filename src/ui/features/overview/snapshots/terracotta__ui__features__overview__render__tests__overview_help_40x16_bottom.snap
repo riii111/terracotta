@@ -3,18 +3,18 @@ source: src/ui/features/overview/render.rs
 expression: bottom_text
 ---
 infra  ws:default  ...ng...  /repo/infra
-O┌Help────────────────────────────────┐
+R┌Help────────────────────────────────┐
 ─│   top                            ▲ │─
- │                                  │ │
-O│ Actions                          │ │u
- │ y                                │ │
- │   copy the full plan             │ │
- │ c                                │ │
- │   show execution context         │ │
- │                                  ┃ │
- │ Exit                             ┃ │
- │ q                                ┃ │
- │   quit                           ▼ │
+┌│                                  │ │┐
+││ Actions                          │ ││
+││ y                                │ ││
+││   copy the full plan             │ ││
+└│ c                                │ │┘
+┌│   show execution context         │ │┐
+││                                  ┃ ││
+││ Exit                             ┃ ││
+││ q                                ┃ ││
+└│   quit                           ▼ │┘
 ─│ ?/Esc close                        │─
 /└────────────────────────────────────┘
-? help | q quit
+2/3 focus | f maximize | ? help | q quit

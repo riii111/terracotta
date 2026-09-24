@@ -1,14 +1,17 @@
-use std::collections::BTreeSet;
+use std::{cell::Cell, collections::BTreeSet};
 
 use ratatui::layout::Rect;
 
 use crate::app::{
-    plan::{PlanAction, ResourceChange, ResourceChangeKind},
+    environments::overview::{
+        EnvironmentRelationGraph, OverviewRowId, single_environment_relations,
+    },
+    plan::{PlanAction, RelationGraph, RelationNodeId, ResourceChange, ResourceChangeKind},
     review::PlanReview,
 };
 use crate::ui::text_input;
 
-use super::OverviewInput;
+use super::{OverviewInput, relations::RelationGraphScroll};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OverviewOverlay {
@@ -25,6 +28,7 @@ pub(crate) struct OverviewRow {
     pub(crate) display_address: String,
     pub(crate) action: String,
     pub(crate) count: usize,
+    pub(crate) node_id: Option<RelationNodeId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +36,7 @@ pub(crate) struct OverviewContent {
     pub(crate) rows: Vec<OverviewRow>,
     pub(crate) repeated: usize,
     pub(crate) unsupported: usize,
+    pub(crate) relations: Option<RelationGraph>,
 }
 
 impl OverviewContent {
@@ -41,8 +46,16 @@ impl OverviewContent {
         expanded: &BTreeSet<usize>,
     ) -> Self {
         let grouping = review.plan().grouped_changes(review.provider_schemas());
+        let relation = single_environment_relations(review);
         let mut rows = Vec::new();
         for (group_index, group) in grouping.groups.iter().enumerate() {
+            let node_addresses = group
+                .members
+                .iter()
+                .filter(|member| member.kind != ResourceChangeKind::NoOp)
+                .map(|member| member.address.clone())
+                .collect::<Vec<_>>();
+            let node_id = row_node_id(&node_addresses, &relation);
             let matching = group
                 .members
                 .iter()
@@ -66,6 +79,7 @@ impl OverviewContent {
                     display_address: group.display_address.clone(),
                     action: action_text(&group.members[0]),
                     count: matching.len(),
+                    node_id: node_id.clone(),
                 });
                 if expanded.contains(&group_index) {
                     rows.extend(matching.into_iter().map(|member_index| OverviewRow {
@@ -76,6 +90,7 @@ impl OverviewContent {
                         display_address: group.members[member_index].address.clone(),
                         action: action_text(&group.members[member_index]),
                         count: 1,
+                        node_id: node_id.clone(),
                     }));
                 }
             } else {
@@ -87,6 +102,7 @@ impl OverviewContent {
                     display_address: group.members[member_index].address.clone(),
                     action: action_text(&group.members[member_index]),
                     count: 1,
+                    node_id: node_id.clone(),
                 }));
             }
         }
@@ -94,8 +110,29 @@ impl OverviewContent {
             rows,
             repeated: grouping.repeated,
             unsupported: review.metadata().nonstandard_changes(),
+            relations: relation.graph,
         }
     }
+}
+
+fn row_node_id(
+    addresses: &[String],
+    relation: &EnvironmentRelationGraph,
+) -> Option<RelationNodeId> {
+    let node_ids = addresses
+        .iter()
+        .map(|address| {
+            relation
+                .row_node_ids
+                .get(&OverviewRowId::Individual(address.clone()))?
+                .as_ref()
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let first = node_ids.first()?;
+    node_ids
+        .iter()
+        .all(|node_id| *node_id == *first)
+        .then(|| (*first).clone())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,13 +146,23 @@ struct SearchState {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct OverviewViewState {
+    focus: OverviewPane,
+    maximized: Option<OverviewPane>,
     vertical: u16,
+    relations_scroll: Cell<RelationGraphScroll>,
     selected: Option<usize>,
     expanded: BTreeSet<usize>,
     search: Option<SearchState>,
     filter: String,
     overlay: Option<OverviewOverlay>,
     overlay_scroll: u16,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum OverviewPane {
+    #[default]
+    Changes,
+    Relations,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,10 +175,15 @@ pub(crate) enum OverviewCommand {
 }
 
 impl OverviewViewState {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Overview pane, selection, and search inputs share state transitions"
+    )]
     pub(crate) fn apply(
         &mut self,
         input: OverviewInput,
-        body: Rect,
+        changes_body: Rect,
+        relations_body: Rect,
         max_vertical: u16,
         content: &OverviewContent,
     ) -> Option<OverviewCommand> {
@@ -140,41 +192,121 @@ impl OverviewViewState {
             return self.apply_search(input, content.rows.len());
         }
         match input {
-            OverviewInput::Up => self.move_selection(-1, body, max_vertical, content),
-            OverviewInput::Down => self.move_selection(1, body, max_vertical, content),
+            OverviewInput::Up if self.active_pane() == OverviewPane::Changes => {
+                self.move_selection(-1, changes_body, max_vertical, content)
+            }
+            OverviewInput::Down if self.active_pane() == OverviewPane::Changes => {
+                self.move_selection(1, changes_body, max_vertical, content)
+            }
+            OverviewInput::Up => {
+                self.scroll_relations_vertical(-1);
+                None
+            }
+            OverviewInput::Down => {
+                self.scroll_relations_vertical(1);
+                None
+            }
             OverviewInput::PageUp => {
-                self.vertical = self.vertical.saturating_sub(body.height.max(1));
+                if self.active_pane() == OverviewPane::Changes {
+                    self.vertical = self.vertical.saturating_sub(changes_body.height.max(1));
+                } else {
+                    self.scroll_relations_vertical(
+                        -i16::try_from(relations_body.height.saturating_sub(5).max(1))
+                            .unwrap_or(i16::MAX),
+                    );
+                }
                 None
             }
             OverviewInput::PageDown => {
-                self.vertical = self
-                    .vertical
-                    .saturating_add(body.height.max(1))
-                    .min(max_vertical);
+                if self.active_pane() == OverviewPane::Changes {
+                    self.vertical = self
+                        .vertical
+                        .saturating_add(changes_body.height.max(1))
+                        .min(max_vertical);
+                } else {
+                    self.scroll_relations_vertical(
+                        i16::try_from(relations_body.height.saturating_sub(5).max(1))
+                            .unwrap_or(i16::MAX),
+                    );
+                }
                 None
             }
             OverviewInput::Top => {
-                self.vertical = 0;
-                self.selected = content.rows.first().map(|_| 0);
+                if self.active_pane() == OverviewPane::Changes {
+                    self.vertical = 0;
+                    self.selected = content.rows.first().map(|_| 0);
+                } else {
+                    self.update_relations_scroll(|scroll| scroll.vertical = 0);
+                }
                 None
             }
             OverviewInput::Bottom => {
-                self.vertical = max_vertical;
-                self.selected = content.rows.len().checked_sub(1);
+                if self.active_pane() == OverviewPane::Changes {
+                    self.vertical = max_vertical;
+                    self.selected = content.rows.len().checked_sub(1);
+                } else {
+                    self.update_relations_scroll(|scroll| scroll.vertical = u16::MAX);
+                }
+                None
+            }
+            OverviewInput::Left => {
+                if self.active_pane() == OverviewPane::Relations {
+                    self.update_relations_scroll(|scroll| {
+                        scroll.horizontal = scroll.horizontal.saturating_sub(1);
+                    });
+                }
+                None
+            }
+            OverviewInput::Right => {
+                if self.active_pane() == OverviewPane::Relations {
+                    self.update_relations_scroll(|scroll| {
+                        scroll.horizontal = scroll.horizontal.saturating_add(1);
+                    });
+                }
+                None
+            }
+            OverviewInput::FocusChanges => {
+                self.focus = OverviewPane::Changes;
+                self.maximized = None;
+                None
+            }
+            OverviewInput::FocusRelations => {
+                self.focus = OverviewPane::Relations;
+                self.maximized = None;
+                None
+            }
+            OverviewInput::ToggleMaximize => {
+                self.maximized = if self.maximized.is_some() {
+                    None
+                } else {
+                    Some(self.focus)
+                };
                 None
             }
             OverviewInput::ToggleExpand => {
-                if let Some(group_index) = self.selected_group_index(content)
+                if self.active_pane() == OverviewPane::Changes
+                    && let Some(group_index) = self.selected_group_index(content)
                     && !self.expanded.remove(&group_index)
                 {
                     self.expanded.insert(group_index);
                 }
                 None
             }
-            OverviewInput::Open => Some(OverviewCommand::Open(self.selected_address(content))),
+            OverviewInput::Open => {
+                let address = if self.active_pane() == OverviewPane::Changes {
+                    self.selected_address(content)
+                } else {
+                    None
+                };
+                Some(OverviewCommand::Open(address))
+            }
             OverviewInput::ViewPlan => Some(OverviewCommand::ViewPlan),
+            OverviewInput::Back if self.maximized.is_some() => {
+                self.maximized = None;
+                None
+            }
             OverviewInput::Back => Some(OverviewCommand::Back),
-            OverviewInput::SearchStart => {
+            OverviewInput::SearchStart if self.active_pane() == OverviewPane::Changes => {
                 let query = self.filter.clone();
                 self.search = Some(SearchState {
                     cursor: text_input::last_grapheme_boundary(&query),
@@ -211,8 +343,29 @@ impl OverviewViewState {
             | OverviewInput::SearchRight
             | OverviewInput::SearchHome
             | OverviewInput::SearchEnd
-            | OverviewInput::SearchConfirm => None,
+            | OverviewInput::SearchConfirm
+            | OverviewInput::SearchStart => None,
         }
+    }
+
+    fn scroll_relations_vertical(&self, delta: i16) {
+        self.update_relations_scroll(|scroll| {
+            if delta.is_negative() {
+                scroll.vertical = scroll.vertical.saturating_sub(delta.unsigned_abs());
+            } else {
+                scroll.vertical = scroll.vertical.saturating_add(delta.cast_unsigned());
+            }
+        });
+    }
+
+    fn update_relations_scroll(&self, update: impl FnOnce(&mut RelationGraphScroll)) {
+        let mut scroll = self.relations_scroll.get();
+        update(&mut scroll);
+        self.relations_scroll.set(scroll);
+    }
+
+    fn active_pane(&self) -> OverviewPane {
+        self.maximized.unwrap_or(self.focus)
     }
 
     fn apply_search(&mut self, input: OverviewInput, row_count: usize) -> Option<OverviewCommand> {
@@ -318,6 +471,31 @@ impl OverviewViewState {
         self.selected
     }
 
+    pub(crate) fn selected_node_id<'a>(
+        &self,
+        content: &'a OverviewContent,
+    ) -> Option<&'a RelationNodeId> {
+        self.selected
+            .and_then(|index| content.rows.get(index))
+            .and_then(|row| row.node_id.as_ref())
+    }
+
+    pub(crate) const fn focus(&self) -> OverviewPane {
+        self.focus
+    }
+
+    pub(crate) const fn maximized(&self) -> Option<OverviewPane> {
+        self.maximized
+    }
+
+    pub(crate) const fn relations_scroll(&self) -> RelationGraphScroll {
+        self.relations_scroll.get()
+    }
+
+    pub(crate) fn set_relations_scroll(&self, scroll: RelationGraphScroll) {
+        self.relations_scroll.set(scroll);
+    }
+
     pub(crate) fn selected_group_expanded(&self, content: &OverviewContent) -> Option<bool> {
         let group_index = self.selected_group_index(content)?;
         Some(self.expanded.contains(&group_index))
@@ -412,7 +590,7 @@ mod tests {
     use crate::app::review::{PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata};
 
     fn apply_search(view: &mut OverviewViewState, input: OverviewInput, content: &OverviewContent) {
-        view.apply(input, Rect::new(0, 0, 40, 5), 0, content);
+        view.apply(input, Rect::new(0, 0, 40, 5), Rect::default(), 0, content);
     }
 
     fn review() -> PlanReview {
@@ -499,6 +677,85 @@ mod tests {
     }
 
     #[test]
+    fn filtered_repeated_member_keeps_the_original_complete_node_identity() {
+        let review = review();
+        let all = OverviewContent::from_review(&review, "", &BTreeSet::new());
+        let filtered = OverviewContent::from_review(&review, "[1]", &BTreeSet::new());
+
+        let expected_node_id = RelationNodeId::from_addresses([
+            "aws_instance.web[0]".to_owned(),
+            "aws_instance.web[1]".to_owned(),
+        ]);
+        assert_eq!(all.rows[0].node_id, expected_node_id);
+        assert_eq!(filtered.rows.len(), 1);
+        assert_eq!(filtered.rows[0].address, "aws_instance.web[1]");
+        assert_eq!(filtered.rows[0].node_id, all.rows[0].node_id);
+    }
+
+    #[test]
+    fn panes_focus_maximize_scroll_and_restore_independently() {
+        let content = OverviewContent::from_review(&review(), "", &BTreeSet::new());
+        let mut view = OverviewViewState::default();
+        let changes = Rect::new(0, 0, 40, 4);
+        let relations = Rect::new(0, 0, 40, 8);
+
+        view.apply(
+            OverviewInput::FocusRelations,
+            changes,
+            relations,
+            0,
+            &content,
+        );
+        view.apply(OverviewInput::Right, changes, relations, 0, &content);
+        view.apply(OverviewInput::Down, changes, relations, 0, &content);
+        view.apply(
+            OverviewInput::ToggleMaximize,
+            changes,
+            relations,
+            0,
+            &content,
+        );
+        assert_eq!(view.focus(), OverviewPane::Relations);
+        assert_eq!(view.maximized(), Some(OverviewPane::Relations));
+        assert_eq!(view.relations_scroll().horizontal, 1);
+        assert_eq!(view.relations_scroll().vertical, 1);
+
+        view.apply(OverviewInput::Back, changes, relations, 0, &content);
+        assert_eq!(view.maximized(), None);
+        assert_eq!(view.focus(), OverviewPane::Relations);
+        assert_eq!(view.relations_scroll().horizontal, 1);
+        assert_eq!(view.relations_scroll().vertical, 1);
+        assert_eq!(
+            view.apply(OverviewInput::Back, changes, relations, 0, &content),
+            Some(OverviewCommand::Back)
+        );
+    }
+
+    #[test]
+    fn relations_enter_opens_the_raw_plan_from_the_top() {
+        let content = OverviewContent::from_review(&review(), "", &BTreeSet::new());
+        let mut view = OverviewViewState::default();
+        view.apply(
+            OverviewInput::FocusRelations,
+            Rect::default(),
+            Rect::default(),
+            0,
+            &content,
+        );
+
+        assert_eq!(
+            view.apply(
+                OverviewInput::Open,
+                Rect::default(),
+                Rect::default(),
+                0,
+                &content,
+            ),
+            Some(OverviewCommand::Open(None))
+        );
+    }
+
+    #[test]
     fn selection_scroll_accounts_for_overview_header_and_notice() {
         let content = OverviewContent {
             rows: (0..6)
@@ -510,16 +767,18 @@ mod tests {
                     display_address: format!("resource.{index}"),
                     action: "~".to_owned(),
                     count: 1,
+                    node_id: None,
                 })
                 .collect(),
             repeated: 0,
             unsupported: 1,
+            relations: None,
         };
         let mut view = OverviewViewState::default();
         let body = Rect::new(0, 0, 40, 5);
 
         for _ in 0..6 {
-            view.apply(OverviewInput::Down, body, 3, &content);
+            view.apply(OverviewInput::Down, body, Rect::default(), 3, &content);
         }
 
         assert_eq!(view.selected(), Some(5));
@@ -532,6 +791,7 @@ mod tests {
             rows: Vec::new(),
             repeated: 0,
             unsupported: 0,
+            relations: None,
         };
         let mut view = OverviewViewState::default();
 
