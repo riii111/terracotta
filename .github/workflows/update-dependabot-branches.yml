@@ -79,9 +79,29 @@ jobs:
               continue
             fi
 
-            if ! gh workflow run ci.yml --ref "$head_ref"; then
-              echo "::error::Could not run CI for Dependabot PR #$number"
+            pr_run=
+            for _ in $(seq 1 30); do
+              if ! pr_run=$(gh run list --workflow ci.yml --branch "$head_ref" --limit 20 \
+                  --json databaseId,headSha,event,status,conclusion |
+                  jq -c --arg sha "$updated_head" \
+                    '[.[] | select(.headSha == $sha and .event == "pull_request")][0] // empty'); then
+                break
+              fi
+              [ -n "$pr_run" ] && break
+              sleep 2
+            done
+            if [ -z "$pr_run" ]; then
+              echo "::error::Could not find pull request CI for Dependabot PR #$number"
               failures=1
+              continue
+            fi
+
+            if [ "$(jq -r .conclusion <<< "$pr_run")" = action_required ]; then
+              run_id=$(jq -r .databaseId <<< "$pr_run")
+              if ! gh api --method POST "/repos/$GH_REPO/actions/runs/$run_id/approve" --silent; then
+                echo "::error::Could not approve pull request CI for Dependabot PR #$number"
+                failures=1
+              fi
             fi
           done <<< "$dependabot_prs"
           exit "$failures"
