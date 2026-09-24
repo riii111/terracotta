@@ -613,10 +613,11 @@ impl EnvironmentView {
                 self.notice = Some("The matrix source belongs to another environment.".to_owned());
                 return None;
             }
-            if cell
-                .source
-                .as_ref()
-                .is_none_or(|source| source.line.is_none())
+            if !grouped
+                && cell
+                    .source
+                    .as_ref()
+                    .is_none_or(|source| source.line.is_none())
             {
                 self.notice = Some("The selected row has no source block.".to_owned());
                 return None;
@@ -646,7 +647,7 @@ impl EnvironmentView {
             ));
             return None;
         };
-        let notice = (grouped && matches.len() > 1).then(|| {
+        let notice = grouped.then(|| {
             format!(
                 "Opening the first of {} matching resources: {address}.",
                 matches.len()

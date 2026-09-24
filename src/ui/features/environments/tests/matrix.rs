@@ -888,6 +888,120 @@ fn grouped_matrix_enter_opens_the_first_matching_resource_and_reports_the_count(
 }
 
 #[test]
+fn grouped_matrix_enter_finds_a_later_member_when_the_first_has_no_source_block() {
+    let mut state = session(&["dev", "prod"]);
+    let changes = (0..2)
+        .map(|index| {
+            change(
+                &format!("terraform_data.server[{index}]"),
+                ResourceChangeKind::Update,
+            )
+        })
+        .collect();
+    let lines = [
+        "Terraform will perform the following actions:".to_owned(),
+        String::new(),
+        "# terraform_data.server[1] will change".to_owned(),
+        "~ input = old -> new".to_owned(),
+        String::new(),
+    ];
+    let blocks = vec![
+        PlanBlock::new(0..2, PlanBlockKind::Common),
+        PlanBlock::with_addresses(
+            2..lines.len(),
+            PlanBlockKind::Resource,
+            vec!["terraform_data.server[1]".to_owned()],
+        ),
+    ];
+    complete_with_plan_document(&mut state, changes, lines.join("\n"), blocks, Vec::new());
+    complete(
+        &mut state,
+        (0..2)
+            .map(|index| {
+                change(
+                    &format!("terraform_data.server[{index}]"),
+                    ResourceChangeKind::Update,
+                )
+            })
+            .collect(),
+    );
+
+    let mut view = EnvironmentView::default();
+    let _ = text(&mut view, &state, (80, 24));
+    press(&mut view, &mut state, KeyCode::Enter);
+    press(&mut view, &mut state, KeyCode::Down);
+    let Some(MatrixSelectedItem::Resource {
+        cell: Some(cell), ..
+    }) = view.matrix.selected_item(0)
+    else {
+        panic!("the selected row is a grouped resource");
+    };
+    assert!(
+        cell.source
+            .as_ref()
+            .is_none_or(|source| source.line.is_none())
+    );
+    press(&mut view, &mut state, KeyCode::Enter);
+
+    assert_eq!(view.selection.raw, Some(0));
+    let block_line = state.plans()[0]
+        .review()
+        .unwrap()
+        .review()
+        .document()
+        .block_for_address("terraform_data.server[1]")
+        .unwrap()
+        .lines()
+        .start;
+    assert_eq!(usize::from(view.reviews[0].scroll().0), block_line);
+    press(&mut view, &mut state, KeyCode::Esc);
+    assert!(
+        text(&mut view, &state, (80, 24))
+            .contains("Opening the first of 1 matching resources: terraform_data.server[1].")
+    );
+}
+
+#[test]
+fn grouped_matrix_reports_one_match_for_an_asymmetric_group() {
+    let mut state = session(&["dev", "prod"]);
+    complete(
+        &mut state,
+        vec![change(
+            "terraform_data.server[0]",
+            ResourceChangeKind::Update,
+        )],
+    );
+    complete(
+        &mut state,
+        (0..2)
+            .map(|index| {
+                change(
+                    &format!("terraform_data.server[{index}]"),
+                    ResourceChangeKind::Update,
+                )
+            })
+            .collect(),
+    );
+
+    let mut view = EnvironmentView::default();
+    let _ = text(&mut view, &state, (80, 24));
+    press(&mut view, &mut state, KeyCode::Enter);
+    press(&mut view, &mut state, KeyCode::Down);
+    assert!(matches!(
+        view.matrix.relation_selection(),
+        Some((OverviewRowId::Group(_), None))
+    ));
+    press(&mut view, &mut state, KeyCode::Enter);
+
+    assert_eq!(view.selection.raw, Some(0));
+    press(&mut view, &mut state, KeyCode::Esc);
+    assert!(
+        text(&mut view, &state, (80, 24))
+            .contains("Opening the first of 1 matching resources: terraform_data.server[0].")
+    );
+}
+
+#[test]
 fn same_change_summary_counts_matrix_rows_and_replacements_once() {
     let mut state = session(&["dev", "prod"]);
     let changes = || {
