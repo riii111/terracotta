@@ -1052,7 +1052,7 @@ Plan: 0 to add, 3 to change, 0 to destroy.
 
     #[test]
     #[ignore = "requires Terraform CLI and the interactive demo"]
-    fn basic_scenario_demo_opens_the_tui_after_noninteractive_setup() {
+    fn single_demo_opens_the_tui_after_noninteractive_setup() {
         let output = Command::new("python3")
             .current_dir(env!("CARGO_MANIFEST_DIR"))
             .args([
@@ -1062,8 +1062,8 @@ Plan: 0 to add, 3 to change, 0 to destroy.
                 "120",
                 "30",
                 "demo",
-                "fixtures/basic/scenario.py",
-                "demo",
+                "fixtures/demo.py",
+                "single",
             ])
             .env("RUSTC_WRAPPER", "")
             .env_remove("TF_IN_AUTOMATION")
@@ -1090,7 +1090,7 @@ Plan: 0 to add, 3 to change, 0 to destroy.
         fn setup() -> Self {
             let output = Command::new("python3")
                 .current_dir(env!("CARGO_MANIFEST_DIR"))
-                .args(["fixtures/basic/scenario.py", "setup"])
+                .args(["tests/support/cli/basic_fixture.py", "setup"])
                 .output()
                 .expect("basic scenario setup should start");
             assert!(
@@ -1141,7 +1141,7 @@ Plan: 0 to add, 3 to change, 0 to destroy.
     fn clean_basic_scenario(directory: &Path) {
         let output = Command::new("python3")
             .current_dir(env!("CARGO_MANIFEST_DIR"))
-            .args(["fixtures/basic/scenario.py", "clean"])
+            .args(["tests/support/cli/basic_fixture.py", "clean"])
             .arg(directory)
             .output()
             .expect("basic scenario cleanup should start");

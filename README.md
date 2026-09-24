@@ -97,13 +97,15 @@ parent directory. The exit code is 130 when interrupted, 1 if any environment ha
 an error or is excluded, and otherwise 2 for changes with `-detailed-exitcode`,
 or 0 without it.
 
-Try the cloudless demos: `python3 fixtures/basic/scenario.py demo` opens the
-single-environment Overview. `python3 fixtures/environments/scenario.py demo`
-opens the three-environment comparison. To see a repeated resource group from a
-real plan, run `python3 fixtures/basic/scenario.py demo --scenario group-expansion`;
-this downloads HashiCorp's time provider on first use, without connecting to a cloud.
-In the plan review, press `s` for Overview, then select `[+] time_sleep.server[*]`
-and press Space. To inspect the plan separately, run
-`python3 fixtures/basic/scenario.py setup --scenario group-expansion`, then remove
-the temporary directory with `python3 fixtures/basic/scenario.py clean PATH`.
-Pass `--plugin-dir PATH` to use an existing local provider directory.
+Try the cloudless demos:
+
+```sh
+python3 fixtures/demo.py single
+python3 fixtures/demo.py multi
+```
+
+`single` opens the single-environment plan. `multi` opens the `dev`, `prod`, and
+`stg` comparison. Both commands prepare a temporary local scenario, build
+Terracotta, and remove the scenario when the review exits. The automatic fixture
+acceptance checks also validate repeated-resource expansion and multi-environment
+retry with both Terraform and OpenTofu.

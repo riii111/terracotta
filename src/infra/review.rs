@@ -631,7 +631,10 @@ mod tests {
     fn reviews_the_basic_scenario_with_four_direct_matches_and_one_no_match() {
         let setup = Command::new("python3")
             .args([
-                concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/basic/scenario.py"),
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/support/cli/basic_fixture.py"
+                ),
                 "setup",
             ])
             .output()
@@ -658,7 +661,10 @@ mod tests {
         );
         let cleanup = Command::new("python3")
             .args([
-                concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/basic/scenario.py"),
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/support/cli/basic_fixture.py"
+                ),
                 "clean",
             ])
             .arg(&directory)

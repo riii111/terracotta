@@ -89,6 +89,45 @@ jobs:
         if: runner.os == 'Windows'
         run: cargo test --locked --release --test delegation_windows
 
+  scenario-acceptance:
+    name: Scenario acceptance (${{ matrix.tool }})
+    strategy:
+      fail-fast: false
+      matrix:
+        tool: [terraform, tofu]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+        with:
+          toolchain: '1.98.1'
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Install Terraform
+        if: matrix.tool == 'terraform'
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: '1.14.6'
+          terraform_wrapper: false
+      - name: Install OpenTofu
+        if: matrix.tool == 'tofu'
+        uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: '1.12.6'
+          tofu_wrapper: false
+      - run: cargo build --locked --bin terracotta
+      - name: Verify single and repeated-resource plans
+        run: python3 fixtures/basic/acceptance.py --tool '${{ matrix.tool }}'
+      - name: Verify multi-environment CLI retry
+        run: python3 fixtures/environments/acceptance.py --binary target/debug/terracotta --tool '${{ matrix.tool }}'
+      - name: Verify Terraform-backed Rust integration tests
+        if: matrix.tool == 'terraform'
+        run: |
+          cargo test --locked --lib reviews_the_basic_scenario_with_four_direct_matches_and_one_no_match -- --ignored
+          cargo test --locked --lib gets_saved_plan_from_the_basic_terraform_scenario -- --ignored
+          cargo test --locked --all-features --test cli single_demo_opens_the_tui_after_noninteractive_setup -- --ignored
+
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest
