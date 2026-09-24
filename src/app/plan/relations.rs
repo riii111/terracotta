@@ -33,6 +33,11 @@ pub(crate) enum RelationUnresolvedReason {
     CyclicReference,
     InvalidConfiguration,
     InvalidState,
+    ConfigurationPartial,
+    ConfigurationUnavailable,
+    ConfigurationNotCollected,
+    StateUnavailable,
+    StateNotCollected,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

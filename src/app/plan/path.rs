@@ -34,7 +34,7 @@ pub(crate) fn normalize_resource_addresses<'a>(
         for component in parse_address_components(address)? {
             match component {
                 AddressComponent::Name(name) => parts.push((name, 0)),
-                AddressComponent::InstanceKey => parts.last_mut()?.1 += 1,
+                AddressComponent::InstanceKey(_) => parts.last_mut()?.1 += 1,
             }
         }
         if merged.is_empty() {
@@ -71,9 +71,41 @@ pub(crate) fn normalize_resource_addresses<'a>(
     })
 }
 
+pub(crate) fn resource_address_matches_block(block: &str, candidate: &str) -> bool {
+    let (Some(block), Some(candidate)) = (address_segments(block), address_segments(candidate))
+    else {
+        return false;
+    };
+    block.len() == candidate.len()
+        && block.iter().zip(candidate).all(|(block, candidate)| {
+            block.name == candidate.name
+                && (block.instance_keys.is_empty()
+                    || block.instance_keys == candidate.instance_keys)
+        })
+}
+
+struct AddressSegment {
+    name: String,
+    instance_keys: Vec<String>,
+}
+
+fn address_segments(address: &str) -> Option<Vec<AddressSegment>> {
+    let mut segments: Vec<AddressSegment> = Vec::new();
+    for component in parse_address_components(address)? {
+        match component {
+            AddressComponent::Name(name) => segments.push(AddressSegment {
+                name,
+                instance_keys: Vec::new(),
+            }),
+            AddressComponent::InstanceKey(key) => segments.last_mut()?.instance_keys.push(key),
+        }
+    }
+    (!segments.is_empty()).then_some(segments)
+}
+
 enum AddressComponent {
     Name(String),
-    InstanceKey,
+    InstanceKey(String),
 }
 
 fn parse_address_components(address: &str) -> Option<Vec<AddressComponent>> {
@@ -94,8 +126,11 @@ fn parse_address_components(address: &str) -> Option<Vec<AddressComponent>> {
         ));
 
         while bytes.get(position) == Some(&b'[') {
+            let key_start = position;
             position = parse_instance_key(bytes, position)?;
-            components.push(AddressComponent::InstanceKey);
+            components.push(AddressComponent::InstanceKey(
+                address.get(key_start..position)?.to_owned(),
+            ));
         }
 
         match bytes.get(position) {
