@@ -10,11 +10,11 @@ dev Ready ~21
 │Address             dev        why    │
 │                                      │
 │Differs across envs                   │
-│terraform_data.api  ~          action │
+│> terraform_data.api~          action │
 │                                      │
-│Same change across envs               │
-│…orm_data.server[*] ~ 20              │
-│                                      │
+│  Same: 1 changes ~1  Space expand    │
+│blank: absent   .: unchanged          │
+│?: plan unavailable                   │
 └──────────────────────────────────────┘
-[/] env | Enter open plan | v full plan
-/ filter | Space expand | ?/q help/quit
+[/] env | Enter open row | v full plan
+/ filter | ?/q help/quit

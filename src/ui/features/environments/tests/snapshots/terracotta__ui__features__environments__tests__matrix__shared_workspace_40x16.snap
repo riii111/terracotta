@@ -4,17 +4,17 @@ expression: output
 ---
 terracotta ▸ prod                   tofu
 staging Error  │  staging Error
-┌* [2] Differs across envs─────────────┐
+┌* [2] Differs across envs · Ready 0/2─┐
 │                                      │
 │Synthetic acquisition error           │
 │Address     staging      why          │
 │                                      │
 │Waiting for environment plans.        │
 │                                      │
+│                                      │
+│                                      │
 │blank: absent   .: unchanged          │
 │?: plan unavailable                   │
-│                                      │
-│                                      │
 └──────────────────────────────────────┘
-[/] env | Enter open plan | v full plan
-/ filter | ?/q help/quit
+[/] env | v full plan | / filter
+?/q help/quit

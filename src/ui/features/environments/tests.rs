@@ -192,17 +192,18 @@ fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
         assert!(text.contains("Help"), "{width}x{height}: {text}");
         assert!(text.contains("Current"), "{width}x{height}: {text}");
         if height <= 24 {
-            assert!(text.contains("scroll"), "{width}x{height}: {text}");
+            assert!(text.contains("↑ / ↓ / j / k"), "{width}x{height}: {text}");
         } else {
             assert!(text.contains("Comparison"), "{width}x{height}: {text}");
         }
         if (width, height) == (80, 24) {
+            let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
             assert!(text.contains("focus Differs"));
             assert!(!text.contains("1 / 2"));
             assert!(!text.contains("include or exclude"));
             assert!(!text.contains("toggle the Envs sidebar"));
             assert!(!text.contains("Tab"));
-            assert!(text.contains("expand or collapse groups"));
+            assert!(normalized.contains("expand or collapse the selected group"));
             assert!(!text.contains("environment filter"));
         }
         assert!(text.contains("Esc"), "{width}x{height}: {text}");
@@ -458,7 +459,7 @@ fn overview_round_trip_opens_the_full_plan_from_the_top() {
         );
         let overview = buffer_text(&render_to_buffer(size, |frame| view.render(frame, &state)));
         assert!(
-            overview.contains("terraform_data.api"),
+            overview.contains("Same change across envs"),
             "{size:?}: {overview}"
         );
         view.handle_key(

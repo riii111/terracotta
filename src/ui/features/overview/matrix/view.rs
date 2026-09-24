@@ -2,13 +2,15 @@ use std::collections::BTreeSet;
 
 use crate::app::environments::{
     EnvironmentSession,
-    comparison::EnvironmentSelection,
-    comparison::{CellState, ComparisonRow, DifferenceReason},
+    comparison::{
+        CellState, ComparisonRow, DifferenceReason, EnvironmentSelection, SourceReference,
+    },
     overview::{
         EnvironmentOverview, GroupId, OverviewRow, OverviewRowId,
         environment_overview_for_selection,
     },
 };
+use crate::app::plan::ResourceChangeKind;
 use crate::ui::features::overview::OverviewInput;
 use crate::ui::text_input;
 
@@ -16,15 +18,56 @@ use crate::ui::text_input;
 pub(crate) struct MatrixCell {
     pub(crate) state: CellState,
     pub(crate) members: Vec<String>,
+    pub(crate) source: Option<SourceReference>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct MatrixRowSelection {
+    pub(crate) row_id: OverviewRowId,
+    pub(crate) child_address: Option<String>,
+}
+
+pub(crate) enum MatrixSelectedItem {
+    SameChanges,
+    Resource {
+        addresses: Vec<String>,
+        cell: Option<MatrixCell>,
+        grouped: bool,
+    },
+}
+
+pub(super) struct SameChangeSummary {
+    pub(super) rows: usize,
+    pub(super) actions: ChangeCounts,
+}
+
+#[derive(Default)]
+pub(super) struct ChangeCounts {
+    pub(super) creates: usize,
+    pub(super) updates: usize,
+    pub(super) deletes: usize,
+    pub(super) replacements: usize,
+    pub(super) reads: usize,
+    pub(super) moves: usize,
+    pub(super) imports: usize,
+    pub(super) unknown: usize,
 }
 
 pub(super) struct Row {
     pub(super) address: String,
     pub(super) group: Option<GroupId>,
-    pub(super) id: OverviewRowId,
+    pub(super) group_members: Vec<String>,
+    pub(super) selection: Option<SelectionKey>,
     pub(super) child: bool,
     pub(super) cells: Vec<MatrixCell>,
     pub(super) difference: Option<DifferenceReason>,
+    pub(super) summary: Option<SameChangeSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum SelectionKey {
+    SameSummary,
+    Resource(MatrixRowSelection),
 }
 
 struct Search {
@@ -38,16 +81,24 @@ pub(crate) struct MatrixView {
     pub(super) vertical: usize,
     pub(super) first_column: usize,
     pub(super) expanded: BTreeSet<GroupId>,
+    pub(super) same_expanded: bool,
     pub(super) filter: String,
     pub(super) overview: Option<EnvironmentOverview>,
     pub(super) environments: Vec<usize>,
+    pub(super) selected: Option<SelectionKey>,
     search: Option<Search>,
     revision: Option<u64>,
 }
 
 impl MatrixView {
-    pub(crate) fn sync(&mut self, state: &EnvironmentSession, environments: &[usize]) {
+    pub(crate) fn sync(
+        &mut self,
+        state: &EnvironmentSession,
+        environments: &[usize],
+        selected_environment: usize,
+    ) {
         if self.revision != Some(state.revision()) || self.environments != environments {
+            let environment_selection_changed = self.environments != environments;
             self.overview = Some(if environments.len() == state.plans().len() {
                 state.overview().clone()
             } else {
@@ -57,6 +108,13 @@ impl MatrixView {
                 environment_overview_for_selection(state.plans(), &selection)
             });
             self.environments = environments.to_vec();
+            if environment_selection_changed {
+                if self.selected_column(selected_environment).is_some() {
+                    self.reveal_environment(selected_environment);
+                } else {
+                    self.first_column = 0;
+                }
+            }
             self.rebuild();
             self.revision = Some(state.revision());
         }
@@ -66,11 +124,71 @@ impl MatrixView {
         self.search.is_some()
     }
 
-    pub(crate) fn selected_column(&self, environment: usize) -> usize {
+    pub(crate) fn selected_column(&self, environment: usize) -> Option<usize> {
         self.environments
             .iter()
             .position(|index| *index == environment)
-            .unwrap_or(0)
+    }
+
+    fn selected_row(&self) -> Option<&MatrixRowSelection> {
+        match self.selected.as_ref()? {
+            SelectionKey::Resource(selection) => Some(selection),
+            SelectionKey::SameSummary => None,
+        }
+    }
+
+    pub(crate) fn relation_selection(&self) -> Option<(&OverviewRowId, Option<&str>)> {
+        self.selected_row()
+            .map(|selection| (&selection.row_id, selection.child_address.as_deref()))
+    }
+
+    pub(crate) fn selected_item(&self, environment: usize) -> Option<MatrixSelectedItem> {
+        let selected = self.selected.as_ref()?;
+        if matches!(selected, SelectionKey::SameSummary) {
+            return Some(MatrixSelectedItem::SameChanges);
+        }
+        let identity = self.relation_selection()?;
+        let row = self.rows.iter().find(|row| {
+            row.selection
+                .as_ref()
+                .is_some_and(|selection| match selection {
+                    SelectionKey::SameSummary => false,
+                    SelectionKey::Resource(selection) => {
+                        (&selection.row_id, selection.child_address.as_deref()) == identity
+                    }
+                })
+        })?;
+
+        let column = self.selected_column(environment);
+        let cell = column.and_then(|column| row.cells.get(column)).cloned();
+        let (addresses, grouped) = if row.group.is_some() {
+            let addresses = cell
+                .as_ref()
+                .map_or_else(|| row.group_members.clone(), |cell| cell.members.clone());
+            (addresses, true)
+        } else {
+            (vec![row.address.clone()], false)
+        };
+        Some(MatrixSelectedItem::Resource {
+            addresses,
+            cell,
+            grouped,
+        })
+    }
+
+    pub(crate) fn selected_expanded(&self) -> Option<bool> {
+        let selected = self.selected.as_ref()?;
+        let row = self
+            .rows
+            .iter()
+            .find(|row| row.selection.as_ref() == Some(selected))?;
+        match selected {
+            SelectionKey::SameSummary => Some(self.same_expanded),
+            SelectionKey::Resource(_) => row
+                .group
+                .as_ref()
+                .map(|group| self.expanded.contains(group)),
+        }
     }
 
     pub(crate) fn filter(&self) -> &str {
@@ -81,52 +199,30 @@ impl MatrixView {
         !self.filter.is_empty()
     }
 
-    pub(crate) fn groups_expanded(&self) -> Option<bool> {
-        let groups: Vec<_> = self
-            .rows
-            .iter()
-            .filter(|row| row.group.is_some())
-            .filter_map(|row| match &row.id {
-                OverviewRowId::Group(id) => Some(id),
-                OverviewRowId::Individual(_) => None,
-            })
-            .collect();
-        (!groups.is_empty()).then(|| groups.iter().all(|group| self.expanded.contains(group)))
-    }
-
     pub(crate) fn apply(&mut self, input: OverviewInput, page_size: usize) {
         if self.searching() {
             self.edit_search(input);
             return;
         }
         match input {
-            OverviewInput::Up => self.vertical = self.vertical.saturating_sub(1),
-            OverviewInput::Down => self.vertical = self.vertical.saturating_add(1),
+            OverviewInput::Up => self.move_selection(-1),
+            OverviewInput::Down => self.move_selection(1),
             OverviewInput::PageUp => {
-                self.vertical = self.vertical.saturating_sub(page_size.max(1));
+                self.move_selection(-isize::try_from(page_size.max(1)).unwrap_or(isize::MAX));
             }
             OverviewInput::PageDown => {
-                self.vertical = self.vertical.saturating_add(page_size.max(1));
+                self.move_selection(isize::try_from(page_size.max(1)).unwrap_or(isize::MAX));
             }
-            OverviewInput::Top => self.vertical = 0,
-            OverviewInput::Bottom => self.vertical = usize::MAX,
-            OverviewInput::ToggleExpand => {
-                let groups: BTreeSet<_> = self
-                    .rows
-                    .iter()
-                    .filter(|row| row.group.is_some())
-                    .filter_map(|row| match &row.id {
-                        OverviewRowId::Group(id) => Some(id.clone()),
-                        OverviewRowId::Individual(_) => None,
-                    })
-                    .collect();
-                if groups.iter().any(|group| !self.expanded.contains(group)) {
-                    self.expanded.extend(groups);
-                } else {
-                    self.expanded.retain(|group| !groups.contains(group));
-                }
-                self.rebuild();
+            OverviewInput::Top => self.select_index(Some(0)),
+            OverviewInput::Bottom => self.select_index(self.rows.len().checked_sub(1)),
+            OverviewInput::Left => self.first_column = self.first_column.saturating_sub(1),
+            OverviewInput::Right => {
+                self.first_column = self
+                    .first_column
+                    .saturating_add(1)
+                    .min(self.environments.len().saturating_sub(1));
             }
+            OverviewInput::ToggleExpand => self.toggle_selected_expansion(),
             OverviewInput::SearchStart => {
                 self.search = Some(Search {
                     previous: self.filter.clone(),
@@ -141,13 +237,94 @@ impl MatrixView {
         }
     }
 
+    pub(crate) fn reveal_environment(&mut self, environment: usize) {
+        if let Some(column) = self.selected_column(environment) {
+            self.first_column = column;
+        }
+    }
+
+    fn move_selection(&mut self, delta: isize) {
+        let current = self.selected_index().unwrap_or(0);
+        let next = if delta < 0 {
+            current.saturating_sub(delta.unsigned_abs())
+        } else {
+            current.saturating_add(delta.cast_unsigned())
+        };
+        self.select_index((!self.rows.is_empty()).then(|| next.min(self.rows.len() - 1)));
+    }
+
+    fn select_index(&mut self, index: Option<usize>) {
+        self.selected =
+            index.and_then(|index| self.rows.get(index).and_then(|row| row.selection.clone()));
+    }
+
+    fn selected_index(&self) -> Option<usize> {
+        self.rows
+            .iter()
+            .position(|row| row.selection.as_ref() == self.selected.as_ref())
+    }
+
+    fn toggle_selected_expansion(&mut self) {
+        match self.selected.as_ref() {
+            Some(SelectionKey::SameSummary) => self.same_expanded = !self.same_expanded,
+            Some(SelectionKey::Resource(_)) => {
+                let group = self
+                    .rows
+                    .iter()
+                    .find(|row| row.selection.as_ref() == self.selected.as_ref())
+                    .and_then(|row| row.group.clone());
+                if let Some(group) = group {
+                    if self.expanded.contains(&group) {
+                        self.expanded.remove(&group);
+                    } else {
+                        self.expanded.insert(group);
+                    }
+                }
+            }
+            None => return,
+        }
+        self.rebuild();
+    }
+
     fn rebuild(&mut self) {
+        let old_index = self.selected_index();
+        let old_selection = self.selected.clone();
         let Some(overview) = &self.overview else {
             self.rows.clear();
+            self.selected = None;
             self.vertical = 0;
             return;
         };
-        self.rows = rows(overview, &self.filter, &self.expanded);
+
+        let mut visible = rows(overview, &self.filter, &self.expanded);
+        if self.environments.len() > 1 {
+            let same_start = visible
+                .iter()
+                .position(|row| row.difference.is_none())
+                .unwrap_or(visible.len());
+            let same_rows = visible.split_off(same_start);
+            if !same_rows.is_empty() {
+                let summary = same_change_summary(&same_rows);
+                visible.push(Row::same_summary(summary));
+                if self.same_expanded {
+                    visible.extend(same_rows);
+                }
+            }
+        }
+        self.rows = visible;
+        self.selected = if self
+            .rows
+            .iter()
+            .any(|row| row.selection.as_ref() == old_selection.as_ref())
+        {
+            old_selection
+        } else if self.rows.is_empty() {
+            None
+        } else {
+            self.rows
+                .get(old_index.unwrap_or(0).min(self.rows.len() - 1))
+                .and_then(|row| row.selection.clone())
+        };
         if self.rows.is_empty() {
             self.vertical = 0;
         }
@@ -192,6 +369,21 @@ impl MatrixView {
     }
 }
 
+impl Row {
+    const fn same_summary(summary: SameChangeSummary) -> Self {
+        Self {
+            address: String::new(),
+            group: None,
+            group_members: Vec::new(),
+            selection: Some(SelectionKey::SameSummary),
+            child: false,
+            cells: Vec::new(),
+            difference: None,
+            summary: Some(summary),
+        }
+    }
+}
+
 fn rows(overview: &EnvironmentOverview, filter: &str, expanded: &BTreeSet<GroupId>) -> Vec<Row> {
     let mut rows = Vec::new();
     for row in &overview.rows {
@@ -200,7 +392,10 @@ fn rows(overview: &EnvironmentOverview, filter: &str, expanded: &BTreeSet<GroupI
                 rows.push(individual(
                     row,
                     false,
-                    OverviewRowId::Individual(row.address.clone()),
+                    MatrixRowSelection {
+                        row_id: OverviewRowId::Individual(row.address.clone()),
+                        child_address: None,
+                    },
                 ));
             }
             OverviewRow::Group(group) => {
@@ -213,10 +408,14 @@ fn rows(overview: &EnvironmentOverview, filter: &str, expanded: &BTreeSet<GroupI
                     continue;
                 }
                 if children.len() == 1 {
+                    let child = children[0];
                     rows.push(individual(
-                        children[0],
+                        child,
                         false,
-                        OverviewRowId::Individual(children[0].address.clone()),
+                        MatrixRowSelection {
+                            row_id: OverviewRowId::Group(group.id.clone()),
+                            child_address: Some(child.address.clone()),
+                        },
                     ));
                     continue;
                 }
@@ -234,23 +433,36 @@ fn rows(overview: &EnvironmentOverview, filter: &str, expanded: &BTreeSet<GroupI
                         MatrixCell {
                             state: cell.state.clone(),
                             members: members.iter().map(|child| child.address.clone()).collect(),
+                            source: cell.source.clone(),
                         }
                     })
                     .collect();
                 rows.push(Row {
                     address: group.display_address.clone(),
                     group: Some(group.id.clone()),
-                    id: OverviewRowId::Group(group.id.clone()),
+                    group_members: group
+                        .children
+                        .iter()
+                        .map(|child| child.address.clone())
+                        .collect(),
+                    selection: Some(SelectionKey::Resource(MatrixRowSelection {
+                        row_id: OverviewRowId::Group(group.id.clone()),
+                        child_address: None,
+                    })),
                     child: false,
                     cells,
                     difference: None,
+                    summary: None,
                 });
                 if expanded.contains(&group.id) {
                     rows.extend(children.into_iter().map(|child| {
                         individual(
                             child,
                             true,
-                            OverviewRowId::Individual(child.address.clone()),
+                            MatrixRowSelection {
+                                row_id: OverviewRowId::Group(group.id.clone()),
+                                child_address: Some(child.address.clone()),
+                            },
                         )
                     }));
                 }
@@ -261,11 +473,12 @@ fn rows(overview: &EnvironmentOverview, filter: &str, expanded: &BTreeSet<GroupI
     rows
 }
 
-fn individual(row: &ComparisonRow, child: bool, id: OverviewRowId) -> Row {
+fn individual(row: &ComparisonRow, child: bool, selection: MatrixRowSelection) -> Row {
     Row {
         address: row.address.clone(),
         group: None,
-        id,
+        group_members: Vec::new(),
+        selection: Some(SelectionKey::Resource(selection)),
         child,
         cells: row
             .cells
@@ -273,9 +486,38 @@ fn individual(row: &ComparisonRow, child: bool, id: OverviewRowId) -> Row {
             .map(|cell| MatrixCell {
                 state: cell.state.clone(),
                 members: vec![row.address.clone()],
+                source: cell.source.clone(),
             })
             .collect(),
         difference: row.difference,
+        summary: None,
+    }
+}
+
+fn same_change_summary(rows: &[Row]) -> SameChangeSummary {
+    let mut actions = ChangeCounts::default();
+    for row in rows {
+        let Some(kind) = row.cells.iter().find_map(|cell| match cell.state {
+            CellState::Change { kind, .. } => Some(kind),
+            CellState::NoOp | CellState::Missing | CellState::Unavailable => None,
+        }) else {
+            continue;
+        };
+        match kind {
+            ResourceChangeKind::Create => actions.creates += 1,
+            ResourceChangeKind::Update => actions.updates += 1,
+            ResourceChangeKind::Delete => actions.deletes += 1,
+            ResourceChangeKind::Replace => actions.replacements += 1,
+            ResourceChangeKind::Read => actions.reads += 1,
+            ResourceChangeKind::Move => actions.moves += 1,
+            ResourceChangeKind::Import => actions.imports += 1,
+            ResourceChangeKind::Unknown | ResourceChangeKind::Unsupported => actions.unknown += 1,
+            ResourceChangeKind::NoOp => {}
+        }
+    }
+    SameChangeSummary {
+        rows: rows.len(),
+        actions,
     }
 }
 
@@ -300,6 +542,12 @@ mod tests {
         let rows = rows(&overview, "", &BTreeSet::new());
 
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].id, OverviewRowId::Individual(address));
+        assert_eq!(
+            rows[0].selection,
+            Some(SelectionKey::Resource(MatrixRowSelection {
+                row_id: OverviewRowId::Individual(address),
+                child_address: None,
+            }))
+        );
     }
 }
