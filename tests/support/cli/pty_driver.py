@@ -219,7 +219,7 @@ def wait_parts(markers, name, timeout=20):
     wait_screen(lambda current: all(marker in current for marker in markers), name, markers, timeout)
 
 
-def wait_environment(name, status, timeout=20):
+def wait_environment(name, status, timeout=20, row_only=False):
     def matches(current):
         lines = current.splitlines()
         for index, line in enumerate(lines):
@@ -228,7 +228,7 @@ def wait_environment(name, status, timeout=20):
                     status_line = lines[index + 1].split("││", 1)[0]
                     if status in status_line:
                         return True
-            if not ("[x]" in line or "[ ]" in line):
+            if not row_only and not ("[x]" in line or "[ ]" in line):
                 for part in line.split("│"):
                     if name in part and status in part:
                         return True
@@ -400,26 +400,32 @@ try:
             send_key(b"q")
             exit_code = wait_exit()
         elif scenario == "env_real":
-            wait_parts(["Ready: 1/3", "Running", "Compared: dev"], "real_partial_results")
+            wait_environment("dev", "Ready", row_only=True)
+            wait_environment("prod", "Running", row_only=True)
             send_key(b"v")
             wait_new("terraform_data.api", "real_review_while_running")
             send_key(b"\x1b")
-            wait_new("Total", "real_back_to_matrix")
+            wait_new("Address", "real_back_to_matrix")
             open(os.environ["TERRACOTTA_REAL_PLAN_GATE"], "w").close()
-            wait_parts(["Ready: 2/3", "Error", "Compared: dev, stg"], "real_comparison_with_error")
+            wait_environment("prod", "Error", row_only=True)
+            send_key(b"]")
             send_key(b"]")
             send_key(b"\r")
             wait_new("required variable", "real_error_diagnostic")
             send_key(b"\x1b")
-            wait_new("Total", "real_error_dialog_closed")
+            wait_new("Address", "real_error_dialog_closed")
             with open(os.path.join(root, "prod/retry.auto.tfvars"), "w") as repair:
                 repair.write('release = "new"\n')
             send_key(b"r")
-            wait_parts(["Ready: 3/3", "prod · terraform"], "real_selected_retry_success")
+            wait_file(
+                os.environ["TERRACOTTA_REAL_PLAN_GATE"] + "-2",
+                "prod_retry_plan_complete",
+            )
+            wait_sidebar_statuses(["Ready", "Ready", "Ready"])
             send_key(b"v")
             wait_parts(["terraform_data.api", "prod"], "real_retried_plan_review")
             send_key(b"0")
-            wait_new("Total", "real_complete_comparison")
+            wait_new("Address", "real_complete_comparison")
             send_key(b"q")
             exit_code = wait_exit()
         elif scenario == "env_default_matrix":
