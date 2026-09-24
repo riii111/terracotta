@@ -513,11 +513,14 @@ fn render_overlay(
                             "select a Changes row or scroll Relations",
                         ),
                         help_dialog::HelpAction::new(
-                            "← / →",
+                            "← / → / h / l",
                             "scroll Changes or Relations horizontally",
                         ),
                         help_dialog::HelpAction::new("PgUp / PgDn", "move one page"),
-                        help_dialog::HelpAction::new("Home / End", "go to the top or bottom"),
+                        help_dialog::HelpAction::new(
+                            "Home / End / g / G",
+                            "go to the top or bottom",
+                        ),
                         help_dialog::HelpAction::new("f", "maximize or restore the focused pane"),
                     ],
                 ),

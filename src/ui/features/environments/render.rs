@@ -639,18 +639,18 @@ fn overview_help_sections(
     ]);
     vec![
         help_dialog::HelpSection::new("Current: Multi-environment Overview", current_actions),
-        other_overview_help(sidebar_enabled),
+        other_overview_help(sidebar_enabled, sidebar_available),
         matrix_legend_help(),
         comparison_help(),
     ]
 }
 
-fn other_overview_help(sidebar_enabled: bool) -> help_dialog::HelpSection {
+fn other_overview_help(sidebar_enabled: bool, sidebar_available: bool) -> help_dialog::HelpSection {
     help_dialog::HelpSection::new(
         "Other",
         vec![
             help_dialog::HelpAction::new(
-                "← / →",
+                "← / → / h / l",
                 if sidebar_enabled {
                     "scroll columns in [2] or [3]"
                 } else {
@@ -666,8 +666,10 @@ fn other_overview_help(sidebar_enabled: bool) -> help_dialog::HelpSection {
                 },
             ),
             help_dialog::HelpAction::new(
-                "Home / End",
-                if sidebar_enabled {
+                "Home / End / g / G",
+                if sidebar_available {
+                    "select first/last environment in [1] or row in [2]; scroll [3] to an edge"
+                } else if sidebar_enabled {
                     "select first/last row in [2] or scroll [3] to an edge"
                 } else {
                     "select the first or last row in [2]"
