@@ -21,8 +21,8 @@ a┌Help────────────────────────
 ││   maximize or restore the        │ ││
 ││   focused pane                   │ ││
 ││ Enter                            │ ││
-││   [1] or [3] opens the plan from │ ││
-││   the top; [2] opens the         ▼ ││
+││   [3] opens the plan from the    │ ││
+││   top; [2] opens the selected    ▼ ││
 └│ ?/Esc close                        │┘
 ?└────────────────────────────────────┘
 2/3 focus | f maximize
