@@ -66,6 +66,7 @@ pub(crate) fn render(
 
     let (legend, legend_height) = visible_legend_lines(
         legend_lines(graph),
+        compact_legend_lines(graph),
         inner.width,
         inner.height.saturating_sub(1),
     );
@@ -112,9 +113,27 @@ pub(crate) fn render(
 
 fn visible_legend_lines(
     lines: Vec<Line<'static>>,
+    compact_lines: Vec<Line<'static>>,
     width: u16,
     available_height: u16,
 ) -> (Vec<Line<'static>>, u16) {
+    let (visible, height, complete) = fitting_legend_lines(lines, width, available_height);
+    if complete {
+        return (visible, height);
+    }
+    let (compact, compact_height, compact_complete) =
+        fitting_legend_lines(compact_lines, width, available_height);
+    if compact_complete {
+        return (compact, compact_height);
+    }
+    (visible, height)
+}
+
+fn fitting_legend_lines(
+    lines: Vec<Line<'static>>,
+    width: u16,
+    available_height: u16,
+) -> (Vec<Line<'static>>, u16, bool) {
     let mut visible = Vec::new();
     let mut height = 0_u16;
     for line in lines {
@@ -125,12 +144,12 @@ fn visible_legend_lines(
         )
         .unwrap_or(u16::MAX);
         if line_height > available_height.saturating_sub(height) {
-            break;
+            return (visible, height, false);
         }
         height = height.saturating_add(line_height);
         visible.push(line);
     }
-    (visible, height)
+    (visible, height, true)
 }
 
 fn legend_lines(graph: &RelationGraph) -> Vec<Line<'static>> {
@@ -164,6 +183,44 @@ fn legend_lines(graph: &RelationGraph) -> Vec<Line<'static>> {
     if graph.nodes.iter().any(|node| !node.unresolved.is_empty()) {
         lines.push(Line::from(Span::styled(
             "? unresolved means a relationship could not be determined",
+            theme::relation_text_style(),
+        )));
+    }
+    lines
+}
+
+fn compact_legend_lines(graph: &RelationGraph) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    if !graph.links.is_empty() {
+        if graph
+            .links
+            .iter()
+            .any(|link| link.kind == RelationGraphLinkKind::Dotted)
+        {
+            lines.push(Line::from(Span::styled(
+                "A→B uses A; block-level may not apply",
+                theme::relation_text_style(),
+            )));
+        } else {
+            lines.push(Line::from(Span::styled(
+                "A ──> B  B uses A",
+                theme::relation_text_style(),
+            )));
+        }
+        if graph
+            .links
+            .iter()
+            .any(|link| link.sources.contains(&RelationSource::State))
+        {
+            lines.push(Line::from(Span::styled(
+                "(state) from state",
+                theme::relation_text_style(),
+            )));
+        }
+    }
+    if graph.nodes.iter().any(|node| !node.unresolved.is_empty()) {
+        lines.push(Line::from(Span::styled(
+            "? unresolved: relationship unknown",
             theme::relation_text_style(),
         )));
     }

@@ -937,10 +937,15 @@ mod tests {
         });
         let text = buffer_text(&output);
 
-        assert!(text.contains("A ──> B  B uses A"), "{text}");
-        assert!(text.contains("block-level, may not apply"), "{text}");
+        assert!(
+            text.contains("A→B uses A; block-level may not apply"),
+            "{text}"
+        );
         assert!(text.contains("(state) from state"), "{text}");
-        assert!(!text.contains("? unresolved means"), "{text}");
+        assert!(
+            text.contains("? unresolved: relationship unknown"),
+            "{text}"
+        );
     }
 
     #[test]
