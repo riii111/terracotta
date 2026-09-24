@@ -131,8 +131,10 @@ impl EnvironmentView {
         }
 
         let editing = self.is_editing();
-        let clearing_filter =
-            self.selection.raw.is_none() && self.matrix.filtered() && key.code == KeyCode::Esc;
+        let clearing_filter = self.selection.raw.is_none()
+            && self.matrix.filtered()
+            && self.maximized.is_none()
+            && key.code == KeyCode::Esc;
         let matrix_page = if !editing && !clearing_filter {
             self.overview_page_size(size, state)
         } else {
@@ -269,7 +271,7 @@ impl EnvironmentView {
                 self.maximized = None;
                 return ControlFlow::Break(None);
             }
-            KeyCode::Char('3') if self.sidebar_enabled => {
+            KeyCode::Char('3') => {
                 self.focus = EnvironmentPane::Relations;
                 self.last_right_focus = EnvironmentPane::Relations;
                 self.maximized = None;
@@ -328,12 +330,12 @@ impl EnvironmentView {
                 self.notice = None;
                 return ControlFlow::Break(None);
             }
-            KeyCode::Esc if self.matrix.filtered() => {
-                return ControlFlow::Continue(());
-            }
             KeyCode::Esc if self.maximized.is_some() => {
                 self.maximized = None;
                 return ControlFlow::Break(None);
+            }
+            KeyCode::Esc if self.matrix.filtered() => {
+                return ControlFlow::Continue(());
             }
             _ => {}
         }
@@ -381,7 +383,7 @@ impl EnvironmentView {
             sidebar_visible,
             self.maximized_for_width(size.width),
             !sidebar_visible && self.maximized_for_width(size.width).is_none(),
-            self.sidebar_enabled,
+            true,
         );
         let page = layout.relations.height.saturating_sub(5).max(1);
         let Some(scroll) = self.relation_scrolls.get_mut(self.selection.column) else {
@@ -586,7 +588,7 @@ impl EnvironmentView {
         self.maximized_for_width(width).unwrap_or_else(|| {
             if self.focus == EnvironmentPane::Environments && self.sidebar_visible(width) {
                 EnvironmentPane::Environments
-            } else if self.focus == EnvironmentPane::Relations && self.sidebar_enabled {
+            } else if self.focus == EnvironmentPane::Relations {
                 EnvironmentPane::Relations
             } else {
                 EnvironmentPane::Matrix

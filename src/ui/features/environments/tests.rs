@@ -852,17 +852,25 @@ fn single_environment_hides_sidebar_and_its_shortcuts() {
     }));
     assert_eq!(view.sidebar, SidebarSetting::Closed);
     assert!(!text.contains("[1] Envs"), "{text}");
+    assert!(text.contains("[3] Relations"), "{text}");
     assert!(text.contains("only-env Pending"), "{text}");
     assert!(!text.contains("toggle envs"), "{text}");
     assert!(!text.contains("1/2 focus"), "{text}");
     assert!(!text.contains("[/] env"), "{text}");
-    assert!(text.contains("2 focus"), "{text}");
+    assert!(text.contains("2/3 focus"), "{text}");
 
     for key in [KeyCode::Char('1'), KeyCode::Char('b')] {
         view.handle_key(KeyEvent::new(key, KeyModifiers::NONE), size, &state);
         assert_eq!(view.sidebar, SidebarSetting::Closed);
         assert_eq!(view.focus, EnvironmentPane::Matrix);
     }
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    assert_eq!(view.focus, EnvironmentPane::Relations);
+    assert_eq!(view.active_pane(size.width), EnvironmentPane::Relations);
 
     view.help();
     let help = buffer_text(&render_to_buffer((120, 40), |frame| {
@@ -870,6 +878,16 @@ fn single_environment_hides_sidebar_and_its_shortcuts() {
     }));
     assert!(!help.contains("1 opens Envs"), "{help}");
     assert!(!help.contains("toggle the Envs sidebar"), "{help}");
+    assert!(help.contains("Current: Overview"), "{help}");
+    assert!(!help.contains("Multi-environment Overview"), "{help}");
+    assert!(help.contains("2 / 3"), "{help}");
+    assert!(help.contains("scroll [3]"), "{help}");
+    assert!(help.contains("scroll columns in [2] or [3]"), "{help}");
+    assert!(
+        help.contains("[3] opens the plan from the top; [2] opens the selected source"),
+        "{help}"
+    );
+    assert!(!help.contains("[1] or [3] opens"), "{help}");
 }
 
 #[test]
