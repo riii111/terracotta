@@ -36,7 +36,7 @@ impl EnvironmentView {
             sidebar_visible,
             self.maximized_for_width(size.width),
             !sidebar_visible && self.maximized_for_width(size.width).is_none(),
-            self.sidebar_enabled,
+            true,
         );
         let content = self.matrix_content_layout(pane_inner(layout.matrix), state);
         let legend_height = if content.matrix.width < 50 { 2 } else { 1 };
@@ -58,7 +58,7 @@ impl EnvironmentView {
                 sidebar_visible,
                 self.maximized_for_width(area.width),
                 !sidebar_visible && self.maximized_for_width(area.width).is_none(),
-                self.sidebar_enabled,
+                true,
             )
         };
         environments::render_header(frame, layout.header, state, &self.selection);
@@ -584,10 +584,8 @@ fn overview_help_sections(
         "↑ / ↓ / j / k",
         if sidebar_available {
             "select environments in [1], rows in [2], or scroll [3]"
-        } else if sidebar_enabled {
-            "select rows in [2] or scroll [3]"
         } else {
-            "select rows in [2]"
+            "select rows in [2] or scroll [3]"
         },
     )];
     if sidebar_available {
@@ -617,10 +615,8 @@ fn overview_help_sections(
             "1 / 2 / 3",
             "focus Envs / Differs / Relations; 1 opens Envs",
         )
-    } else if sidebar_enabled {
-        help_dialog::HelpAction::new("2 / 3", "focus Differs / Relations")
     } else {
-        help_dialog::HelpAction::new("2", "focus Differs")
+        help_dialog::HelpAction::new("2 / 3", "focus Differs / Relations")
     });
     if sidebar_available {
         current_actions.push(help_dialog::HelpAction::new("b", "toggle the Envs sidebar"));
@@ -639,39 +635,21 @@ fn overview_help_sections(
     ]);
     vec![
         help_dialog::HelpSection::new("Current: Multi-environment Overview", current_actions),
-        other_overview_help(sidebar_enabled),
+        other_overview_help(),
         matrix_legend_help(),
         comparison_help(),
     ]
 }
 
-fn other_overview_help(sidebar_enabled: bool) -> help_dialog::HelpSection {
+fn other_overview_help() -> help_dialog::HelpSection {
     help_dialog::HelpSection::new(
         "Other",
         vec![
-            help_dialog::HelpAction::new(
-                "← / →",
-                if sidebar_enabled {
-                    "scroll columns in [2] or [3]"
-                } else {
-                    "scroll columns in [2]"
-                },
-            ),
-            help_dialog::HelpAction::new(
-                "PageUp / PageDown",
-                if sidebar_enabled {
-                    "move rows in [2] or scroll [3]"
-                } else {
-                    "move rows in [2]"
-                },
-            ),
+            help_dialog::HelpAction::new("← / →", "scroll columns in [2] or [3]"),
+            help_dialog::HelpAction::new("PageUp / PageDown", "move rows in [2] or scroll [3]"),
             help_dialog::HelpAction::new(
                 "Home / End",
-                if sidebar_enabled {
-                    "select first/last row in [2] or scroll [3] to an edge"
-                } else {
-                    "select the first or last row in [2]"
-                },
+                "select first/last row in [2] or scroll [3] to an edge",
             ),
             help_dialog::HelpAction::new("v", "open the full plan from the top"),
             help_dialog::HelpAction::new("y", "copy the selected environment's plan"),
@@ -857,10 +835,8 @@ fn overview_footer(context: OverviewFooterContext<'_>) -> Vec<Line<'static>> {
     items.push(overview_footer_hint(&["q"], "quit"));
     items.push(if sidebar_available {
         overview_footer_hint(&["1", "2", "3"], "focus")
-    } else if environment_navigation.is_multiple() {
-        overview_footer_hint(&["2", "3"], "focus")
     } else {
-        overview_footer_hint(&["2"], "focus")
+        overview_footer_hint(&["2", "3"], "focus")
     });
     items.push(if maximized {
         overview_footer_hint(&["f", "Esc"], "restore")
@@ -911,10 +887,8 @@ fn compact_overview_footer(
     }
     items.push(if environment_navigation.sidebar_available() {
         overview_footer_hint(&["1", "2", "3"], "focus")
-    } else if environment_navigation.is_multiple() {
-        overview_footer_hint(&["2", "3"], "focus")
     } else {
-        overview_footer_hint(&["2"], "focus")
+        overview_footer_hint(&["2", "3"], "focus")
     });
     items.push(if maximized {
         overview_footer_hint(&["f", "Esc"], "restore")
