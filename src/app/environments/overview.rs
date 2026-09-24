@@ -12,9 +12,12 @@ use super::{
 };
 use crate::app::{
     plan::{
+        RelationGraph, RelationNodeId, RelationNodeInput, ResourceChange, ResourceChangeKind,
+        build_relation_graph,
         grouping::{GroupingCandidate, GroupingKey, grouping_candidate},
-        path::normalize_resource_addresses,
+        path::{module_breadcrumbs, normalize_resource_addresses, resource_display_address},
     },
+    review::PlanReview,
     session::ReviewSessionState,
 };
 
@@ -22,6 +25,18 @@ use crate::app::{
 pub(crate) struct EnvironmentOverview {
     pub(crate) scope: ComparisonScope,
     pub(crate) rows: Vec<OverviewRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EnvironmentOverviewWithRelations {
+    pub(crate) overview: EnvironmentOverview,
+    pub(crate) relations: BTreeMap<usize, EnvironmentRelationGraph>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EnvironmentRelationGraph {
+    pub(crate) graph: Option<RelationGraph>,
+    pub(crate) row_node_ids: BTreeMap<OverviewRowId, Option<RelationNodeId>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,7 +53,7 @@ pub(crate) struct OverviewGroup {
     pub(crate) children: Vec<ComparisonRow>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum OverviewRowId {
     Group(GroupId),
     Individual(String),
@@ -119,6 +134,276 @@ pub(crate) fn environment_overview_for_selection(
     }
 }
 
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "GR06 consumes the environment graphs and row-to-node mappings"
+    )
+)]
+pub(crate) fn environment_overview_with_relations_for_selection(
+    plans: &[EnvironmentPlan],
+    selection: &EnvironmentSelection,
+) -> EnvironmentOverviewWithRelations {
+    let overview = environment_overview_for_selection(plans, selection);
+    let selected_columns: BTreeMap<_, _> = selection
+        .indexes()
+        .iter()
+        .enumerate()
+        .map(|(column, index)| (*index, column))
+        .collect();
+    let relations = plans
+        .iter()
+        .enumerate()
+        .map(|(environment, plan)| {
+            let mut row_node_ids = empty_row_node_ids(&overview);
+            let Some(review) = plan.review().map(ReviewSessionState::review) else {
+                return (
+                    environment,
+                    EnvironmentRelationGraph {
+                        graph: None,
+                        row_node_ids,
+                    },
+                );
+            };
+
+            let node_inputs = selected_columns.get(&environment).map_or_else(
+                || grouped_plan_node_inputs(review).0,
+                |column| comparison_node_inputs(&overview, *column, review, &mut row_node_ids),
+            );
+            (
+                environment,
+                EnvironmentRelationGraph {
+                    graph: Some(build_relation_graph(review.relations(), &node_inputs)),
+                    row_node_ids,
+                },
+            )
+        })
+        .collect();
+
+    EnvironmentOverviewWithRelations {
+        overview,
+        relations,
+    }
+}
+
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "GR07 consumes the grouped single-environment graph and row mapping"
+    )
+)]
+pub(crate) fn single_environment_relations(review: &PlanReview) -> EnvironmentRelationGraph {
+    let (node_inputs, row_node_ids) = grouped_plan_node_inputs(review);
+    EnvironmentRelationGraph {
+        graph: Some(build_relation_graph(review.relations(), &node_inputs)),
+        row_node_ids,
+    }
+}
+
+fn empty_row_node_ids(
+    overview: &EnvironmentOverview,
+) -> BTreeMap<OverviewRowId, Option<RelationNodeId>> {
+    let mut row_node_ids = BTreeMap::new();
+    for row in &overview.rows {
+        match row {
+            OverviewRow::Individual(row) => {
+                row_node_ids.insert(OverviewRowId::Individual(row.address.clone()), None);
+            }
+            OverviewRow::Group(group) => {
+                row_node_ids.insert(OverviewRowId::Group(group.id.clone()), None);
+            }
+        }
+    }
+    row_node_ids
+}
+
+fn comparison_node_inputs(
+    overview: &EnvironmentOverview,
+    column: usize,
+    review: &PlanReview,
+    row_node_ids: &mut BTreeMap<OverviewRowId, Option<RelationNodeId>>,
+) -> Vec<RelationNodeInput> {
+    let changes: BTreeMap<_, _> = review
+        .plan()
+        .resource_changes
+        .iter()
+        .map(|change| (change.address.as_str(), change))
+        .collect();
+    let mut node_inputs = Vec::new();
+
+    for row in &overview.rows {
+        match row {
+            OverviewRow::Individual(row) => {
+                if !matches!(row.cells[column].state, CellState::Change { .. }) {
+                    continue;
+                }
+                let addresses = [row.address.clone()];
+                let input = relation_node_input(
+                    &changes,
+                    &addresses,
+                    &row.address,
+                    row.difference.is_some(),
+                );
+                record_node(
+                    input,
+                    [OverviewRowId::Individual(row.address.clone())],
+                    &mut node_inputs,
+                    row_node_ids,
+                );
+            }
+            OverviewRow::Group(group) => {
+                let cell = &group.cells[column];
+                let differs = group
+                    .children
+                    .iter()
+                    .any(|child| child.difference.is_some());
+                let input =
+                    relation_node_input(&changes, &cell.members, &group.display_address, differs);
+                record_node(
+                    input,
+                    [OverviewRowId::Group(group.id.clone())],
+                    &mut node_inputs,
+                    row_node_ids,
+                );
+            }
+        }
+    }
+
+    node_inputs
+}
+
+fn grouped_plan_node_inputs(
+    review: &PlanReview,
+) -> (
+    Vec<RelationNodeInput>,
+    BTreeMap<OverviewRowId, Option<RelationNodeId>>,
+) {
+    let grouping = review.plan().grouped_changes(review.provider_schemas());
+    let changes: BTreeMap<_, _> = review
+        .plan()
+        .resource_changes
+        .iter()
+        .map(|change| (change.address.as_str(), change))
+        .collect();
+    let mut node_inputs = Vec::new();
+    let mut row_node_ids = BTreeMap::new();
+
+    for group in grouping.groups {
+        let addresses: Vec<_> = group
+            .members
+            .iter()
+            .filter(|change| change.kind != ResourceChangeKind::NoOp)
+            .map(|change| change.address.clone())
+            .collect();
+        if addresses.is_empty() {
+            continue;
+        }
+
+        if group.is_repeated() && addresses.len() > 1 {
+            let candidate = grouping_candidate(&group.members[0], review.provider_schemas())
+                .expect("repeated changes should retain their grouping candidate");
+            let input = relation_node_input(&changes, &addresses, &group.display_address, false);
+            let row_ids = std::iter::once(OverviewRowId::Group(GroupId(candidate.key))).chain(
+                addresses
+                    .iter()
+                    .map(|address| OverviewRowId::Individual(address.clone())),
+            );
+            record_node(input, row_ids, &mut node_inputs, &mut row_node_ids);
+        } else {
+            for address in addresses {
+                let input =
+                    relation_node_input(&changes, std::slice::from_ref(&address), &address, false);
+                record_node(
+                    input,
+                    [OverviewRowId::Individual(address)],
+                    &mut node_inputs,
+                    &mut row_node_ids,
+                );
+            }
+        }
+    }
+
+    (node_inputs, row_node_ids)
+}
+
+fn relation_node_input(
+    changes: &BTreeMap<&str, &ResourceChange>,
+    addresses: &[String],
+    display_address: &str,
+    differs: bool,
+) -> Option<RelationNodeInput> {
+    let operation = changes.get(addresses.first()?.as_str())?.kind;
+    if operation == ResourceChangeKind::NoOp
+        || addresses.iter().any(|address| {
+            changes
+                .get(address.as_str())
+                .is_none_or(|change| change.kind != operation)
+        })
+    {
+        return None;
+    }
+
+    RelationNodeInput::new(
+        addresses.iter().cloned(),
+        resource_display_address(display_address).unwrap_or_else(|| display_address.to_owned()),
+        operation,
+        addresses.len(),
+        relation_breadcrumbs(addresses, display_address),
+        differs,
+    )
+}
+
+fn relation_breadcrumbs(addresses: &[String], display_address: &str) -> Vec<String> {
+    let Some(mut display_breadcrumbs) = module_breadcrumbs(display_address) else {
+        return Vec::new();
+    };
+    let Some(member_breadcrumbs) = addresses
+        .iter()
+        .map(|address| module_breadcrumbs(address))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return display_breadcrumbs;
+    };
+    let Some(first) = member_breadcrumbs.first() else {
+        return display_breadcrumbs;
+    };
+    if first.len() != display_breadcrumbs.len()
+        || member_breadcrumbs
+            .iter()
+            .any(|breadcrumbs| breadcrumbs.len() != first.len())
+    {
+        return display_breadcrumbs;
+    }
+
+    for (index, breadcrumb) in display_breadcrumbs.iter_mut().enumerate() {
+        if member_breadcrumbs
+            .iter()
+            .all(|candidate| candidate[index] == first[index])
+        {
+            breadcrumb.clone_from(&first[index]);
+        }
+    }
+    display_breadcrumbs
+}
+
+fn record_node(
+    input: Option<RelationNodeInput>,
+    row_ids: impl IntoIterator<Item = OverviewRowId>,
+    node_inputs: &mut Vec<RelationNodeInput>,
+    row_node_ids: &mut BTreeMap<OverviewRowId, Option<RelationNodeId>>,
+) {
+    let Some(input) = input else {
+        return;
+    };
+    let node_id = input.id.clone();
+    node_inputs.push(input);
+    for row_id in row_ids {
+        row_node_ids.insert(row_id, Some(node_id.clone()));
+    }
+}
+
 fn shared_candidate<'a>(
     row: &ComparisonRow,
     candidates: &'a [BTreeMap<&str, GroupingCandidate>],
@@ -191,8 +476,8 @@ mod tests {
             PlanResult,
         },
         execution::Tool,
-        plan::{Plan, PlanAction, PlanValue, ResourceChange, ResourceChangeKind, ResourceMode},
-        review::{PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata, PlanReview},
+        plan::{Plan, PlanAction, PlanValue, ResourceMode},
+        review::{PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata},
     };
 
     #[test]
@@ -385,6 +670,22 @@ mod tests {
                 line: Some(0)
             })
         );
+
+        let selection = EnvironmentSelection::new(None, session.plans().len()).unwrap();
+        let result = environment_overview_with_relations_for_selection(session.plans(), &selection);
+        for (environment, module_key, address_count) in [(0, "dev", 2), (1, "prod", 1)] {
+            let graph = result.relations[&environment]
+                .graph
+                .as_ref()
+                .expect("module environments are ready");
+            assert_eq!(graph.nodes.len(), 1);
+            assert_eq!(graph.nodes[0].id.addresses().len(), address_count);
+            assert_eq!(graph.nodes[0].display_address, "test_resource.item[*]");
+            assert_eq!(
+                graph.nodes[0].breadcrumbs,
+                [format!("app[\"{module_key}\"]")]
+            );
+        }
         assert_partition(&session, &overview);
     }
 
@@ -565,6 +866,173 @@ mod tests {
                 .all(|row| matches!(row, OverviewRow::Individual(_)))
         );
         assert_partition(&session, &complete);
+    }
+
+    #[test]
+    fn relation_graphs_use_each_compared_groups_changed_addresses() {
+        let session = ready_session([changes(2, "new"), changes(3, "new")]);
+        let selection = EnvironmentSelection::new(None, session.plans().len()).unwrap();
+
+        let result = environment_overview_with_relations_for_selection(session.plans(), &selection);
+
+        let group = only_group(&result.overview);
+        let group_id = OverviewRowId::Group(group.id.clone());
+        for (environment, expected_count) in [(0, 2), (1, 3)] {
+            let relation = &result.relations[&environment];
+            let graph = relation
+                .graph
+                .as_ref()
+                .expect("ready environments have a graph");
+            assert_eq!(graph.nodes.len(), 1);
+            let node = &graph.nodes[0];
+            assert_eq!(node.change_count, expected_count);
+            assert_eq!(node.id.addresses().len(), expected_count);
+            assert!(node.differs);
+            assert_eq!(
+                relation.row_node_ids.get(&group_id),
+                Some(&Some(node.id.clone()))
+            );
+            assert_eq!(relation.row_node_ids.len(), 1);
+            assert!(group.children.iter().all(|child| {
+                !relation
+                    .row_node_ids
+                    .contains_key(&OverviewRowId::Individual(child.address.clone()))
+            }));
+        }
+    }
+
+    #[test]
+    fn excluded_environment_gets_its_plan_groups_without_comparison_highlights() {
+        let session = ready_session([changes(2, "new"), changes(3, "other")]);
+        let selection = EnvironmentSelection::new(Some(vec![0]), session.plans().len()).unwrap();
+
+        let result = environment_overview_with_relations_for_selection(session.plans(), &selection);
+
+        let group = only_group(&result.overview);
+        let included = result.relations[&0]
+            .graph
+            .as_ref()
+            .expect("the compared environment is ready");
+        assert_eq!(included.nodes.len(), 1);
+        assert_eq!(included.nodes[0].id.addresses().len(), 2);
+        assert!(!included.nodes[0].differs);
+
+        let excluded_relation = &result.relations[&1];
+        let excluded = excluded_relation
+            .graph
+            .as_ref()
+            .expect("excluded ready environments still get a graph");
+        assert_eq!(excluded.nodes.len(), 1);
+        assert_eq!(excluded.nodes[0].id.addresses().len(), 3);
+        assert!(!excluded.nodes[0].differs);
+        assert!(excluded_relation.row_node_ids.values().all(Option::is_none));
+        assert_eq!(
+            excluded_relation
+                .row_node_ids
+                .get(&OverviewRowId::Group(group.id.clone())),
+            Some(&None)
+        );
+    }
+
+    #[test]
+    fn partial_ready_and_retry_rebuild_only_available_environment_graphs() {
+        let mut session = pending_session(2);
+        complete_next(&mut session, review(changes(2, "new")));
+        let selection = EnvironmentSelection::new(None, session.plans().len()).unwrap();
+
+        let partial =
+            environment_overview_with_relations_for_selection(session.plans(), &selection);
+
+        assert_eq!(
+            partial.overview.scope,
+            ComparisonScope::Partial { compared: vec![0] }
+        );
+        assert!(partial.relations[&0].graph.is_some());
+        assert!(partial.relations[&1].graph.is_none());
+        assert!(
+            partial.relations[&1]
+                .row_node_ids
+                .values()
+                .all(Option::is_none)
+        );
+
+        let run = session.start_next().unwrap();
+        assert_eq!(run, 1);
+        assert!(session.complete(
+            run,
+            PlanResult::Error("synthetic retry".to_owned()),
+            Vec::new()
+        ));
+        assert!(session.retry(1));
+        complete_next(&mut session, review(changes(3, "different")));
+
+        let retried =
+            environment_overview_with_relations_for_selection(session.plans(), &selection);
+
+        assert!(matches!(
+            retried.overview.scope,
+            ComparisonScope::All { .. }
+        ));
+        let graph = retried.relations[&1]
+            .graph
+            .as_ref()
+            .expect("a completed retry rebuilds its graph");
+        assert_eq!(graph.nodes.len(), 3);
+        assert!(graph.nodes.iter().all(|node| node.differs));
+        for address in [
+            "test_resource.item[0]",
+            "test_resource.item[1]",
+            "test_resource.item[2]",
+        ] {
+            let node_id = retried.relations[&1]
+                .row_node_ids
+                .get(&OverviewRowId::Individual(address.to_owned()))
+                .and_then(Option::as_ref)
+                .expect("changed individual rows map to a graph node");
+            assert_eq!(node_id.addresses(), [address]);
+        }
+    }
+
+    #[test]
+    fn single_environment_expansion_maps_children_to_the_original_group_node() {
+        let changes = changes(3, "new");
+        let review = review(changes.clone());
+
+        let relation = single_environment_relations(&review);
+
+        let graph = relation.graph.as_ref().expect("a ready plan has a graph");
+        assert_eq!(graph.nodes.len(), 1);
+        let node = &graph.nodes[0];
+        assert_eq!(node.id.addresses().len(), 3);
+        let filtered_address = "test_resource.item[1]";
+        assert_eq!(
+            changes
+                .iter()
+                .filter(|change| change.address.contains("item[1]"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            relation
+                .row_node_ids
+                .get(&OverviewRowId::Individual(filtered_address.to_owned())),
+            Some(&Some(node.id.clone()))
+        );
+        let candidate = grouping_candidate(&changes[0], None).expect("changes are groupable");
+        assert_eq!(
+            relation
+                .row_node_ids
+                .get(&OverviewRowId::Group(GroupId(candidate.key))),
+            Some(&Some(node.id.clone()))
+        );
+        for change in changes {
+            assert_eq!(
+                relation
+                    .row_node_ids
+                    .get(&OverviewRowId::Individual(change.address)),
+                Some(&Some(node.id.clone()))
+            );
+        }
     }
 
     fn only_group(overview: &EnvironmentOverview) -> &OverviewGroup {

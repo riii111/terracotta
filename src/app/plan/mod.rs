@@ -24,13 +24,8 @@ pub(crate) use relations::{
 };
 pub(crate) use relations_graph::{
     RelationGraph, RelationGraphGroup, RelationGraphLink, RelationGraphLinkKind, RelationNode,
-    RelationNodeId,
+    RelationNodeId, RelationNodeInput, build_relation_graph,
 };
-#[expect(
-    unused_imports,
-    reason = "relation graph construction is the app contract for GR02B"
-)]
-pub(crate) use relations_graph::{RelationNodeInput, build_relation_graph};
 
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum PlanValue {
