@@ -71,19 +71,32 @@ pub(crate) fn overview_selected_column_style() -> Style {
 pub(crate) fn overview_total_style() -> Style {
     Style::default()
         .fg(Color::Rgb(0xde, 0xd8, 0xd1))
-        .bg(Color::Rgb(0x30, 0x32, 0x2f))
+        .bg(Color::Reset)
 }
 
 pub(crate) fn overview_total_muted_style() -> Style {
     Style::default()
         .fg(Color::Rgb(0xb8, 0xb5, 0xae))
-        .bg(Color::Rgb(0x30, 0x32, 0x2f))
+        .bg(Color::Reset)
 }
 
-pub(crate) fn overview_preview_title_style() -> Style {
+pub(crate) fn overview_total_add_style() -> Style {
+    success_style().bg(Color::Reset)
+}
+
+pub(crate) fn overview_total_update_style() -> Style {
+    warning_style().bg(Color::Reset)
+}
+
+pub(crate) fn overview_total_destroy_style() -> Style {
+    error_style().bg(Color::Reset)
+}
+
+pub(crate) fn overview_total_replace_style() -> Style {
     Style::default()
-        .fg(Color::Rgb(0xde, 0xd8, 0xd1))
-        .bg(Color::Rgb(0x30, 0x32, 0x2f))
+        .fg(Color::Rgb(0xb4, 0x8e, 0xc8))
+        .bg(Color::Reset)
+        .add_modifier(Modifier::BOLD)
 }
 
 pub(crate) fn overview_warning_style() -> Style {
@@ -92,14 +105,6 @@ pub(crate) fn overview_warning_style() -> Style {
 
 pub(crate) fn overview_header_warning_style() -> Style {
     warning_style().bg(Color::Rgb(0x2c, 0x2d, 0x2b))
-}
-
-pub(crate) fn overview_plan_line_style(line: &str) -> Style {
-    if matches!(line.trim_start().chars().next(), Some('+' | '-' | '~')) {
-        plan_line_style(line).bg(Color::Reset)
-    } else {
-        overview_text_style()
-    }
 }
 
 pub(crate) fn overview_footer_key_style() -> Style {

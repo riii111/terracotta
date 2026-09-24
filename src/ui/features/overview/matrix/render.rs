@@ -226,7 +226,7 @@ fn column_widths(state: &EnvironmentSession, view: &MatrixView) -> Vec<usize> {
         .enumerate()
         .map(|(column, environment)| {
             let plan = &state.plans()[*environment];
-            let (first_total, second_total) = total_text(plan);
+            let total = total_text(plan);
             let widest_cell = view
                 .rows
                 .iter()
@@ -235,8 +235,7 @@ fn column_widths(state: &EnvironmentSession, view: &MatrixView) -> Vec<usize> {
                 .unwrap_or(0);
             (Line::from(name(plan).as_str()).width() + 2)
                 .max(widest_cell)
-                .max(Line::from(first_total.as_str()).width())
-                .max(Line::from(second_total.as_str()).width())
+                .max(Line::from(total.as_str()).width())
                 .max(MIN_CELL_WIDTH)
                 + COLUMN_GAP * 3
         })
@@ -301,25 +300,33 @@ fn visible_columns(
         .collect()
 }
 
-fn total_text(plan: &EnvironmentPlan) -> (String, String) {
+fn total_text(plan: &EnvironmentPlan) -> String {
     plan.review().map_or_else(
-        || {
-            (
-                status(plan).split(':').next().unwrap_or("?").to_owned(),
-                String::new(),
-            )
-        },
+        || status(plan).split(':').next().unwrap_or("?").to_owned(),
         |review| {
             let counts = review.review().metadata();
-            (
-                format!(
-                    "+{} ~{} -{}",
-                    counts.additions(),
-                    counts.changes(),
-                    counts.deletions()
-                ),
-                format!("{} replace", counts.replacements()),
-            )
+            let mut parts = Vec::new();
+            if counts.additions() > 0 {
+                parts.push(format!("+{}", counts.additions()));
+            }
+            if counts.changes() > 0 {
+                parts.push(format!("~{}", counts.changes()));
+            }
+            if counts.deletions() > 0 {
+                parts.push(format!("-{}", counts.deletions()));
+            }
+            if counts.replacements() > 0 {
+                parts.push(format!("{} replace", counts.replacements()));
+            }
+            if parts.is_empty() {
+                if counts.has_changes() {
+                    "No resource changes".to_owned()
+                } else {
+                    "No changes".to_owned()
+                }
+            } else {
+                parts.join(" ")
+            }
         },
     )
 }
@@ -329,43 +336,86 @@ fn total_lines(
     view: &MatrixView,
     columns: &[(usize, usize)],
     address_width: usize,
-) -> [Line<'static>; 2] {
-    let mut lines = [Line::default(), Line::default()];
-    for (total_line, line) in lines.iter_mut().enumerate() {
-        let style = if total_line == 0 {
-            theme::overview_total_style()
-        } else {
-            theme::overview_total_muted_style()
-        };
-        let mut spans = vec![Span::styled(
-            fit(
-                if total_line == 0 { "Total" } else { "" },
-                address_width,
-                false,
-            ),
+) -> [Line<'static>; 1] {
+    let style = theme::overview_total_style();
+    let mut spans = vec![Span::styled(fit("Total", address_width, false), style)];
+    for &(index, column_width) in columns {
+        let environment = view.environments[index];
+        let text = total_text(&state.plans()[environment]);
+        let text_width = column_width.saturating_sub(COLUMN_GAP);
+        spans.push(Span::styled(" ", style));
+        spans.extend(total_spans(&state.plans()[environment], &text, text_width));
+        spans.push(Span::styled(
+            " ".repeat(text_width.saturating_sub(Line::from(text.as_str()).width())),
             style,
-        )];
-        for &(index, column_width) in columns {
-            let environment = view.environments[index];
-            let totals = total_text(&state.plans()[environment]);
-            let text = if total_line == 0 { totals.0 } else { totals.1 };
-            spans.push(Span::styled(
-                format!("{} ", fit(&text, column_width - COLUMN_GAP, false)),
-                style,
-            ));
-        }
-        spans.push(Span::styled(format!(" {}", " ".repeat(WHY_WIDTH)), style));
-        let table_width = address_width
-            .saturating_add(1)
-            .saturating_add(columns.iter().map(|(_, width)| *width).sum::<usize>())
-            .saturating_add(WHY_WIDTH);
-        let line_width = spans.iter().map(Span::width).sum::<usize>();
-        if line_width < table_width {
-            spans.push(Span::styled(" ".repeat(table_width - line_width), style));
-        }
-        *line = Line::from(spans);
+        ));
+        spans.push(Span::styled(" ".repeat(COLUMN_GAP), style));
     }
-    lines
+    spans.push(Span::styled(" ".repeat(WHY_WIDTH + 1), style));
+    let table_width = address_width
+        .saturating_add(1)
+        .saturating_add(columns.iter().map(|(_, width)| *width).sum::<usize>())
+        .saturating_add(WHY_WIDTH);
+    let line_width = spans.iter().map(Span::width).sum::<usize>();
+    if line_width < table_width {
+        spans.push(Span::styled(" ".repeat(table_width - line_width), style));
+    }
+    [Line::from(spans)]
+}
+
+fn total_spans(plan: &EnvironmentPlan, text: &str, width: usize) -> Vec<Span<'static>> {
+    let Some(review) = plan.review() else {
+        return vec![Span::styled(
+            fit(text, width, false),
+            theme::overview_total_muted_style(),
+        )];
+    };
+    let counts = review.review().metadata();
+    if counts.additions() == 0
+        && counts.changes() == 0
+        && counts.deletions() == 0
+        && counts.replacements() == 0
+    {
+        return vec![Span::styled(
+            fit(text, width, false),
+            theme::overview_total_muted_style(),
+        )];
+    }
+    let mut spans = Vec::new();
+    let mut used = 0;
+    for (value, style) in [
+        (
+            (counts.additions() > 0).then(|| format!("+{}", counts.additions())),
+            theme::overview_total_add_style(),
+        ),
+        (
+            (counts.changes() > 0).then(|| format!("~{}", counts.changes())),
+            theme::overview_total_update_style(),
+        ),
+        (
+            (counts.deletions() > 0).then(|| format!("-{}", counts.deletions())),
+            theme::overview_total_destroy_style(),
+        ),
+        (
+            (counts.replacements() > 0).then(|| format!("{} replace", counts.replacements())),
+            theme::overview_total_replace_style(),
+        ),
+    ] {
+        let Some(value) = value else { continue };
+        if !spans.is_empty() {
+            spans.push(Span::styled(" ", theme::overview_total_style()));
+            used += 1;
+        }
+        used += Line::from(value.as_str()).width();
+        spans.push(Span::styled(value, style));
+    }
+    if used < width {
+        spans.push(Span::styled(
+            " ".repeat(width - used),
+            theme::overview_total_style(),
+        ));
+    }
+    spans
 }
 
 fn symbol_legend(width: u16) -> Vec<Line<'static>> {

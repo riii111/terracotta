@@ -1,14 +1,15 @@
 ---
 source: src/ui/features/plan_review/render.rs
+assertion_line: 1930
 expression: buffer_text(buffer)
 ---
 Target: repo Workspace: default Tool: terraform loading... Dir: /repo
-Unique targets (replace once): +0 add  ~0 update  0 replace  -0 destroy
+Changes  none
+
 ────────────────────────────────────────────────────────────────────────────────
 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-
 
 
 

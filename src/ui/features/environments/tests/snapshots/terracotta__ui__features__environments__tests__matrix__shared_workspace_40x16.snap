@@ -1,5 +1,6 @@
 ---
 source: src/ui/features/environments/tests/matrix.rs
+assertion_line: 1022
 expression: output
 ---
 0 Overview   1 staging  2 staging
@@ -11,10 +12,10 @@ Error   staging: Error
 
  Waiting for environment plans.
 
- Total       Error
-
+ Total        Error
  blank: absent   .: unchanged
  ?: plan unavailable
- [ ] env  Enter preview  / filter
+
+ [ ] env  Enter open  / filter
  e env filter
- v full plan  ? help  q quit
+ ? help  q quit

@@ -3,12 +3,13 @@ source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
 Target: main [PROD] Workspace: default Tool: terraform 1.9.0 Dir: ./environments/production/main
-Unique targets (replace once): +2 add  ~2 update  0 replace  -1 destroy
+Changes  +2 add  ~2 update  -1 destroy
+
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   # terraform_data.api will be updated in-place
   ~ resource "terraform_data" "api" {
-      id       = "api-20260920"
  main [PROD]  ws:default  terraform 1.9.0  ./environments/production/main
+      ~ input  = "before" -> "after"
       # (4 unchanged attributes hidden)
     }
 
@@ -22,31 +23,30 @@ Unique targets (replace once): +2 add  ~2 update  0 replace  -1 destroy
   # terraform_data.old will be destroyed
   - resource "terraform_data" "old" {
       id = "old-20260920"
-    }
-                                                     ┌Apply help─────────────────────────────────────────┐
-  # terraform_data.new will be created               │ Navigation                                        │
-  + resource "terraform_data" "new" {   ┌────────────│ ↑ / ↓ / PgUp / PgDn scroll confirmation           │─────────────┐
-      input = "new-value"               │            │ ← / →               move in confirmation input    │             │
-      note  = "A deliberately long synth│ Apply this │ Home / End          move to input start or end    │             │
-    }                                   │            │                                                   │             │
-                                        │ Target: mai│ Input                                             │             │
-Changes to Outputs:                     │ Workspace: │ Type                enter the confirmation text   │             │
-  + endpoint = (known after apply)      │ Directory: │ Backspace           delete before the cursor      │             │
-  ~ summary  = "old summary" -> "new sum│ Tool: terra│                                                   │             │
-                                        │ Plan: +2 ad│ Context                                           │             │
-Warning: Value for "pending" is not know│            │ Tab                 show execution context        │             │
-                                        │ Type main t│                                                   │             │
-Plan: 2 to add, 2 to change, 1 to destro│ > |        │ Apply                                             │             │
-                                        │            │ Enter               confirm apply                 │             │
-Synthetic review text continues below so└────────────│ Esc                 return to plan review         │─────────────┘
-The same long body is intentionally reusEnter confirm│ ?/Esc close                                       │
-No Terraform process, provider, state file, or cloud └───────────────────────────────────────────────────┘
+    }                                                ┌Apply help─────────────────────────────────────────┐
+                                                     │ Navigation                                        │
+  # terraform_data.new will be created  ┌────────────│ ↑ / ↓ / PgUp / PgDn scroll confirmation           │─────────────┐
+  + resource "terraform_data" "new" {   │            │ ← / →               move in confirmation input    │             │
+      input = "new-value"               │ Apply this │ Home / End          move to input start or end    │             │
+      note  = "A deliberately long synth│            │                                                   │             │
+    }                                   │ Target: mai│ Input                                             │             │
+                                        │ Workspace: │ Type                enter the confirmation text   │             │
+Changes to Outputs:                     │ Directory: │ Backspace           delete before the cursor      │             │
+  + endpoint = (known after apply)      │ Tool: terra│                                                   │             │
+  ~ summary  = "old summary" -> "new sum│ Plan: +2 ad│ Context                                           │             │
+                                        │            │ Tab                 show execution context        │             │
+Warning: Value for "pending" is not know│ Type main t│                                                   │             │
+                                        │ > |        │ Apply                                             │             │
+Plan: 2 to add, 2 to change, 1 to destro│            │ Enter               confirm apply                 │             │
+                                        └────────────│ Esc                 return to plan review         │─────────────┘
+Synthetic review text continues below soEnter confirm│ ?/Esc close                                       │
+The same long body is intentionally reused across eve└───────────────────────────────────────────────────┘
+No Terraform process, provider, state file, or cloud credential is used by this fixture.
 The review surface preserves Terraform order, attributes, output values, and diagnostics.
 Long lines remain unwrapped in the plan body; horizontal movement exposes the hidden suffix.
 Vertical movement exposes later lines in this synthetic plan body.
 
 End of synthetic plan body.
-
 
 
 

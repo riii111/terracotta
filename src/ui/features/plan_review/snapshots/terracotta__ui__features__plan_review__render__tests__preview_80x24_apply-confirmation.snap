@@ -1,28 +1,29 @@
 ---
 source: src/ui/features/plan_review/render.rs
+assertion_line: 1930
 expression: buffer_text(buffer)
 ---
 Target: main [PROD] Workspace: default Tool: terraform loading... Dir: /re...ain
-Umain [PROD]  ws:default  terraform loading...  /repo/environm...roduction/main
+Cmain [PROD]  ws:default  terraform loading...  /repo/environm...roduction/main
+
 ────────────────────────────────────────────────────────────────────────────────
   # terraform_data.api will be updated in-place                                ▲
-  ~ resource "terraform_data" "api" {                                          ┃
  ┌────────────────────────────────────────────────────────────────────────────┐┃
  │                                                                            │┃
  │ Apply this reviewed plan?                                                  │┃
  │                                                                            │┃
  │ Target: main [PROD]                                                        │┃
  │ Workspace: default                                                         │┃
--│ Directory: /repo/environments/production/main                              ││
- │ Tool: terraform loading...                                                 ││
+ │ Directory: /repo/environments/production/main                              │┃
+-│ Tool: terraform loading...                                                 ││
  │ Plan: +2 add  ~2 update  0 replace  -1 destroy                             ││
  │                                                                            ││
  │ Type main to apply (exact match).                                          ││
  │ > |                                                                        ││
  │                                                                            ││
  └────────────────────────────────────────────────────────────────────────────┘│
- Enter confirm | Esc back | ? help                                             │
-    }                                                                          │
+ Enter confirm | Esc back | ? help" {                                          │
+      id = "old-20260920"                                                      │
 ◀︎═══════════════════════════════════════════════════════════════════───────────▶︎
 ────────────────────────────────────────────────────────────────────────────────
 s overview | / filter | ? help | q quit                                Line 3/43

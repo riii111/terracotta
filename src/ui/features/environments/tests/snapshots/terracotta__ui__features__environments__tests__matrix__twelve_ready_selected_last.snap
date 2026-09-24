@@ -12,8 +12,7 @@ Ready: 12/12
   Same change across envs
   terraform_data.api ~           ~           ~           ~
 
-  Total              +0 ~1 -0    +0 ~1 -0    +0 ~1 -0    +0 ~1 -0
-                     0 replace   0 replace   0 replace   0 replace
+  Total               ~1                    ~1                    ~1
   blank: absent   .: unchanged   ?: plan unavailable
 
 
@@ -24,5 +23,6 @@ Ready: 12/12
 
 
 
-  [ ] environment | Enter preview | / filter | e environments | v full plan
-  ? help | q quit
+
+
+  [ ] environment | Enter open | / filter | e environments | ? help | q quit

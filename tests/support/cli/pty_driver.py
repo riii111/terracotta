@@ -230,7 +230,7 @@ def wait_file(path, name, timeout=20):
 
 
 def plan_status_is_above_plan_text(current):
-    markers = ("Unique targets (replace once):", "terraform_data.api")
+    markers = ("Changes", "terraform_data.api")
     positions = [current.find(marker) for marker in markers]
     if any(position < 0 for position in positions):
         return False
@@ -664,7 +664,7 @@ try:
             plan_status_is_above_plan_text,
             "plan_status_and_text",
             (
-                "Unique targets (replace once):",
+                "Changes",
                 "terraform_data.api",
             ),
         )

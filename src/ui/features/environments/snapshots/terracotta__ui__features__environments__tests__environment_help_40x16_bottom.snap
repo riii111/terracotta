@@ -4,17 +4,17 @@ expression: bottom_text
 ---
 0 Overview   1 a-ready  2 b-error  ›
 R┌Help────────────────────────────────┐
-b│                                  ▲ │
-d│ Comparison                       │ │
-H│ Same changes                     │ │
- │   no differences found in Ready  │ │
- │   plans; unknown values may      │ │
- │   differ                         │ │
- │ Scope                            │ │
- │   only Ready environments are    │ │
- │   compared                       │ │
- │ Excluded                         ┃ │
- │   environments are not retried   ▼ │
+b│   environments are not retried   ▲ │
+d│                                  │ │
+H│ Totals                           │ │
+ │ replace                          │ │
+ │   counted once as a replacement; │ │
+ │   it is not added to create or   │ │
+ │   delete                         │ │
+ │ No changes                       │ │
+ │   all resource operation counts  │ │
+ │   are zero for a Ready           ┃ │
+ │   environment                    ▼ │
  │ ?/Esc close                        │
  └────────────────────────────────────┘
- v full plan  ? help  q quit
+ ? help  q quit

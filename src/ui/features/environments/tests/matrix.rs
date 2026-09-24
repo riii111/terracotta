@@ -175,29 +175,6 @@ fn press_event_at(
     }
 }
 
-fn press_at(view: &mut EnvironmentView, state: &mut EnvironmentSession, code: KeyCode, size: Size) {
-    press_event_at(view, state, KeyEvent::new(code, KeyModifiers::NONE), size);
-}
-
-fn first_resource_index(rendered: &str) -> usize {
-    rendered
-        .lines()
-        .filter_map(|line| {
-            line.find("terraform_data.server_")
-                .map(|start| &line[start..])
-        })
-        .find_map(|address| {
-            address
-                .trim_start_matches("terraform_data.server_")
-                .chars()
-                .take_while(char::is_ascii_digit)
-                .collect::<String>()
-                .parse()
-                .ok()
-        })
-        .expect("a rendered matrix resource")
-}
-
 #[test]
 fn tab_keys_open_the_adjacent_full_plan_from_raw_plan() {
     let mut state = session(&["dev", "prod", "stg"]);
@@ -280,7 +257,7 @@ fn three_environments_show_groups_actions_and_totals(#[case] width: u16, #[case]
         assert!(bottom.contains("blank: absent"), "{bottom}");
         assert!(bottom.contains("?: plan unavailable"), "{bottom}");
         assert!(bottom.contains("Total"), "{bottom}");
-        assert!(rendered.contains("v full plan"), "{rendered}");
+        assert!(rendered.contains("Enter open"), "{rendered}");
     } else {
         assert!(rendered.contains("blank: absent"));
         assert!(rendered.contains("?: plan unavailable"));
@@ -366,7 +343,7 @@ fn three_environments_show_groups_actions_and_totals(#[case] width: u16, #[case]
             .cell((2, u16::try_from(total_line).unwrap()))
             .expect("total band")
             .bg,
-        Color::Rgb(0x30, 0x32, 0x2f)
+        Color::Reset
     );
     assert_eq!(
         buffer.cell((width - 1, height - 1)).unwrap().bg,
@@ -480,8 +457,7 @@ fn space_toggles_all_groups_independently_of_matrix_scroll() {
         ] {
             assert!(rendered.contains(hint), "{width}x{height}: {hint}");
         }
-        assert!(rendered.contains("Enter preview"), "{width}x{height}");
-        assert!(rendered.contains("v full plan"), "{width}x{height}");
+        assert!(rendered.contains("Enter open"), "{width}x{height}");
         assert!(!rendered.contains("↑↓"), "{width}x{height}");
         assert!(!rendered.contains("←→"), "{width}x{height}");
     }
@@ -517,77 +493,16 @@ fn space_toggles_all_groups_independently_of_matrix_scroll() {
     assert_eq!(text(&mut view, &state, (80, 24)), filtered);
 }
 
-#[rstest]
-#[case::seventy(70)]
-#[case::seventy_three(73)]
-fn expanded_group_preview_keeps_full_plan_hint_at_narrow_widths(#[case] width: u16) {
-    let mut state = session(&["dev", "prod", "stg"]);
-    for _ in 0..3 {
-        complete(
-            &mut state,
-            (0..2)
-                .map(|index| {
-                    change(
-                        &format!("terraform_data.server[{index}]"),
-                        ResourceChangeKind::Update,
-                    )
-                })
-                .collect(),
-        );
-    }
-    let mut view = EnvironmentView::default();
-
-    press(&mut view, &mut state, KeyCode::Char(' '));
-    assert_eq!(view.matrix.groups_expanded(), Some(true));
-    press(&mut view, &mut state, KeyCode::Enter);
-
-    let rendered = text(&mut view, &state, (width, 24));
-    assert!(rendered.contains("v full plan"), "{rendered}");
-}
-
-#[test]
-fn preview_footer_prioritizes_environment_close_and_full_plan_actions() {
-    let mut state = session(&["dev", "prod", "stg"]);
-    for _ in 0..3 {
-        complete(
-            &mut state,
-            vec![change("terraform_data.api", ResourceChangeKind::Update)],
-        );
-    }
-    let mut view = EnvironmentView::default();
-    press(&mut view, &mut state, KeyCode::Enter);
-
-    for size in [(40, 16), (80, 24), (120, 40), (160, 60)] {
-        let rendered = text(&mut view, &state, size);
-        let environment_hint = if size.0 == 40 {
-            "[ ] env"
-        } else {
-            "[ ] environment"
-        };
-        for hint in [
-            environment_hint,
-            "Esc close",
-            "v full plan",
-            "? help",
-            "q quit",
-        ] {
-            assert!(rendered.contains(hint), "{size:?}: {hint}\n{rendered}");
-        }
-        assert!(!rendered.contains("↑↓"), "{size:?}\n{rendered}");
-        assert!(!rendered.contains("←→"), "{size:?}\n{rendered}");
-    }
-}
-
 #[test]
 fn short_terminal_keeps_major_environment_actions_without_movement_hints() {
     let state = session(&["dev", "prod", "stg"]);
     let mut view = EnvironmentView::default();
     let rendered = text(&mut view, &state, (40, 14));
 
-    assert!(rendered.contains("Enter preview"));
+    assert!(rendered.contains("Enter open"));
     for hint in [
         "[ ] env",
-        "Enter preview",
+        "Enter open",
         "/ filter",
         "e env filter",
         "? help",
@@ -669,343 +584,51 @@ fn matrix_symbol_legend_remains_visible_across_environment_counts(#[case] count:
 }
 
 #[test]
-fn unavailable_environment_opens_its_state_dialog_and_preview_after_completion() {
-    let mut state = session(&["a", "b", "c"]);
-    complete(
-        &mut state,
-        vec![change("terraform_data.api", ResourceChangeKind::Update)],
-    );
-    complete(
-        &mut state,
-        vec![change("terraform_data.api", ResourceChangeKind::NoOp)],
-    );
-    let mut view = EnvironmentView::default();
-    press(&mut view, &mut state, KeyCode::Char('2'));
-    assert_eq!(view.selection.raw, Some(1));
-    assert!(
-        text(&mut view, &state, (80, 24)).contains("Terraform will perform the following actions")
-    );
-    press(&mut view, &mut state, KeyCode::Esc);
-    press(&mut view, &mut state, KeyCode::Char('3'));
-    assert!(text(&mut view, &state, (80, 24)).contains("Pending"));
-    assert!(view.selection.raw.is_none());
-    press(&mut view, &mut state, KeyCode::Esc);
-    complete(&mut state, Vec::new());
-    press(&mut view, &mut state, KeyCode::Enter);
-    let rendered = text(&mut view, &state, (80, 24));
-    assert!(rendered.contains("c · Plan preview"), "{rendered}");
-    assert!(
-        rendered.contains("Terraform will perform the following actions"),
-        "{rendered}"
-    );
-    assert!(view.selection.raw.is_none());
-    assert!(view.preview_open);
-}
-
-#[test]
-fn plan_preview_follows_the_environment_and_survives_full_plan_round_trip() {
+fn enter_opens_the_selected_environment_full_plan() {
     let mut state = session(&["dev", "prod"]);
-    for _ in 0..2 {
-        complete(
-            &mut state,
-            vec![
-                change("terraform_data.api", ResourceChangeKind::Update),
-                change("terraform_data.worker", ResourceChangeKind::Update),
-            ],
-        );
-    }
-    let mut view = EnvironmentView::default();
-    press(&mut view, &mut state, KeyCode::Enter);
-    assert!(view.preview_open);
-    assert!(view.selection.raw.is_none());
-
-    let api_buffer = render_to_buffer((120, 40), |frame| view.render(frame, &state));
-    let api = buffer_text(&api_buffer);
-    assert!(api.contains("dev · Plan preview"), "{api}");
-    assert!(api.contains("# terraform_data.api will change"), "{api}");
-    let heading_line = api
-        .lines()
-        .position(|line| line.contains("dev · Plan preview"))
-        .unwrap();
-    let heading_column = u16::try_from(
-        api.lines()
-            .nth(heading_line)
-            .unwrap()
-            .find("dev · Plan preview")
-            .unwrap(),
-    )
-    .unwrap();
-    let heading_cell = api_buffer
-        .cell((heading_column, u16::try_from(heading_line).unwrap()))
-        .expect("preview title");
-    assert_eq!(heading_cell.bg, Color::Rgb(0x30, 0x32, 0x2f));
-    assert_eq!(heading_cell.fg, Color::Rgb(0xde, 0xd8, 0xd1));
-    assert!(!heading_cell.modifier.contains(Modifier::BOLD));
-    assert!(!api.contains("> dev · Plan preview"), "{api}");
-    press(&mut view, &mut state, KeyCode::Enter);
-    assert!(view.selection.raw.is_none());
-
-    press(&mut view, &mut state, KeyCode::Char(']'));
-    press(&mut view, &mut state, KeyCode::Right);
-    let worker = text(&mut view, &state, (120, 40));
-    assert!(worker.contains("prod · Plan preview"), "{worker}");
-    assert!(
-        worker.contains("# terraform_data.api will change"),
-        "{worker}"
-    );
-
-    press(&mut view, &mut state, KeyCode::Char('v'));
-    assert_eq!(view.selection.raw, Some(1));
-    let full_plan = text(&mut view, &state, (120, 40));
-    assert!(full_plan.contains("Terraform will perform the following actions:"));
-    press(&mut view, &mut state, KeyCode::Esc);
-    assert!(view.selection.raw.is_none());
-    assert!(view.preview_open);
-    let returned = text(&mut view, &state, (120, 40));
-    assert!(returned.contains("prod · Plan preview"), "{returned}");
-    assert!(
-        returned.contains("# terraform_data.api will change"),
-        "{returned}"
-    );
-
-    press(&mut view, &mut state, KeyCode::Esc);
-    assert!(!view.preview_open);
-    assert!(view.selection.raw.is_none());
-}
-
-#[test]
-fn plan_preview_preserves_search_cancel_priority() {
-    let mut state = session(&["dev"]);
     complete(
         &mut state,
         vec![change("terraform_data.api", ResourceChangeKind::Update)],
     );
-    let mut view = EnvironmentView::default();
-    press(&mut view, &mut state, KeyCode::Enter);
-    press(&mut view, &mut state, KeyCode::Char('/'));
-    press(&mut view, &mut state, KeyCode::Char('a'));
-    press(&mut view, &mut state, KeyCode::Esc);
-
-    assert!(view.preview_open);
-    assert!(!view.matrix.searching());
-    assert_eq!(view.matrix.filter(), "");
-    press(&mut view, &mut state, KeyCode::Esc);
-    assert!(!view.preview_open);
-}
-
-#[test]
-fn confirmed_matrix_filter_does_not_consume_preview_escape() {
-    let mut state = session(&["dev"]);
     complete(
         &mut state,
-        vec![change("terraform_data.api", ResourceChangeKind::Update)],
-    );
-    let mut view = EnvironmentView::default();
-    press(&mut view, &mut state, KeyCode::Char('/'));
-    for character in "api".chars() {
-        press(&mut view, &mut state, KeyCode::Char(character));
-    }
-    press(&mut view, &mut state, KeyCode::Enter);
-    press(&mut view, &mut state, KeyCode::Enter);
-    assert!(view.preview_open);
-    assert_eq!(view.matrix.filter(), "api");
-
-    press(&mut view, &mut state, KeyCode::Esc);
-    assert_eq!(view.matrix.filter(), "api");
-    assert!(!view.preview_open);
-    press(&mut view, &mut state, KeyCode::Esc);
-    assert_eq!(view.matrix.filter(), "");
-    assert!(!view.preview_open);
-}
-
-#[test]
-fn plan_preview_tracks_unavailable_environment_states() {
-    let mut state = session(&["dev", "pending"]);
-    complete(
-        &mut state,
-        vec![change("terraform_data.api", ResourceChangeKind::Update)],
+        vec![change("terraform_data.worker", ResourceChangeKind::Update)],
     );
     let mut view = EnvironmentView::default();
 
-    press(&mut view, &mut state, KeyCode::Right);
     press(&mut view, &mut state, KeyCode::Enter);
-    let rendered = text(&mut view, &state, (80, 24));
-    assert!(rendered.contains("pending · Plan preview"), "{rendered}");
-    assert!(rendered.contains("has not been acquired yet"), "{rendered}");
-    press(&mut view, &mut state, KeyCode::Esc);
-
-    complete(&mut state, Vec::new());
-    press(&mut view, &mut state, KeyCode::Enter);
-    let rendered = text(&mut view, &state, (80, 24));
-    assert!(rendered.contains("pending · Plan preview"), "{rendered}");
-    assert!(
-        rendered.contains("Terraform will perform the following actions"),
-        "{rendered}"
-    );
-}
-
-#[test]
-fn failed_plan_preview_shows_its_diagnostic_and_keeps_retry_available() {
-    let mut state = session(&["dev", "failed"]);
-    complete(
-        &mut state,
-        vec![change("terraform_data.api", ResourceChangeKind::Update)],
-    );
-    let index = state.start_next().unwrap();
-    assert!(state.complete(
-        index,
-        PlanResult::Error("Synthetic plan acquisition failure".to_owned()),
-        Vec::new(),
-    ));
-    assert_eq!(environments::status(&state.plans()[index]), "Error");
-    let mut view = EnvironmentView::default();
-    press(&mut view, &mut state, KeyCode::Enter);
-    press(&mut view, &mut state, KeyCode::Char(']'));
-    press(&mut view, &mut state, KeyCode::Right);
-
-    let rendered = text(&mut view, &state, (80, 24));
-    assert!(rendered.contains("failed · Plan preview"), "{rendered}");
-    assert!(
-        rendered.contains("Synthetic plan acquisition failure"),
-        "{rendered}"
-    );
-    assert!(
-        !rendered.contains("# terraform_data.api will change"),
-        "{rendered}"
-    );
-    press(&mut view, &mut state, KeyCode::Char('r'));
-    assert_eq!(state.start_next(), Some(index));
-    let rendered = text(&mut view, &state, (80, 24));
-    assert!(
-        rendered.contains("Plan acquisition is still in progress"),
-        "{rendered}"
-    );
-}
-
-#[test]
-fn plan_preview_shows_the_full_sanitized_environment_document() {
-    let mut state = session(&["dev", "prod"]);
-    let address = "terraform_data.api";
-    let plan_text = [
-        "PRELUDE_MARKER",
-        &format!("# {address} will change"),
-        "~ password = synthetic-secret -> rotated",
-        "",
-        "# terraform_data.worker will change",
-        "~ input = old -> new",
-        "",
-        "Changes to Outputs:",
-        "  endpoint = \"https://synthetic.invalid\"",
-        "",
-        "Plan: 0 to add, 2 to change, 0 to destroy.",
-        "TAIL_SUMMARY_MARKER",
-    ]
-    .join("\n");
-    let changes = vec![
-        change(address, ResourceChangeKind::Update),
-        change("terraform_data.worker", ResourceChangeKind::Update),
-    ];
-    for _ in 0..2 {
-        complete_with_plan_document(
-            &mut state,
-            changes.clone(),
-            plan_text.clone(),
-            Vec::new(),
-            vec![SensitiveValue::Text("synthetic-secret".to_owned())],
-        );
-    }
-    let mut view = EnvironmentView::default();
-    press(&mut view, &mut state, KeyCode::Enter);
-
-    let rendered = text(&mut view, &state, (80, 24));
-    assert!(rendered.contains("dev · Plan preview"), "{rendered}");
-    assert!(rendered.contains("PRELUDE_MARKER"), "{rendered}");
-    assert!(
-        rendered.contains("# terraform_data.api will change"),
-        "{rendered}"
-    );
-    assert!(!rendered.contains("synthetic-secret"), "{rendered}");
-    assert!(rendered.contains("terraform_data.worker"), "{rendered}");
-
-    for _ in 0..4 {
-        press(&mut view, &mut state, KeyCode::PageDown);
-    }
-    let rendered = text(&mut view, &state, (80, 24));
-    assert!(rendered.contains("TAIL_SUMMARY_MARKER"), "{rendered}");
-    assert!(!rendered.contains("synthetic-secret"), "{rendered}");
-}
-
-#[test]
-fn preview_visibility_selects_navigation_target_and_brackets_switch_environments() {
-    let mut state = session(&["dev", "prod"]);
-    for name in ["dev", "prod"] {
-        let plan_text = format!(
-            "Terraform plan for {name}\n{}\n{name}_TAIL",
-            (0..30)
-                .map(|index| format!("# {name} line {index}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        );
-        complete_with_plan_document(
-            &mut state,
-            vec![change("terraform_data.api", ResourceChangeKind::Update)],
-            plan_text,
-            Vec::new(),
-            Vec::new(),
-        );
-    }
-    let mut view = EnvironmentView::default();
-
-    press(&mut view, &mut state, KeyCode::Enter);
-    assert!(view.preview_open);
+    assert_eq!(view.selection.raw, Some(0));
     assert!(text(&mut view, &state, (80, 24)).contains("terraform_data.api"));
-    let (_, preview_visible, preview_page) =
-        view.overview_page_sizes(Size::new(80, 24), &state, true);
-    assert!(preview_visible);
-    assert!(preview_page > 0);
-    assert_ne!(preview_page, 10);
-    press(&mut view, &mut state, KeyCode::PageDown);
-    assert_eq!(view.preview_vertical, preview_page);
-    assert!(text(&mut view, &state, (80, 24)).contains("terraform_data.api"));
-    press(&mut view, &mut state, KeyCode::Right);
-    assert!(view.preview_vertical > 0);
-    assert!(view.preview_horizontal > 0);
-    assert_eq!(view.selection.column, 0);
+    press(&mut view, &mut state, KeyCode::Esc);
+    press(&mut view, &mut state, KeyCode::Char(']'));
+    press(&mut view, &mut state, KeyCode::Enter);
+    assert_eq!(view.selection.raw, Some(1));
+    assert!(text(&mut view, &state, (80, 24)).contains("terraform_data.worker"));
+}
 
-    let preview_vertical = view.preview_vertical;
-    let preview_horizontal = view.preview_horizontal;
-    press(&mut view, &mut state, KeyCode::Tab);
-    press_event(
-        &mut view,
+#[test]
+fn environment_selection_is_preserved_when_returning_from_full_plan() {
+    let mut state = session(&["dev", "prod"]);
+    complete(
         &mut state,
-        KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+        vec![change("terraform_data.api", ResourceChangeKind::Update)],
     );
-    assert_eq!(view.selection.column, 0);
-    assert_eq!(view.preview_vertical, preview_vertical);
-    assert_eq!(view.preview_horizontal, preview_horizontal);
+    complete(
+        &mut state,
+        vec![change("terraform_data.worker", ResourceChangeKind::Update)],
+    );
+    let mut view = EnvironmentView::default();
 
     press(&mut view, &mut state, KeyCode::Char(']'));
+    press(&mut view, &mut state, KeyCode::Enter);
+    press(&mut view, &mut state, KeyCode::Esc);
     assert_eq!(view.selection.column, 1);
-    assert_eq!(view.preview_vertical, 0);
-    assert_eq!(view.preview_horizontal, 0);
-    let rendered = text(&mut view, &state, (80, 24));
-    assert!(rendered.contains("prod · Plan preview"), "{rendered}");
-    assert!(!rendered.contains("dev line"), "{rendered}");
-
-    press(&mut view, &mut state, KeyCode::Enter);
-    assert!(view.preview_open);
     assert!(view.selection.raw.is_none());
-    press(&mut view, &mut state, KeyCode::Char('['));
-    assert_eq!(view.selection.column, 0);
-    press(&mut view, &mut state, KeyCode::Esc);
-    assert!(!view.preview_open);
-    assert_eq!(view.preview_vertical, 0);
-    assert_eq!(view.preview_horizontal, 0);
 }
 
 #[test]
-fn overview_pages_move_by_the_visible_matrix_and_preview_heights() {
-    let mut state = session(&["dev", "prod"]);
+fn overview_pages_use_the_visible_matrix_height() {
+    let mut state = session(&["dev"]);
     let changes: Vec<_> = (0..40)
         .map(|index| {
             change(
@@ -1014,122 +637,12 @@ fn overview_pages_move_by_the_visible_matrix_and_preview_heights() {
             )
         })
         .collect();
-    let plan_text = (0..80)
-        .map(|index| format!("long plan line {index}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    for _ in 0..2 {
-        complete_with_plan_document(
-            &mut state,
-            changes.clone(),
-            plan_text.clone(),
-            Vec::new(),
-            Vec::new(),
-        );
-    }
+    complete(&mut state, changes);
     let view = EnvironmentView::default();
-    let compact = Size::new(80, 24);
-    let tall = Size::new(80, 40);
-    let (compact_matrix_page, _, _) = view.overview_page_sizes(compact, &state, false);
-    let (tall_matrix_page, _, _) = view.overview_page_sizes(tall, &state, false);
-    assert_ne!(compact_matrix_page, 10);
-    assert!(tall_matrix_page > compact_matrix_page);
-
-    let mut compact_view = EnvironmentView::default();
-    press_at(&mut compact_view, &mut state, KeyCode::PageDown, compact);
-    let compact_first = first_resource_index(&text(&mut compact_view, &state, (80, 24)));
-    let mut tall_view = EnvironmentView::default();
-    press_at(&mut tall_view, &mut state, KeyCode::PageDown, tall);
-    let tall_first = first_resource_index(&text(&mut tall_view, &state, (80, 40)));
-    assert_ne!(
-        tall_first, compact_first,
-        "matrix pages should use their visible heights, {compact_matrix_page} and {tall_matrix_page}"
-    );
-
-    let mut view = EnvironmentView::default();
-    press_at(&mut view, &mut state, KeyCode::PageDown, compact);
-    let matrix_position = first_resource_index(&text(&mut view, &state, (80, 24)));
-    press_at(&mut view, &mut state, KeyCode::Enter, compact);
-    assert_eq!(
-        first_resource_index(&text(&mut view, &state, (80, 24))),
-        matrix_position
-    );
-
-    let (_, compact_preview_visible, compact_preview_page) =
-        view.overview_page_sizes(compact, &state, true);
-    let (_, tall_preview_visible, tall_preview_page) = view.overview_page_sizes(tall, &state, true);
-    assert!(compact_preview_visible);
-    assert!(tall_preview_visible);
-    assert_ne!(compact_preview_page, 10);
-    assert!(tall_preview_page > compact_preview_page);
-    press_at(&mut view, &mut state, KeyCode::PageDown, compact);
-    assert_eq!(view.preview_vertical, compact_preview_page);
-    assert_eq!(
-        first_resource_index(&text(&mut view, &state, (80, 24))),
-        matrix_position
-    );
-}
-
-#[test]
-fn filtering_out_the_preview_environment_selects_the_visible_plan_from_the_top() {
-    let mut state = session(&["dev", "prod", "stg"]);
-    for name in ["dev", "prod", "stg"] {
-        complete_with_plan_document(
-            &mut state,
-            vec![change("terraform_data.api", ResourceChangeKind::Update)],
-            format!(
-                "Plan for {name}\n{}\n{name}_TAIL",
-                (0..24)
-                    .map(|index| format!("# {name} line {index}"))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            ),
-            Vec::new(),
-            Vec::new(),
-        );
-    }
-    let mut view = EnvironmentView::default();
-    press(&mut view, &mut state, KeyCode::Enter);
-    press(&mut view, &mut state, KeyCode::PageDown);
-    assert!(view.preview_vertical > 0);
-
-    press(&mut view, &mut state, KeyCode::Char('e'));
-    press(&mut view, &mut state, KeyCode::Char(' '));
-    press(&mut view, &mut state, KeyCode::Down);
-    press(&mut view, &mut state, KeyCode::Enter);
-    assert_eq!(view.selection.column, 1);
-    assert_eq!(view.preview_vertical, 0);
-    let rendered = text(&mut view, &state, (80, 24));
-    assert!(rendered.contains("prod · Plan preview"), "{rendered}");
-    assert!(!rendered.contains("dev line"), "{rendered}");
-    assert!(!rendered.contains("dev_TAIL"), "{rendered}");
-}
-
-#[test]
-fn reopening_preview_for_the_same_environment_keeps_its_scroll_position() {
-    let mut state = session(&["dev", "prod"]);
-    for _ in 0..2 {
-        let plan_text = (0..40)
-            .map(|index| format!("# line {index}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        complete_with_plan_document(
-            &mut state,
-            vec![change("terraform_data.api", ResourceChangeKind::Update)],
-            plan_text,
-            Vec::new(),
-            Vec::new(),
-        );
-    }
-    let mut view = EnvironmentView::default();
-    press(&mut view, &mut state, KeyCode::Enter);
-    press(&mut view, &mut state, KeyCode::PageDown);
-    let scroll = view.preview_vertical;
-    assert!(scroll > 0);
-    press(&mut view, &mut state, KeyCode::Esc);
-    press(&mut view, &mut state, KeyCode::Enter);
-
-    assert_eq!(view.preview_vertical, scroll);
+    let compact = view.overview_page_size(Size::new(80, 24), &state);
+    let tall = view.overview_page_size(Size::new(80, 40), &state);
+    assert_ne!(compact, 10);
+    assert!(tall > compact);
 }
 
 #[test]
@@ -1180,104 +693,6 @@ fn space_toggles_all_displayed_resource_groups() {
         collapsed.contains("[+] terraform_data.server_1[*]"),
         "{collapsed}"
     );
-}
-
-#[test]
-fn full_preview_scrolls_long_raw_text_in_both_directions() {
-    let mut state = session(&["dev", "prod"]);
-    let address = "terraform_data.api";
-    let mut lines = vec![
-        format!("# {address} will change"),
-        "~ password = synthetic-secret -> rotated".to_owned(),
-    ];
-    lines.push(format!(
-        "  long_attribute = {}CLIPPED_RAW_TAIL",
-        "x".repeat(80)
-    ));
-    lines.push("  # immediately after long raw line".to_owned());
-    lines.extend((1..=24).map(|index| format!("  # synthetic block line {index}")));
-    let plan_text = lines.join("\n");
-    let block = PlanBlock::with_addresses(
-        0..lines.len(),
-        PlanBlockKind::Resource,
-        vec![address.to_owned()],
-    );
-    for _ in 0..2 {
-        complete_with_plan_document(
-            &mut state,
-            vec![change(address, ResourceChangeKind::Update)],
-            plan_text.clone(),
-            vec![block.clone()],
-            vec![SensitiveValue::Text("synthetic-secret".to_owned())],
-        );
-    }
-    let mut view = EnvironmentView::default();
-    press(&mut view, &mut state, KeyCode::Enter);
-
-    for size in [(40, 24), (80, 24), (120, 40), (160, 60)] {
-        let rendered = text(&mut view, &state, size);
-        assert!(
-            rendered.contains("# terraform_data.api will change"),
-            "{size:?}: {rendered}"
-        );
-        assert!(
-            !rendered.contains("synthetic-secret"),
-            "{size:?}: {rendered}"
-        );
-        if size == (40, 24) {
-            let rendered_lines: Vec<_> = rendered.lines().collect();
-            let long_line = rendered_lines
-                .iter()
-                .position(|line| line.contains("long_attribute ="))
-                .expect("long raw line should be visible");
-            let following_line = rendered_lines
-                .iter()
-                .position(|line| line.contains("immediately after long raw line"))
-                .expect("following raw line should be visible");
-            assert_eq!(following_line, long_line + 1, "{rendered}");
-            assert!(!rendered.contains("CLIPPED_RAW_TAIL"), "{rendered}");
-        }
-        if size == (160, 60) {
-            press(&mut view, &mut state, KeyCode::PageDown);
-            let scrolled = text(&mut view, &state, size);
-            assert!(scrolled.contains("synthetic block line 24"), "{scrolled}");
-        }
-    }
-    for _ in 0..120 {
-        press(&mut view, &mut state, KeyCode::Right);
-    }
-    assert!(
-        text(&mut view, &state, (40, 24)).contains("CLIPPED_RAW_TAIL"),
-        "horizontal scrolling should reveal the unwrapped tail"
-    );
-}
-
-#[test]
-fn preview_falls_back_when_it_would_shrink_the_matrix_below_minimum() {
-    let mut state = session(&["dev", "prod"]);
-    for _ in 0..2 {
-        complete(
-            &mut state,
-            vec![change("terraform_data.api", ResourceChangeKind::Update)],
-        );
-    }
-    let mut view = EnvironmentView::default();
-    press(&mut view, &mut state, KeyCode::Enter);
-    let small = text(&mut view, &state, (40, 12));
-    assert!(small.contains("Resize for preview"), "{small}");
-    assert!(small.contains('v'), "{small}");
-    assert!(small.contains("Address"), "{small}");
-    press_at(&mut view, &mut state, KeyCode::Right, Size::new(40, 12));
-    assert_eq!(view.selection.column, 1);
-    press_at(&mut view, &mut state, KeyCode::Char('['), Size::new(40, 12));
-    assert_eq!(view.selection.column, 0);
-
-    let large = text(&mut view, &state, (80, 24));
-    assert!(
-        large.contains("# terraform_data.api will change"),
-        "{large}"
-    );
-    assert!(view.preview_open);
 }
 
 #[test]
@@ -1566,8 +981,6 @@ fn filter_can_narrow_a_three_environment_matrix_to_one_selected_environment() {
     assert!(!output.contains("2 stg"), "{output}");
     assert_eq!(view.selection.column, 1);
     press(&mut view, &mut state, KeyCode::Enter);
-    assert!(view.preview_open);
-    press(&mut view, &mut state, KeyCode::Char('v'));
     assert_eq!(view.selection.raw, Some(1));
 }
 

@@ -189,7 +189,7 @@ fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
         }
         if (width, height) == (80, 24) {
             assert!(text.contains("1–9"));
-            assert!(text.contains("open plan preview"));
+            assert!(text.contains("full plan"));
             assert!(!text.contains("Tab"));
             assert!(text.contains("expand or collapse groups"));
             assert!(text.contains("filter compared environments"));
@@ -220,7 +220,6 @@ fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
     view.dialog_scroll = u16::MAX;
     let bottom = render_to_buffer((40, 16), |frame| view.render(frame, &state));
     let bottom_text = buffer_text(&bottom);
-    assert!(bottom_text.contains("Excluded"));
     assert!(bottom_text.contains("quit"));
     assert_eq!(bottom_text.matches("close").count(), 1);
     insta::assert_snapshot!("environment_help_40x16_bottom", bottom_text);

@@ -1,5 +1,6 @@
 ---
 source: src/ui/features/environments/tests/matrix.rs
+assertion_line: 547
 expression: "text(&mut view, &state, (80, 24))"
 ---
 0 Overview  ‹  7 env-06  8 env-07  9 env-08  10 env-09  11 env-10  12 env-11
@@ -14,8 +15,7 @@ Pending
 
   Waiting for environment plans.
 
-  Total       Pending     Pending     Pending     Pending
-
+  Total        Pending          Pending          Pending          Pending
   blank: absent   .: unchanged   ?: plan unavailable
 
 
@@ -24,5 +24,6 @@ Pending
 
 
 
-  [ ] environment | Enter preview | / filter | e environments | v full plan
-  ? help | q quit
+
+
+  [ ] environment | Enter open | / filter | e environments | ? help | q quit

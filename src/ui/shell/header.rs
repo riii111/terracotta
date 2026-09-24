@@ -45,11 +45,11 @@ pub(crate) fn render_review(frame: &mut Frame<'_>, area: Rect, review: &PlanRevi
 }
 
 pub(crate) fn render_plan_review(frame: &mut Frame<'_>, area: Rect, review: &PlanReview) {
-    render(
-        frame,
-        area,
-        vec![plan_review_header_line(review, area.width)],
-    );
+    let mut lines = vec![plan_review_header_line(review, area.width)];
+    if area.height > 1 {
+        lines.push(plan_review_changes_line(review));
+    }
+    render(frame, area, lines);
 }
 
 pub(crate) fn render_execution(frame: &mut Frame<'_>, area: Rect, context: &ExecutionContext) {
@@ -115,6 +115,47 @@ fn plan_review_header_line(review: &PlanReview, width: u16) -> Line<'static> {
         ],
         width,
     )
+}
+
+fn plan_review_changes_line(review: &PlanReview) -> Line<'static> {
+    let counts = review.metadata();
+    let mut line = Line::from(Span::styled("Changes", theme::secondary_style()));
+    let mut append = |text: String, style| {
+        line.push_span(Span::styled("  ", theme::secondary_style()));
+        line.push_span(Span::styled(text, style));
+    };
+    if counts.additions() > 0 {
+        append(
+            format!("+{} add", counts.additions()),
+            theme::success_style(),
+        );
+    }
+    if counts.changes() > 0 {
+        append(
+            format!("~{} update", counts.changes()),
+            theme::warning_style(),
+        );
+    }
+    if counts.replacements() > 0 {
+        append(
+            format!("{} replace", counts.replacements()),
+            theme::overview_total_replace_style(),
+        );
+    }
+    if counts.deletions() > 0 {
+        append(
+            format!("-{} destroy", counts.deletions()),
+            theme::error_style(),
+        );
+    }
+    if counts.additions() == 0
+        && counts.changes() == 0
+        && counts.replacements() == 0
+        && counts.deletions() == 0
+    {
+        line.push_span(Span::styled("  none", theme::secondary_style()));
+    }
+    line
 }
 
 fn compact_review_header_line(review: &PlanReview, width: u16) -> Line<'static> {

@@ -9,12 +9,11 @@ d-pending: Pending   e-hcp: Excluded: HCP execution
 
   Missing required variable
   Pass a variable before retrying.
-  Address       a-ready   > b-error     c-running     d-pending    why
+  Address       a-ready    > b-error     c-running     d-pending    why
 
   No matching resource changes. v opens the full plan.
 
-  Total       +0 ~0 -0    Error       Running       Pending
-              0 replace
+  Total        No changes      Error              Running              Pending
   blank: absent   .: unchanged   ?: plan unavailable
 
 
@@ -24,5 +23,6 @@ d-pending: Pending   e-hcp: Excluded: HCP execution
 
 
 
-  [ ] environment | Enter preview | / filter | e environments | v full plan
-  ? help | q quit
+
+
+  [ ] environment | Enter open | / filter | e environments | ? help | q quit

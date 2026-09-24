@@ -1,12 +1,9 @@
-use super::{EnvironmentDialog, EnvironmentView, PlanPreview};
+use super::{EnvironmentDialog, EnvironmentView};
 use crate::{
     app::environments::{EnvironmentPlan, EnvironmentSession, EnvironmentState},
     ui::{
         features::{overview::matrix, plan_review},
-        primitives::{
-            atoms::{scrollbar, separator},
-            molecules::help_dialog,
-        },
+        primitives::{atoms::separator, molecules::help_dialog},
         shell::environments,
         theme,
     },
@@ -19,18 +16,14 @@ use ratatui::{
 };
 use std::time::Instant;
 
-const MIN_MATRIX_HEIGHT: u16 = 5;
-const MIN_PREVIEW_HEIGHT: u16 = 4;
-
 impl EnvironmentView {
-    pub(super) fn overview_page_sizes(
+    pub(super) fn overview_page_size(
         &self,
         size: ratatui::layout::Size,
         state: &EnvironmentSession,
-        calculate_preview_page: bool,
-    ) -> (usize, bool, usize) {
+    ) -> usize {
         if self.selection.raw.is_some() {
-            return (1, false, 0);
+            return 1;
         }
         let area = Rect::new(0, 0, size.width, size.height);
         let visible_environments = self.visible_environments(state.plans().len());
@@ -43,16 +36,7 @@ impl EnvironmentView {
             &visible_environments,
         );
         let content = self.overview_content_layout(layout.body, state);
-        let matrix_page = usize::from(content.matrix.height.saturating_sub(2)).max(1);
-        let preview_visible = content.preview.is_some();
-        let preview_page = if calculate_preview_page {
-            content.preview.map_or(0, |area| {
-                preview_page_size(area, &self.selected_plan_preview(state))
-            })
-        } else {
-            0
-        };
-        (matrix_page, preview_visible, preview_page)
+        usize::from(content.matrix.height.saturating_sub(2)).max(1)
     }
 
     pub(crate) fn render(&mut self, frame: &mut Frame<'_>, state: &EnvironmentSession) {
@@ -192,16 +176,6 @@ impl EnvironmentView {
             &mut self.matrix,
             self.selection.column,
         );
-        if let Some(preview_area) = layout.preview {
-            let preview = self.selected_plan_preview(state);
-            render_plan_preview(
-                frame,
-                preview_area,
-                &preview,
-                &mut self.preview_vertical,
-                &mut self.preview_horizontal,
-            );
-        }
         render_footer(frame, layout.content_area, &layout.footer);
     }
 
@@ -218,48 +192,21 @@ impl EnvironmentView {
             .map(overview_detail)
             .unwrap_or_default();
         let (context_height, detail_height) = section_heights(content_area, &context, &detail);
-        let regular_footer = overview_footer(
+        let footer = overview_footer(
             content_area.width,
-            self.preview_open,
             self.matrix.searching(),
             self.matrix.groups_expanded(),
         );
-        let regular_footer_height = line_count(&regular_footer);
-        let panel_height = self
-            .preview_open
-            .then(|| {
-                let preview_space_height = area
-                    .height
-                    .saturating_sub(context_height + detail_height + regular_footer_height)
-                    .saturating_sub(content_area.y.saturating_sub(area.y));
-                available_preview_height(preview_space_height)
-            })
-            .flatten();
-        let footer = if self.preview_open && panel_height.is_none() {
-            preview_unavailable_footer(content_area.width, self.matrix.searching())
-        } else {
-            regular_footer
-        };
         let matrix_height = area.height.saturating_sub(
             context_height
                 + detail_height
                 + line_count(&footer)
-                + content_area.y.saturating_sub(area.y)
-                + panel_height.unwrap_or(0),
+                + content_area.y.saturating_sub(area.y),
         );
         let matrix_y = content_area
             .y
             .saturating_add(context_height + detail_height);
         let matrix = Rect::new(content_area.x, matrix_y, content_area.width, matrix_height);
-        let preview = panel_height.map(|panel_height| {
-            Rect::new(
-                content_area.x,
-                matrix_y.saturating_add(matrix_height),
-                content_area.width,
-                panel_height,
-            )
-        });
-
         OverviewContentLayout {
             content_area,
             context,
@@ -267,7 +214,6 @@ impl EnvironmentView {
             detail,
             detail_height,
             matrix,
-            preview,
             footer,
         }
     }
@@ -312,7 +258,6 @@ struct OverviewContentLayout {
     detail: String,
     detail_height: u16,
     matrix: Rect,
-    preview: Option<Rect>,
     footer: Vec<Line<'static>>,
 }
 
@@ -327,14 +272,21 @@ fn overview_context(view: &EnvironmentView) -> String {
 fn overview_detail(plan: &EnvironmentPlan) -> String {
     if matches!(plan.state(), EnvironmentState::Error) {
         plan.diagnostic().text().to_owned()
-    } else if let Some(review) = plan
-        .review()
-        .filter(|review| review.review().metadata().nonstandard_changes() > 0)
-    {
-        format!(
-            "Other changes: {} output/import/move or unsupported change(s). v opens the full plan.",
-            review.review().metadata().nonstandard_changes()
-        )
+    } else if let Some(review) = plan.review().filter(|review| {
+        let metadata = review.review().metadata();
+        metadata.nonstandard_changes() > 0 || !metadata.output_names().is_empty()
+    }) {
+        let metadata = review.review().metadata();
+        let count = metadata.nonstandard_changes();
+        let outputs = !metadata.output_names().is_empty();
+        let detail = if count > 0 && outputs {
+            format!("{count} other change(s) and output changes")
+        } else if count > 0 {
+            format!("{count} other change(s)")
+        } else {
+            "output changes".to_owned()
+        };
+        format!("Other changes: {detail}. v opens the full plan.")
     } else {
         String::new()
     }
@@ -361,97 +313,117 @@ fn section_heights(area: Rect, context: &str, detail: &str) -> (u16, u16) {
 }
 
 fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
-    help_dialog::render(
-        frame,
-        area,
-        "Help",
-        &[
-            help_dialog::HelpSection::new(
-                "Current: Overview",
-                vec![
-                    help_dialog::HelpAction::new(
-                        "↑ / ↓ / j / k",
-                        "scroll matrix or preview; move through filter candidates",
-                    ),
-                    help_dialog::HelpAction::new(
-                        "← / →",
-                        "select env or scroll preview; move in filter search",
-                    ),
-                    help_dialog::HelpAction::new("[ / ]", "select previous or next environment"),
-                    help_dialog::HelpAction::new(
-                        "Enter",
-                        "open plan preview; apply filter or accept search",
-                    ),
-                    help_dialog::HelpAction::new(
-                        "Esc",
-                        "close preview; return from plan; cancel filter; restore search",
-                    ),
-                    help_dialog::HelpAction::new(
-                        "1–9",
-                        "open the numbered environment's full plan",
-                    ),
-                    help_dialog::HelpAction::new(
-                        "Space",
-                        "expand or collapse groups; toggle a filter candidate",
-                    ),
-                    help_dialog::HelpAction::new(
-                        "/",
-                        "filter addresses; search environment names in filter",
-                    ),
-                    help_dialog::HelpAction::new("e", "filter compared environments"),
-                ],
+    let sections = overview_help_sections();
+    help_dialog::render(frame, area, "Help", &sections, scroll);
+}
+
+fn overview_help_sections() -> Vec<help_dialog::HelpSection> {
+    vec![
+        help_current_overview(),
+        help_other_actions(),
+        help_matrix_legend(),
+        help_comparison(),
+        help_totals(),
+    ]
+}
+
+fn help_current_overview() -> help_dialog::HelpSection {
+    help_dialog::HelpSection::new(
+        "Current: Overview",
+        vec![
+            help_dialog::HelpAction::new(
+                "↑ / ↓ / j / k",
+                "scroll matrix; move through filter candidates",
             ),
-            help_dialog::HelpSection::new(
-                "Other",
-                vec![
-                    help_dialog::HelpAction::new(
-                        "PgUp / PgDn",
-                        "move a page in the active view or candidate list",
-                    ),
-                    help_dialog::HelpAction::new(
-                        "Home / End",
-                        "go to an endpoint or the start/end of search text",
-                    ),
-                    help_dialog::HelpAction::new("a", "clear filter search and select all"),
-                    help_dialog::HelpAction::new("v", "show the full plan from the top"),
-                    help_dialog::HelpAction::new("y", "copy the selected environment's plan"),
-                    help_dialog::HelpAction::new("c", "show environment context"),
-                    help_dialog::HelpAction::new("r", "retry a selected Error environment"),
-                    help_dialog::HelpAction::new("q", "quit; confirms first while acquiring"),
-                ],
+            help_dialog::HelpAction::new("← / →", "select env; move in filter search"),
+            help_dialog::HelpAction::new("[ / ]", "select previous or next environment"),
+            help_dialog::HelpAction::new(
+                "Enter",
+                "open the selected environment's full plan; apply filter or accept search",
             ),
-            help_dialog::HelpSection::new(
-                "Matrix legend",
-                vec![
-                    help_dialog::HelpAction::new("+ / ~ / -", "create / update / delete"),
-                    help_dialog::HelpAction::new(
-                        "+/- / -/+",
-                        "replace (create→delete / delete→create)",
-                    ),
-                    help_dialog::HelpAction::new("blank", "resource absent from this environment"),
-                    help_dialog::HelpAction::new(".", "resource present, with no change"),
-                    help_dialog::HelpAction::new("?", "plan unavailable; action unknown"),
-                    help_dialog::HelpAction::new("read / move / import", "action shown by name"),
-                    help_dialog::HelpAction::new(
-                        "why: missing",
-                        "resource present in only some Ready plans",
-                    ),
-                ],
+            help_dialog::HelpAction::new("Esc", "return from plan; cancel filter; restore search"),
+            help_dialog::HelpAction::new("1–9", "open the numbered environment's full plan"),
+            help_dialog::HelpAction::new(
+                "Space",
+                "expand or collapse groups; toggle a filter candidate",
             ),
-            help_dialog::HelpSection::new(
-                "Comparison",
-                vec![
-                    help_dialog::HelpAction::new(
-                        "Same changes",
-                        "no differences found in Ready plans; unknown values may differ",
-                    ),
-                    help_dialog::HelpAction::new("Scope", "only Ready environments are compared"),
-                    help_dialog::HelpAction::new("Excluded", "environments are not retried"),
-                ],
+            help_dialog::HelpAction::new(
+                "/",
+                "filter addresses; search environment names in filter",
+            ),
+            help_dialog::HelpAction::new("e", "filter compared environments"),
+        ],
+    )
+}
+
+fn help_other_actions() -> help_dialog::HelpSection {
+    help_dialog::HelpSection::new(
+        "Other",
+        vec![
+            help_dialog::HelpAction::new(
+                "PgUp / PgDn",
+                "move a page in the active view or candidate list",
+            ),
+            help_dialog::HelpAction::new(
+                "Home / End",
+                "go to an endpoint or the start/end of search text",
+            ),
+            help_dialog::HelpAction::new("a", "clear filter search and select all"),
+            help_dialog::HelpAction::new("v", "show the full plan from the top"),
+            help_dialog::HelpAction::new("y", "copy the selected environment's plan"),
+            help_dialog::HelpAction::new("c", "show environment context"),
+            help_dialog::HelpAction::new("r", "retry a selected Error environment"),
+            help_dialog::HelpAction::new("q", "quit; confirms first while acquiring"),
+        ],
+    )
+}
+
+fn help_matrix_legend() -> help_dialog::HelpSection {
+    help_dialog::HelpSection::new(
+        "Matrix legend",
+        vec![
+            help_dialog::HelpAction::new("+ / ~ / -", "create / update / delete"),
+            help_dialog::HelpAction::new("+/- / -/+", "replace (create→delete / delete→create)"),
+            help_dialog::HelpAction::new("blank", "resource absent from this environment"),
+            help_dialog::HelpAction::new(".", "resource present, with no change"),
+            help_dialog::HelpAction::new("?", "plan unavailable; action unknown"),
+            help_dialog::HelpAction::new("read / move / import", "action shown by name"),
+            help_dialog::HelpAction::new(
+                "why: missing",
+                "resource present in only some Ready plans",
             ),
         ],
-        scroll,
-    );
+    )
+}
+
+fn help_comparison() -> help_dialog::HelpSection {
+    help_dialog::HelpSection::new(
+        "Comparison",
+        vec![
+            help_dialog::HelpAction::new(
+                "Same changes",
+                "no differences found in Ready plans; unknown values may differ",
+            ),
+            help_dialog::HelpAction::new("Scope", "only Ready environments are compared"),
+            help_dialog::HelpAction::new("Excluded", "environments are not retried"),
+        ],
+    )
+}
+
+fn help_totals() -> help_dialog::HelpSection {
+    help_dialog::HelpSection::new(
+        "Totals",
+        vec![
+            help_dialog::HelpAction::new(
+                "replace",
+                "counted once as a replacement; it is not added to create or delete",
+            ),
+            help_dialog::HelpAction::new(
+                "No changes",
+                "all resource operation counts are zero for a Ready environment",
+            ),
+        ],
+    )
 }
 
 fn overview_footer_hint(
@@ -503,17 +475,7 @@ fn overview_footer_layout(items: Vec<Line<'static>>, width: u16) -> Vec<Line<'st
         .collect()
 }
 
-fn available_preview_height(content_height: u16) -> Option<u16> {
-    let minimum_height = MIN_MATRIX_HEIGHT.saturating_add(MIN_PREVIEW_HEIGHT);
-    (content_height >= minimum_height).then_some(content_height / 2)
-}
-
-fn overview_footer(
-    width: u16,
-    preview_open: bool,
-    searching: bool,
-    expanded: Option<bool>,
-) -> Vec<Line<'static>> {
+fn overview_footer(width: u16, searching: bool, expanded: Option<bool>) -> Vec<Line<'static>> {
     if searching {
         return overview_footer_layout(
             vec![
@@ -524,23 +486,39 @@ fn overview_footer(
         );
     }
     if width < 45 {
-        return compact_overview_footer(preview_open, expanded, width);
+        return compact_overview_footer(expanded, width);
     }
-    let mut items = if preview_open {
-        vec![
-            overview_footer_hint(&["[ ]"], "environment"),
-            overview_footer_hint(&["Esc"], "close"),
-            overview_footer_hint(&["v"], "full plan"),
-        ]
-    } else {
-        vec![
-            overview_footer_hint(&["[ ]"], "environment"),
-            overview_footer_hint(&["Enter"], "preview"),
+    let mut items = vec![
+        overview_footer_hint(&["[ ]"], "environment"),
+        overview_footer_hint(&["Enter"], "open"),
+        overview_footer_hint(&["/"], "filter"),
+        overview_footer_hint(&["e"], "environments"),
+    ];
+    if let Some(expanded) = expanded {
+        items.push(overview_footer_hint(
+            &["Space"],
+            if expanded {
+                "collapse all"
+            } else {
+                "expand all"
+            },
+        ));
+    }
+    items.extend([
+        overview_footer_hint(&["?"], "help"),
+        overview_footer_hint(&["q"], "quit"),
+    ]);
+    overview_footer_layout(items, width)
+}
+
+fn compact_overview_footer(expanded: Option<bool>, width: u16) -> Vec<Line<'static>> {
+    if width < 32 {
+        let mut items = vec![
+            overview_footer_hint(&["[ ]"], "env"),
+            overview_footer_hint(&["Enter"], "open"),
             overview_footer_hint(&["/"], "filter"),
-            overview_footer_hint(&["e"], "environments"),
-        ]
-    };
-    if !preview_open {
+        ];
+        items.push(overview_footer_hint(&["e"], "env filter"));
         if let Some(expanded) = expanded {
             items.push(overview_footer_hint(
                 &["Space"],
@@ -551,43 +529,7 @@ fn overview_footer(
                 },
             ));
         }
-        items.push(overview_footer_hint(&["v"], "full plan"));
-    }
-    items.extend([
-        overview_footer_hint(&["?"], "help"),
-        overview_footer_hint(&["q"], "quit"),
-    ]);
-    overview_footer_layout(items, width)
-}
-
-fn compact_overview_footer(
-    preview_open: bool,
-    expanded: Option<bool>,
-    width: u16,
-) -> Vec<Line<'static>> {
-    if width < 32 {
-        let mut items = vec![
-            overview_footer_hint(&["[ ]"], "env"),
-            overview_footer_hint(&["Enter"], "preview"),
-            overview_footer_hint(&["/"], "filter"),
-        ];
-        if preview_open {
-            items[1] = overview_footer_hint(&["Esc"], "close");
-        } else {
-            items.push(overview_footer_hint(&["e"], "env filter"));
-            if let Some(expanded) = expanded {
-                items.push(overview_footer_hint(
-                    &["Space"],
-                    if expanded {
-                        "collapse all"
-                    } else {
-                        "expand all"
-                    },
-                ));
-            }
-        }
         items.extend([
-            overview_footer_hint(&["v"], "plan"),
             overview_footer_hint(&["?"], "help"),
             overview_footer_hint(&["q"], "quit"),
         ]);
@@ -595,24 +537,9 @@ fn compact_overview_footer(
     }
 
     let environment = if width < 40 { "env" } else { "environment" };
-    let plan = "full plan";
-    if preview_open {
-        return vec![
-            join_footer_items([
-                overview_footer_hint(&["[ ]"], environment),
-                overview_footer_hint(&["Esc"], "close"),
-            ]),
-            join_footer_items([
-                overview_footer_hint(&["v"], plan),
-                overview_footer_hint(&["?"], "help"),
-                overview_footer_hint(&["q"], "quit"),
-            ]),
-        ];
-    }
-
     let items = vec![
         overview_footer_hint(&["[ ]"], environment),
-        overview_footer_hint(&["Enter"], "preview"),
+        overview_footer_hint(&["Enter"], "open"),
         overview_footer_hint(&["/"], "filter"),
     ];
     let mut row_two = vec![overview_footer_hint(&["e"], "env filter")];
@@ -630,7 +557,6 @@ fn compact_overview_footer(
         join_footer_items(items),
         join_footer_items(row_two),
         join_footer_items([
-            overview_footer_hint(&["v"], plan),
             overview_footer_hint(&["?"], "help"),
             overview_footer_hint(&["q"], "quit"),
         ]),
@@ -648,52 +574,6 @@ fn join_footer_items(items: impl IntoIterator<Item = Line<'static>>) -> Line<'st
     line
 }
 
-fn preview_unavailable_footer(width: u16, searching: bool) -> Vec<Line<'static>> {
-    if searching {
-        return overview_footer_layout(
-            vec![
-                overview_footer_hint(&["Enter"], "confirm"),
-                overview_footer_hint(&["Esc"], "cancel"),
-                Line::from("Resize for preview"),
-            ],
-            width,
-        );
-    }
-    if width < 45 {
-        return overview_footer_layout(
-            vec![
-                overview_footer_hint(&["[ ]"], "environment"),
-                overview_footer_hint(&["Esc"], "close"),
-                overview_footer_hint(&["/"], "filter"),
-                overview_footer_hint(&["e"], "environments"),
-                Line::from("Resize for preview"),
-                overview_footer_hint(&["v"], "full plan"),
-                overview_footer_hint(&["?"], "help"),
-                overview_footer_hint(&["q"], "quit"),
-            ],
-            width,
-        );
-    }
-    let preview_message = if width >= 56 {
-        "Preview needs more room"
-    } else {
-        "Resize for preview"
-    };
-    overview_footer_layout(
-        vec![
-            overview_footer_hint(&["[ ]"], "environment"),
-            overview_footer_hint(&["Esc"], "close"),
-            overview_footer_hint(&["/"], "filter"),
-            overview_footer_hint(&["e"], "environments"),
-            Line::from(preview_message),
-            overview_footer_hint(&["v"], "full plan"),
-            overview_footer_hint(&["?"], "help"),
-            overview_footer_hint(&["q"], "quit"),
-        ],
-        width,
-    )
-}
-
 fn line_count(lines: &[Line<'static>]) -> u16 {
     u16::try_from(lines.len()).unwrap_or(u16::MAX)
 }
@@ -708,122 +588,4 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, lines: &[Line<'static>]) {
             line_count(lines),
         ),
     );
-}
-
-fn render_plan_preview(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    preview: &PlanPreview,
-    vertical: &mut usize,
-    horizontal: &mut usize,
-) {
-    if area.height < MIN_PREVIEW_HEIGHT {
-        return;
-    }
-    frame.render_widget(
-        Paragraph::new(Line::styled(
-            preview.title.clone(),
-            theme::overview_preview_title_style(),
-        ))
-        .style(theme::overview_total_style()),
-        Rect::new(area.x, area.y, area.width, 1),
-    );
-    let body_area = Rect::new(
-        area.x,
-        area.y.saturating_add(1),
-        area.width,
-        area.height.saturating_sub(1),
-    );
-    let lines = preview
-        .text
-        .split('\n')
-        .map(|line| {
-            Line::styled(
-                line.to_owned(),
-                if preview.is_raw {
-                    theme::overview_plan_line_style(line)
-                } else {
-                    theme::overview_warning_style()
-                },
-            )
-        })
-        .collect::<Vec<_>>();
-    let line_width = lines.iter().map(Line::width).max().unwrap_or(0);
-    let line_count = lines.len();
-    let (vertical_scrollbar, horizontal_scrollbar) =
-        preview_scrollbars(line_count, line_width, body_area);
-    let content = Rect::new(
-        body_area.x,
-        body_area.y,
-        body_area
-            .width
-            .saturating_sub(u16::from(vertical_scrollbar)),
-        body_area
-            .height
-            .saturating_sub(u16::from(horizontal_scrollbar)),
-    );
-    *vertical = (*vertical).min(line_count.saturating_sub(usize::from(content.height)));
-    *horizontal = (*horizontal).min(line_width.saturating_sub(usize::from(content.width)));
-    frame.render_widget(
-        Paragraph::new(lines)
-            .style(theme::overview_text_style())
-            .scroll((
-                u16::try_from(*vertical).unwrap_or(u16::MAX),
-                u16::try_from(*horizontal).unwrap_or(u16::MAX),
-            )),
-        content,
-    );
-    if vertical_scrollbar {
-        scrollbar::render_vertical(
-            frame,
-            Rect::new(content.right(), content.y, 1, content.height),
-            line_count,
-            usize::from(content.height),
-            *vertical,
-        );
-    }
-    if horizontal_scrollbar {
-        scrollbar::render_horizontal(
-            frame,
-            Rect::new(content.x, content.bottom(), content.width, 1),
-            line_width,
-            usize::from(content.width),
-            *horizontal,
-        );
-    }
-}
-
-fn preview_scrollbars(line_count: usize, line_width: usize, area: Rect) -> (bool, bool) {
-    let mut vertical = line_count > usize::from(area.height);
-    let mut horizontal = line_width > usize::from(area.width);
-    for _ in 0..2 {
-        let width = usize::from(area.width).saturating_sub(usize::from(vertical));
-        let height = usize::from(area.height).saturating_sub(usize::from(horizontal));
-        horizontal = line_width > width;
-        vertical = line_count > height;
-    }
-    (vertical, horizontal)
-}
-
-fn preview_page_size(area: Rect, preview: &PlanPreview) -> usize {
-    let body_area = Rect::new(
-        area.x,
-        area.y.saturating_add(1),
-        area.width,
-        area.height.saturating_sub(1),
-    );
-    let line_width = preview
-        .text
-        .split('\n')
-        .map(|line| Line::from(line).width())
-        .max()
-        .unwrap_or(0);
-    let (_, horizontal_scrollbar) =
-        preview_scrollbars(preview.text.split('\n').count(), line_width, body_area);
-    usize::from(
-        body_area
-            .height
-            .saturating_sub(u16::from(horizontal_scrollbar)),
-    )
-    .max(1)
 }

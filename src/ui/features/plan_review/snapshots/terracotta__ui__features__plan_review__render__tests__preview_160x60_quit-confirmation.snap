@@ -3,7 +3,8 @@ source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
 Target: main [PROD] Workspace: default Tool: terraform loading... Dir: /repo/environments/production/main
-Unique targets (replace once): +2 add  ~2 update  0 replace  -1 destroy
+Changes  +2 add  ~2 update  -1 destroy
+
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   # terraform_data.api will be updated in-place
   ~ resource "terraform_data" "api" {
@@ -46,7 +47,6 @@ Long lines remain unwrapped in the plan body; horizontal movement exposes the hi
 Vertical movement exposes later lines in this synthetic plan body.
 
 End of synthetic plan body.
-
 
 
 

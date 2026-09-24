@@ -3,10 +3,11 @@ source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
 Target: main [PROD] Workspace: default Tool: terraform loading... Dir: /repo/environments/production/main
-Unique targets (replace once): +2 add  ~2 update  0 replace  -1 destroy
+Changes  +2 add  ~2 update  -1 destroy
+
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  # terraform_data.api will be updated in-place                                                                        ▲
- main [PROD]  ws:default  terraform loading...  /repo/environments/production/main                                     ┃
+ main [PROD]  ws:default  terraform loading...  /repo/environments/production/main                                     ▲
+  ~ resource "terraform_data" "api" {                                                                                  ┃
       id       = "api-20260920"                                                                                        ┃
       ~ input  = "before" -> "after"                                                                                   ┃
       # (4 unchanged attributes hidden)                                                                                ┃
@@ -14,31 +15,30 @@ Unique targets (replace once): +2 add  ~2 update  0 replace  -1 destroy
                                                                                                                        ┃
   # terraform_data.worker must be replaced                                                                             ┃
 -/+ resource "terraform_data" "worker" {                                                                               ┃
-      ~ input = "worker-before" -> "worker-after" # forces replacement                                                 ┃
-      - old_checksum┌──────────────────────────────────────────────────────────────────────────────┐                   ┃
-      + new_checksum│                                                                              │                   ┃
-    }               │ Apply this reviewed plan?                                                    │                   ┃
+      ~ input = "wor┌──────────────────────────────────────────────────────────────────────────────┐                   ┃
+      - old_checksum│                                                                              │                   ┃
+      + new_checksum│ Apply this reviewed plan?                                                    │                   ┃
+    }               │                                                                              │                   ┃
+                    │ Target: main [PROD]                                                          │                   ┃
+  # terraform_data.o│ Workspace: default                                                           │                   ┃
+  - resource "terraf│ Directory: /repo/environments/production/main                                │                   ┃
+      id = "old-2026│ Tool: terraform loading...                                                   │                   ┃
+    }               │ Plan: +2 add  ~2 update  0 replace  -1 destroy                               │                   ┃
                     │                                                                              │                   ┃
-  # terraform_data.o│ Target: main [PROD]                                                          │                   ┃
-  - resource "terraf│ Workspace: default                                                           │                   ┃
-      id = "old-2026│ Directory: /repo/environments/production/main                                │                   ┃
-    }               │ Tool: terraform loading...                                                   │                   ┃
-                    │ Plan: +2 add  ~2 update  0 replace  -1 destroy                               │                   ┃
-  # terraform_data.n│                                                                              │                   ┃
-  + resource "terraf│ Type main to apply (exact match).                                            │                   ┃
-      input = "new-v│ > |                                                                          │                   ┃
-      note  = "A del│                                                                              │                   ┃
-    }               └──────────────────────────────────────────────────────────────────────────────┘                   ┃
-                    Enter confirm | Esc back | ? help                                                                  ┃
+  # terraform_data.n│ Type main to apply (exact match).                                            │                   ┃
+  + resource "terraf│ > |                                                                          │                   ┃
+      input = "new-v│                                                                              │                   ┃
+      note  = "A del└──────────────────────────────────────────────────────────────────────────────┘                   ┃
+    }               Enter confirm | Esc back | ? help                                                                  ┃
+                                                                                                                       ┃
 Changes to Outputs:                                                                                                    ┃
   + endpoint = (known after apply)                                                                                     ┃
   ~ summary  = "old summary" -> "new summary with a deliberately long value for review"                                ┃
-                                                                                                                       ┃
+                                                                                                                       │
 Warning: Value for "pending" is not known until apply                                                                  │
                                                                                                                        │
 Plan: 2 to add, 2 to change, 1 to destroy.                                                                             │
                                                                                                                        │
-Synthetic review text continues below so the viewport and scrollbar remain meaningful.                                 │
-The same long body is intentionally reused across every review state and terminal size.                                ▼
+Synthetic review text continues below so the viewport and scrollbar remain meaningful.                                 ▼
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 s overview | / filter | ? help | q quit                                                                        Line 3/43

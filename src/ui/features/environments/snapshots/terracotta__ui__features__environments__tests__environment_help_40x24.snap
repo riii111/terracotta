@@ -6,23 +6,23 @@ expression: text
 R┌Help────────────────────────────────┐
 b│ Current: Overview                ▲ │
 d│ ↑ / ↓ / j / k                    ┃ │
-H│   scroll matrix or preview; move ┃ │
- │   through filter candidates      ┃ │
- │ ← / →                            ┃ │
- │   select env or scroll preview;  │ │
- │   move in filter search          │ │
+H│   scroll matrix; move through    ┃ │
+ │   filter candidates              ┃ │
+ │ ← / →                            │ │
+ │   select env; move in filter     │ │
+ │   search                         │ │
  │ [ / ]                            │ │
  │   select previous or next        │ │
  │   environment                    │ │
  │ Enter                            │ │
- │   open plan preview; apply       │ │
+ │   open the selected              │ │
+ │   environment's full plan; apply │ │
  │   filter or accept search        │ │
  │ Esc                              │ │
- │   close preview; return from     │ │
- │   plan; cancel filter; restore   │ │
- │   search                         │ │
+ │   return from plan; cancel       │ │
+ │   filter; restore search         │ │
  │ 1–9                              │ │
  │   open the numbered              ▼ │
  │ ?/Esc close                        │
  └────────────────────────────────────┘
- v full plan  ? help  q quit
+ ? help  q quit
