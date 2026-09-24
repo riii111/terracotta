@@ -6,15 +6,15 @@ infra  ws:default  ...ng...  /repo/infra
 R┌Help────────────────────────────────┐
 ─│ Navigation                       ▲ │─
 ┌│ 2 / 3                            ┃ │┐
-││   focus Changes / Relations      ┃ ││
-││ ↑ / ↓ / j / k                    ┃ ││
-└│   select a Changes row or scroll │ │┘
-┌│   Relations                      │ │┐
+││   focus Changes · infra /        ┃ ││
+││   Relations                      │ ││
+└│ ↑ / ↓ / j / k                    │ │┘
+┌│   select a Changes row or scroll │ │┐
+││   Relations                      │ ││
 ││ ← / → / h / l                    │ ││
 ││   scroll Changes or Relations    │ ││
 ││   horizontally                   │ ││
-││ PgUp / PgDn                      │ ││
-└│   move one page                  ▼ │┘
+└│ PgUp / PgDn                      ▼ │┘
 ─│ ?/Esc close                        │─
 /└────────────────────────────────────┘
 2/3 focus | f maximize | ? help | q quit

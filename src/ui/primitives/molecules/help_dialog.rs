@@ -20,12 +20,15 @@ const STACKED_DESCRIPTION_INDENT: u16 = 2;
 
 pub(crate) struct HelpAction {
     keys: &'static str,
-    description: &'static str,
+    description: String,
 }
 
 impl HelpAction {
-    pub(crate) const fn new(keys: &'static str, description: &'static str) -> Self {
-        Self { keys, description }
+    pub(crate) fn new(keys: &'static str, description: impl Into<String>) -> Self {
+        Self {
+            keys,
+            description: description.into(),
+        }
     }
 }
 
@@ -41,13 +44,13 @@ impl HelpSection {
 }
 
 #[derive(Clone, Copy)]
-struct ScrolledText {
+struct ScrolledText<'a> {
     line: usize,
     height: usize,
     scroll: usize,
     x: u16,
     width: u16,
-    text: &'static str,
+    text: &'a str,
     style: Style,
 }
 
@@ -175,7 +178,7 @@ fn required_content_width(sections: &[HelpSection]) -> u16 {
     sections
         .iter()
         .flat_map(|section| &section.actions)
-        .map(|action| line_width(action.description))
+        .map(|action| line_width(&action.description))
         .fold(column_width, u16::max)
 }
 
@@ -193,7 +196,7 @@ fn max_description_width(sections: &[HelpSection]) -> u16 {
     sections
         .iter()
         .flat_map(|section| &section.actions)
-        .map(|action| line_width(action.description))
+        .map(|action| line_width(&action.description))
         .max()
         .unwrap_or_default()
 }
@@ -235,14 +238,14 @@ fn content_height(sections: &[HelpSection], layout: ActionLayout) -> usize {
 
 fn row_height(action: &HelpAction, layout: ActionLayout) -> usize {
     if action.keys.is_empty() {
-        return wrapped_lines(action.description, layout.content_width);
+        return wrapped_lines(&action.description, layout.content_width);
     }
     if layout.stacked {
         return wrapped_lines(action.keys, layout.content_width)
-            .saturating_add(wrapped_lines(action.description, layout.description_width));
+            .saturating_add(wrapped_lines(&action.description, layout.description_width));
     }
     wrapped_lines(action.keys, layout.key_width)
-        .max(wrapped_lines(action.description, layout.description_width))
+        .max(wrapped_lines(&action.description, layout.description_width))
 }
 
 fn wrapped_lines(text: &str, width: u16) -> usize {
@@ -291,7 +294,7 @@ fn render_sections(
                         scroll,
                         x: viewport.x,
                         width: layout.content_width,
-                        text: action.description,
+                        text: &action.description,
                         style: theme::body_style(),
                     },
                 );
@@ -319,7 +322,7 @@ fn render_sections(
                         scroll,
                         x: viewport.x.saturating_add(layout.description_x),
                         width: layout.description_width,
-                        text: action.description,
+                        text: &action.description,
                         style: theme::body_style(),
                     },
                 );
@@ -346,7 +349,7 @@ fn render_sections(
                         scroll,
                         x: viewport.x.saturating_add(layout.description_x),
                         width: layout.description_width,
-                        text: action.description,
+                        text: &action.description,
                         style: theme::body_style(),
                     },
                 );
@@ -356,7 +359,7 @@ fn render_sections(
     }
 }
 
-fn render_scrolled_text(frame: &mut Frame<'_>, viewport: Rect, text: ScrolledText) {
+fn render_scrolled_text(frame: &mut Frame<'_>, viewport: Rect, text: ScrolledText<'_>) {
     if text.width == 0 || text.height == 0 {
         return;
     }

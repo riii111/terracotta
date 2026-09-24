@@ -8,7 +8,7 @@ a┌Help────────────────────────
 ││ ↑ / ↓ / j / k                    ┃ ││
 ││   select rows in [2] or scroll   ┃ ││
 ││   [3]                            ┃ ││
-││ Space                            ┃ ││
+││ Space                            │ ││
 ││   expand or collapse the         │ ││
 ││   selected group or Same change  │ ││
 └│   summary in [2]                 │ │┘
@@ -16,13 +16,13 @@ a┌Help────────────────────────
 ││   select the previous or next    │ ││
 ││   environment                    │ ││
 ││ 2 / 3                            │ ││
-││   focus Differs / Relations      │ ││
+││   focus Compare / Relations      │ ││
 ││ f                                │ ││
-││   maximize or restore the        │ ││
-││   focused pane                   │ ││
+││   maximize or restore [2]        │ ││
+││   Compare / [3] Relations        │ ││
 ││ Enter                            │ ││
 ││   [3] opens the plan from the    │ ││
 ││   top; [2] opens the selected    ▼ ││
 └│ ?/Esc close                        │┘
-?└────────────────────────────────────┘
-2/3 focus | f maximize
+v└────────────────────────────────────┘
+f maximize | ? help | q quit

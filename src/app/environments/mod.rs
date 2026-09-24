@@ -71,6 +71,7 @@ pub(crate) enum PlanResult {
 
 pub(crate) struct EnvironmentSession {
     plans: Vec<EnvironmentPlan>,
+    exploration_root: Option<PathBuf>,
     detailed_exitcode: bool,
     interrupted: bool,
     overview: overview::EnvironmentOverview,
@@ -99,13 +100,23 @@ impl EnvironmentSession {
             overview: overview::environment_overview(&plans),
             revision: 0,
             plans,
+            exploration_root: None,
             detailed_exitcode,
             interrupted: false,
         }
     }
 
+    pub(crate) fn with_exploration_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.exploration_root = Some(root.into());
+        self
+    }
+
     pub(crate) fn plans(&self) -> &[EnvironmentPlan] {
         &self.plans
+    }
+
+    pub(crate) fn exploration_root(&self) -> Option<&Path> {
+        self.exploration_root.as_deref()
     }
 
     pub(crate) const fn overview(&self) -> &overview::EnvironmentOverview {

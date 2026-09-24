@@ -28,6 +28,27 @@ pub(crate) fn hint(alternative_keys: &[&'static str], description: &'static str)
     Line::from(spans)
 }
 
+pub(crate) fn overview_hint(
+    alternative_keys: &[&'static str],
+    description: &'static str,
+) -> Line<'static> {
+    let mut spans = Vec::new();
+    for (index, key) in alternative_keys.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::styled(
+                KEY_SEPARATOR,
+                theme::overview_footer_separator_style(),
+            ));
+        }
+        spans.push(Span::styled(*key, theme::overview_footer_key_style()));
+    }
+    spans.push(Span::styled(
+        format!(" {description}"),
+        theme::overview_footer_text_style(),
+    ));
+    Line::from(spans)
+}
+
 pub(crate) fn quit_confirmation_lines(width: u16, notice: Option<&str>) -> Vec<Line<'static>> {
     let available = available_width(width, notice);
     let full = quit_confirmation_line();
@@ -131,6 +152,57 @@ pub(crate) fn layout(items: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>
     rows.into_iter()
         .filter(|row| !row.spans.is_empty())
         .collect()
+}
+
+pub(crate) fn layout_prioritized(
+    items: Vec<(u8, Line<'static>)>,
+    width: u16,
+) -> Vec<Line<'static>> {
+    let mut priority_order = (0..items.len()).collect::<Vec<_>>();
+    priority_order.sort_by_key(|index| std::cmp::Reverse(items[*index].0));
+    let mut selected = vec![false; items.len()];
+    for index in priority_order {
+        selected[index] = true;
+        if !fits_in_rows(
+            items
+                .iter()
+                .enumerate()
+                .filter(|(position, _)| selected[*position])
+                .map(|(_, (_, line))| line),
+            usize::from(width),
+        ) {
+            selected[index] = false;
+        }
+    }
+    layout(
+        items
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, (_, line))| selected[index].then_some(line))
+            .collect(),
+        width,
+    )
+}
+
+fn fits_in_rows<'a>(items: impl Iterator<Item = &'a Line<'static>>, width: usize) -> bool {
+    let mut rows = 1;
+    let mut row_width = 0_usize;
+    for item in items {
+        let item_width = item.width();
+        if item_width == 0 || item_width > width {
+            return false;
+        }
+        let separator_width = usize::from(row_width > 0) * SEPARATOR.len();
+        if row_width + separator_width + item_width <= width {
+            row_width += separator_width + item_width;
+        } else if rows < MAX_ROWS {
+            rows += 1;
+            row_width = item_width;
+        } else {
+            return false;
+        }
+    }
+    true
 }
 
 pub(crate) fn layout_with_notice(
@@ -477,5 +549,23 @@ mod tests {
         );
         assert!(actual.iter().all(|line| line.width() <= usize::from(width)));
         assert!(actual.len() <= MAX_ROWS);
+    }
+
+    #[test]
+    fn prioritized_layout_keeps_help_and_quit_after_earlier_operations() {
+        let lines = layout_prioritized(
+            vec![
+                (50, Line::from("Enter open selected row")),
+                (110, Line::from("? help")),
+                (120, Line::from("q quit")),
+                (40, Line::from("b toggle envs")),
+            ],
+            14,
+        );
+
+        assert_eq!(
+            lines.iter().map(Line::to_string).collect::<Vec<_>>(),
+            ["? help", "q quit"]
+        );
     }
 }

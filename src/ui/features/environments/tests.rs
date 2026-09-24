@@ -165,6 +165,24 @@ fn matrix_header(text: &str) -> &str {
         .expect("matrix header should be rendered")
 }
 
+fn text_position(buffer: &ratatui::buffer::Buffer, needle: &str) -> Option<(u16, u16)> {
+    let area = buffer.area();
+    let needle = needle.chars().collect::<Vec<_>>();
+    for y in area.y..area.bottom() {
+        for x in area.x..area.right() {
+            if needle.iter().enumerate().all(|(offset, character)| {
+                u16::try_from(offset)
+                    .ok()
+                    .and_then(|offset| buffer.cell((x.saturating_add(offset), y)))
+                    .is_some_and(|cell| cell.symbol() == character.to_string())
+            }) {
+                return Some((x, y));
+            }
+        }
+    }
+    None
+}
+
 #[test]
 fn pending_running_ready_error_and_excluded_remain_distinct_at_supported_sizes() {
     let state = partial_session();
@@ -257,7 +275,7 @@ fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
         }
         if (width, height) == (80, 24) {
             let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
-            assert!(text.contains("focus Differs"));
+            assert!(text.contains("focus Compare"));
             assert!(!text.contains("1 / 2"));
             assert!(!text.contains("include or exclude"));
             assert!(!text.contains("toggle the Envs sidebar"));
@@ -300,14 +318,110 @@ fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
         wide.contains("compare only the selected environment / all environments"),
         "{wide}"
     );
+    for explanation in [
+        "A ──> B",
+        "review start",
+        "could not be determined",
+        "cause, impact, or execution order",
+    ] {
+        assert!(wide.contains(explanation), "{explanation}: {wide}");
+    }
 
     view.dialog_scroll = u16::MAX;
     let bottom = render_to_buffer((40, 16), |frame| view.render(frame, &state));
     let bottom_text = buffer_text(&bottom);
-    assert!(bottom_text.contains("Excluded"));
     assert!(bottom_text.contains("Scope"));
     assert_eq!(bottom_text.matches("close").count(), 1);
     insta::assert_snapshot!("environment_help_40x16_bottom", bottom_text);
+}
+
+#[test]
+fn single_comparison_help_uses_the_changes_pane_name() {
+    let state = overview_plan_session(&["prod"]);
+    let mut view = EnvironmentView::default();
+    view.help();
+
+    let text = buffer_text(&render_to_buffer((120, 40), |frame| {
+        view.render(frame, &state);
+    }));
+
+    assert!(text.contains("focus Changes · prod / Relations"), "{text}");
+    assert!(
+        text.contains("maximize or restore [2] Changes · prod / [3] Relations"),
+        "{text}"
+    );
+}
+
+#[test]
+fn environment_breadcrumb_uses_the_exploration_root_across_selection_and_single_results() {
+    let state =
+        overview_plan_session(&["dev", "prod"]).with_exploration_root("/workspace/environments");
+    let mut view = EnvironmentView::default();
+    let size = Size::new(120, 40);
+    let _ = render_to_buffer((120, 40), |frame| view.render(frame, &state));
+
+    for key in [KeyCode::Char(']'), KeyCode::Char('[')] {
+        view.handle_key(KeyEvent::new(key, KeyModifiers::NONE), size, &state);
+        let text = buffer_text(&render_to_buffer((120, 40), |frame| {
+            view.render(frame, &state);
+        }));
+        assert!(
+            text.lines()
+                .next()
+                .unwrap()
+                .contains("terracotta ▸ environments"),
+            "{text}"
+        );
+    }
+
+    let one_result = overview_plan_session(&["prod"]).with_exploration_root("/workspace");
+    let mut single_view = EnvironmentView::default();
+    let text = buffer_text(&render_to_buffer((120, 40), |frame| {
+        single_view.render(frame, &one_result);
+    }));
+    assert!(
+        text.lines()
+            .next()
+            .unwrap()
+            .contains("terracotta ▸ workspace"),
+        "{text}"
+    );
+    assert!(
+        !text.lines().next().unwrap().contains("terracotta ▸ prod"),
+        "{text}"
+    );
+}
+
+#[test]
+fn variable_environment_rows_keep_the_selected_plan_visible() {
+    let state = partial_session();
+    let mut view = EnvironmentView::default();
+    let size = Size::new(90, 12);
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    view.handle_key(
+        KeyEvent::new(KeyCode::End, KeyModifiers::NONE),
+        size,
+        &state,
+    );
+
+    let text = buffer_text(&render_to_buffer((90, 12), |frame| {
+        view.render(frame, &state);
+    }));
+
+    assert!(text.contains("> [x] e-hcp"), "{text}");
+    assert!(!text.contains("Error"), "{text}");
+    assert!(!text.contains("Pending +0"), "{text}");
+    assert!(!text.contains("Running +0"), "{text}");
+
+    let text = buffer_text(&render_to_buffer((120, 30), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(text.contains("Error"), "{text}");
+    assert!(text.contains("r retry"), "{text}");
 }
 
 #[test]
@@ -1385,7 +1499,7 @@ fn short_terminal_keeps_the_matrix_frame_and_shows_resize_guidance() {
 }
 
 #[test]
-fn sidebar_focus_and_maximize_shortcuts_preserve_each_other() {
+fn sidebar_cannot_be_maximized_and_footer_keeps_help_and_quit_last() {
     let state = partial_session();
     let size = ratatui::layout::Size::new(120, 40);
     let mut view = EnvironmentView::default();
@@ -1395,41 +1509,69 @@ fn sidebar_focus_and_maximize_shortcuts_preserve_each_other() {
 
     let _ = render_to_buffer((120, 40), |frame| view.render(frame, &state));
     press(&mut view, KeyCode::Char('f'));
-    assert_eq!(view.maximized, Some(EnvironmentPane::Environments));
+    assert_eq!(view.maximized, None);
+    assert_eq!(view.focus, EnvironmentPane::Environments);
+    let focused = buffer_text(&render_to_buffer((120, 40), |frame| {
+        view.render(frame, &state);
+    }));
+    let footer = focused
+        .lines()
+        .rev()
+        .take(2)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(!footer.contains("f maximize"), "{footer}");
+    assert!(footer.ends_with("? help | q quit"), "{footer}");
+
+    press(&mut view, KeyCode::Char('?'));
+    let help = buffer_text(&render_to_buffer((120, 40), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(
+        help.contains("maximize or restore [2] Compare / [3] Relations"),
+        "{help}"
+    );
+    assert!(!help.contains("maximize or restore [1]"), "{help}");
+    press(&mut view, KeyCode::Esc);
+
+    press(&mut view, KeyCode::Char('b'));
+    assert_eq!(view.sidebar, SidebarSetting::Closed);
+    assert_eq!(view.focus, EnvironmentPane::Matrix);
+    press(&mut view, KeyCode::Char('f'));
+    assert_eq!(view.maximized, Some(EnvironmentPane::Matrix));
     let maximized = buffer_text(&render_to_buffer((120, 40), |frame| {
         view.render(frame, &state);
     }));
-    assert!(!maximized.contains("Resize terminal to view pane content"));
+    press(&mut view, KeyCode::Char('b'));
+    assert_eq!(view.sidebar, SidebarSetting::Closed);
+    assert_eq!(view.maximized, Some(EnvironmentPane::Matrix));
+    assert!(maximized.contains("[2] Compare"), "{maximized}");
 
     let hidden = buffer_text(&render_to_buffer((89, 40), |frame| {
         view.render(frame, &state);
     }));
     assert!(!hidden.contains("[1] Envs"), "{hidden}");
-    assert_eq!(view.maximized, Some(EnvironmentPane::Environments));
-    let restored = buffer_text(&render_to_buffer((90, 40), |frame| {
+    assert_eq!(view.maximized, Some(EnvironmentPane::Matrix));
+    let restored_width = buffer_text(&render_to_buffer((90, 40), |frame| {
         view.render(frame, &state);
     }));
-    assert!(restored.contains("[1] Envs"), "{restored}");
+    assert!(!restored_width.contains("[1] Envs"), "{restored_width}");
 
-    press(&mut view, KeyCode::Char('b'));
-    assert_eq!(view.sidebar, SidebarSetting::Open);
-    assert_eq!(view.maximized, Some(EnvironmentPane::Environments));
-    press(&mut view, KeyCode::Char('f'));
-    assert_eq!(view.maximized, None);
-
-    press(&mut view, KeyCode::Char('2'));
-    press(&mut view, KeyCode::Char('f'));
-    assert_eq!(view.maximized, Some(EnvironmentPane::Matrix));
-    press(&mut view, KeyCode::Esc);
-    assert_eq!(view.maximized, None);
-    press(&mut view, KeyCode::Char('f'));
-    assert_eq!(view.maximized, Some(EnvironmentPane::Matrix));
     press(&mut view, KeyCode::Char('1'));
     assert_eq!(view.maximized, None);
     assert_eq!(view.focus, EnvironmentPane::Environments);
+    assert_eq!(view.sidebar, SidebarSetting::Open);
     press(&mut view, KeyCode::Char('b'));
     assert_eq!(view.sidebar, SidebarSetting::Closed);
-    assert_eq!(view.focus, EnvironmentPane::Matrix);
+    press(&mut view, KeyCode::Char('3'));
+    press(&mut view, KeyCode::Char('f'));
+    assert_eq!(view.maximized, Some(EnvironmentPane::Relations));
+    press(&mut view, KeyCode::Esc);
+    assert_eq!(view.maximized, None);
+    assert_eq!(view.focus, EnvironmentPane::Relations);
 }
 
 #[test]
@@ -1666,6 +1808,43 @@ fn sidebar_focus_and_selected_name_use_ansi_colors_and_terminal_defaults() {
         assert_eq!(style.fg, Some(foreground));
         assert_eq!(style.bg, Some(Color::Reset));
     }
+}
+
+#[test]
+fn overview_uses_default_text_for_required_labels_and_bold_pane_names() {
+    let state = partial_session();
+    let mut view = EnvironmentView::default();
+    let buffer = render_to_buffer((120, 40), |frame| view.render(frame, &state));
+
+    for label in [
+        "[1] Envs",
+        "[2] Compare",
+        "[3] Relations",
+        "Address",
+        "why",
+        "open plan",
+    ] {
+        let (x, y) = text_position(&buffer, label).expect("required label is rendered");
+        let cell = buffer.cell((x, y)).expect("label cell exists");
+        assert_eq!(cell.fg, Color::Reset, "{label}");
+        assert_eq!(cell.bg, Color::Reset, "{label}");
+        if label.starts_with('[') {
+            assert!(cell.modifier.contains(Modifier::BOLD), "{label}");
+        }
+    }
+
+    let single = overview_plan_session(&["dev"]);
+    let mut single_view = EnvironmentView::default();
+    let single_buffer = render_to_buffer((120, 40), |frame| single_view.render(frame, &single));
+    let changes =
+        text_position(&single_buffer, "[2] Changes").expect("Changes pane title is rendered");
+    assert!(
+        single_buffer
+            .cell(changes)
+            .expect("Changes title cell exists")
+            .modifier
+            .contains(Modifier::BOLD)
+    );
 }
 
 #[test]

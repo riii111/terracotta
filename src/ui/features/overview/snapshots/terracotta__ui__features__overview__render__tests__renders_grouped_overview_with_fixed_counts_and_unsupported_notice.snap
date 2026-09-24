@@ -5,7 +5,7 @@ expression: text
 infra  ws:default  terraform loading...  /repo/infra
 Ready  ~2 update  Repeated: 2
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-┌* [2] Changes─────────────────────────────────────────────────────────────────────────────────────┐
+┌* [2] Changes · infra─────────────────────────────────────────────────────────────────────────────┐
 │  Change Address                                                                                  │
 │Other changes: 1 output/import/move or unsupported change(s). Press v for the full plan.          │
 │  ~ x2   [+] terraform_data.server[*]                                                             │
@@ -20,9 +20,9 @@ Ready  ~2 update  Repeated: 2
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
-│A ──> B  B uses A                                                                                 │
-│solid=instance endpoints; dotted=block candidate                                                  │
-│state evidence=(state)                                                                            │
+│                                                                                                  │
+│                                                                                                  │
+│? unresolved means a relationship could not be determined                                         │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 / filter | Enter open raw | v full plan | 2/3 focus | f maximize | ? help | q quit

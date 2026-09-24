@@ -13,7 +13,7 @@ use crate::{
         RelationGraph, RelationGraphGroup, RelationGraphLink, RelationGraphLinkKind, RelationNode,
         RelationNodeId, RelationSource, RelationUnresolvedReason, ResourceChangeKind,
     },
-    ui::theme,
+    ui::{primitives::molecules::help_dialog, theme},
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -64,21 +64,19 @@ pub(crate) fn render(
         };
     }
 
-    let legend = vec![
-        "A ──> B  B uses A",
-        "solid=instance endpoints; dotted=block candidate",
-        "state evidence=(state)",
-    ]
-    .into_iter()
-    .map(|line| Line::from(Span::styled(line, theme::relation_muted_style())))
-    .collect::<Vec<_>>();
-    let legend_height = u16::try_from(legend.len())
-        .unwrap_or(u16::MAX)
-        .min(inner.height.saturating_sub(1));
-    let visible_legend = legend
-        .into_iter()
-        .take(usize::from(legend_height))
-        .collect::<Vec<_>>();
+    let legend = legend_lines(graph);
+    let requested_legend_height = legend
+        .iter()
+        .map(|line| {
+            u16::try_from(
+                Paragraph::new(line.clone())
+                    .wrap(ratatui::widgets::Wrap { trim: false })
+                    .line_count(inner.width),
+            )
+            .unwrap_or(u16::MAX)
+        })
+        .fold(0_u16, u16::saturating_add);
+    let legend_height = requested_legend_height.min(inner.height.saturating_sub(1));
     let content_height = inner.height.saturating_sub(legend_height);
     let content_area = Rect::new(inner.x, inner.y, inner.width, content_height);
     let legend_area = Rect::new(
@@ -109,8 +107,68 @@ pub(crate) fn render(
             .scroll((scroll.vertical, scroll.horizontal)),
         content_area,
     );
-    frame.render_widget(Paragraph::new(visible_legend), legend_area);
+    if legend_height > 0 {
+        frame.render_widget(
+            Paragraph::new(legend)
+                .wrap(ratatui::widgets::Wrap { trim: false })
+                .style(theme::relation_text_style()),
+            legend_area,
+        );
+    }
     scroll
+}
+
+fn legend_lines(graph: &RelationGraph) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    if !graph.links.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "A ──> B  B uses A",
+            theme::relation_text_style(),
+        )));
+        if graph
+            .links
+            .iter()
+            .any(|link| link.kind == RelationGraphLinkKind::Dotted)
+        {
+            lines.push(Line::from(Span::styled(
+                "block-level, may not apply",
+                theme::relation_text_style(),
+            )));
+        }
+        if graph
+            .links
+            .iter()
+            .any(|link| link.sources.contains(&RelationSource::State))
+        {
+            lines.push(Line::from(Span::styled(
+                "(state) from state",
+                theme::relation_text_style(),
+            )));
+        }
+    }
+    if graph.nodes.iter().any(|node| !node.unresolved.is_empty()) {
+        lines.push(Line::from(Span::styled(
+            "? unresolved means a relationship could not be determined",
+            theme::relation_text_style(),
+        )));
+    }
+    lines
+}
+
+pub(crate) fn help_section() -> help_dialog::HelpSection {
+    help_dialog::HelpSection::new(
+        "Relations",
+        vec![
+            help_dialog::HelpAction::new("A ──> B", "B uses A"),
+            help_dialog::HelpAction::new("block-level", "may not apply to this instance"),
+            help_dialog::HelpAction::new("(state)", "recorded in state at review start"),
+            help_dialog::HelpAction::new("? unresolved", "a relationship could not be determined"),
+            help_dialog::HelpAction::new(
+                "Scope",
+                "configuration references and recorded dependencies; not cause, impact, or execution order",
+            ),
+        ],
+    )
 }
 
 fn graph_lines(
@@ -680,7 +738,52 @@ mod tests {
         },
     };
 
-    use super::{RelationGraphScroll, RelationGraphView, render};
+    use super::{RelationGraphScroll, RelationGraphView, legend_lines, render};
+
+    #[test]
+    fn relation_legend_shows_only_applicable_explanations() {
+        let no_links = legend_lines(&single_node_graph());
+        assert!(no_links.is_empty());
+
+        let unresolved = legend_lines(&isolated_graph());
+        let unresolved = unresolved
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(unresolved.len(), 1);
+        assert!(unresolved[0].starts_with("? unresolved"));
+        assert!(!unresolved[0].contains("A ──> B"));
+
+        let plain_a = node("aws_vpc.main", ResourceChangeKind::Create);
+        let plain_b = node("aws_subnet.web", ResourceChangeKind::Create);
+        let plain = graph(
+            vec![plain_a.clone(), plain_b.clone()],
+            vec![link(
+                &plain_a,
+                &plain_b,
+                RelationGraphLinkKind::Solid,
+                &[RelationSource::Configuration],
+            )],
+        );
+        let plain = legend_lines(&plain)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(plain, ["A ──> B  B uses A"]);
+
+        let annotated = legend_lines(&branch_graph())
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            annotated,
+            [
+                "A ──> B  B uses A",
+                "block-level, may not apply",
+                "(state) from state",
+            ]
+        );
+    }
 
     #[test]
     fn branch_keeps_all_nodes_and_evidence_visible() {
@@ -711,7 +814,8 @@ mod tests {
         assert!(text.contains("(state)"));
         assert!(text.contains("(config,state)"));
         assert!(text.contains("A ──> B  B uses A"));
-        assert!(text.contains("solid=instance endpoints; dotted=block candidate"));
+        assert!(text.contains("block-level, may not apply"));
+        assert!(text.contains("(state) from state"));
 
         let rows = text.lines().collect::<Vec<_>>();
         let top = rows.iter().position(|row| row.contains('┬')).unwrap();
@@ -938,7 +1042,7 @@ mod tests {
     }
 
     #[test]
-    fn narrow_view_keeps_frame_and_bottom_legend_and_clamps_scroll() {
+    fn narrow_view_keeps_frame_and_content_visible_without_an_unneeded_legend() {
         let graph = long_graph();
         let mut returned = RelationGraphScroll {
             vertical: 0,
@@ -958,13 +1062,8 @@ mod tests {
         assert!(returned.horizontal > 0);
         assert!(text.contains("┌"));
         assert!(text.contains("this_19"));
-        assert!(
-            text.lines()
-                .rev()
-                .nth(1)
-                .unwrap()
-                .contains("state evidence=(state)")
-        );
+        assert!(!text.contains("A ──> B"));
+        assert!(!text.contains("(state) from state"));
     }
 
     #[test]

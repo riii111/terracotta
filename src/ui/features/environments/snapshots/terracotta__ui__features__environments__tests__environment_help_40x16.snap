@@ -16,5 +16,5 @@ a┌Help────────────────────────
 ││   select the previous or next    │ ││
 ││   environment                    ▼ ││
 └│ ?/Esc close                        │┘
-?└────────────────────────────────────┘
-2/3 focus | f maximize
+v└────────────────────────────────────┘
+f maximize | ? help | q quit

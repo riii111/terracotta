@@ -40,8 +40,8 @@ pub(crate) fn overview_header_muted_style() -> Style {
     overview_muted_style()
 }
 
-pub(crate) fn overview_header_accent_style() -> Style {
-    overview_accent_style()
+pub(crate) fn overview_pane_title_style() -> Style {
+    overview_header_style().add_modifier(Modifier::BOLD)
 }
 
 pub(crate) fn overview_header_selected_style() -> Style {
@@ -118,7 +118,7 @@ pub(crate) fn overview_footer_key_style() -> Style {
 }
 
 pub(crate) fn overview_footer_text_style() -> Style {
-    overview_muted_style()
+    overview_text_style()
 }
 
 pub(crate) fn overview_footer_separator_style() -> Style {

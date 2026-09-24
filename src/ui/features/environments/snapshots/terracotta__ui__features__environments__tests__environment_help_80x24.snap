@@ -9,11 +9,11 @@ a┌Help────────────────────────
 ││ Space              expand or collapse the selected group or Same change  ┃ ││
 ││                    summary in [2]                                        ┃ ││
 ││ [ / ]              select the previous or next environment               ┃ ││
-││ 2 / 3              focus Differs / Relations                             ┃ ││
-││ f                  maximize or restore the focused pane                  ┃ ││
+││ 2 / 3              focus Compare / Relations                             ┃ ││
+││ f                  maximize or restore [2] Compare / [3] Relations       ┃ ││
 └│ Enter              [3] opens the plan from the top; [2] opens the        ┃ │┘
-┌│                    selected source                                       ┃ │┐
-││ /                  filter [2] addresses; [3] always shows the whole      ┃ ││
+┌│                    selected source                                       │ │┐
+││ /                  filter [2] addresses; [3] always shows the whole      │ ││
 ││                    environment                                           │ ││
 ││ r                  retry the selected Error environment                  │ ││
 ││                                                                          │ ││
@@ -24,4 +24,4 @@ a┌Help────────────────────────
 ││ v                  open the full plan from the top                       │ ││
 ││ y                  copy the selected environment's plan                  ▼ ││
 └│ ?/Esc close                                                                │┘
-[└────────────────────────────────────────────────────────────────────────────┘
+v└────────────────────────────────────────────────────────────────────────────┘

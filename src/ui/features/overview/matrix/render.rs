@@ -151,7 +151,7 @@ fn content_lines(
             } else {
                 "Same change across envs"
             };
-            lines.push(Line::styled(title, theme::overview_text_style()));
+            lines.push(Line::styled(title, theme::overview_accent_style()));
         }
         if selected {
             selected_line = Some(lines.len());
@@ -181,10 +181,10 @@ fn render_column_headers(
     columns: &[(usize, usize)],
     address_width: usize,
 ) {
-    let mut header = vec![Span::styled("Address", theme::overview_muted_style())];
+    let mut header = vec![Span::styled("Address", theme::overview_text_style())];
     header.push(Span::styled(
         " ".repeat(address_width.saturating_sub(7)),
-        theme::overview_muted_style(),
+        theme::overview_text_style(),
     ));
     for &(column, column_width) in columns {
         let environment = view.environments[column];
@@ -192,14 +192,14 @@ fn render_column_headers(
         let (label, padding) = fit_parts(&label, column_width.saturating_sub(COLUMN_GAP), false);
         header.push(Span::styled(
             format!("{label}{} ", " ".repeat(padding)),
-            theme::overview_muted_style(),
+            theme::overview_text_style(),
         ));
     }
-    header.push(Span::styled(" ", theme::overview_muted_style()));
-    header.push(Span::styled("why", theme::overview_muted_style()));
+    header.push(Span::styled(" ", theme::overview_text_style()));
+    header.push(Span::styled("why", theme::overview_text_style()));
     header.push(Span::styled(
         " ".repeat(WHY_WIDTH.saturating_sub(3)),
-        theme::overview_muted_style(),
+        theme::overview_text_style(),
     ));
     frame.render_widget(
         Paragraph::new(Line::from(header)).style(theme::overview_text_style()),
@@ -331,16 +331,13 @@ fn visible_columns_from(first: usize, widths: &[usize], budget: usize) -> Vec<(u
 fn symbol_legend(width: u16) -> Vec<Line<'static>> {
     if width < 50 {
         vec![
-            Line::styled(
-                "blank: absent   .: unchanged",
-                theme::overview_muted_style(),
-            ),
-            Line::styled("?: plan unavailable", theme::overview_muted_style()),
+            Line::styled("blank: absent   .: unchanged", theme::overview_text_style()),
+            Line::styled("?: plan unavailable", theme::overview_text_style()),
         ]
     } else {
         vec![Line::styled(
             "blank: absent   .: unchanged   ?: plan unavailable",
-            theme::overview_muted_style(),
+            theme::overview_text_style(),
         )]
     }
 }
@@ -408,7 +405,7 @@ fn row_line(
     spans.push(Span::styled(" ", theme::overview_text_style()));
     spans.push(Span::styled(
         fit(reason, WHY_WIDTH, false),
-        theme::overview_muted_style(),
+        theme::overview_text_style(),
     ));
     Line::from(spans)
 }
