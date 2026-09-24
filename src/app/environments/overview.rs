@@ -14,6 +14,7 @@ use crate::app::{
     plan::{
         RelationGraph, RelationNodeId, RelationNodeInput, ResourceChange, ResourceChangeKind,
         build_relation_graph,
+        comparison::resource_has_unknown,
         grouping::{GroupingCandidate, GroupingKey, grouping_candidate},
         path::{module_breadcrumbs, normalize_resource_addresses, resource_display_address},
     },
@@ -49,6 +50,7 @@ pub(crate) enum OverviewRow {
 pub(crate) struct OverviewGroup {
     pub(crate) id: GroupId,
     pub(crate) display_address: String,
+    pub(crate) has_unknown: bool,
     pub(crate) cells: Vec<GroupCell>,
     pub(crate) children: Vec<ComparisonRow>,
 }
@@ -120,6 +122,7 @@ pub(crate) fn environment_overview_for_selection(
             rows.push(OverviewRow::Group(OverviewGroup {
                 id: GroupId(key),
                 display_address: address.display().to_owned(),
+                has_unknown: children.iter().any(|child| child.has_unknown),
                 cells,
                 children,
             }));
@@ -231,6 +234,7 @@ fn comparison_node_inputs(
                     &addresses,
                     &row.address,
                     row.difference.is_some(),
+                    false,
                 );
                 record_node(
                     input,
@@ -245,8 +249,18 @@ fn comparison_node_inputs(
                     .children
                     .iter()
                     .any(|child| child.difference.is_some());
-                let input =
-                    relation_node_input(&changes, &cell.members, &group.display_address, differs);
+                let has_unknown = cell
+                    .members
+                    .iter()
+                    .filter_map(|address| changes.get(address.as_str()))
+                    .any(|change| resource_has_unknown(change));
+                let input = relation_node_input(
+                    &changes,
+                    &cell.members,
+                    &group.display_address,
+                    differs,
+                    has_unknown,
+                );
                 record_node(
                     input,
                     [OverviewRowId::Group(group.id.clone())],
@@ -290,7 +304,13 @@ fn grouped_plan_node_inputs(
         if group.is_repeated() && addresses.len() > 1 {
             let candidate = grouping_candidate(&group.members[0], review.provider_schemas())
                 .expect("repeated changes should retain their grouping candidate");
-            let input = relation_node_input(&changes, &addresses, &group.display_address, false);
+            let input = relation_node_input(
+                &changes,
+                &addresses,
+                &group.display_address,
+                false,
+                group.has_unknown,
+            );
             let row_ids = std::iter::once(OverviewRowId::Group(GroupId(candidate.key))).chain(
                 addresses
                     .iter()
@@ -299,8 +319,13 @@ fn grouped_plan_node_inputs(
             record_node(input, row_ids, &mut node_inputs, &mut row_node_ids);
         } else {
             for address in addresses {
-                let input =
-                    relation_node_input(&changes, std::slice::from_ref(&address), &address, false);
+                let input = relation_node_input(
+                    &changes,
+                    std::slice::from_ref(&address),
+                    &address,
+                    false,
+                    false,
+                );
                 record_node(
                     input,
                     [OverviewRowId::Individual(address)],
@@ -319,6 +344,7 @@ fn relation_node_input(
     addresses: &[String],
     display_address: &str,
     differs: bool,
+    has_unknown: bool,
 ) -> Option<RelationNodeInput> {
     let operation = changes.get(addresses.first()?.as_str())?.kind;
     if operation == ResourceChangeKind::NoOp
@@ -338,6 +364,7 @@ fn relation_node_input(
         addresses.len(),
         relation_breadcrumbs(addresses, display_address),
         differs,
+        has_unknown,
     )
 }
 
@@ -462,7 +489,10 @@ mod tests {
             PlanResult,
         },
         execution::Tool,
-        plan::{Plan, PlanAction, PlanValue, ResourceMode},
+        plan::{
+            AttributeType, Plan, PlanAction, PlanValue, ProviderSchema, ProviderSchemas,
+            ResourceMode, ResourceSchema,
+        },
         review::{PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata},
     };
 
@@ -484,6 +514,77 @@ mod tests {
         assert_eq!(extra.difference, Some(DifferenceReason::Missing));
         assert_eq!(extra.cells[0].state, CellState::Missing);
         assert_partition(&session, &overview);
+    }
+
+    #[test]
+    fn groups_matching_unknown_changes_across_small_and_large_environment_counts() {
+        let provider = "registry.example/provider".to_owned();
+        let resource_type = "test_resource".to_owned();
+        let schemas = ProviderSchemas {
+            providers: BTreeMap::from([(
+                provider.clone(),
+                ProviderSchema {
+                    resources: BTreeMap::from([(
+                        resource_type.clone(),
+                        ResourceSchema {
+                            attributes: BTreeMap::from([
+                                ("input".to_owned(), AttributeType::String),
+                                ("output".to_owned(), AttributeType::String),
+                            ]),
+                            block_types: BTreeMap::new(),
+                        },
+                    )]),
+                },
+            )]),
+        };
+        for counts in [[2, 2, 4], [20, 20, 200]] {
+            let mut session = pending_session(3);
+            for count in counts {
+                let changes = (0..count)
+                    .map(|index| {
+                        let mut change = change(&format!("test_resource.server[{index}]"), "new");
+                        change.provider = Some(provider.clone());
+                        change.resource_type = Some(resource_type.clone());
+                        change.before = Some(PlanValue::Object(BTreeMap::from([(
+                            "input".to_owned(),
+                            PlanValue::String("old".to_owned()),
+                        )])));
+                        change.after = Some(PlanValue::Object(BTreeMap::from([
+                            ("input".to_owned(), PlanValue::String("new".to_owned())),
+                            ("output".to_owned(), PlanValue::Null),
+                        ])));
+                        change.after_unknown = Some(PlanValue::Object(BTreeMap::from([(
+                            "output".to_owned(),
+                            PlanValue::Bool(true),
+                        )])));
+                        change
+                    })
+                    .collect();
+                complete_next(
+                    &mut session,
+                    review(changes).with_provider_schemas(Some(schemas.clone())),
+                );
+            }
+
+            let overview = environment_overview(session.plans());
+            let group = only_group(&overview);
+            assert_eq!(member_counts(group), counts);
+            assert!(group.has_unknown);
+
+            let selection = EnvironmentSelection::new(None, session.plans().len()).unwrap();
+            let with_relations =
+                environment_overview_with_relations_for_selection(session.plans(), &selection);
+            for relation in with_relations.relations.values() {
+                let graph = relation.graph.as_ref().unwrap();
+                let node = graph
+                    .nodes
+                    .iter()
+                    .find(|node| node.display_address == "test_resource.server[*]")
+                    .unwrap();
+                assert!(node.has_unknown);
+                assert!(counts.contains(&node.change_count));
+            }
+        }
     }
 
     #[test]

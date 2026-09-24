@@ -3,9 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::{
     AttributeType, PlanAction, ProviderSchemas, ResourceChange, ResourceSchema,
     attribute_diff::{
-        AttributeChangeKind, AttributeDiff, AttributePathSegment, GroupingValue,
+        AttributeChangeKind, AttributeDiff, AttributePathSegment, GroupingValue, UnknownShape,
         diff_resource_attributes,
     },
+    comparison::resource_has_unknown,
     path::normalize_resource_address,
 };
 
@@ -13,6 +14,7 @@ use super::{
 pub(crate) struct ChangeGroup {
     pub(crate) display_address: String,
     pub(crate) members: Vec<ResourceChange>,
+    pub(crate) has_unknown: bool,
 }
 
 impl ChangeGroup {
@@ -31,6 +33,7 @@ pub(crate) struct PlanGrouping {
 pub(crate) struct GroupingCandidate {
     display_address: String,
     pub(crate) key: GroupingKey,
+    pub(crate) has_unknown: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -61,6 +64,7 @@ pub(crate) fn group_resource_changes(
             .push(Candidate {
                 position,
                 display_address: candidate.display_address,
+                has_unknown: candidate.has_unknown,
                 change,
             });
     }
@@ -80,6 +84,7 @@ pub(crate) fn group_resource_changes(
             .min()
             .expect("a non-empty grouping bucket should have a first position");
         let display_address = bucket[0].display_address.clone();
+        let has_unknown = bucket.iter().any(|candidate| candidate.has_unknown);
         let mut members = bucket
             .into_iter()
             .map(|candidate| candidate.change.clone())
@@ -90,6 +95,7 @@ pub(crate) fn group_resource_changes(
             group: ChangeGroup {
                 display_address,
                 members,
+                has_unknown,
             },
         });
     }
@@ -117,6 +123,9 @@ pub(crate) fn grouping_candidate(
 
     let address = normalize_resource_address(&change.address)?;
     let diffs = diff_resource_attributes(change);
+    let has_changed_unknown = diffs.attributes.iter().any(|attribute| {
+        attribute.kind == AttributeChangeKind::Changed && attribute.after.is_unknown()
+    });
     let mut attributes = Vec::with_capacity(diffs.changed_count);
 
     for attribute in diffs
@@ -124,13 +133,27 @@ pub(crate) fn grouping_candidate(
         .iter()
         .filter(|attribute| attribute.kind == AttributeChangeKind::Changed)
     {
-        if !is_comparable_attribute(attribute, change, schemas) {
+        if !is_comparable_attribute(attribute, change, schemas, has_changed_unknown) {
             return None;
         }
+        let after = attribute.after.grouping_value()?;
+        let value_type =
+            if has_changed_unknown && (attribute.after.is_unknown() || attribute.path.len() > 1) {
+                let value_type = grouping_attribute_type(change, &attribute.path, schemas)?;
+                if let GroupingValue::Unknown(shape) = &after
+                    && !unknown_shape_matches_type(shape, value_type)
+                {
+                    return None;
+                }
+                Some(value_type.clone())
+            } else {
+                None
+            };
         attributes.push(AttributeSignature {
             path: attribute.path.clone(),
             before: attribute.before.grouping_value()?,
-            after: attribute.after.grouping_value()?,
+            after,
+            value_type,
         });
     }
 
@@ -146,6 +169,7 @@ pub(crate) fn grouping_candidate(
             actions: change.actions.clone(),
             attributes,
         },
+        has_unknown: resource_has_unknown(change),
     })
 }
 
@@ -158,12 +182,14 @@ fn single_group(change: &ResourceChange) -> ChangeGroup {
     ChangeGroup {
         display_address: change.address.clone(),
         members: vec![change.clone()],
+        has_unknown: false,
     }
 }
 
 struct Candidate<'a> {
     position: usize,
     display_address: String,
+    has_unknown: bool,
     change: &'a ResourceChange,
 }
 
@@ -172,23 +198,35 @@ struct AttributeSignature {
     path: Vec<AttributePathSegment>,
     before: GroupingValue,
     after: GroupingValue,
+    value_type: Option<AttributeType>,
 }
 
 fn is_comparable_attribute(
     attribute: &AttributeDiff,
     change: &ResourceChange,
     schemas: Option<&ProviderSchemas>,
+    has_changed_unknown: bool,
 ) -> bool {
-    if attribute.before.is_sensitive()
-        || attribute.after.is_sensitive()
-        || attribute.before.is_unknown()
-        || attribute.after.is_unknown()
+    if attribute.before.is_sensitive() || attribute.after.is_sensitive() {
+        return false;
+    }
+
+    if !has_changed_unknown
+        && (attribute.before.kind() == super::attribute_diff::AttributeValueKind::Null
+            || attribute.after.kind() == super::attribute_diff::AttributeValueKind::Null)
     {
         return false;
     }
 
     if attribute.before.grouping_value().is_none() || attribute.after.grouping_value().is_none() {
         return false;
+    }
+
+    if has_changed_unknown {
+        if attribute.after.is_unknown() || attribute.path.len() > 1 {
+            return grouping_attribute_type(change, &attribute.path, schemas).is_some();
+        }
+        return matches!(attribute.path.as_slice(), [AttributePathSegment::Key(_)]);
     }
 
     match attribute.path.as_slice() {
@@ -198,6 +236,68 @@ fn is_comparable_attribute(
             AttributePathSegment::Key(_),
         ] => is_simple_map_attribute(change, attribute_name, schemas),
         _ => false,
+    }
+}
+
+fn grouping_attribute_type<'a>(
+    change: &ResourceChange,
+    path: &[AttributePathSegment],
+    schemas: Option<&'a ProviderSchemas>,
+) -> Option<&'a AttributeType> {
+    let [AttributePathSegment::Key(name), rest @ ..] = path else {
+        return None;
+    };
+    let schema = resource_schema(change, schemas)?;
+    let mut attribute_type = schema
+        .attributes
+        .get(name)
+        .or_else(|| schema.block_types.get(name))?;
+    for segment in rest {
+        attribute_type = match (attribute_type, segment) {
+            (AttributeType::Object(fields), AttributePathSegment::Key(key)) => fields.get(key)?,
+            (AttributeType::Map(value), AttributePathSegment::Key(_)) => value,
+            (AttributeType::Tuple(elements), AttributePathSegment::Index(index)) => {
+                elements.get(*index)?
+            }
+            _ => return None,
+        };
+    }
+    (!contains_dynamic_type(attribute_type)).then_some(attribute_type)
+}
+
+fn contains_dynamic_type(attribute_type: &AttributeType) -> bool {
+    match attribute_type {
+        AttributeType::Dynamic => true,
+        AttributeType::List(element)
+        | AttributeType::Set(element)
+        | AttributeType::Map(element) => contains_dynamic_type(element),
+        AttributeType::Tuple(elements) => elements.iter().any(contains_dynamic_type),
+        AttributeType::Object(fields) => fields.values().any(contains_dynamic_type),
+        AttributeType::Bool | AttributeType::Number | AttributeType::String => false,
+    }
+}
+
+fn unknown_shape_matches_type(shape: &UnknownShape, attribute_type: &AttributeType) -> bool {
+    match shape {
+        UnknownShape::Bool(_) => true,
+        UnknownShape::Array(markers) => match attribute_type {
+            AttributeType::Tuple(elements) if elements.len() == markers.len() => markers
+                .iter()
+                .zip(elements)
+                .all(|(marker, element)| unknown_shape_matches_type(marker, element)),
+            _ => false,
+        },
+        UnknownShape::Object(markers) => match attribute_type {
+            AttributeType::Object(fields) => markers.iter().all(|(key, marker)| {
+                fields
+                    .get(key)
+                    .is_some_and(|field| unknown_shape_matches_type(marker, field))
+            }),
+            AttributeType::Map(value) => markers
+                .values()
+                .all(|marker| unknown_shape_matches_type(marker, value)),
+            _ => false,
+        },
     }
 }
 
@@ -302,6 +402,30 @@ mod tests {
             "labels".to_owned(),
             AttributeType::Map(Box::new(AttributeType::String)),
         )])
+    }
+
+    fn schema_for_changes(
+        changes: &mut [ResourceChange],
+        attributes: BTreeMap<String, AttributeType>,
+    ) -> ProviderSchemas {
+        let schemas = schema_for(&mut changes[0], attributes);
+        let provider = changes[0].provider.clone();
+        let resource_type = changes[0].resource_type.clone();
+        for change in &mut changes[1..] {
+            change.provider.clone_from(&provider);
+            change.resource_type.clone_from(&resource_type);
+        }
+        schemas
+    }
+
+    fn unknown_output_change(address: &str, input_before: &str) -> ResourceChange {
+        let mut change = change(
+            address,
+            json!({"input": input_before}),
+            json!({"input": "new", "output": null}),
+        );
+        change.after_unknown = Some(plan_value(json!({"output": true})));
+        change
     }
 
     #[test]
@@ -488,6 +612,203 @@ mod tests {
         assert_eq!(grouping.repeated, 0);
         assert_eq!(grouping.groups.len(), 3);
         assert!(grouping.groups[0].members[0].address.ends_with("[0]"));
+    }
+
+    #[test]
+    fn groups_same_known_changes_with_matching_unknown_attributes() {
+        let mut changes = (0..200)
+            .map(|index| unknown_output_change(&format!("aws_instance.server[{index}]"), "old"))
+            .collect::<Vec<_>>();
+        let schemas = schema_for_changes(
+            &mut changes,
+            BTreeMap::from([
+                ("input".to_owned(), AttributeType::String),
+                ("output".to_owned(), AttributeType::String),
+            ]),
+        );
+
+        let grouping = group_resource_changes(&changes, Some(&schemas));
+
+        assert_eq!(grouping.repeated, 200);
+        assert_eq!(grouping.groups.len(), 1);
+        assert_eq!(grouping.groups[0].display_address, "aws_instance.server[*]");
+        assert!(grouping.groups[0].has_unknown);
+    }
+
+    #[test]
+    fn unknown_grouping_keeps_known_values_paths_and_null_distinct() {
+        let different_before = unknown_output_change("aws_instance.server[1]", "other");
+        let different_path = {
+            let mut change = change(
+                "aws_instance.server[2]",
+                json!({"input": "old"}),
+                json!({"input": "new", "id": null}),
+            );
+            change.after_unknown = Some(plan_value(json!({"id": true})));
+            change
+        };
+        let mut known_null = change(
+            "aws_instance.server[3]",
+            json!({"input": "old"}),
+            json!({"input": "new", "output": null}),
+        );
+        known_null.after_unknown = Some(plan_value(json!({"output": false})));
+        let mut changes = vec![
+            unknown_output_change("aws_instance.server[0]", "old"),
+            different_before,
+            different_path,
+            known_null,
+        ];
+        let schemas = schema_for_changes(
+            &mut changes,
+            BTreeMap::from([
+                ("input".to_owned(), AttributeType::String),
+                ("output".to_owned(), AttributeType::String),
+                ("id".to_owned(), AttributeType::String),
+            ]),
+        );
+
+        let grouping = group_resource_changes(&changes, Some(&schemas));
+
+        assert_eq!(grouping.repeated, 0);
+        assert_eq!(grouping.groups.len(), 4);
+        assert!(grouping.groups.iter().all(|group| !group.is_repeated()));
+    }
+
+    #[test]
+    fn groups_nested_unknown_map_and_object_fields_with_their_known_changes() {
+        let settings = AttributeType::Object(BTreeMap::from([
+            ("input".to_owned(), AttributeType::String),
+            ("output".to_owned(), AttributeType::String),
+        ]));
+        let mut changes = (0..2)
+            .map(|index| {
+                let mut change = change(
+                    &format!("aws_instance.server[{index}]"),
+                    json!({"settings": {"input": "old", "output": "old"}, "labels": {}}),
+                    json!({"settings": {"input": "new", "output": null}, "labels": {}}),
+                );
+                change.after_unknown = Some(plan_value(json!({
+                    "settings": {"output": true},
+                    "labels": {"zone": true}
+                })));
+                change
+            })
+            .collect::<Vec<_>>();
+        let schemas = schema_for_changes(
+            &mut changes,
+            BTreeMap::from([
+                ("settings".to_owned(), settings),
+                (
+                    "labels".to_owned(),
+                    AttributeType::Map(Box::new(AttributeType::String)),
+                ),
+            ]),
+        );
+
+        let grouping = group_resource_changes(&changes, Some(&schemas));
+
+        assert_eq!(grouping.repeated, 2);
+        assert_eq!(grouping.groups.len(), 1);
+        assert!(grouping.groups[0].has_unknown);
+    }
+
+    #[test]
+    fn only_schema_fixed_tuple_positions_allow_unknown_collection_elements() {
+        let tuple_type = AttributeType::Tuple(vec![AttributeType::String, AttributeType::String]);
+        let mut tuple_changes = (0..2)
+            .map(|index| {
+                let mut change = change(
+                    &format!("aws_instance.tuple[{index}]"),
+                    json!({"items": ["old", "old"]}),
+                    json!({"items": ["new", null]}),
+                );
+                change.after_unknown = Some(plan_value(json!({"items": [false, true]})));
+                change
+            })
+            .collect::<Vec<_>>();
+        let tuple_schemas = schema_for_changes(
+            &mut tuple_changes,
+            BTreeMap::from([("items".to_owned(), tuple_type)]),
+        );
+        let tuple_grouping = group_resource_changes(&tuple_changes, Some(&tuple_schemas));
+        assert_eq!(tuple_grouping.repeated, 2);
+        assert_eq!(tuple_grouping.groups.len(), 1);
+
+        let mut tuple_changes = (0..2)
+            .map(|index| {
+                let mut change = change(
+                    &format!("aws_instance.tuple[{index}]"),
+                    json!({"items": ["old", "old"]}),
+                    json!({"items": ["new", null]}),
+                );
+                change.after_unknown = Some(plan_value(json!({"items": [false, true]})));
+                change
+            })
+            .collect::<Vec<_>>();
+        tuple_changes[1].after = Some(plan_value(json!({"items": [null, "new"]})));
+        tuple_changes[1].after_unknown = Some(plan_value(json!({"items": [true, false]})));
+        let tuple_schemas = schema_for_changes(
+            &mut tuple_changes,
+            BTreeMap::from([(
+                "items".to_owned(),
+                AttributeType::Tuple(vec![AttributeType::String, AttributeType::String]),
+            )]),
+        );
+        let tuple_grouping = group_resource_changes(&tuple_changes, Some(&tuple_schemas));
+        assert_eq!(tuple_grouping.repeated, 0);
+        assert_eq!(tuple_grouping.groups.len(), 2);
+
+        for collection_type in [
+            AttributeType::List(Box::new(AttributeType::String)),
+            AttributeType::Set(Box::new(AttributeType::String)),
+        ] {
+            let mut changes = (0..2)
+                .map(|index| {
+                    let mut change = change(
+                        &format!("aws_instance.collection[{index}]"),
+                        json!({"items": ["old", "old"]}),
+                        json!({"items": ["new", null]}),
+                    );
+                    change.after_unknown = Some(plan_value(json!({"items": [false, true]})));
+                    change
+                })
+                .collect::<Vec<_>>();
+            let schemas = schema_for_changes(
+                &mut changes,
+                BTreeMap::from([("items".to_owned(), collection_type)]),
+            );
+
+            let grouping = group_resource_changes(&changes, Some(&schemas));
+
+            assert_eq!(grouping.repeated, 0);
+            assert_eq!(grouping.groups.len(), 2);
+        }
+    }
+
+    #[test]
+    fn never_groups_unknown_sensitive_values_even_when_the_schema_proves_their_shape() {
+        let mut changes = (0..2)
+            .map(|index| {
+                let mut change =
+                    unknown_output_change(&format!("aws_instance.server[{index}]"), "old");
+                change.after_sensitive = Some(plan_value(json!({"output": true})));
+                change
+            })
+            .collect::<Vec<_>>();
+        let schemas = schema_for_changes(
+            &mut changes,
+            BTreeMap::from([
+                ("input".to_owned(), AttributeType::String),
+                ("output".to_owned(), AttributeType::String),
+            ]),
+        );
+
+        let grouping = group_resource_changes(&changes, Some(&schemas));
+
+        assert_eq!(grouping.repeated, 0);
+        assert_eq!(grouping.groups.len(), 2);
+        assert!(grouping.groups.iter().all(|group| !group.is_repeated()));
     }
 
     #[test]

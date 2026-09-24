@@ -54,7 +54,7 @@ fn render_content(
     columns: &[(usize, usize)],
     address_width: usize,
 ) {
-    let (lines, selected_line) = content_lines(view, state, area.width, columns, address_width);
+    let (lines, selected_lines) = content_lines(view, state, area.width, columns, address_width);
     let legend = symbol_legend(area.width);
     let body = Rect::new(
         area.x,
@@ -67,15 +67,8 @@ fn render_content(
     let body_height = usize::from(body.height);
     let max_vertical = lines.len().saturating_sub(body_height);
     view.vertical = view.vertical.min(max_vertical);
-    if let Some(selected_line) = selected_line
-        && body_height > 0
-    {
-        let visible_end = view.vertical.saturating_add(body_height);
-        if selected_line < view.vertical {
-            view.vertical = selected_line;
-        } else if selected_line >= visible_end {
-            view.vertical = selected_line.saturating_add(1).saturating_sub(body_height);
-        }
+    if let Some(selected_lines) = selected_lines.filter(|_| body_height > 0) {
+        scroll_selected_range_into_view(view, selected_lines, body_height);
     }
     frame.render_widget(
         Paragraph::new(lines)
@@ -98,14 +91,14 @@ fn content_lines(
     width: u16,
     columns: &[(usize, usize)],
     address_width: usize,
-) -> (Vec<Line<'static>>, Option<usize>) {
+) -> (Vec<Line<'static>>, Option<(usize, usize)>) {
     let filtered = view.environments.len() != state.plans().len();
     let partial = view
         .overview
         .as_ref()
         .is_none_or(|overview| !matches!(overview.scope, ComparisonScope::All { .. }));
     let mut lines = Vec::new();
-    let mut selected_line = None;
+    let mut selected_lines = None;
     let mut section = None;
     let mut summary_seen = false;
     for row in &view.rows {
@@ -117,7 +110,8 @@ fn content_lines(
             section = Some(false);
             summary_seen = true;
             if selected {
-                selected_line = Some(lines.len());
+                let selected_line = lines.len();
+                selected_lines = Some((selected_line, selected_line));
             }
             lines.push(summary_line(summary, selected, view.same_expanded, width));
             continue;
@@ -153,10 +147,25 @@ fn content_lines(
             };
             lines.push(Line::styled(title, theme::overview_accent_style()));
         }
+        let row_line_index = lines.len();
         if selected {
-            selected_line = Some(lines.len());
+            selected_lines = Some((row_line_index, row_line_index));
         }
-        lines.push(row_line(row, view, selected, columns, address_width));
+        lines.push(row_line(
+            row,
+            view,
+            selected,
+            columns,
+            address_width,
+            width >= 64,
+        ));
+        if width < 64 && row.has_unknown {
+            let note_line = lines.len();
+            lines.push(unknown_note_line(row));
+            if selected {
+                selected_lines = Some((row_line_index, note_line));
+            }
+        }
     }
     if lines.is_empty() {
         let waiting = view
@@ -170,7 +179,33 @@ fn content_lines(
         }));
     }
 
-    (lines, selected_line)
+    (lines, selected_lines)
+}
+
+const fn scroll_selected_range_into_view(
+    view: &mut MatrixView,
+    selected_lines: (usize, usize),
+    body_height: usize,
+) {
+    if selected_lines
+        .1
+        .saturating_sub(selected_lines.0)
+        .saturating_add(1)
+        > body_height
+    {
+        view.vertical = selected_lines.0;
+        return;
+    }
+    if selected_lines.0 < view.vertical {
+        view.vertical = selected_lines.0;
+    }
+    let visible_end = view.vertical.saturating_add(body_height);
+    if selected_lines.1 >= visible_end {
+        view.vertical = selected_lines
+            .1
+            .saturating_add(1)
+            .saturating_sub(body_height);
+    }
 }
 
 fn render_column_headers(
@@ -217,7 +252,12 @@ fn address_width(area: Rect, view: &MatrixView) -> usize {
                 .group
                 .as_ref()
                 .map_or(if row.child { 2 } else { 0 }, |_| 4);
-            2 + expansion + Line::from(row.address.as_str()).width()
+            let unknown_width = if row.has_unknown && usize::from(area.width) >= 64 {
+                Line::from(" [unknown values]").width()
+            } else {
+                0
+            };
+            2 + expansion + Line::from(row.address.as_str()).width() + unknown_width
         })
         .max()
         .unwrap_or(0)
@@ -225,7 +265,21 @@ fn address_width(area: Rect, view: &MatrixView) -> usize {
     let max_width = usize::from(area.width)
         .saturating_sub(WHY_WIDTH + MIN_CELL_WIDTH + COLUMN_GAP * 2)
         .clamp(MIN_ADDRESS_WIDTH, MAX_ADDRESS_WIDTH);
-    content_width.clamp(MIN_ADDRESS_WIDTH, max_width)
+    let address_width = content_width.clamp(MIN_ADDRESS_WIDTH, max_width);
+    let unknown_label_width = view
+        .rows
+        .iter()
+        .filter(|row| row.summary.is_none() && row.has_unknown && usize::from(area.width) >= 64)
+        .map(|row| {
+            let expansion = row
+                .group
+                .as_ref()
+                .map_or(if row.child { 2 } else { 0 }, |_| 4);
+            2 + expansion + Line::from(" [unknown values]").width()
+        })
+        .max()
+        .unwrap_or(0);
+    address_width.max(unknown_label_width)
 }
 
 fn column_widths(state: &EnvironmentSession, view: &MatrixView) -> Vec<usize> {
@@ -352,6 +406,7 @@ fn row_line(
     selected: bool,
     columns: &[(usize, usize)],
     address_width: usize,
+    include_unknown_label: bool,
 ) -> Line<'static> {
     let expansion = row
         .group
@@ -364,7 +419,10 @@ fn row_line(
             }
         });
     let address_budget = address_width.saturating_sub(2 + expansion.len());
-    let (address, address_padding) = fit_parts(&row.address, address_budget, true);
+    let unknown_label = (row.has_unknown && include_unknown_label).then_some("[unknown values]");
+    let label_width = unknown_label.map_or(0, |label| Line::from(Span::raw(label)).width() + 1);
+    let address_text_budget = address_budget.saturating_sub(label_width);
+    let (address, address_padding) = fit_parts(&row.address, address_text_budget, true);
     let mut spans = vec![
         Span::styled(
             if selected { ">" } else { " " },
@@ -382,6 +440,12 @@ fn row_line(
         ),
         Span::raw(" ".repeat(address_padding)),
     ];
+    if let Some(label) = unknown_label {
+        spans.push(Span::styled(
+            format!(" {label}"),
+            theme::overview_muted_style(),
+        ));
+    }
     for &(index, column_width) in columns {
         let cell = &row.cells[index];
         let (text, padding) = fit_parts(
@@ -410,6 +474,17 @@ fn row_line(
     Line::from(spans)
 }
 
+fn unknown_note_line(row: &Row) -> Line<'static> {
+    let expansion = row
+        .group
+        .as_ref()
+        .map_or(if row.child { 2 } else { 0 }, |_| 4);
+    Line::from(vec![
+        Span::raw(" ".repeat(2 + expansion)),
+        Span::styled("[unknown values]", theme::overview_muted_style()),
+    ])
+}
+
 fn summary_line(
     summary: &super::view::SameChangeSummary,
     selected: bool,
@@ -429,6 +504,12 @@ fn summary_line(
         Span::raw(" "),
         Span::styled(label, theme::overview_text_style()),
     ];
+    if summary.has_unknown {
+        spans.push(Span::styled(
+            " [unknown values]",
+            theme::overview_muted_style(),
+        ));
+    }
     push_count(
         &mut spans,
         summary.actions.creates,
@@ -583,6 +664,7 @@ fn fit_parts(text: &str, width: usize, suffix: bool) -> (String, usize) {
 mod tests {
     use super::*;
     use crate::ui::features::overview::OverviewInput;
+    use crate::ui::test_support::{buffer_text, render_to_buffer};
 
     fn matrix_view(first_column: usize) -> MatrixView {
         let mut view = MatrixView::default();
@@ -590,6 +672,96 @@ mod tests {
         view.environments = vec![0, 1, 2];
         view.selected_environment = Some(2);
         view
+    }
+
+    #[test]
+    fn unknown_group_note_is_kept_when_the_address_column_is_narrow() {
+        let row = Row {
+            address: "terraform_data.server[*]".to_owned(),
+            group: None,
+            group_members: Vec::new(),
+            selection: None,
+            child: false,
+            cells: Vec::new(),
+            difference: None,
+            summary: None,
+            has_unknown: true,
+        };
+        let mut view = matrix_view(0);
+        view.rows.push(row);
+        let address_width = address_width(Rect::new(0, 0, 40, 16), &view);
+
+        assert!(address_width >= 19);
+        let line = row_line(&view.rows[0], &view, false, &[], address_width, false).to_string();
+
+        assert!(line.contains("server[*]"), "{line}");
+        let note = unknown_note_line(&view.rows[0]).to_string();
+        assert!(note.contains("[unknown values]"), "{note}");
+    }
+
+    #[test]
+    fn scrolling_up_keeps_the_selected_unknown_row_and_its_note_visible() {
+        let mut view = matrix_view(0);
+        view.vertical = 12;
+
+        scroll_selected_range_into_view(&mut view, (10, 11), 8);
+
+        assert_eq!(view.vertical, 10);
+        assert!(view.vertical <= 10);
+        assert!(view.vertical + 8 > 11);
+    }
+
+    #[test]
+    fn scrolling_down_keeps_the_selected_unknown_row_and_its_note_visible() {
+        let mut view = matrix_view(0);
+
+        scroll_selected_range_into_view(&mut view, (10, 11), 8);
+
+        assert_eq!(view.vertical, 4);
+        assert!(view.vertical <= 10);
+        assert!(view.vertical + 8 > 11);
+    }
+
+    #[test]
+    fn one_line_body_keeps_the_selected_unknown_address_visible() {
+        let selection = super::super::view::SelectionKey::SameSummary;
+        let mut view = MatrixView::default();
+        view.selected = Some(selection.clone());
+        view.rows.push(Row {
+            address: "terraform_data.server[*]".to_owned(),
+            group: None,
+            group_members: Vec::new(),
+            selection: Some(selection),
+            child: false,
+            cells: Vec::new(),
+            difference: None,
+            summary: None,
+            has_unknown: true,
+        });
+        let state = EnvironmentSession::new(Vec::new(), false);
+        let output = render_to_buffer((40, 5), |frame| {
+            render(frame, frame.area(), &state, &mut view);
+        });
+        let text = buffer_text(&output);
+
+        assert!(text.contains("server[*]"), "{text}");
+        assert!(!text.contains("[unknown values]"), "{text}");
+    }
+
+    #[test]
+    fn collapsed_same_change_summary_keeps_unknown_group_note() {
+        let summary = super::super::view::SameChangeSummary {
+            rows: 1,
+            actions: super::super::view::ChangeCounts {
+                updates: 1,
+                ..Default::default()
+            },
+            has_unknown: true,
+        };
+
+        let line = summary_line(&summary, false, false, 40).to_string();
+
+        assert!(line.contains("[unknown values]"), "{line}");
     }
 
     #[test]

@@ -34,6 +34,7 @@ pub(crate) enum MatrixSelectedItem {
 pub(super) struct SameChangeSummary {
     pub(super) rows: usize,
     pub(super) actions: ChangeCounts,
+    pub(super) has_unknown: bool,
 }
 
 #[derive(Default)]
@@ -57,6 +58,7 @@ pub(super) struct Row {
     pub(super) cells: Vec<MatrixCell>,
     pub(super) difference: Option<DifferenceReason>,
     pub(super) summary: Option<SameChangeSummary>,
+    pub(super) has_unknown: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -364,6 +366,7 @@ impl MatrixView {
 
 impl Row {
     const fn same_summary(summary: SameChangeSummary) -> Self {
+        let has_unknown = summary.has_unknown;
         Self {
             address: String::new(),
             group: None,
@@ -373,6 +376,7 @@ impl Row {
             cells: Vec::new(),
             difference: None,
             summary: Some(summary),
+            has_unknown,
         }
     }
 }
@@ -446,6 +450,7 @@ fn rows(overview: &EnvironmentOverview, filter: &str, expanded: &BTreeSet<GroupI
                     cells,
                     difference: None,
                     summary: None,
+                    has_unknown: group.has_unknown,
                 });
                 if expanded.contains(&group.id) {
                     rows.extend(children.into_iter().map(|child| {
@@ -484,6 +489,7 @@ fn individual(row: &ComparisonRow, child: bool, selection: MatrixRowSelection) -
             .collect(),
         difference: row.difference,
         summary: None,
+        has_unknown: false,
     }
 }
 
@@ -511,6 +517,7 @@ fn same_change_summary(rows: &[Row]) -> SameChangeSummary {
     SameChangeSummary {
         rows: rows.len(),
         actions,
+        has_unknown: rows.iter().any(|row| row.has_unknown),
     }
 }
 

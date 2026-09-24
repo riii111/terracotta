@@ -6,9 +6,8 @@ infra  ws:default  terraform loading...  /repo/infra
 Ready  ~2 update  Repeated: 2
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ┌* [2] Changes · infra─────────────────────────────────────────────────────────────────────────────────────────────────┐
-│  Change Address                                                                                                      │
-│Ot┌Help────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │
-│  │ Navigation                                                                                                     │  │
+│  ┌Help────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │
+│Ot│ Navigation                                                                                                     │  │
 │  │ 2 / 3              focus Changes · infra / Relations                                                           │  │
 │  │ ↑ / ↓ / j / k      select a Changes row or scroll Relations                                                    │  │
 │  │ ← / → / h / l      scroll Changes or Relations horizontally                                                    │  │
@@ -18,8 +17,9 @@ Ready  ~2 update  Repeated: 2
 │  │                                                                                                                │  │
 │  │ Review                                                                                                         │  │
 │  │ Enter              open the selected raw block                                                                 │  │
-└──│ /                  filter Changes full addresses                                                               │──┘
-┌  │ Space              expand or collapse only on [+]/[-] group rows                                               │──┐
+│  │ /                  filter Changes full addresses                                                               │  │
+└──│ Space              expand or collapse only on [+]/[-] group rows                                               │──┘
+┌  │ [unknown values]   known changes and unknown paths match; final values may differ                              │──┐
 │Li│ v                  show the full plan from the top                                                             │  │
 │  │                                                                                                                │  │
 │  │ Actions                                                                                                        │  │
@@ -31,13 +31,13 @@ Ready  ~2 update  Repeated: 2
 │  │ block-level        may not apply to this instance                                                              │  │
 │  │ (state)            recorded in state at review start                                                           │  │
 │  │ ? unresolved       a relationship could not be determined                                                      │  │
+│  │ Grouped links      may apply to only some members                                                              │  │
 │  │ Scope              configuration references and recorded dependencies; not cause, impact, or execution order   │  │
 │  │                                                                                                                │  │
 │  │ Exit                                                                                                           │  │
 │  │ q                  quit                                                                                        │  │
 │  │ ?/Esc close                                                                                                    │  │
 │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │
-│                                                                                                                      │
 │? unresolved means a relationship could not be determined                                                             │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

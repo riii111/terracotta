@@ -10,9 +10,9 @@ use crate::app::environments::overview::OverviewRowId;
 use crate::app::{
     execution::{ExecutionContext, SensitiveValue},
     plan::{
-        ConfigurationRelationStatus, Plan, PlanAction, PlanRelations, PlanSummary, PlanValue,
-        RelationEndpoint, RelationEvidence, RelationSource, ResourceChange, ResourceChangeKind,
-        ResourceMode,
+        AttributeType, ConfigurationRelationStatus, Plan, PlanAction, PlanRelations, PlanSummary,
+        PlanValue, ProviderSchema, ProviderSchemas, RelationEndpoint, RelationEvidence,
+        RelationSource, ResourceChange, ResourceChangeKind, ResourceMode, ResourceSchema,
     },
     review::{PlanBlock, PlanBlockKind, PlanDocument},
 };
@@ -76,6 +76,15 @@ fn complete_with_relations(
     changes: Vec<ResourceChange>,
     relations: PlanRelations,
 ) {
+    complete_with_schemas(state, changes, relations, None);
+}
+
+fn complete_with_schemas(
+    state: &mut EnvironmentSession,
+    changes: Vec<ResourceChange>,
+    relations: PlanRelations,
+    provider_schemas: Option<ProviderSchemas>,
+) {
     let mut lines = vec![
         "Terraform will perform the following actions:".to_owned(),
         String::new(),
@@ -97,13 +106,14 @@ fn complete_with_relations(
             vec![change.address.clone()],
         ));
     }
-    complete_with_plan_document_and_relations(
+    complete_with_plan_document_and_relations_and_schemas(
         state,
         changes,
         lines.join("\n"),
         blocks,
         Vec::new(),
         relations,
+        provider_schemas,
     );
 }
 
@@ -131,6 +141,26 @@ fn complete_with_plan_document_and_relations(
     blocks: Vec<PlanBlock>,
     sensitive_values: Vec<SensitiveValue>,
     relations: PlanRelations,
+) {
+    complete_with_plan_document_and_relations_and_schemas(
+        state,
+        changes,
+        text,
+        blocks,
+        sensitive_values,
+        relations,
+        None,
+    );
+}
+
+fn complete_with_plan_document_and_relations_and_schemas(
+    state: &mut EnvironmentSession,
+    changes: Vec<ResourceChange>,
+    text: String,
+    blocks: Vec<PlanBlock>,
+    sensitive_values: Vec<SensitiveValue>,
+    relations: PlanRelations,
+    provider_schemas: Option<ProviderSchemas>,
 ) {
     let index = state.start_next().expect("pending environment");
     let directory = state.plans()[index].directory().to_owned();
@@ -162,6 +192,7 @@ fn complete_with_plan_document_and_relations(
         Vec::new(),
     )
     .with_relations(relations)
+    .with_provider_schemas(provider_schemas)
     .with_context(
         ExecutionContext::loading(directory.display().to_string()).with_workspace("default"),
     )
@@ -901,6 +932,102 @@ fn same_change_summary_and_group_rows_expand_independently() {
     ));
     press(&mut view, &mut state, KeyCode::Char(' '));
     assert_eq!(text(&mut view, &state, (80, 24)), filtered);
+}
+
+#[test]
+fn unknown_same_change_summary_and_group_row_keep_the_annotation_visible() {
+    let provider = "registry.example/provider".to_owned();
+    let schemas = ProviderSchemas {
+        providers: BTreeMap::from([(
+            provider.clone(),
+            ProviderSchema {
+                resources: BTreeMap::from([(
+                    "terraform_data".to_owned(),
+                    ResourceSchema {
+                        attributes: BTreeMap::from([
+                            ("input".to_owned(), AttributeType::String),
+                            ("output".to_owned(), AttributeType::String),
+                        ]),
+                        block_types: BTreeMap::new(),
+                    },
+                )]),
+            },
+        )]),
+    };
+    let mut state = session(&["dev", "stg", "prod"]);
+    for count in [2, 2, 4] {
+        let mut changes: Vec<_> = (0..count)
+            .map(|index| {
+                let mut change = change(
+                    &format!("terraform_data.server[{index}]"),
+                    ResourceChangeKind::Update,
+                );
+                change.provider = Some(provider.clone());
+                change.before = Some(PlanValue::Object(BTreeMap::from([(
+                    "input".to_owned(),
+                    PlanValue::String("old".to_owned()),
+                )])));
+                change.after = Some(PlanValue::Object(BTreeMap::from([
+                    ("input".to_owned(), PlanValue::String("new".to_owned())),
+                    ("output".to_owned(), PlanValue::Null),
+                ])));
+                change.after_unknown = Some(PlanValue::Object(BTreeMap::from([(
+                    "output".to_owned(),
+                    PlanValue::Bool(true),
+                )])));
+                change
+            })
+            .collect();
+        changes.extend((0..20).map(|index| {
+            let address = format!("terraform_data.zz_extra_{index:02}");
+            let mut change = change(&address, ResourceChangeKind::Update);
+            change.resource_name = Some(format!("zz_extra_{index:02}"));
+            change
+        }));
+        complete_with_schemas(
+            &mut state,
+            changes,
+            PlanRelations::not_collected(),
+            Some(schemas.clone()),
+        );
+    }
+
+    let mut view = EnvironmentView::default();
+    press(&mut view, &mut state, KeyCode::Char('2'));
+    press(&mut view, &mut state, KeyCode::Char('f'));
+    press(&mut view, &mut state, KeyCode::End);
+    let collapsed = text(&mut view, &state, (165, 50));
+    assert!(
+        collapsed.contains("Same change across envs: 21 changes [unknown values]"),
+        "{collapsed}"
+    );
+
+    press(&mut view, &mut state, KeyCode::Char(' '));
+    let expanded = text(&mut view, &state, (165, 50));
+    assert_eq!(
+        expanded.matches("[unknown values]").count(),
+        2,
+        "{expanded}"
+    );
+
+    press(&mut view, &mut state, KeyCode::End);
+    let bottom = text(&mut view, &state, (40, 16));
+    assert!(bottom.contains("zz_extra_19"), "{bottom}");
+    for _ in 0..20 {
+        press(&mut view, &mut state, KeyCode::Up);
+    }
+    let narrow = text(&mut view, &state, (40, 16));
+    let narrow_lines = narrow.lines().collect::<Vec<_>>();
+    let selected_group = narrow_lines
+        .iter()
+        .position(|line| line.contains("> [+]") && line.contains("server[*]"));
+    assert!(selected_group.is_some(), "{narrow}");
+    assert!(
+        narrow_lines
+            .get(selected_group.unwrap() + 1)
+            .is_some_and(|line| line.contains("[unknown values]")),
+        "{narrow}"
+    );
 }
 
 fn assert_matrix_footer_actions(view: &mut EnvironmentView, state: &EnvironmentSession) {

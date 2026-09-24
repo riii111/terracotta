@@ -4,8 +4,8 @@ expression: bottom_text
 ---
 infra  ws:default  ...ng...  /repo/infra
 R┌Help────────────────────────────────┐
-─│   a relationship could not be    ▲ │─
-┌│   determined                     │ │┐
+─│ Grouped links                    ▲ │─
+┌│   may apply to only some members │ │┐
 ││ Scope                            │ ││
 ││   configuration references and   │ ││
 └│   recorded dependencies; not     │ │┘

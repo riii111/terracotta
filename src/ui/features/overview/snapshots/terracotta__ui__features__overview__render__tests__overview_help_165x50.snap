@@ -11,7 +11,6 @@ Ready  ~2 update  Repeated: 2
 │  ~ x2   [+] terraform_data.server[*]                                                                                                                              │
 │                                                                                                                                                                   │
 │                                                                                                                                                                   │
-│                                                                                                                                                                   │
 │                        ┌Help────────────────────────────────────────────────────────────────────────────────────────────────────────────┐                         │
 │                        │ Navigation                                                                                                     │                         │
 │                        │ 2 / 3              focus Changes · infra / Relations                                                           │                         │
@@ -22,9 +21,10 @@ Ready  ~2 update  Repeated: 2
 │                        │ f                  maximize or restore [2] Changes · infra / [3] Relations                                     │                         │
 │                        │                                                                                                                │                         │
 │                        │ Review                                                                                                         │                         │
-└────────────────────────│ Enter              open the selected raw block                                                                 │─────────────────────────┘
-┌  [3] Relations · whole │ /                  filter Changes full addresses                                                               │─────────────────────────┐
-│Links unknown           │ Space              expand or collapse only on [+]/[-] group rows                                               │                         │
+│                        │ Enter              open the selected raw block                                                                 │                         │
+└────────────────────────│ /                  filter Changes full addresses                                                               │─────────────────────────┘
+┌  [3] Relations · whole │ Space              expand or collapse only on [+]/[-] group rows                                               │─────────────────────────┐
+│Links unknown           │ [unknown values]   known changes and unknown paths match; final values may differ                              │                         │
 │  ~ terraform_data.serve│ v                  show the full plan from the top                                                             │                         │
 │                        │                                                                                                                │                         │
 │                        │ Actions                                                                                                        │                         │
@@ -36,13 +36,13 @@ Ready  ~2 update  Repeated: 2
 │                        │ block-level        may not apply to this instance                                                              │                         │
 │                        │ (state)            recorded in state at review start                                                           │                         │
 │                        │ ? unresolved       a relationship could not be determined                                                      │                         │
+│                        │ Grouped links      may apply to only some members                                                              │                         │
 │                        │ Scope              configuration references and recorded dependencies; not cause, impact, or execution order   │                         │
 │                        │                                                                                                                │                         │
 │                        │ Exit                                                                                                           │                         │
 │                        │ q                  quit                                                                                        │                         │
 │                        │ ?/Esc close                                                                                                    │                         │
 │                        └────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘                         │
-│                                                                                                                                                                   │
 │                                                                                                                                                                   │
 │                                                                                                                                                                   │
 │                                                                                                                                                                   │

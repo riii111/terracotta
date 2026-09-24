@@ -169,6 +169,12 @@ fn legend_lines(graph: &RelationGraph) -> Vec<Line<'static>> {
                 theme::relation_text_style(),
             )));
         }
+        if has_grouped_links(graph) {
+            lines.push(Line::from(Span::styled(
+                "Grouped links may apply to only some members",
+                theme::relation_text_style(),
+            )));
+        }
         if graph
             .links
             .iter()
@@ -207,6 +213,12 @@ fn compact_legend_lines(graph: &RelationGraph) -> Vec<Line<'static>> {
                 theme::relation_text_style(),
             )));
         }
+        if has_grouped_links(graph) {
+            lines.push(Line::from(Span::styled(
+                "Grouped links may be partial",
+                theme::relation_text_style(),
+            )));
+        }
         if graph
             .links
             .iter()
@@ -235,6 +247,7 @@ pub(crate) fn help_section() -> help_dialog::HelpSection {
             help_dialog::HelpAction::new("block-level", "may not apply to this instance"),
             help_dialog::HelpAction::new("(state)", "recorded in state at review start"),
             help_dialog::HelpAction::new("? unresolved", "a relationship could not be determined"),
+            help_dialog::HelpAction::new("Grouped links", "may apply to only some members"),
             help_dialog::HelpAction::new(
                 "Scope",
                 "configuration references and recorded dependencies; not cause, impact, or execution order",
@@ -579,8 +592,8 @@ fn fallback_group_lines(
         .iter()
         .filter_map(|id| {
             let mut row = node_line(node(node_index, id)?, selected_node, maximized);
-            let uses = incoming
-                .get(id)
+            let incoming_links = incoming.get(id);
+            let uses = incoming_links
                 .into_iter()
                 .flatten()
                 .map(|link| {
@@ -595,6 +608,17 @@ fn fallback_group_lines(
             if !uses.is_empty() {
                 row.spans.push(Span::styled(
                     format!("  uses: {}", uses.join(", ")),
+                    theme::relation_muted_style(),
+                ));
+            }
+            let has_grouped_link = incoming_links.into_iter().flatten().any(|link| {
+                [&link.from, &link.to]
+                    .into_iter()
+                    .any(|id| node(node_index, id).is_some_and(|node| node.change_count > 1))
+            });
+            if has_grouped_link {
+                row.spans.push(Span::styled(
+                    "  grouped links may be partial",
                     theme::relation_muted_style(),
                 ));
             }
@@ -642,6 +666,12 @@ fn node_line(
             theme::relation_muted_style(),
         ));
     }
+    if node.has_unknown {
+        spans.push(Span::styled(
+            " [unknown values]",
+            theme::relation_muted_style(),
+        ));
+    }
     if node.differs {
         spans.push(Span::styled(" !", theme::relation_warning_style()));
     }
@@ -649,6 +679,18 @@ fn node_line(
         spans.push(Span::styled(" ?", theme::relation_muted_style()));
     }
     Line::from(spans)
+}
+
+fn has_grouped_links(graph: &RelationGraph) -> bool {
+    graph.links.iter().any(|link| {
+        [&link.from, &link.to].into_iter().any(|id| {
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.id == *id)
+                .is_some_and(|node| node.change_count > 1)
+        })
+    })
 }
 
 fn visible_breadcrumbs(breadcrumbs: &[String], maximized: bool) -> Vec<String> {
@@ -810,7 +852,10 @@ mod tests {
         },
     };
 
-    use super::{RelationGraphScroll, RelationGraphView, legend_lines, render};
+    use super::{
+        RelationGraphScroll, RelationGraphView, compact_legend_lines, graph_lines, legend_lines,
+        node_line, render,
+    };
 
     #[test]
     fn relation_legend_shows_only_applicable_explanations() {
@@ -854,6 +899,69 @@ mod tests {
                 "block-level, may not apply",
                 "(state) from state",
             ]
+        );
+    }
+
+    #[test]
+    fn grouped_node_note_and_link_scope_remain_distinct_from_unresolved_links() {
+        let mut aggregate = node("aws_instance.web[*]", ResourceChangeKind::Update);
+        aggregate.change_count = 2;
+        aggregate.has_unknown = true;
+        let target = node("aws_subnet.web", ResourceChangeKind::Create);
+        let graph = graph(
+            vec![aggregate.clone(), target.clone()],
+            vec![link(
+                &aggregate,
+                &target,
+                RelationGraphLinkKind::Solid,
+                &[RelationSource::Configuration],
+            )],
+        );
+
+        let rendered_node = node_line(&aggregate, None, false).to_string();
+        let legend = legend_lines(&graph)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        let compact = compact_legend_lines(&graph)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        let fallback = graph_lines(&graph, None, false, 8)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered_node.contains("[unknown values]"),
+            "{rendered_node}"
+        );
+        assert!(!rendered_node.contains(" ?"), "{rendered_node}");
+        assert_eq!(
+            legend,
+            [
+                "A ──> B  B uses A",
+                "Grouped links may apply to only some members",
+            ]
+        );
+        assert!(
+            compact
+                .iter()
+                .any(|line| line == "Grouped links may be partial")
+        );
+        assert!(
+            fallback
+                .iter()
+                .any(|line| line.contains("uses:") && line.contains("grouped links may be partial")),
+            "{fallback:?}"
+        );
+        assert_eq!(
+            fallback
+                .iter()
+                .filter(|line| line.contains("grouped links may be partial"))
+                .count(),
+            1,
+            "{fallback:?}"
         );
     }
 
@@ -1238,6 +1346,7 @@ mod tests {
             change_count: 1,
             breadcrumbs,
             differs: false,
+            has_unknown: false,
             unresolved: BTreeSet::new(),
         }
     }
@@ -1258,6 +1367,7 @@ mod tests {
             change_count,
             breadcrumbs: breadcrumbs.iter().map(|part| (*part).to_owned()).collect(),
             differs,
+            has_unknown: false,
             unresolved: unresolved.iter().copied().collect(),
         }
     }

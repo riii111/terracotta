@@ -282,7 +282,7 @@ impl Plan {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum AttributeType {
     Bool,
     Number,
