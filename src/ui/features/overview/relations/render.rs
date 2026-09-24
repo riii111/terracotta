@@ -74,7 +74,7 @@ pub(crate) fn render(
     .collect::<Vec<_>>();
     let legend_height = u16::try_from(legend.len())
         .unwrap_or(u16::MAX)
-        .min(inner.height);
+        .min(inner.height.saturating_sub(1));
     let visible_legend = legend
         .into_iter()
         .take(usize::from(legend_height))
@@ -965,6 +965,27 @@ mod tests {
                 .unwrap()
                 .contains("state evidence=(state)")
         );
+    }
+
+    #[test]
+    fn short_view_keeps_relation_content_visible() {
+        let graph = branch_graph();
+
+        for height in [4, 5] {
+            let text = buffer_text(&render_to_buffer((120, height), |frame| {
+                render(
+                    frame,
+                    Rect::new(0, 0, 120, height),
+                    &graph,
+                    &view("prod · whole env", None, false, 0, 0),
+                );
+            }));
+
+            assert!(
+                text.contains("terraform_data.db"),
+                "height={height}\n{text}"
+            );
+        }
     }
 
     #[test]
