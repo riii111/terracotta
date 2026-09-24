@@ -8,13 +8,13 @@ R┌Help────────────────────────
 ┌│ 2 / 3                            ┃ │┐
 ││   focus Changes / Relations      ┃ ││
 ││ ↑ / ↓ / j / k                    ┃ ││
-││   select a Changes row or scroll │ ││
-└│   Relations                      │ │┘
-┌│ ← / →                            │ │┐
-││   scroll Relations horizontally  │ ││
+└│   select a Changes row or scroll │ │┘
+┌│   Relations                      │ │┐
+││ ← / →                            │ ││
+││   scroll Changes or Relations    │ ││
+││   horizontally                   │ ││
 ││ PgUp / PgDn                      │ ││
-││   move one page                  │ ││
-└│ Home / End                       ▼ │┘
+└│   move one page                  ▼ │┘
 ─│ ?/Esc close                        │─
 /└────────────────────────────────────┘
 2/3 focus | f maximize | ? help | q quit

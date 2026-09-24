@@ -8,9 +8,9 @@ R┌Help────────────────────────
 ┌│                                  │ │┐
 ││ Actions                          │ ││
 ││ y                                │ ││
-││   copy the full plan             │ ││
-└│ c                                │ │┘
-┌│   show execution context         │ │┐
+└│   copy the full plan             │ │┘
+┌│ c                                │ │┐
+││   show execution context         │ ││
 ││                                  ┃ ││
 ││ Exit                             ┃ ││
 ││ q                                ┃ ││

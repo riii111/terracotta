@@ -149,6 +149,7 @@ pub(crate) struct OverviewViewState {
     focus: OverviewPane,
     maximized: Option<OverviewPane>,
     vertical: u16,
+    changes_horizontal: u16,
     relations_scroll: Cell<RelationGraphScroll>,
     selected: Option<usize>,
     expanded: BTreeSet<usize>,
@@ -250,7 +251,9 @@ impl OverviewViewState {
                 None
             }
             OverviewInput::Left => {
-                if self.active_pane() == OverviewPane::Relations {
+                if self.active_pane() == OverviewPane::Changes {
+                    self.changes_horizontal = self.changes_horizontal.saturating_sub(1);
+                } else {
                     self.update_relations_scroll(|scroll| {
                         scroll.horizontal = scroll.horizontal.saturating_sub(1);
                     });
@@ -258,7 +261,9 @@ impl OverviewViewState {
                 None
             }
             OverviewInput::Right => {
-                if self.active_pane() == OverviewPane::Relations {
+                if self.active_pane() == OverviewPane::Changes {
+                    self.changes_horizontal = self.changes_horizontal.saturating_add(1);
+                } else {
                     self.update_relations_scroll(|scroll| {
                         scroll.horizontal = scroll.horizontal.saturating_add(1);
                     });
@@ -320,6 +325,10 @@ impl OverviewViewState {
                 None
             }
             OverviewInput::SearchCancel => {
+                if self.maximized.is_some() {
+                    self.maximized = None;
+                    return None;
+                }
                 self.filter.clear();
                 self.selected = None;
                 self.vertical = 0;
@@ -512,6 +521,10 @@ impl OverviewViewState {
         self.vertical
     }
 
+    pub(crate) const fn changes_horizontal(&self) -> u16 {
+        self.changes_horizontal
+    }
+
     pub(crate) const fn expanded(&self) -> &BTreeSet<usize> {
         &self.expanded
     }
@@ -588,6 +601,7 @@ mod tests {
     use super::*;
     use crate::app::plan::{Plan, PlanSummary, PlanValue, ResourceMode};
     use crate::app::review::{PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata};
+    use crate::ui::features::overview::key_to_input;
 
     fn apply_search(view: &mut OverviewViewState, input: OverviewInput, content: &OverviewContent) {
         view.apply(input, Rect::new(0, 0, 40, 5), Rect::default(), 0, content);
@@ -729,6 +743,68 @@ mod tests {
             view.apply(OverviewInput::Back, changes, relations, 0, &content),
             Some(OverviewCommand::Back)
         );
+    }
+
+    #[test]
+    fn arrows_scroll_changes_and_relations_independently() {
+        let content = OverviewContent::from_review(&review(), "", &BTreeSet::new());
+        let mut view = OverviewViewState::default();
+
+        view.apply(
+            OverviewInput::Right,
+            Rect::default(),
+            Rect::default(),
+            0,
+            &content,
+        );
+        assert_eq!(view.changes_horizontal(), 1);
+        assert_eq!(view.relations_scroll().horizontal, 0);
+
+        view.apply(
+            OverviewInput::FocusRelations,
+            Rect::default(),
+            Rect::default(),
+            0,
+            &content,
+        );
+        view.apply(
+            OverviewInput::Right,
+            Rect::default(),
+            Rect::default(),
+            0,
+            &content,
+        );
+        assert_eq!(view.changes_horizontal(), 1);
+        assert_eq!(view.relations_scroll().horizontal, 1);
+    }
+
+    #[test]
+    fn escape_restores_maximized_filtered_pane_before_clearing_filter() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let content = OverviewContent::from_review(&review(), "", &BTreeSet::new());
+        let mut view = OverviewViewState {
+            filter: "web".to_owned(),
+            ..OverviewViewState::default()
+        };
+        let changes = Rect::default();
+        let relations = Rect::default();
+        let escape = key_to_input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), false, true)
+            .expect("confirmed filter maps Escape");
+
+        view.apply(
+            OverviewInput::ToggleMaximize,
+            changes,
+            relations,
+            0,
+            &content,
+        );
+        view.apply(escape, changes, relations, 0, &content);
+        assert_eq!(view.maximized(), None);
+        assert_eq!(view.filter(), "web");
+
+        view.apply(escape, changes, relations, 0, &content);
+        assert!(view.filter().is_empty());
     }
 
     #[test]

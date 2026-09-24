@@ -19,7 +19,7 @@ Ready  ~2 update  Repeated: 2
 │                                                 │ Navigation                                                    │                                                 │
 │                                                 │ 2 / 3         focus Changes / Relations                       │                                                 │
 │                                                 │ ↑ / ↓ / j / k select a Changes row or scroll Relations        │                                                 │
-│                                                 │ ← / →         scroll Relations horizontally                   │                                                 │
+│                                                 │ ← / →         scroll Changes or Relations horizontally        │                                                 │
 │                                                 │ PgUp / PgDn   move one page                                   │                                                 │
 │                                                 │ Home / End    go to the top or bottom                         │                                                 │
 └─────────────────────────────────────────────────│ f             maximize or restore the focused pane            │─────────────────────────────────────────────────┘

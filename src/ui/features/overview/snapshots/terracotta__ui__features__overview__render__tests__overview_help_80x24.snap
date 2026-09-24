@@ -7,7 +7,7 @@ Ready  ┌Help──────────────────────
 ───────│ Navigation                                                  ▲ │────────
 ┌* [2] │ 2 / 3         focus Changes / Relations                     ┃ │───────┐
 │  Chan│ ↑ / ↓ / j / k select a Changes row or scroll Relations      ┃ │       │
-│Other │ ← / →         scroll Relations horizontally                 ┃ │or the │
+│Other │ ← / →         scroll Changes or Relations horizontally      ┃ │or the │
 │  ~ x2│ PgUp / PgDn   move one page                                 ┃ │       │
 │      │ Home / End    go to the top or bottom                       ┃ │       │
 │      │ f             maximize or restore the focused pane          ┃ │       │

@@ -95,7 +95,7 @@ fn prepare(
     );
     let (changes, relations) = pane_areas(body, view.maximized());
     let changes_body = Block::bordered().inner(changes);
-    let lines = overview_lines(content, state.review(), view, changes_body.width);
+    let lines = overview_lines(content, state.review(), view);
     let line_count = lines.len();
     let max_vertical = u16::try_from(line_count.saturating_sub(usize::from(changes_body.height)))
         .unwrap_or(u16::MAX);
@@ -282,11 +282,7 @@ fn pane_areas(body: Rect, maximized: Option<OverviewPane>) -> (Rect, Rect) {
         Some(OverviewPane::Changes) => (body, Rect::default()),
         Some(OverviewPane::Relations) => (Rect::default(), body),
         None => {
-            let changes_height = if body.height < 12 {
-                body.height.saturating_add(1) / 2
-            } else {
-                body.height.saturating_mul(4) / 10
-            };
+            let changes_height = body.height.saturating_mul(4) / 10;
             (
                 Rect::new(body.x, body.y, body.width, changes_height),
                 Rect::new(
@@ -328,7 +324,7 @@ fn render_changes_panel(
     frame.render_widget(
         Paragraph::new(lines.to_owned())
             .style(theme::overview_text_style())
-            .scroll((vertical, 0)),
+            .scroll((vertical, view.changes_horizontal())),
         body,
     );
     if lines.len() > usize::from(body.height) {
@@ -346,7 +342,6 @@ fn overview_lines(
     content: &OverviewContent,
     review: &PlanReview,
     view: &OverviewViewState,
-    width: u16,
 ) -> Vec<Line<'static>> {
     let mut lines = vec![Line::from(vec![
         Span::styled("  Change ", theme::overview_muted_style()),
@@ -391,16 +386,6 @@ fn overview_lines(
             row.action.clone()
         };
         let label_prefix = format!("{indent}{expansion} ");
-        let label = truncate_address(
-            &format!("{label_prefix}{}", row.display_address),
-            width as usize,
-            marker.len() + 1 + 7,
-        );
-        let (address_prefix, address) = label
-            .strip_prefix(&label_prefix)
-            .map_or(("", label.as_str()), |address| {
-                (label_prefix.as_str(), address)
-            });
         let address_style = if selected {
             theme::overview_header_selected_style()
         } else {
@@ -409,8 +394,8 @@ fn overview_lines(
         lines.push(Line::from(vec![
             Span::styled(format!("{marker} "), theme::overview_text_style()),
             Span::styled(format!("{action:<6} "), action_style(&row.action)),
-            Span::styled(address_prefix.to_owned(), theme::overview_text_style()),
-            Span::styled(address.to_owned(), address_style),
+            Span::styled(label_prefix, theme::overview_text_style()),
+            Span::styled(row.display_address.clone(), address_style),
         ]));
     }
     lines
@@ -428,32 +413,6 @@ fn action_style(action: &str) -> Style {
     } else {
         theme::overview_muted_style()
     }
-}
-
-fn truncate_address(value: &str, width: usize, reserved: usize) -> String {
-    let available = width.saturating_sub(reserved).max(1);
-    if value.chars().count() <= available {
-        return value.to_owned();
-    }
-    if available <= 3 {
-        return value
-            .chars()
-            .rev()
-            .take(available)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect();
-    }
-    let suffix = value
-        .chars()
-        .rev()
-        .take(available - 3)
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect::<String>();
-    format!("...{suffix}")
 }
 
 fn copy_flash_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
@@ -475,11 +434,7 @@ fn footer_items(view: &OverviewViewState, content: &OverviewContent) -> Vec<Line
                 footer::hint(&["/"], "filter"),
                 footer::hint(&["Enter"], "open raw"),
             ],
-            OverviewPane::Relations => vec![
-                footer::hint(&["↑", "↓"], "scroll"),
-                footer::hint(&["←", "→"], "pan"),
-                footer::hint(&["Enter"], "open raw"),
-            ],
+            OverviewPane::Relations => vec![footer::hint(&["Enter"], "open raw")],
         };
         if view.focus() == OverviewPane::Changes
             && let Some(expanded) = view.selected_group_expanded(content)
@@ -500,7 +455,7 @@ fn footer_items(view: &OverviewViewState, content: &OverviewContent) -> Vec<Line
             footer::hint(&["?"], "help"),
             footer::hint(&["q"], "quit"),
         ]);
-        if !view.filter().is_empty() {
+        if !view.filter().is_empty() && view.maximized().is_none() {
             items.insert(0, footer::hint(&["Esc"], "clear filter"));
         }
         items
@@ -550,7 +505,10 @@ fn render_overlay(
                             "↑ / ↓ / j / k",
                             "select a Changes row or scroll Relations",
                         ),
-                        help_dialog::HelpAction::new("← / →", "scroll Relations horizontally"),
+                        help_dialog::HelpAction::new(
+                            "← / →",
+                            "scroll Changes or Relations horizontally",
+                        ),
                         help_dialog::HelpAction::new("PgUp / PgDn", "move one page"),
                         help_dialog::HelpAction::new("Home / End", "go to the top or bottom"),
                         help_dialog::HelpAction::new("f", "maximize or restore the focused pane"),
@@ -764,6 +722,30 @@ mod tests {
         .with_relations(relations)
     }
 
+    fn scroll_filtered_row_into_view(
+        state: &OverviewSessionState,
+        view: &mut OverviewViewState,
+        content: &OverviewContent,
+    ) {
+        let layout = layout(Rect::new(0, 0, 40, 16), state, view, content);
+        view.apply(
+            OverviewInput::Down,
+            layout.changes_body(),
+            layout.relations(),
+            layout.max_vertical(),
+            content,
+        );
+        for _ in 0..5 {
+            view.apply(
+                OverviewInput::Right,
+                layout.changes_body(),
+                layout.relations(),
+                layout.max_vertical(),
+                content,
+            );
+        }
+    }
+
     #[test]
     fn renders_grouped_overview_with_fixed_counts_and_unsupported_notice() {
         let state = OverviewSessionState::new(review());
@@ -831,6 +813,13 @@ mod tests {
             let text = buffer_text(&buffer);
             assert!(text.contains("[2] Changes"), "{width}x{height}: {text}");
             assert!(text.contains("[3] Relations"), "{width}x{height}: {text}");
+            let split = layout(Rect::new(0, 0, width, height), &state, &view, &content);
+            let body_height = split.changes.height + split.relations.height;
+            assert_eq!(
+                split.changes.height,
+                body_height * 4 / 10,
+                "{width}x{height}"
+            );
         }
 
         let area = Rect::new(0, 0, 120, 40);
@@ -856,6 +845,60 @@ mod tests {
         assert_eq!(maximized.changes, Rect::default());
         assert_eq!(maximized.relations.width, area.width);
         assert!(maximized.relations.height > split.relations.height);
+    }
+
+    #[test]
+    fn changes_pane_scrolls_full_addresses_horizontally() {
+        let address = format!("terraform_data.{}tail-marker", "long_segment_".repeat(7));
+        let state = OverviewSessionState::new(review());
+        let mut view = OverviewViewState::default();
+        let mut content = OverviewContent::from_review(state.review(), "", view.expanded());
+        content.rows[0].display_address = address.clone();
+        let lines = overview_lines(&content, state.review(), &view);
+        assert!(lines.iter().any(|line| line.to_string().contains(&address)));
+
+        let initial = render_to_buffer((32, 5), |frame| {
+            render_changes_panel(frame, frame.area(), &lines, &view, 0);
+        });
+        assert!(!buffer_text(&initial).contains("tail-marker"));
+
+        for _ in 0..100 {
+            view.apply(
+                OverviewInput::Right,
+                Rect::default(),
+                Rect::default(),
+                0,
+                &content,
+            );
+        }
+        let scrolled = render_to_buffer((32, 5), |frame| {
+            render_changes_panel(frame, frame.area(), &lines, &view, 0);
+        });
+        assert!(buffer_text(&scrolled).contains("tail-marker"));
+    }
+
+    #[test]
+    fn relations_footer_omits_basic_arrow_navigation() {
+        let content = OverviewContent::from_review(&review(), "", &BTreeSet::new());
+        let mut view = OverviewViewState::default();
+        view.apply(
+            OverviewInput::FocusRelations,
+            Rect::default(),
+            Rect::default(),
+            0,
+            &content,
+        );
+
+        let footer_text = footer_items(&view, &content)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(footer_text.contains("Enter open raw"));
+        assert!(!footer_text.contains('↑'));
+        assert!(!footer_text.contains('↓'));
+        assert!(!footer_text.contains('←'));
+        assert!(!footer_text.contains('→'));
     }
 
     #[test]
@@ -955,6 +998,7 @@ mod tests {
             OverviewContent::from_review(state.review(), view.filter(), view.expanded());
         assert_eq!(filtered_content.rows.len(), 1);
         assert_eq!(view.selected_group_expanded(&filtered_content), None);
+        scroll_filtered_row_into_view(&state, &mut view, &filtered_content);
         let filtered = render_to_buffer((40, 16), |frame| {
             render(frame, &state, &view, Instant::now());
         });
