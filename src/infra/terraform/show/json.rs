@@ -45,7 +45,14 @@ pub(super) fn parse_plan_json_with_metadata(
     let plan = parse_plan_document(&document)?;
     let metadata = super::metadata::metadata_from_document(root, &plan, detailed_exit_has_changes);
     let planned_addresses = parse_value_addresses(root, false)?;
-    let relations = super::relations::parse_configuration(&document, &planned_addresses);
+    let deleted_addresses = plan
+        .resource_changes
+        .iter()
+        .filter(|change| change.kind == ResourceChangeKind::Delete)
+        .map(|change| change.address.clone())
+        .collect();
+    let relations =
+        super::relations::parse_configuration(&document, &planned_addresses, &deleted_addresses);
     Ok((plan, metadata, relations))
 }
 

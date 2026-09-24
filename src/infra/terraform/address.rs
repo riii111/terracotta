@@ -76,7 +76,7 @@ pub(super) enum ResourceReference {
 
 pub(super) fn parse_resource_address(address: &str) -> Option<ResourceAddress> {
     let parts = split_traversal(address)?;
-    let parsed = parse_resource_parts(&parts, true)?;
+    let parsed = parse_resource_parts(&parts)?;
     let expected_parts = parsed.modules.len() * 2 + usize::from(parsed.mode == "data") + 2;
     (parts.len() == expected_parts).then_some(parsed)
 }
@@ -113,7 +113,7 @@ pub(super) fn parse_reference(reference: &str) -> Option<ResourceReference> {
         return Some(ResourceReference::ModuleOutput { modules, output });
     }
 
-    parse_resource_parts(rest, true).map(ResourceReference::Resource)
+    parse_resource_parts(rest).map(ResourceReference::Resource)
 }
 
 pub(super) fn parse_module_address(module: &str) -> Option<Vec<ModuleAddressSegment>> {
@@ -154,12 +154,8 @@ pub(super) fn format_resource_address(
     address
 }
 
-fn parse_resource_parts(parts: &[String], allow_modules: bool) -> Option<ResourceAddress> {
-    let (modules, rest) = if allow_modules {
-        module_prefix(parts)?
-    } else {
-        (Vec::new(), parts)
-    };
+fn parse_resource_parts(parts: &[String]) -> Option<ResourceAddress> {
+    let (modules, rest) = module_prefix(parts)?;
     let (mode, resource_offset) = if rest.first().is_some_and(|part| part == "data") {
         ("data", 1)
     } else {

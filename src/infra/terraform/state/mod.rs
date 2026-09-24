@@ -1,4 +1,8 @@
-use std::{collections::BTreeSet, ffi::OsString, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    ffi::OsString,
+    path::Path,
+};
 
 use serde_json::{Map, Value};
 
@@ -94,7 +98,9 @@ fn parse_state(input: &[u8]) -> StateParseResult<Vec<RelationEvidence>> {
             let instance = instance.as_object().ok_or(StateParseError::Invalid)?;
             let index = match instance.get("index_key") {
                 Some(Value::String(value)) => Some(AddressIndex::String(value.clone())),
-                Some(Value::Number(value)) => Some(AddressIndex::Number(value.to_string())),
+                Some(Value::Number(value)) => Some(AddressIndex::Number(
+                    value.as_u64().ok_or(StateParseError::Invalid)?.to_string(),
+                )),
                 Some(Value::Null) | None => None,
                 _ => return Err(StateParseError::Invalid),
             };
@@ -145,6 +151,13 @@ fn relations_for_state(instances: &[StateInstance]) -> Vec<RelationEvidence> {
         .iter()
         .map(|instance| instance.address.as_str())
         .collect::<BTreeSet<_>>();
+    let mut instances_by_block = BTreeMap::<&str, Vec<&StateInstance>>::new();
+    for instance in instances {
+        instances_by_block
+            .entry(&instance.block)
+            .or_default()
+            .push(instance);
+    }
     let mut relations = Vec::new();
     for instance in instances {
         let dependent = RelationEndpoint::Instance(instance.address.clone());
@@ -175,17 +188,15 @@ fn relations_for_state(instances: &[StateInstance]) -> Vec<RelationEvidence> {
                 continue;
             }
             let block = address.block();
-            let targets = instances
-                .iter()
-                .filter(|candidate| candidate.block == block)
-                .collect::<Vec<_>>();
-            match targets.as_slice() {
-                [target] if target.address == block => relations.push(RelationEvidence::resolved(
-                    dependent.clone(),
-                    RelationEndpoint::Instance(target.address.clone()),
-                    RelationSource::State,
-                )),
-                [] => relations.push(RelationEvidence::unresolved(
+            match instances_by_block.get(block.as_str()).map(Vec::as_slice) {
+                Some([target]) if target.address == block => {
+                    relations.push(RelationEvidence::resolved(
+                        dependent.clone(),
+                        RelationEndpoint::Instance(target.address.clone()),
+                        RelationSource::State,
+                    ));
+                }
+                None | Some([]) => relations.push(RelationEvidence::unresolved(
                     dependent.clone(),
                     RelationSource::State,
                     RelationUnresolvedReason::MissingAddress,
@@ -387,6 +398,11 @@ mod tests {
             })
         }));
         assert!(parse(json!({"resources": [{"instances": "bad"}]})).is_err());
+        for index in [json!(1.0), json!(1.5), json!(-1)] {
+            assert!(parse(json!({
+                "resources": [resource(None, "invalid_index", vec![instance(Some(index), json!([]))])]
+            })).is_err());
+        }
         let mut unknown_mode = resource(None, "unknown_mode", vec![instance(None, json!([]))]);
         unknown_mode["mode"] = json!("future");
         assert!(parse(json!({"resources": [unknown_mode]})).is_err());

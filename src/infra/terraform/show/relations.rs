@@ -19,7 +19,8 @@ pub(super) struct ConfigurationAnalysis {
 
 pub(super) fn parse_configuration(
     document: &Value,
-    known_addresses: &BTreeSet<String>,
+    planned_addresses: &BTreeSet<String>,
+    deleted_addresses: &BTreeSet<String>,
 ) -> ConfigurationAnalysis {
     let has_prior_state = document
         .get("prior_state")
@@ -45,14 +46,19 @@ pub(super) fn parse_configuration(
     let mut evidence = Vec::new();
     for (path, module) in &tree.modules {
         for resource in &module.resources {
-            let source_addresses = source_addresses_for(path, &resource.identity, known_addresses);
+            let source_addresses = source_addresses_for(
+                path,
+                &resource.identity,
+                planned_addresses,
+                deleted_addresses,
+            );
             for (dependent, context) in source_addresses {
                 evidence.extend(tree.relations_for_resource(
                     path,
                     resource,
                     &dependent,
                     &context,
-                    known_addresses,
+                    planned_addresses,
                 ));
             }
         }
@@ -750,7 +756,7 @@ impl ConfigurationTree {
             && !known_addresses
                 .iter()
                 .filter_map(|address| parse_resource_address(address))
-                .any(|address| address.modules.starts_with(&context.modules))
+                .any(|address| module_path_matches(&address.modules, &context.modules))
         {
             return Resolution::issue(RelationUnresolvedReason::MissingAddress);
         }
@@ -765,6 +771,14 @@ impl ConfigurationTree {
             Resolution::target(RelationEndpoint::Block(address))
         }
     }
+}
+
+fn module_path_matches(address: &[ModuleAddressSegment], prefix: &[ModuleAddressSegment]) -> bool {
+    address.len() >= prefix.len()
+        && prefix.iter().zip(address).all(|(expected, actual)| {
+            expected.name == actual.name
+                && (expected.index.is_none() || expected.index == actual.index)
+        })
 }
 
 #[derive(Default)]
@@ -825,9 +839,10 @@ fn format_path(path: &[String]) -> String {
 fn source_addresses_for(
     path: &[String],
     identity: &ResourceIdentity,
-    known_addresses: &BTreeSet<String>,
+    planned_addresses: &BTreeSet<String>,
+    deleted_addresses: &BTreeSet<String>,
 ) -> Vec<(RelationEndpoint, ResolutionContext)> {
-    let mut matches = known_addresses
+    let mut matches = planned_addresses
         .iter()
         .filter_map(|address| parse_resource_address(address))
         .filter(|address| {
@@ -840,7 +855,15 @@ fn source_addresses_for(
             (RelationEndpoint::Instance(address.full()), context)
         })
         .collect::<Vec<_>>();
-    if matches.is_empty() {
+    let has_deleted_instances = matches.is_empty()
+        && deleted_addresses
+            .iter()
+            .filter_map(|address| parse_resource_address(address))
+            .any(|address| {
+                address.module_names().eq(path.iter().map(String::as_str))
+                    && identity.matches(&address)
+            });
+    if matches.is_empty() && !has_deleted_instances {
         let modules = path
             .iter()
             .map(|name| ModuleAddressSegment {
@@ -943,6 +966,7 @@ mod tests {
                 .iter()
                 .map(|address| (*address).to_owned())
                 .collect(),
+            &BTreeSet::new(),
         )
     }
 
@@ -1400,6 +1424,44 @@ mod tests {
     }
 
     #[test]
+    fn omits_configuration_roots_for_blocks_with_only_deleted_instances() {
+        let document = json!({
+            "format_version": "1.2",
+            "prior_state": {"values": {"root_module": {"resources": [
+                {"address": "terraform_data.source"},
+                {"address": "terraform_data.counted[0]"}
+            ]}}},
+            "planned_values": {"root_module": {"resources": [
+                {"address": "terraform_data.source"}
+            ]}},
+            "resource_changes": [{
+                "address": "terraform_data.counted[0]",
+                "mode": "managed",
+                "change": {"actions": ["delete"]}
+            }],
+            "configuration": {"root_module": {"resources": [
+                resource("terraform_data.source", "source", json!({}), json!([])),
+                resource("terraform_data.counted", "counted", json!({
+                    "input": {"references": ["terraform_data.source.id"]}
+                }), json!([]))
+            ]}}
+        });
+
+        let (_, _, analysis) = super::super::json::parse_plan_json_with_metadata(
+            document.to_string().as_bytes(),
+            false,
+        )
+        .expect("zero-count plan should parse");
+
+        assert!(!analysis.relations.configuration.iter().any(|edge| {
+            matches!(
+                edge.dependent.address(),
+                "terraform_data.counted" | "terraform_data.counted[0]"
+            )
+        }));
+    }
+
+    #[test]
     fn does_not_read_reference_shaped_data_from_constant_values() {
         let relations = evidence(
             json!({
@@ -1510,6 +1572,46 @@ mod tests {
         assert!(!relations.configuration.iter().any(|edge| {
             edge.dependent.address() == "terraform_data.consumer"
                 && edge.unresolved == Some(RelationUnresolvedReason::AmbiguousModule)
+        }));
+    }
+
+    #[test]
+    fn resolves_repeated_child_modules_beneath_an_indexed_module_block() {
+        let document = json!({
+            "configuration": {"root_module": {
+                "resources": [resource("terraform_data.consumer", "consumer", json!({}), json!(["module.outer[0]"]))],
+                "module_calls": {"outer": {
+                    "count_expression": {"constant_value": 2},
+                    "module": {
+                        "module_calls": {"inner": {
+                            "count_expression": {"constant_value": 1},
+                            "module": {
+                                "resources": [resource("terraform_data.inside", "inside", json!({}), json!([]))]
+                            }
+                        }}
+                    }
+                }}
+            }}
+        });
+
+        let relations = evidence(
+            document,
+            &[
+                "terraform_data.consumer",
+                "module.outer[0].module.inner[0].terraform_data.inside",
+            ],
+        );
+
+        assert!(relations.configuration.iter().any(|edge| {
+            edge.dependent.address() == "terraform_data.consumer"
+                && edge.referenced.as_ref().is_some_and(|target| {
+                    target.address() == "module.outer[0].module.inner.terraform_data.inside"
+                        && !target.is_instance()
+                })
+        }));
+        assert!(!relations.configuration.iter().any(|edge| {
+            edge.dependent.address() == "terraform_data.consumer"
+                && edge.unresolved == Some(RelationUnresolvedReason::MissingAddress)
         }));
     }
 

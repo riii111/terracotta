@@ -261,9 +261,7 @@ pub(crate) fn read_saved_plan_review(
             runner,
         ) {
             Ok(state) => relations.with_state(StateRelationStatus::Available, state),
-            Err(StateReadError::Execution(error))
-                if error.is_interrupted() || cancellation.is_cancelled() =>
-            {
+            Err(StateReadError::Execution(error)) if error.is_interrupted() => {
                 return Err(error);
             }
             Err(_) if cancellation.is_cancelled() => {
