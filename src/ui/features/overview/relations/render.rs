@@ -278,8 +278,12 @@ fn branch_lines(
         edge_prefixes[0].clone(),
         theme::relation_muted_style(),
     ));
-    first.push(Span::raw(
-        " ".repeat(max_prefix_width - text_width(&edge_prefixes[0])),
+    first.push(Span::styled(
+        edge_padding(
+            dependents[0],
+            max_prefix_width - text_width(&edge_prefixes[0]),
+        ),
+        theme::relation_muted_style(),
     ));
     first.push(Span::styled("┬─>", theme::relation_muted_style()));
     first.extend(
@@ -341,8 +345,9 @@ fn merge_diagram_lines(
         edge_prefixes[0].clone(),
         theme::relation_muted_style(),
     ));
-    first.push(Span::raw(
-        " ".repeat(max_prefix_width - text_width(&edge_prefixes[0])),
+    first.push(Span::styled(
+        edge_padding(sources[0], max_prefix_width - text_width(&edge_prefixes[0])),
+        theme::relation_muted_style(),
     ));
     first.push(Span::styled("┐", theme::relation_muted_style()));
 
@@ -354,8 +359,9 @@ fn merge_diagram_lines(
         edge_prefixes[1].clone(),
         theme::relation_muted_style(),
     ));
-    second.push(Span::raw(
-        " ".repeat(max_prefix_width - text_width(&edge_prefixes[1])),
+    second.push(Span::styled(
+        edge_padding(sources[1], max_prefix_width - text_width(&edge_prefixes[1])),
+        theme::relation_muted_style(),
     ));
     second.push(Span::styled("┴─>", theme::relation_muted_style()));
     second.extend(node_line(node(node_index, target)?, selected_node, maximized).spans);
@@ -536,6 +542,14 @@ fn edge_prefix(link: &RelationGraphLink) -> String {
     edge_segment(link).trim_end_matches('>').to_owned()
 }
 
+fn edge_padding(link: &RelationGraphLink, width: usize) -> String {
+    let glyph = match link.kind {
+        RelationGraphLinkKind::Solid => "─",
+        RelationGraphLinkKind::Dotted => "┄",
+    };
+    glyph.repeat(width)
+}
+
 fn text_width(text: &str) -> usize {
     Line::from(Span::raw(text.to_owned())).width()
 }
@@ -705,6 +719,7 @@ mod tests {
             glyph_column(rows[top], '┬'),
             glyph_column(rows[top + 1], '└')
         );
+        assert_edge_annotation_trails(rows[top], '┬');
     }
 
     #[test]
@@ -746,6 +761,8 @@ mod tests {
             glyph_column(merge_rows[top], '┐'),
             glyph_column(merge_rows[top + 1], '┴')
         );
+        assert_edge_annotation_trails(merge_rows[top], '┐');
+        assert_edge_annotation_trails(merge_rows[top + 1], '┴');
     }
 
     #[test]
@@ -985,6 +1002,28 @@ mod tests {
             .unwrap()
     }
 
+    fn assert_edge_annotation_trails(line: &str, junction: char) {
+        let characters = line.chars().collect::<Vec<_>>();
+        let junction_column = characters
+            .iter()
+            .position(|character| *character == junction)
+            .unwrap();
+        let label_end = characters[..junction_column]
+            .iter()
+            .rposition(|character| *character == ')')
+            .unwrap();
+        let label_start = characters[..label_end]
+            .iter()
+            .rposition(|character| *character == '(')
+            .unwrap();
+        let edge_glyph = characters[label_start - 1];
+        assert!(
+            characters[label_end + 1..junction_column]
+                .iter()
+                .all(|character| *character == edge_glyph)
+        );
+    }
+
     fn node(address: &str, operation: ResourceChangeKind) -> RelationNode {
         let parts = address.split('.').collect::<Vec<_>>();
         let resource_index = parts
@@ -1092,13 +1131,13 @@ mod tests {
                     &source,
                     &service,
                     RelationGraphLinkKind::Solid,
-                    &[RelationSource::Configuration, RelationSource::State],
+                    &[RelationSource::State],
                 ),
                 link(
                     &source,
                     &record,
                     RelationGraphLinkKind::Dotted,
-                    &[RelationSource::State],
+                    &[RelationSource::Configuration, RelationSource::State],
                 ),
             ],
         )
