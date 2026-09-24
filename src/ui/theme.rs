@@ -103,6 +103,54 @@ pub(crate) fn overview_warning_style() -> Style {
     warning_style().bg(Color::Reset)
 }
 
+pub(crate) fn relation_text_style() -> Style {
+    Style::default().fg(Color::Reset).bg(Color::Reset)
+}
+
+pub(crate) fn relation_muted_style() -> Style {
+    Style::default().fg(Color::DarkGray).bg(Color::Reset)
+}
+
+pub(crate) fn relation_section_style() -> Style {
+    Style::default()
+        .fg(Color::Green)
+        .bg(Color::Reset)
+        .add_modifier(Modifier::BOLD)
+}
+
+pub(crate) fn relation_warning_style() -> Style {
+    Style::default()
+        .fg(Color::Yellow)
+        .bg(Color::Reset)
+        .add_modifier(Modifier::BOLD)
+}
+
+pub(crate) fn relation_create_style() -> Style {
+    Style::default().fg(Color::Green).bg(Color::Reset)
+}
+
+pub(crate) fn relation_update_style() -> Style {
+    Style::default().fg(Color::Yellow).bg(Color::Reset)
+}
+
+pub(crate) fn relation_replace_style() -> Style {
+    Style::default().fg(Color::Magenta).bg(Color::Reset)
+}
+
+pub(crate) fn relation_delete_style() -> Style {
+    Style::default().fg(Color::Red).bg(Color::Reset)
+}
+
+pub(crate) fn relation_frame_style(focused: bool) -> Style {
+    Style::default()
+        .fg(if focused {
+            Color::Cyan
+        } else {
+            Color::DarkGray
+        })
+        .bg(Color::Reset)
+}
+
 pub(crate) fn overview_header_warning_style() -> Style {
     warning_style().bg(Color::Rgb(0x2c, 0x2d, 0x2b))
 }
