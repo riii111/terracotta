@@ -339,8 +339,6 @@ impl OverviewViewState {
             OverviewInput::Quit => Some(OverviewCommand::Quit),
             OverviewInput::SearchChar(_)
             | OverviewInput::SearchBackspace
-            | OverviewInput::Left
-            | OverviewInput::Right
             | OverviewInput::SearchLeft
             | OverviewInput::SearchRight
             | OverviewInput::SearchHome
