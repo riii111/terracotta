@@ -1,13 +1,29 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::Modifier,
     text::{Line, Span},
-    widgets::{Paragraph, Wrap},
+    widgets::Paragraph,
 };
 
-use crate::app::environments::{EnvironmentPlan, EnvironmentSession, EnvironmentState};
-use crate::ui::theme;
+use super::context::truncate_middle;
+use crate::{
+    app::{
+        environments::{EnvironmentPlan, EnvironmentSession, EnvironmentState},
+        execution::ExecutionContextValue,
+    },
+    ui::theme,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EnvironmentPane {
+    Environments,
+    Matrix,
+    #[expect(
+        dead_code,
+        reason = "GR06 adds the Relations pane to the shared layout."
+    )]
+    Relations,
+}
 
 #[derive(Default)]
 pub(crate) struct EnvironmentSelection {
@@ -16,55 +32,17 @@ pub(crate) struct EnvironmentSelection {
 }
 
 pub(crate) struct EnvironmentLayout {
-    pub(crate) tabs: Rect,
+    pub(crate) header: Rect,
     pub(crate) summary: Rect,
-    pub(crate) notice: Rect,
-    pub(crate) header_separator: Rect,
     pub(crate) body: Rect,
-    pub(crate) ready_on_tabs: bool,
-}
-
-pub(crate) fn overview_layout(
-    area: Rect,
-    state: &EnvironmentSession,
-    notice: Option<&str>,
-    filter_active: bool,
-    selection: &EnvironmentSelection,
-    visible_environments: &[usize],
-) -> EnvironmentLayout {
-    let tabs = Rect::new(area.x, area.y, area.width, area.height.min(1));
-    let ready = ready_summary(state);
-    let tabs_width = overview_tabs_width(state, selection, visible_environments);
-    let ready_on_tabs = tabs_width
-        .saturating_add(Line::from(ready.as_str()).width())
-        .saturating_add(2)
-        <= usize::from(area.width);
-    let summary_text = overview_summary(state, filter_active, ready_on_tabs);
-    let summary_height = if summary_text.is_empty() {
-        0
-    } else {
-        wrapped_height(&summary_text, area.width).min(area.height / 3)
-    };
-    let summary = Rect::new(area.x, tabs.bottom(), area.width, summary_height);
-    let remaining = area.bottom().saturating_sub(summary.bottom());
-    let notice_height = notice
-        .map_or(0, |text| wrapped_height(text, area.width))
-        .min(remaining / 3);
-    let notice = Rect::new(area.x, summary.bottom(), area.width, notice_height);
-    let body = Rect::new(
-        area.x,
-        notice.bottom(),
-        area.width,
-        area.bottom().saturating_sub(notice.bottom()),
-    );
-    EnvironmentLayout {
-        tabs,
-        summary,
-        notice,
-        header_separator: Rect::default(),
-        body,
-        ready_on_tabs,
-    }
+    pub(crate) footer: Rect,
+    pub(crate) environments: Rect,
+    pub(crate) matrix: Rect,
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "GR06 renders the Relations pane.")
+    )]
+    pub(crate) relations: Rect,
 }
 
 impl EnvironmentSelection {
@@ -73,8 +51,147 @@ impl EnvironmentSelection {
     }
 }
 
+pub(crate) fn overview_layout(
+    area: Rect,
+    sidebar_width: u16,
+    sidebar_visible: bool,
+    maximized: Option<EnvironmentPane>,
+    show_summary: bool,
+    show_relations: bool,
+) -> EnvironmentLayout {
+    let header = Rect::new(area.x, area.y, area.width, area.height.min(1));
+    let footer_height = if area.height < 6 {
+        1
+    } else {
+        area.height.saturating_sub(header.height).min(2)
+    };
+    let footer = Rect::new(
+        area.x,
+        area.bottom().saturating_sub(footer_height),
+        area.width,
+        footer_height,
+    );
+    let summary_height =
+        u16::from(show_summary && area.height >= 6).min(footer.y.saturating_sub(header.bottom()));
+    let summary = Rect::new(area.x, header.bottom(), area.width, summary_height);
+    let body = Rect::new(
+        area.x,
+        summary.bottom(),
+        area.width,
+        footer.y.saturating_sub(summary.bottom()),
+    );
+    let mut environments = Rect::default();
+    let mut matrix = Rect::default();
+    let mut relations = Rect::default();
+
+    match maximized {
+        Some(EnvironmentPane::Environments) => environments = body,
+        Some(EnvironmentPane::Matrix) => matrix = body,
+        Some(EnvironmentPane::Relations) => relations = body,
+        None => {
+            let right = if sidebar_visible {
+                let width = sidebar_width.min(body.width);
+                environments = Rect::new(body.x, body.y, width, body.height);
+                Rect::new(
+                    body.x.saturating_add(width),
+                    body.y,
+                    body.width.saturating_sub(width),
+                    body.height,
+                )
+            } else {
+                body
+            };
+            if show_relations {
+                let matrix_height = right.height.saturating_mul(4) / 10;
+                matrix = Rect::new(right.x, right.y, right.width, matrix_height);
+                relations = Rect::new(
+                    right.x,
+                    right.y.saturating_add(matrix_height),
+                    right.width,
+                    right.height.saturating_sub(matrix_height),
+                );
+            } else {
+                matrix = right;
+            }
+        }
+    }
+
+    EnvironmentLayout {
+        header,
+        summary,
+        body,
+        footer,
+        environments,
+        matrix,
+        relations,
+    }
+}
+
+pub(crate) fn sidebar_width(plans: &[EnvironmentPlan]) -> u16 {
+    let widest_row = plans
+        .iter()
+        .map(|plan| {
+            Line::from(name(plan))
+                .width()
+                .saturating_add(if plan.is_production() { 6 } else { 0 })
+                .saturating_add(4)
+        })
+        .max()
+        .unwrap_or(0)
+        .clamp(24, 41);
+    u16::try_from(widest_row).unwrap_or(41)
+}
+
+pub(crate) fn render_header(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &EnvironmentSession,
+    selection: &EnvironmentSelection,
+) {
+    let Some(plan) = state.plans().get(selection.active()) else {
+        return;
+    };
+    let title = format!("terracotta ▸ {}", directory_name(plan));
+    let tool = plan.review().map_or_else(
+        || plan.tool.display_name().to_owned(),
+        |review| {
+            let review = review.review();
+            match review.context().tool_version() {
+                ExecutionContextValue::Known(version) => {
+                    format!("{} {version}", plan.tool.display_name())
+                }
+                ExecutionContextValue::Loading => plan.tool.display_name().to_owned(),
+            }
+        },
+    );
+    let tool_width = Line::from(tool.as_str())
+        .width()
+        .min(usize::from(area.width));
+    let title_width = usize::from(area.width).saturating_sub(tool_width.saturating_add(1));
+    let title = fit_end(&title, title_width);
+    let gap =
+        usize::from(area.width).saturating_sub(Line::from(title.as_str()).width() + tool_width);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(title, theme::overview_header_style()),
+            Span::styled(" ".repeat(gap), theme::overview_header_style()),
+            Span::styled(tool, theme::overview_header_muted_style()),
+        ]))
+        .style(theme::overview_header_style()),
+        area,
+    );
+}
+
 pub(crate) fn name(plan: &EnvironmentPlan) -> String {
     plan.display_name()
+}
+
+fn directory_name(plan: &EnvironmentPlan) -> String {
+    plan.directory()
+        .file_name()
+        .unwrap_or_else(|| plan.directory().as_os_str())
+        .to_string_lossy()
+        .into_owned()
 }
 
 pub(crate) fn context(plan: &EnvironmentPlan) -> String {
@@ -96,223 +213,6 @@ pub(crate) const fn status(plan: &EnvironmentPlan) -> &'static str {
     }
 }
 
-pub(crate) fn summary(state: &EnvironmentSession, filter_active: bool) -> String {
-    let ready = state
-        .plans()
-        .iter()
-        .filter(|plan| plan.review().is_some())
-        .count();
-    let mut parts = vec![ready_summary(state)];
-    if filter_active {
-        if state
-            .plans()
-            .iter()
-            .any(|plan| matches!(plan.state(), EnvironmentState::Error))
-        {
-            parts.push("Error present".to_owned());
-        }
-        parts.push("[Env filter ON]".to_owned());
-        return parts.join("   ");
-    }
-    if ready < state.plans().len() {
-        let names: Vec<_> = state
-            .plans()
-            .iter()
-            .filter(|plan| plan.review().is_some())
-            .map(name)
-            .collect();
-        parts.push(format!(
-            "Compared: {}",
-            if names.is_empty() {
-                "none".to_owned()
-            } else {
-                names.join(", ")
-            }
-        ));
-        for plan in state.plans().iter().filter(|plan| plan.review().is_none()) {
-            parts.push(format!("{}: {}", name(plan), status(plan)));
-        }
-    }
-    parts.join("   ")
-}
-
-fn ready_summary(state: &EnvironmentSession) -> String {
-    let ready = state
-        .plans()
-        .iter()
-        .filter(|plan| plan.review().is_some())
-        .count();
-    format!("Ready: {ready}/{}", state.plans().len())
-}
-
-fn overview_summary(
-    state: &EnvironmentSession,
-    filter_active: bool,
-    ready_on_tabs: bool,
-) -> String {
-    let summary = summary(state, filter_active);
-    if !ready_on_tabs {
-        return summary;
-    }
-    let ready = ready_summary(state);
-    summary
-        .strip_prefix(&ready)
-        .unwrap_or(&summary)
-        .trim_start()
-        .trim_start_matches("   ")
-        .to_owned()
-}
-
-fn overview_tabs_width(
-    state: &EnvironmentSession,
-    selection: &EnvironmentSelection,
-    visible_environments: &[usize],
-) -> usize {
-    let mut width = Line::from(overview_tab_label(selection.raw.is_none())).width();
-    for (position, index) in visible_environments.iter().enumerate() {
-        let plan = &state.plans()[*index];
-        let label = environment_tab_label(position, plan, selection.raw == Some(*index));
-        width = width.saturating_add(2 + Line::from(label).width());
-    }
-    let active = selection.active();
-    let visible_position = visible_environments
-        .iter()
-        .position(|index| *index == active)
-        .unwrap_or(0);
-    if visible_position > 0 {
-        width = width.saturating_add(3);
-    }
-    if visible_position + 1 < visible_environments.len() {
-        width = width.saturating_add(2);
-    }
-    width
-}
-
-pub(crate) fn render_overview_header(
-    frame: &mut Frame<'_>,
-    layout: &EnvironmentLayout,
-    state: &EnvironmentSession,
-    selection: &EnvironmentSelection,
-    visible_environments: &[usize],
-    filter_active: bool,
-) {
-    let labels: Vec<_> = visible_environments
-        .iter()
-        .enumerate()
-        .map(|(position, index)| {
-            let plan = &state.plans()[*index];
-            environment_tab_label(position, plan, selection.raw == Some(*index))
-        })
-        .collect::<Vec<_>>();
-    let active_position = visible_environments
-        .iter()
-        .position(|index| *index == selection.active())
-        .unwrap_or(0);
-    let ready_width = if layout.ready_on_tabs {
-        Line::from(ready_summary(state).as_str()).width() + 2
-    } else {
-        0
-    };
-    let overview_width = Line::from(overview_tab_label(selection.raw.is_none())).width();
-    let available = usize::from(layout.tabs.width)
-        .saturating_sub(ready_width)
-        .saturating_sub(overview_width)
-        .saturating_sub(5);
-    let mut first = 0;
-    while first < active_position
-        && labels[first..=active_position]
-            .iter()
-            .map(|label| Line::from(label.as_str()).width())
-            .sum::<usize>()
-            .saturating_add((active_position - first + 1) * 2)
-            > available
-    {
-        first += 1;
-    }
-    let mut spans = vec![Span::styled(
-        overview_tab_label(selection.raw.is_none()),
-        if selection.raw.is_none() {
-            theme::overview_header_accent_style().add_modifier(Modifier::BOLD)
-        } else {
-            theme::overview_header_muted_style()
-        },
-    )];
-    let mut used = spans.iter().map(Span::width).sum::<usize>();
-    let tab_limit = usize::from(layout.tabs.width).saturating_sub(ready_width);
-    if first > 0 {
-        spans.push(Span::styled("  ‹", theme::overview_header_muted_style()));
-        used += 3;
-    }
-    for (position, label) in labels.iter().enumerate().skip(first) {
-        let width = Line::from(label.as_str()).width();
-        if used + 2 + width > tab_limit && position > active_position {
-            spans.push(Span::styled(" ›", theme::overview_header_muted_style()));
-            break;
-        }
-        spans.push(Span::styled("  ", theme::overview_header_muted_style()));
-        used += 2;
-        spans.push(Span::styled(
-            label.clone(),
-            if selection.raw == Some(visible_environments[position]) {
-                theme::overview_header_accent_style().add_modifier(Modifier::BOLD)
-            } else {
-                theme::overview_header_muted_style()
-            },
-        ));
-        used += width;
-    }
-    if layout.ready_on_tabs {
-        let ready = ready_summary(state);
-        let padding = usize::from(layout.tabs.width)
-            .saturating_sub(used.saturating_add(Line::from(ready.as_str()).width()));
-        spans.push(Span::styled(
-            " ".repeat(padding),
-            theme::overview_header_style(),
-        ));
-        spans.push(Span::styled(ready, theme::overview_header_muted_style()));
-    }
-    frame.render_widget(
-        Paragraph::new(Line::from(spans)).style(theme::overview_header_style()),
-        layout.tabs,
-    );
-
-    let summary = overview_summary(state, filter_active, layout.ready_on_tabs);
-    if !summary.is_empty() {
-        frame.render_widget(
-            Paragraph::new(summary)
-                .wrap(Wrap { trim: false })
-                .style(theme::overview_header_muted_style()),
-            layout.summary,
-        );
-    }
-}
-
-const fn overview_tab_label(selected: bool) -> &'static str {
-    if selected {
-        "> 0 Overview"
-    } else {
-        "0 Overview"
-    }
-}
-
-fn environment_tab_label(position: usize, plan: &EnvironmentPlan, selected: bool) -> String {
-    let marker = if selected { "> " } else { "" };
-    let production = plan
-        .review()
-        .is_some_and(|review| review.review().context().is_production() == Some(true));
-    format!(
-        "{marker}{} {}{}",
-        position + 1,
-        name(plan),
-        if production { " [PROD]" } else { "" }
-    )
-}
-
-fn wrapped_height(text: &str, width: u16) -> u16 {
-    u16::try_from(
-        Paragraph::new(text)
-            .wrap(Wrap { trim: false })
-            .line_count(width.max(1)),
-    )
-    .unwrap_or(u16::MAX)
+fn fit_end(value: &str, width: usize) -> String {
+    truncate_middle(value, width)
 }

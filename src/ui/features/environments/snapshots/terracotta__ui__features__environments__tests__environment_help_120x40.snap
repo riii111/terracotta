@@ -2,43 +2,42 @@
 source: src/ui/features/environments/tests.rs
 expression: text
 ---
-> 0 Overview  1 a-ready  2 b-error  3 c-running  4 d-pending  5 e-hcp                                         Ready: 1/5
-Compared: ┌Help─────────────────────────────────────────────────────────────────────────────────────────────┐
-          │ Current: Overview                                                                             ▲ │
-          │ ↑ / ↓ / j / k        scroll matrix; move through filter candidates                            ┃ │
-          │ ← / →                select env; move in filter search                                        ┃ │
-  Address │ [ / ]                select previous or next environment                                      ┃ │
-          │ Enter                open the selected environment's full plan; apply filter or accept search ┃ │
-  No match│ Esc                  return from plan; cancel filter; restore search                          ┃ │
-          │ 1–9                  open the numbered environment's full plan                                ┃ │
-  Total   │ Space                expand or collapse groups; toggle a filter candidate                     ┃ │
-  blank: a│ /                    filter addresses; search environment names in filter                     ┃ │
-          │ e                    filter compared environments                                             ┃ │
-          │                                                                                               ┃ │
-          │ Other                                                                                         ┃ │
-          │ PgUp / PgDn          move a page in the active view or candidate list                         ┃ │
-          │ Home / End           go to an endpoint or the start/end of search text                        ┃ │
-          │ a                    clear filter search and select all                                       ┃ │
-          │ v                    show the full plan from the top                                          ┃ │
-          │ y                    copy the selected environment's plan                                     ┃ │
-          │ c                    show environment context                                                 ┃ │
-          │ r                    retry a selected Error environment                                       ┃ │
-          │ q                    quit; confirms first while acquiring                                     ┃ │
-          │                                                                                               ┃ │
-          │ Matrix legend                                                                                 ┃ │
-          │ + / ~ / -            create / update / delete                                                 ┃ │
-          │ +/- / -/+            replace (create→delete / delete→create)                                  ┃ │
-          │ blank                resource absent from this environment                                    ┃ │
-          │ .                    resource present, with no change                                         ┃ │
-          │ ?                    plan unavailable; action unknown                                         ┃ │
-          │ read / move / import action shown by name                                                     ┃ │
-          │ why: missing         resource present in only some Ready plans                                ┃ │
-          │                                                                                               ┃ │
-          │ Comparison                                                                                    ┃ │
-          │ Same changes         no differences found in Ready plans; unknown values may differ           │ │
-          │ Scope                only Ready environments are compared                                     │ │
-          │ Excluded             environments are not retried                                             │ │
-          │                                                                                               ▼ │
-          │ ?/Esc close                                                                                     │
-          └─────────────────────────────────────────────────────────────────────────────────────────────────┘
-  [ ] environment | Enter open | / filter | e environments | ? help | q quit
+terracotta ▸ a-ready                                                                                           terraform
+a-ready Ready No changes  │  b-error Error  │  c-running Running  │  d-pending Pending  │  e-hcp Excluded: HCP execution
+┌* [2] Differs acr┌Help─────────────────────────────────────────────────────────────────────────────┐──────────────────┐
+│                 │ Current: Multi-environment Overview                                             │                  │
+│                 │ ↑ / ↓ / j / k select environments in [1] or scroll [2]                          │                  │
+│Address     a-rea│ Space         include or exclude an environment in [1]                          │                  │
+│                 │ Space         expand or collapse groups in [2]                                  │                  │
+│No matching resou│ o / a         compare only the selected environment / all environments in [1]   │                  │
+│                 │ [ / ]         select the previous or next environment                           │                  │
+│blank: absent   .│ 1 / 2         focus Envs / Differs; 1 opens Envs                                │                  │
+│                 │ b             toggle the Envs sidebar                                           │                  │
+│                 │ f             maximize or restore the focused pane                              │                  │
+│                 │ Enter         open the selected environment's full plan                         │                  │
+│                 │ /             filter matrix addresses; display only                             │                  │
+│                 │ r             retry the selected Error environment                              │                  │
+│                 │                                                                                 │                  │
+│                 │ Other                                                                           │                  │
+│                 │ ← / →         select an environment while [2] is focused                        │                  │
+│                 │ v             open the full plan from the top                                   │                  │
+│                 │ y             copy the selected environment's plan                              │                  │
+│                 │ c             show environment context                                          │                  │
+│                 │ ?             show or close this help                                           │                  │
+│                 │ q             quit; confirms first while acquiring                              │                  │
+│                 │                                                                                 │                  │
+│                 │ Matrix legend                                                                   │                  │
+│                 │ + / ~ / -     create / update / delete                                          │                  │
+│                 │ +/- / -/+     replace (create→delete / delete→create)                           │                  │
+│                 │ blank         resource absent from this environment                             │                  │
+│                 │ .             resource present, with no change                                  │                  │
+│                 │ ?             plan unavailable; action unknown                                  │                  │
+│                 │                                                                                 │                  │
+│                 │ Comparison                                                                      │                  │
+│                 │ Same changes  no differences found in Ready plans; unknown values may differ    │                  │
+│                 │ Excluded      environments remain selectable and are not retried                │                  │
+│                 │ Scope         only Ready plans are compared                                     │                  │
+│                 │ why: missing  resource is present in only some Ready plans                      │                  │
+│                 │ ?/Esc close                                                                     │                  │
+└─────────────────└─────────────────────────────────────────────────────────────────────────────────┘──────────────────┘
+[/] env | Enter open plan | v full plan | / filter | b toggle envs | ? help | q quit | 1/2 focus | f maximize

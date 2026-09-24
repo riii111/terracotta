@@ -3,7 +3,6 @@ use std::{
     time::Instant,
 };
 
-use ratatui::style::{Color, Modifier};
 use rstest::rstest;
 
 use super::*;
@@ -175,8 +174,12 @@ fn press_event_at(
     }
 }
 
+fn press_at(view: &mut EnvironmentView, state: &mut EnvironmentSession, code: KeyCode, size: Size) {
+    press_event_at(view, state, KeyEvent::new(code, KeyModifiers::NONE), size);
+}
+
 #[test]
-fn tab_keys_open_the_adjacent_full_plan_from_raw_plan() {
+fn brackets_open_the_adjacent_full_plan_from_raw_plan() {
     let mut state = session(&["dev", "prod", "stg"]);
     for _ in 0..3 {
         complete(
@@ -188,30 +191,23 @@ fn tab_keys_open_the_adjacent_full_plan_from_raw_plan() {
 
     press(&mut view, &mut state, KeyCode::Right);
     assert_eq!(view.selection.column, 1);
-    press(&mut view, &mut state, KeyCode::Tab);
+    press(&mut view, &mut state, KeyCode::Char('['));
+    assert_eq!(view.selection.column, 0);
+    press(&mut view, &mut state, KeyCode::Char(']'));
     assert_eq!(view.selection.column, 1);
 
     press(&mut view, &mut state, KeyCode::Char('v'));
     assert_eq!(view.selection.raw, Some(1));
-    let buffer = render_to_buffer((80, 24), |frame| view.render(frame, &state));
-    let rendered = buffer_text(&buffer);
-    assert!(rendered.contains("# terraform_data.api will change"));
-    assert!(rendered.lines().next().unwrap().contains("> 2 stg"));
-    let selected_tab =
-        u16::try_from(rendered.lines().next().unwrap().find("> 2 stg").unwrap()).unwrap();
-    let selected_tab_marker = buffer.cell((selected_tab, 0)).unwrap();
-    assert_eq!(selected_tab_marker.bg, Color::Reset);
-    assert_eq!(selected_tab_marker.fg, Color::Rgb(0xef, 0xae, 0x6d));
-    assert!(selected_tab_marker.modifier.contains(Modifier::BOLD));
+    assert!(text(&mut view, &state, (80, 24)).contains("# terraform_data.api will change"));
 
-    press(&mut view, &mut state, KeyCode::Tab);
+    press(&mut view, &mut state, KeyCode::Char(']'));
     assert_eq!(view.selection.raw, Some(2));
     assert!(text(&mut view, &state, (80, 24)).contains("# terraform_data.api will change"));
 
     press_event(
         &mut view,
         &mut state,
-        KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+        KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE),
     );
     assert_eq!(view.selection.raw, Some(1));
     assert!(text(&mut view, &state, (80, 24)).contains("# terraform_data.api will change"));
@@ -226,7 +222,10 @@ fn text(view: &mut EnvironmentView, state: &EnvironmentSession, size: (u16, u16)
 #[case::medium(120, 40)]
 #[case::large(160, 60)]
 #[case::narrow(40, 16)]
-fn three_environments_show_groups_actions_and_totals(#[case] width: u16, #[case] height: u16) {
+fn three_environments_show_matrix_actions_across_supported_widths(
+    #[case] width: u16,
+    #[case] height: u16,
+) {
     let mut state = session(&["dev", "prod", "stg"]);
     for (count, action) in [
         (20, ResourceChangeKind::Update),
@@ -254,8 +253,8 @@ fn three_environments_show_groups_actions_and_totals(#[case] width: u16, #[case]
         .count();
     assert_eq!(reversed_cells, 0, "the matrix has no selected resource row");
     let rendered = buffer_text(&buffer);
-    assert!(rendered.contains("1 dev"));
-    assert!(!rendered.contains("dev · terraform"));
+    assert!(rendered.contains("terracotta ▸ dev"));
+    assert!(!rendered.contains("0 Overview"));
     if (width, height) == (40, 16) {
         view.handle_key(
             KeyEvent::new(KeyCode::End, KeyModifiers::NONE),
@@ -265,117 +264,53 @@ fn three_environments_show_groups_actions_and_totals(#[case] width: u16, #[case]
         let bottom = text(&mut view, &state, (width, height));
         assert!(bottom.contains("blank: absent"), "{bottom}");
         assert!(bottom.contains("?: plan unavailable"), "{bottom}");
-        assert!(bottom.contains("Total"), "{bottom}");
-        assert!(rendered.contains("Enter open"), "{rendered}");
+        assert!(!bottom.contains("Total"), "{bottom}");
     } else {
         assert!(rendered.contains("blank: absent"));
         assert!(rendered.contains("?: plan unavailable"));
     }
-    assert!(rendered.contains("> dev"));
     assert!(!rendered.contains("> terraform_data.api"));
-    let overview_tab = buffer.cell((0, 0)).expect("overview tab");
-    assert!(rendered.lines().next().unwrap().starts_with("> 0 Overview"));
-    assert_eq!(overview_tab.bg, Color::Reset);
-    assert_eq!(overview_tab.fg, Color::Rgb(0xef, 0xae, 0x6d));
-    assert!(overview_tab.modifier.contains(Modifier::BOLD));
-    let environment_header = rendered.lines().next().unwrap();
-    let environment_column = u16::try_from(environment_header.find("1 dev").unwrap()).unwrap();
-    assert_eq!(
-        buffer
-            .cell((environment_column, 0))
-            .expect("environment tab")
-            .bg,
-        Color::Reset
-    );
+    assert!(rendered.contains("[2] Differs across envs"));
+    assert!(!rendered.contains("Total"));
     let matrix_header = rendered
         .lines()
-        .position(|line| line.trim_start().starts_with("Address"))
+        .position(|line| line.contains("Address"))
         .unwrap();
-    let matrix_environment_column = u16::try_from(
-        rendered
+    assert!(
+        !rendered
             .lines()
             .nth(matrix_header)
             .unwrap()
-            .find("> dev")
-            .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        buffer
-            .cell((
-                matrix_environment_column,
-                u16::try_from(matrix_header).unwrap()
-            ))
-            .expect("matrix environment heading")
-            .fg,
-        Color::Rgb(0xde, 0xd8, 0xd1)
+            .contains("> dev")
     );
-    assert_eq!(
-        buffer
-            .cell((
-                matrix_environment_column,
-                u16::try_from(matrix_header).unwrap()
-            ))
-            .expect("selected environment heading")
-            .bg,
-        Color::Rgb(0x50, 0x48, 0x3e)
-    );
-    if let Some(nonselected_environment_column) = rendered
-        .lines()
-        .nth(matrix_header)
-        .and_then(|line| line.find("prod"))
-        .and_then(|column| u16::try_from(column).ok())
-    {
-        assert_eq!(
-            buffer
-                .cell((
-                    nonselected_environment_column,
-                    u16::try_from(matrix_header).unwrap()
-                ))
-                .expect("nonselected environment heading")
-                .bg,
-            Color::Reset
-        );
-    }
     assert_eq!(
         buffer
             .cell((2, u16::try_from(matrix_header).unwrap()))
-            .expect("matrix background")
+            .unwrap()
             .bg,
         Color::Reset
     );
-    let total_line = rendered
-        .lines()
-        .position(|line| line.trim_start().starts_with("Total"))
-        .unwrap();
-    assert_eq!(
-        buffer
-            .cell((2, u16::try_from(total_line).unwrap()))
-            .expect("total band")
-            .bg,
-        Color::Reset
-    );
+    assert_eq!(buffer.cell((0, 0)).unwrap().bg, Color::Reset);
     assert_eq!(
         buffer.cell((width - 1, height - 1)).unwrap().bg,
         Color::Reset
     );
-    assert!(rendered.contains("Space expand all"));
     if width >= 120 {
-        let lines: Vec<_> = rendered.lines().collect();
-        let data = lines
-            .iter()
-            .find(|line| line.contains("terraform_data.api"))
-            .unwrap();
-        let total = lines[total_line];
-        assert_eq!(data.find('~'), total.find("~21"));
-        assert_eq!(data.find("+/-"), total.find("~200"));
-        assert_eq!(data.rfind('-'), total.find("~20 -1"));
+        assert!(rendered.contains("* [1] Envs"));
+        assert!(rendered.contains("Space include/exclude"));
+    } else {
+        assert!(rendered.contains(if width == 40 {
+            "Space expand"
+        } else {
+            "Space expand all"
+        }));
+        assert!(!rendered.contains("[1] Envs"));
     }
     insta::assert_snapshot!(format!("three_environments_{width}x{height}"), rendered);
 }
 
 #[test]
-fn selected_environment_column_includes_blank_cells_without_selecting_rows() {
+fn selected_environment_stays_viewable_after_leaving_the_comparison() {
     let mut state = session(&["dev", "prod"]);
     complete(
         &mut state,
@@ -386,52 +321,81 @@ fn selected_environment_column_includes_blank_cells_without_selecting_rows() {
         vec![change("terraform_data.zeta", ResourceChangeKind::Update)],
     );
     let mut view = EnvironmentView::default();
-
-    let buffer = render_to_buffer((80, 24), |frame| view.render(frame, &state));
-    let rendered = buffer_text(&buffer);
-    assert!(rendered.contains("> dev"));
-    assert!(!rendered.contains("> terraform_data.alpha"));
-    assert!(!rendered.contains("> terraform_data.zeta"));
-    let column = u16::try_from(
-        rendered
-            .lines()
-            .find(|line| line.trim_start().starts_with("Address"))
-            .unwrap()
-            .find("> dev")
-            .unwrap(),
-    )
-    .unwrap();
-    let empty_row = u16::try_from(
-        rendered
-            .lines()
-            .position(|line| line.contains("terraform_data.zeta"))
-            .expect("row with a blank selected cell"),
-    )
-    .unwrap();
-    assert_eq!(
-        buffer
-            .cell((column, empty_row))
-            .expect("selected blank cell")
-            .bg,
-        Color::Reset
+    press_at(&mut view, &mut state, KeyCode::Down, Size::new(120, 40));
+    press_at(
+        &mut view,
+        &mut state,
+        KeyCode::Char('1'),
+        Size::new(120, 40),
     );
-
-    press(&mut view, &mut state, KeyCode::Right);
-    let buffer = render_to_buffer((80, 24), |frame| view.render(frame, &state));
-    let rendered = buffer_text(&buffer);
-    let column = u16::try_from(
-        rendered
-            .lines()
-            .find(|line| line.trim_start().starts_with("Address"))
-            .unwrap()
-            .find("> prod")
-            .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        buffer.cell((column, empty_row)).expect("selected cell").bg,
-        Color::Reset
+    press_at(
+        &mut view,
+        &mut state,
+        KeyCode::Char(' '),
+        Size::new(120, 40),
     );
+    assert_eq!(view.selected_environments, Some(vec![0]));
+    assert_eq!(view.selection.column, 1);
+
+    let rendered = text(&mut view, &state, (120, 40));
+    let header = rendered
+        .lines()
+        .find(|line| line.contains("Address"))
+        .unwrap();
+    assert!(header.contains("dev"), "{header}");
+    assert!(!header.contains("prod"), "{header}");
+    assert!(rendered.contains("> [ ] prod"), "{rendered}");
+
+    press_at(&mut view, &mut state, KeyCode::Enter, Size::new(120, 40));
+    assert_eq!(view.selection.raw, Some(1));
+}
+
+#[test]
+fn sidebar_counts_and_matrix_actions_use_ansi_operation_colors() {
+    let mut state = session(&["dev", "test", "stg", "prod"]);
+    for kind in [
+        ResourceChangeKind::Create,
+        ResourceChangeKind::Update,
+        ResourceChangeKind::Delete,
+        ResourceChangeKind::Replace,
+    ] {
+        complete(&mut state, vec![change("terraform_data.api", kind)]);
+    }
+    let mut view = EnvironmentView::default();
+    let buffer = render_to_buffer((160, 40), |frame| view.render(frame, &state));
+    let rendered = buffer_text(&buffer);
+
+    for (label, foreground) in [
+        ("+1", Color::Green),
+        ("~1", Color::Yellow),
+        ("-1", Color::Red),
+        ("1 replace", Color::Magenta),
+    ] {
+        let (y, line) = rendered
+            .lines()
+            .enumerate()
+            .find(|(_, line)| line.contains(label))
+            .unwrap_or_else(|| panic!("missing sidebar count {label}: {rendered}"));
+        let byte_index = line.find(label).unwrap();
+        let x = u16::try_from(ratatui::text::Line::from(&line[..byte_index]).width()).unwrap();
+        let cell = buffer.cell((x, u16::try_from(y).unwrap())).unwrap();
+        assert_eq!(cell.fg, foreground, "{label}");
+        assert_eq!(cell.bg, Color::Reset, "{label}");
+    }
+
+    let (row_y, row) = rendered
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.contains("terraform_data.api"))
+        .expect("matrix API row");
+    let replace_byte_index = row.find("+/-").expect("replace action");
+    let replace_x =
+        u16::try_from(ratatui::text::Line::from(&row[..replace_byte_index]).width()).unwrap();
+    let replace_cell = buffer
+        .cell((replace_x, u16::try_from(row_y).unwrap()))
+        .unwrap();
+    assert_eq!(replace_cell.fg, Color::Magenta);
+    assert_eq!(replace_cell.bg, Color::Reset);
 }
 
 #[test]
@@ -458,27 +422,28 @@ fn space_toggles_all_groups_independently_of_matrix_scroll() {
     assert!(text(&mut view, &state, (40, 16)).contains("Space expand"));
     for (width, height) in [(40, 16), (80, 24), (120, 40), (160, 60)] {
         let rendered = text(&mut view, &state, (width, height));
-        let environment_hint = if width == 40 {
-            "[ ] env"
-        } else {
-            "[ ] environment"
-        };
-        let filter_hint = if width == 40 {
-            "e env filter"
-        } else {
-            "e environments"
-        };
+        let environment_hint = "[/] env";
         for hint in [
             environment_hint,
             "/ filter",
-            filter_hint,
-            "Space expand all",
-            "? help",
-            "q quit",
+            if width == 40 {
+                "Space expand"
+            } else {
+                "Space expand all"
+            },
+            if width == 40 {
+                "?/q help/quit"
+            } else {
+                "? help"
+            },
         ] {
             assert!(rendered.contains(hint), "{width}x{height}: {hint}");
         }
-        assert!(rendered.contains("Enter open"), "{width}x{height}");
+        if width != 40 {
+            assert!(rendered.contains("q quit"), "{width}x{height}");
+        }
+        assert!(rendered.contains("Enter open plan"), "{width}x{height}");
+        assert!(rendered.contains("v full plan"), "{width}x{height}");
         assert!(!rendered.contains("↑↓"), "{width}x{height}");
         assert!(!rendered.contains("←→"), "{width}x{height}");
     }
@@ -520,22 +485,15 @@ fn short_terminal_keeps_major_environment_actions_without_movement_hints() {
     let mut view = EnvironmentView::default();
     let rendered = text(&mut view, &state, (40, 14));
 
-    assert!(rendered.contains("Enter open"));
-    for hint in [
-        "[ ] env",
-        "Enter open",
-        "/ filter",
-        "e env filter",
-        "? help",
-        "q quit",
-    ] {
+    assert!(rendered.contains("Enter open plan"));
+    for hint in ["[/] env", "Enter open plan", "/ filter", "?/q help/quit"] {
         assert!(rendered.contains(hint), "{hint}");
     }
     assert!(!rendered.contains("↑↓"));
     assert!(!rendered.contains("←→"));
     let lines = rendered.lines().collect::<Vec<_>>();
     assert!(
-        lines
+        !lines
             .iter()
             .any(|line| line.trim_start().starts_with("Total"))
     );
@@ -549,10 +507,10 @@ fn narrow_matrix_keeps_why_visible_with_a_long_selected_environment_name() {
     let rendered = text(&mut view, &state, (40, 16));
     let header = rendered
         .lines()
-        .find(|line| line.trim_start().starts_with("Address"))
+        .find(|line| line.contains("Address"))
         .expect("matrix header");
 
-    assert!(header.contains('>'));
+    assert!(!header.contains("> "));
     assert!(header.contains("why"));
 }
 
@@ -575,10 +533,13 @@ fn columns_remain_selectable_without_rows_and_scroll_beyond_nine() {
             vec![change("terraform_data.api", ResourceChangeKind::Update)],
         );
     }
-    insta::assert_snapshot!(
-        "twelve_ready_selected_last",
-        text(&mut view, &state, (80, 24))
-    );
+    let rendered = text(&mut view, &state, (80, 24));
+    insta::assert_snapshot!("twelve_ready_selected_last", rendered.as_str());
+    let header = rendered
+        .lines()
+        .find(|line| line.contains("Address"))
+        .expect("matrix header");
+    assert!(header.contains("env-11"), "{header}");
     press(&mut view, &mut state, KeyCode::Char('v'));
     assert_eq!(view.selection.raw, Some(11));
     press(&mut view, &mut state, KeyCode::Char('['));
@@ -605,65 +566,38 @@ fn matrix_symbol_legend_remains_visible_across_environment_counts(#[case] count:
 }
 
 #[test]
-fn enter_opens_the_selected_environment_full_plan() {
-    let mut state = session(&["dev", "prod"]);
+fn unavailable_environment_opens_its_state_dialog_and_raw_plan_after_completion() {
+    let mut state = session(&["a", "b", "c"]);
     complete(
         &mut state,
         vec![change("terraform_data.api", ResourceChangeKind::Update)],
     );
     complete(
         &mut state,
-        vec![change("terraform_data.worker", ResourceChangeKind::Update)],
+        vec![change("terraform_data.api", ResourceChangeKind::NoOp)],
     );
     let mut view = EnvironmentView::default();
-
-    press(&mut view, &mut state, KeyCode::Enter);
-    assert_eq!(view.selection.raw, Some(0));
-    assert!(text(&mut view, &state, (80, 24)).contains("terraform_data.api"));
-    press(&mut view, &mut state, KeyCode::Esc);
-    press(&mut view, &mut state, KeyCode::Char(']'));
-    press(&mut view, &mut state, KeyCode::Enter);
+    let size = Size::new(120, 40);
+    press_at(&mut view, &mut state, KeyCode::Down, size);
+    press_at(&mut view, &mut state, KeyCode::Enter, size);
     assert_eq!(view.selection.raw, Some(1));
-    assert!(text(&mut view, &state, (80, 24)).contains("terraform_data.worker"));
-}
-
-#[test]
-fn environment_selection_is_preserved_when_returning_from_full_plan() {
-    let mut state = session(&["dev", "prod"]);
-    complete(
-        &mut state,
-        vec![change("terraform_data.api", ResourceChangeKind::Update)],
+    assert!(
+        text(&mut view, &state, (120, 40)).contains("Terraform will perform the following actions")
     );
-    complete(
-        &mut state,
-        vec![change("terraform_data.worker", ResourceChangeKind::Update)],
-    );
-    let mut view = EnvironmentView::default();
-
-    press(&mut view, &mut state, KeyCode::Char(']'));
-    press(&mut view, &mut state, KeyCode::Enter);
-    press(&mut view, &mut state, KeyCode::Esc);
-    assert_eq!(view.selection.column, 1);
+    press_at(&mut view, &mut state, KeyCode::Esc, size);
+    press_at(&mut view, &mut state, KeyCode::Down, size);
+    press_at(&mut view, &mut state, KeyCode::Enter, size);
+    assert!(text(&mut view, &state, (120, 40)).contains("Pending"));
     assert!(view.selection.raw.is_none());
-}
-
-#[test]
-fn overview_pages_use_the_visible_matrix_height() {
-    let mut state = session(&["dev"]);
-    let changes: Vec<_> = (0..40)
-        .map(|index| {
-            change(
-                &format!("terraform_data.server_{index}"),
-                ResourceChangeKind::Update,
-            )
-        })
-        .collect();
-    complete(&mut state, changes);
-    let view = EnvironmentView::default();
-    let compact = view.overview_page_size(Size::new(80, 24), &state);
-    let tall = view.overview_page_size(Size::new(80, 40), &state);
-    assert_ne!(compact, 10);
-    assert!(tall > compact);
+    press_at(&mut view, &mut state, KeyCode::Esc, size);
+    complete(&mut state, Vec::new());
+    press_at(&mut view, &mut state, KeyCode::Enter, size);
+    let rendered = text(&mut view, &state, (120, 40));
+    assert!(
+        rendered.contains("Terraform will perform the following actions"),
+        "{rendered}"
+    );
+    assert_eq!(view.selection.raw, Some(2));
 }
 
 #[test]
@@ -742,9 +676,9 @@ fn filter_uses_complete_addresses_and_raw_return_preserves_expansion() {
     press(&mut view, &mut state, KeyCode::Down);
     press(&mut view, &mut state, KeyCode::Right);
     let before = text(&mut view, &state, (80, 24));
-    press(&mut view, &mut state, KeyCode::Char('3'));
-    assert_eq!(view.selection.raw, Some(2));
-    assert_eq!(view.reviews[2].scroll().0, 0);
+    press(&mut view, &mut state, KeyCode::Char('v'));
+    assert_eq!(view.selection.raw, Some(1));
+    assert_eq!(view.reviews[1].scroll().0, 0);
     press(&mut view, &mut state, KeyCode::Esc);
     assert_eq!(view.selection.column, 1);
     assert_eq!(text(&mut view, &state, (80, 24)), before);
@@ -851,7 +785,8 @@ fn retry_and_new_ready_environment_keep_member_when_group_disappears() {
     let output = text(&mut view, &state, (80, 24));
     assert_eq!(view.selection.column, 2);
     assert!(output.contains("terraform_data.server[0]"), "{output}");
-    assert!(output.contains("Ready: 3/3"));
+    assert!(output.contains("terracotta ▸ c"), "{output}");
+    assert!(output.contains("Ready"));
     assert!(!output.contains("Compared:"));
 }
 
@@ -885,124 +820,29 @@ fn raw_filter_escape_clears_the_query_before_returning_to_overview() {
 }
 
 #[test]
-fn environment_filter_updates_comparison_columns_and_preserves_global_ready_progress() {
+fn focus_keys_open_and_close_the_sidebar_without_changing_selection() {
     let mut state = session(&["dev", "prod", "stg"]);
-    complete(
-        &mut state,
-        vec![change("terraform_data.api", ResourceChangeKind::Update)],
-    );
-    complete(
-        &mut state,
-        vec![change("terraform_data.api", ResourceChangeKind::Update)],
-    );
-    complete(
-        &mut state,
-        vec![change("terraform_data.api", ResourceChangeKind::Create)],
-    );
-    let mut view = EnvironmentView::default();
-
-    press(&mut view, &mut state, KeyCode::Char('e'));
-    press(&mut view, &mut state, KeyCode::Down);
-    press(&mut view, &mut state, KeyCode::Down);
-    press(&mut view, &mut state, KeyCode::Char(' '));
-    press(&mut view, &mut state, KeyCode::Enter);
-
-    let output = text(&mut view, &state, (80, 24));
-    assert!(output.contains("Ready: 3/3"), "{output}");
-    assert!(output.contains("[Env filter ON]"), "{output}");
-    assert!(
-        output.contains("Same change across selected envs"),
-        "{output}"
-    );
-    assert!(output.contains("1 dev  2 stg"), "{output}");
-    assert!(!output.contains("3 prod"), "{output}");
-    assert!(!output.contains("Compared:"), "{output}");
-}
-
-#[test]
-fn environment_filter_escape_discards_unapplied_toggles() {
-    let mut state = session(&["dev", "prod"]);
-    complete(
-        &mut state,
-        vec![change("terraform_data.api", ResourceChangeKind::Update)],
-    );
-    complete(
-        &mut state,
-        vec![change("terraform_data.api", ResourceChangeKind::Update)],
-    );
-    let mut view = EnvironmentView::default();
-
-    press(&mut view, &mut state, KeyCode::Char('e'));
-    press(&mut view, &mut state, KeyCode::Char(' '));
-    press(&mut view, &mut state, KeyCode::Esc);
-
-    let output = text(&mut view, &state, (80, 24));
-    assert!(!output.contains("[Env filter ON]"), "{output}");
-    assert!(output.contains("1 dev  2 prod"), "{output}");
-}
-
-#[test]
-fn filtered_numbered_tabs_open_the_environment_with_the_visible_number() {
-    let names = (0..10)
-        .map(|index| format!("env-{index:02}"))
-        .collect::<Vec<_>>();
-    let mut state = session(&names.iter().map(String::as_str).collect::<Vec<_>>());
-    for _ in 0..10 {
+    for _ in 0..3 {
         complete(
             &mut state,
             vec![change("terraform_data.api", ResourceChangeKind::Update)],
         );
     }
     let mut view = EnvironmentView::default();
+    let size = Size::new(120, 40);
 
-    press(&mut view, &mut state, KeyCode::Char('e'));
-    for index in 0..10 {
-        if index != 2 && index != 9 {
-            press(&mut view, &mut state, KeyCode::Char(' '));
-        }
-        if index < 9 {
-            press(&mut view, &mut state, KeyCode::Down);
-        }
-    }
-    press(&mut view, &mut state, KeyCode::Enter);
-
-    let output = text(&mut view, &state, (120, 40));
-    assert!(output.contains("1 env-02  2 env-09"), "{output}");
-    assert!(!output.contains("env-00"), "{output}");
-    press(&mut view, &mut state, KeyCode::Char('3'));
-    assert!(view.selection.raw.is_none());
-    press(&mut view, &mut state, KeyCode::Char('2'));
-    assert_eq!(view.selection.raw, Some(9));
-}
-
-#[test]
-fn filter_can_narrow_a_three_environment_matrix_to_one_selected_environment() {
-    let mut state = session(&["dev", "prod", "stg"]);
-    for kind in [
-        ResourceChangeKind::Update,
-        ResourceChangeKind::Update,
-        ResourceChangeKind::Create,
-    ] {
-        complete(&mut state, vec![change("terraform_data.api", kind)]);
-    }
-    let mut view = EnvironmentView::default();
-
-    press(&mut view, &mut state, KeyCode::Char('e'));
-    press(&mut view, &mut state, KeyCode::Char(' '));
-    press(&mut view, &mut state, KeyCode::Down);
-    press(&mut view, &mut state, KeyCode::Down);
-    press(&mut view, &mut state, KeyCode::Char(' '));
-    press(&mut view, &mut state, KeyCode::Enter);
-
-    let output = text(&mut view, &state, (80, 24));
-    assert!(output.contains("Ready: 3/3"), "{output}");
-    assert!(output.contains("[Env filter ON]"), "{output}");
-    assert!(output.contains("1 stg"), "{output}");
-    assert!(!output.contains("1 dev"), "{output}");
-    assert!(!output.contains("2 prod"), "{output}");
+    press_at(&mut view, &mut state, KeyCode::Char('2'), size);
+    assert_eq!(view.focus, EnvironmentPane::Matrix);
+    press_at(&mut view, &mut state, KeyCode::Char('1'), size);
+    assert_eq!(view.focus, EnvironmentPane::Environments);
+    press_at(&mut view, &mut state, KeyCode::Down, size);
     assert_eq!(view.selection.column, 1);
-    press(&mut view, &mut state, KeyCode::Enter);
-    assert_eq!(view.selection.raw, Some(1));
+    press_at(&mut view, &mut state, KeyCode::Char('b'), size);
+    assert_eq!(view.sidebar, SidebarSetting::Closed);
+    assert_eq!(view.focus, EnvironmentPane::Matrix);
+    press_at(&mut view, &mut state, KeyCode::Char('b'), size);
+    assert_eq!(view.sidebar, SidebarSetting::Open);
+    assert_eq!(view.focus, EnvironmentPane::Matrix);
 }
 
 #[rstest]
@@ -1038,7 +878,7 @@ fn shared_workspace_names_keep_retry_directory_and_tool_visible(
     let output = text(&mut view, &state, (width, height));
 
     assert!(!output.contains("/synthetic/prod"));
-    assert!(output.contains("2 staging"));
+    assert!(output.contains("terracotta ▸ prod"));
     assert!(!output.contains("staging · tofu"));
     insta::assert_snapshot!(format!("shared_workspace_{width}x{height}"), output);
     press(&mut view, &mut state, KeyCode::Char('c'));

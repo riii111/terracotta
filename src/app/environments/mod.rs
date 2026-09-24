@@ -5,7 +5,7 @@ use std::{
 
 use crate::app::{
     copy::{self, CopyEffect},
-    execution::{Diagnostic, Tool},
+    execution::{Diagnostic, ExecutionContext, Tool},
     review::PlanReview,
     session::{self, Action, Effect, ReviewSessionState, SessionState},
 };
@@ -303,6 +303,17 @@ impl EnvironmentPlan {
                 },
                 str::to_owned,
             )
+    }
+
+    pub(crate) fn is_production(&self) -> bool {
+        self.review()
+            .and_then(|review| review.review().context().is_production())
+            .unwrap_or_else(|| {
+                ExecutionContext::loading(self.directory.display().to_string())
+                    .with_workspace(self.workspace().unwrap_or("default"))
+                    .is_production()
+                    == Some(true)
+            })
     }
 
     pub(crate) fn workspace(&self) -> Option<&str> {
@@ -605,6 +616,28 @@ mod tests {
             ("live", 3),
         ] {
             assert_eq!(environment_stage(name), expected, "environment: {name}");
+        }
+    }
+
+    #[test]
+    fn production_environment_is_detected_before_plan_completion() {
+        let state = EnvironmentSession::new(
+            vec![
+                available_named("default", "/repo/prod"),
+                available_named("production", "/repo/apps"),
+                available_named("default", "/repo/nonprod"),
+            ],
+            false,
+        );
+
+        for plan in state.plans() {
+            let expected = matches!(plan.directory().to_str(), Some("/repo/prod" | "/repo/apps"));
+            assert_eq!(
+                plan.is_production(),
+                expected,
+                "{}",
+                plan.directory().display()
+            );
         }
     }
 

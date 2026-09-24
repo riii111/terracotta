@@ -2,27 +2,27 @@
 source: src/ui/features/environments/tests/matrix.rs
 expression: output
 ---
-> 0 Overview  1 staging  2 staging                                    Ready: 0/2
-Compared: none   staging: Error   staging: Error
-
-
-  Synthetic acquisition error
-  Address       staging   > staging    why
-
-  Waiting for environment plans.
-
-  Total       Error       Error
-  blank: absent   .: unchanged   ?: plan unavailable
-
-
-
-
-
-
-
-
-
-
-
-
-  [ ] environment | Enter open | / filter | e environments | ? help | q quit
+terracotta ▸ prod                                                           tofu
+staging Error  │  staging Error
+┌* [2] Differs across envs─────────────────────────────────────────────────────┐
+│                                                                              │
+│Synthetic acquisition error                                                   │
+│Address     staging     staging      why                                      │
+│                                                                              │
+│Waiting for environment plans.                                                │
+│                                                                              │
+│blank: absent   .: unchanged   ?: plan unavailable                            │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+[/] env | Enter open plan | v full plan | / filter | ? help | q quit | 2 focus
+f maximize
