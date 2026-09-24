@@ -61,14 +61,14 @@ fn partial_session() -> EnvironmentSession {
     state
 }
 
-fn overview_plan_session() -> EnvironmentSession {
+fn overview_plan_session(names: &[&str]) -> EnvironmentSession {
     use crate::app::{
         plan::{Plan, PlanAction, ResourceChange, ResourceChangeKind, ResourceMode},
         review::{PlanBlock, PlanBlockKind, PlanDocument, PlanLineKind},
     };
 
-    let environments = ["a-ready", "b-ready"]
-        .into_iter()
+    let environments = names
+        .iter()
         .map(|name| Environment {
             tool: Tool::Terraform,
             availability: EnvironmentAvailability::Available(EnvironmentIdentity {
@@ -84,7 +84,7 @@ fn overview_plan_session() -> EnvironmentSession {
     lines[20] = "PLAN LINE 20 # terraform_data.api will be updated in-place".to_owned();
     let text = lines.join("\n");
 
-    for name in ["a-ready", "b-ready"] {
+    for name in names {
         let work = state.start_next().expect("environment should start");
         let document = PlanDocument::with_blocks_and_line_kinds(
             text.clone(),
@@ -139,6 +139,12 @@ fn overview_plan_session() -> EnvironmentSession {
     }
 
     state
+}
+
+fn matrix_header(text: &str) -> &str {
+    text.lines()
+        .find(|line| line.contains("Address"))
+        .expect("matrix header should be rendered")
 }
 
 #[test]
@@ -453,7 +459,7 @@ fn ready_review_remains_available_and_quit_requires_confirmation_while_acquiring
 
 #[test]
 fn plan_scroll_resets_when_resize_makes_the_full_document_fit() {
-    let state = overview_plan_session();
+    let state = overview_plan_session(&["a-ready", "b-ready"]);
     let mut view = EnvironmentView::default();
     let small = Size::new(80, 24);
 
@@ -492,7 +498,7 @@ fn plan_scroll_resets_when_resize_makes_the_full_document_fit() {
 
 #[test]
 fn overview_round_trip_opens_the_full_plan_from_the_top() {
-    let state = overview_plan_session();
+    let state = overview_plan_session(&["a-ready", "b-ready"]);
 
     for size in [(80, 24), (120, 40), (160, 60)] {
         let mut view = EnvironmentView::default();
@@ -529,8 +535,200 @@ fn overview_round_trip_opens_the_full_plan_from_the_top() {
 }
 
 #[test]
+fn selecting_visible_environments_preserves_matrix_columns_across_layout_changes() {
+    let state = overview_plan_session(&["dev", "stg", "prod"]);
+    let mut view = EnvironmentView::default();
+    let wide = Size::new(165, 50);
+
+    for _ in 0..2 {
+        view.handle_key(
+            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+            wide,
+            &state,
+        );
+    }
+
+    let all_columns = buffer_text(&render_to_buffer((165, 50), |frame| {
+        view.render(frame, &state);
+    }));
+    for environment in ["dev", "stg", "prod"] {
+        assert!(
+            matrix_header(&all_columns).contains(environment),
+            "{all_columns}"
+        );
+    }
+
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE),
+        wide,
+        &state,
+    );
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE),
+        wide,
+        &state,
+    );
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE),
+        wide,
+        &state,
+    );
+
+    let maximized = buffer_text(&render_to_buffer((165, 50), |frame| {
+        view.render(frame, &state);
+    }));
+    for environment in ["dev", "stg", "prod"] {
+        assert!(
+            matrix_header(&maximized).contains(environment),
+            "{maximized}"
+        );
+    }
+
+    let resized = buffer_text(&render_to_buffer((120, 40), |frame| {
+        view.render(frame, &state);
+    }));
+    for environment in ["dev", "stg", "prod"] {
+        assert!(matrix_header(&resized).contains(environment), "{resized}");
+    }
+
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
+        wide,
+        &state,
+    );
+    let raw = buffer_text(&render_to_buffer((165, 50), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(raw.contains("PLAN LINE 00"), "{raw}");
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
+        wide,
+        &state,
+    );
+    let returned = buffer_text(&render_to_buffer((165, 50), |frame| {
+        view.render(frame, &state);
+    }));
+    for environment in ["dev", "stg", "prod"] {
+        assert!(matrix_header(&returned).contains(environment), "{returned}");
+    }
+}
+
+#[test]
+fn narrow_selection_keeps_the_previous_column_and_manual_scroll_position() {
+    let state = overview_plan_session(&["dev", "stg", "prod"]);
+    let mut view = EnvironmentView::default();
+    let narrow = Size::new(55, 24);
+
+    for _ in 0..2 {
+        view.handle_key(
+            KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE),
+            narrow,
+            &state,
+        );
+    }
+
+    let selected = buffer_text(&render_to_buffer((55, 24), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(matrix_header(&selected).contains("stg"), "{selected}");
+    assert!(matrix_header(&selected).contains("prod"), "{selected}");
+    assert!(!matrix_header(&selected).contains("dev"), "{selected}");
+
+    view.handle_key(
+        KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+        narrow,
+        &state,
+    );
+    let manually_scrolled = buffer_text(&render_to_buffer((55, 24), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(
+        matrix_header(&manually_scrolled).contains("prod"),
+        "{manually_scrolled}"
+    );
+    assert!(
+        !matrix_header(&manually_scrolled).contains("stg"),
+        "{manually_scrolled}"
+    );
+
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
+        narrow,
+        &state,
+    );
+    let raw = buffer_text(&render_to_buffer((55, 24), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(raw.contains("PLAN LINE 00"), "{raw}");
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
+        narrow,
+        &state,
+    );
+    let returned = buffer_text(&render_to_buffer((55, 24), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(matrix_header(&returned).contains("prod"), "{returned}");
+    assert!(!matrix_header(&returned).contains("stg"), "{returned}");
+}
+
+#[test]
+fn selecting_an_excluded_environment_keeps_the_matrix_start() {
+    let state = overview_plan_session(&["dev", "stg", "prod"]);
+    let mut view = EnvironmentView::default();
+    let size = Size::new(165, 50);
+
+    for _ in 0..2 {
+        view.handle_key(
+            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+            size,
+            &state,
+        );
+    }
+    render_to_buffer((165, 50), |frame| view.render(frame, &state));
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    view.handle_key(
+        KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    render_to_buffer((165, 50), |frame| view.render(frame, &state));
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+
+    for (key, expected) in [(KeyCode::Up, 1), (KeyCode::Down, 2)] {
+        view.handle_key(KeyEvent::new(key, KeyModifiers::NONE), size, &state);
+        let rendered = buffer_text(&render_to_buffer((165, 50), |frame| {
+            view.render(frame, &state);
+        }));
+        let header = matrix_header(&rendered);
+        assert!(header.contains("stg"), "{rendered}");
+        assert!(!header.contains("dev"), "{rendered}");
+        assert!(!header.contains("prod"), "{rendered}");
+        assert_eq!(view.selection.column, expected);
+    }
+}
+
+#[test]
 fn filtered_plan_position_tracks_the_visible_source_line_after_resize() {
-    let mut state = overview_plan_session();
+    let mut state = overview_plan_session(&["a-ready", "b-ready"]);
     let mut view = EnvironmentView::default();
     let small = Size::new(80, 24);
     view.handle_key(
@@ -1059,7 +1257,7 @@ fn pending_production_environment_shows_its_badge_before_the_plan_finishes() {
 
 #[test]
 fn sidebar_focus_and_selected_name_use_ansi_colors_and_terminal_defaults() {
-    let state = overview_plan_session();
+    let state = overview_plan_session(&["a-ready", "b-ready"]);
     let mut view = EnvironmentView::default();
     let buffer = render_to_buffer((120, 40), |frame| view.render(frame, &state));
     assert_eq!(view.sidebar_width, 24);

@@ -6,7 +6,7 @@ terracotta ▸ prod                                                           to
 staging Error  │  staging Error
 ┌* [2] Differs across envs · Ready 0/2─────────────────────────────────────────┐
 │                                                                              │
-│Address     staging      why                                                  │
+│Address     staging     staging      why                                      │
 │                                                                              │
 │Waiting for environment plans.                                                │
 │                                                                              │

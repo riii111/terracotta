@@ -6,7 +6,7 @@ terracotta ▸ env-11                                                    terrafo
 env-11 Ready ~1
 ┌* [2] Differs across envs─────────────────────────────────────────────────────┐
 │                                                                              │
-│Address     env-11       why                                                  │
+│Address     env-08      env-09      env-10      env-11       why              │
 │                                                                              │
 │> Same change across envs: 1 changes ~1  Space expand                         │
 │                                                                              │

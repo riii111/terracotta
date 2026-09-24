@@ -75,6 +75,7 @@ pub(crate) struct MatrixView {
     pub(super) rows: Vec<Row>,
     pub(super) vertical: usize,
     pub(super) first_column: usize,
+    environment_reveal: Option<usize>,
     pub(super) expanded: BTreeSet<GroupId>,
     pub(super) same_expanded: bool,
     pub(super) filter: String,
@@ -97,12 +98,9 @@ impl MatrixView {
             let environment_selection_changed = self.environments != environments;
             self.overview = Some(overview.clone());
             self.environments = environments.to_vec();
-            if environment_selection_changed {
-                if self.selected_column(selected_environment).is_some() {
-                    self.reveal_environment(selected_environment);
-                } else {
-                    self.first_column = 0;
-                }
+            if environment_selection_changed && self.selected_column(selected_environment).is_some()
+            {
+                self.request_environment_reveal(selected_environment);
             }
             self.rebuild();
             self.revision = Some(state.revision());
@@ -204,8 +202,12 @@ impl MatrixView {
             }
             OverviewInput::Top => self.select_index(Some(0)),
             OverviewInput::Bottom => self.select_index(self.rows.len().checked_sub(1)),
-            OverviewInput::Left => self.first_column = self.first_column.saturating_sub(1),
+            OverviewInput::Left => {
+                self.environment_reveal = None;
+                self.first_column = self.first_column.saturating_sub(1);
+            }
             OverviewInput::Right => {
+                self.environment_reveal = None;
                 self.first_column = self
                     .first_column
                     .saturating_add(1)
@@ -226,10 +228,12 @@ impl MatrixView {
         }
     }
 
-    pub(crate) fn reveal_environment(&mut self, environment: usize) {
-        if let Some(column) = self.selected_column(environment) {
-            self.first_column = column;
-        }
+    pub(crate) const fn request_environment_reveal(&mut self, environment: usize) {
+        self.environment_reveal = Some(environment);
+    }
+
+    pub(super) const fn take_environment_reveal(&mut self) -> Option<usize> {
+        self.environment_reveal.take()
     }
 
     fn move_selection(&mut self, delta: isize) {
