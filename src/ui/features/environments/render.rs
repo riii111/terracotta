@@ -2,9 +2,15 @@ use super::{EnvironmentDialog, EnvironmentView, overview::matrix::MatrixSelected
 use crate::{
     app::environments::{EnvironmentPlan, EnvironmentSession, EnvironmentState},
     ui::{
-        features::{overview::matrix, plan_review},
+        features::{
+            overview::{
+                matrix,
+                relations::{self, RelationGraphView},
+            },
+            plan_review,
+        },
         primitives::molecules::help_dialog,
-        shell::{environments, footer},
+        shell::{environments, environments::EnvironmentPane, footer},
         theme,
     },
 };
@@ -30,7 +36,7 @@ impl EnvironmentView {
             sidebar_visible,
             self.maximized_for_width(size.width),
             !sidebar_visible && self.maximized_for_width(size.width).is_none(),
-            false,
+            self.sidebar_enabled,
         );
         let content = self.matrix_content_layout(pane_inner(layout.matrix), state);
         let legend_height = if content.matrix.width < 50 { 2 } else { 1 };
@@ -52,7 +58,7 @@ impl EnvironmentView {
                 sidebar_visible,
                 self.maximized_for_width(area.width),
                 !sidebar_visible && self.maximized_for_width(area.width).is_none(),
-                false,
+                self.sidebar_enabled,
             )
         };
         environments::render_header(frame, layout.header, state, &self.selection);
@@ -108,7 +114,7 @@ impl EnvironmentView {
                 state.plans(),
                 self.selection.column,
                 &self.compared_environments(state.plans().len()),
-                self.active_pane(layout.body.width) == environments::EnvironmentPane::Environments,
+                self.active_pane(layout.header.width) == EnvironmentPane::Environments,
             );
         }
         if layout.summary.height > 0 {
@@ -119,7 +125,15 @@ impl EnvironmentView {
                 frame,
                 layout.matrix,
                 state,
-                self.active_pane(layout.body.width) == environments::EnvironmentPane::Matrix,
+                self.active_pane(layout.header.width) == EnvironmentPane::Matrix,
+            );
+        }
+        if layout.relations.width > 0 && layout.relations.height > 0 {
+            self.render_relations_panel(
+                frame,
+                layout.relations,
+                state,
+                self.active_pane(layout.header.width) == EnvironmentPane::Relations,
             );
         }
         let matrix_state = if self.matrix.searching() {
@@ -129,7 +143,7 @@ impl EnvironmentView {
         } else {
             MatrixFooterState::Filtered
         };
-        let focus = self.active_pane(layout.body.width);
+        let focus = self.active_pane(layout.header.width);
         let matrix_selection = self.matrix.selected_item(self.selection.column);
         let enter_action = match matrix_selection {
             None => None,
@@ -146,13 +160,16 @@ impl EnvironmentView {
             maximized: self.maximized.is_some(),
             environment_navigation: if self.sidebar_enabled {
                 EnvironmentNavigation::Multiple {
-                    sidebar_available: layout.body.width >= 90,
+                    sidebar_available: layout.header.width >= 90,
                 }
             } else {
                 EnvironmentNavigation::Single
             },
             resize_guidance: layout.body.height < 3
-                || (focus == environments::EnvironmentPane::Matrix && layout.matrix.width < 3),
+                || (focus == EnvironmentPane::Matrix
+                    && (layout.matrix.width < 3 || layout.matrix.height < 3))
+                || (focus == EnvironmentPane::Relations
+                    && (layout.relations.width < 3 || layout.relations.height < 3)),
         });
         frame.render_widget(
             Paragraph::new(footer_lines).style(theme::overview_text_style()),
@@ -201,6 +218,59 @@ impl EnvironmentView {
             );
         }
         matrix::render(frame, layout.matrix, state, &mut self.matrix);
+    }
+
+    fn render_relations_panel(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        state: &EnvironmentSession,
+        focused: bool,
+    ) {
+        let title = state.plans().get(self.selection.column).map_or_else(
+            || "environment unavailable".to_owned(),
+            |plan| {
+                let compared = self
+                    .compared_environments(state.plans().len())
+                    .contains(&self.selection.column);
+                format!(
+                    "{} · {}",
+                    environments::name(plan),
+                    if compared {
+                        "whole env"
+                    } else {
+                        "not compared"
+                    }
+                )
+            },
+        );
+        let relation = self
+            .environment_relations
+            .as_ref()
+            .and_then(|overview| overview.relations.get(&self.selection.column));
+        if let Some(graph) = relation.and_then(|relation| relation.graph.as_ref()) {
+            let scroll = self.relation_scrolls[self.selection.column];
+            let rendered_scroll = relations::render(
+                frame,
+                area,
+                graph,
+                &RelationGraphView {
+                    title: &title,
+                    selected_node: self.selected_relation_node(state),
+                    focused,
+                    maximized: self.maximized_for_width(area.width)
+                        == Some(EnvironmentPane::Relations),
+                    scroll,
+                },
+            );
+            self.relation_scrolls[self.selection.column] = rendered_scroll;
+        } else {
+            let status = state.plans().get(self.selection.column).map_or_else(
+                || "No environment is selected.".to_owned(),
+                relations_status,
+            );
+            render_relations_status(frame, area, &title, focused, &status);
+        }
     }
 
     fn matrix_content_layout(&self, area: Rect, state: &EnvironmentSession) -> MatrixContentLayout {
@@ -307,6 +377,46 @@ fn environment_summary_line(plan: &EnvironmentPlan) -> Line<'static> {
         }
     }
     line
+}
+
+fn relations_status(plan: &EnvironmentPlan) -> String {
+    match plan.state() {
+        EnvironmentState::Pending => {
+            "Plan pending; relations will appear after acquisition.".to_owned()
+        }
+        EnvironmentState::Running => {
+            "Plan running; relations will appear after acquisition.".to_owned()
+        }
+        EnvironmentState::Error => format!("Plan failed: {}", plan.diagnostic().text()),
+        EnvironmentState::ExcludedHcp => {
+            "Plan excluded because HCP performs the execution.".to_owned()
+        }
+        EnvironmentState::Ready { .. } => "Relations are unavailable for this plan.".to_owned(),
+    }
+}
+
+fn render_relations_status(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    title: &str,
+    focused: bool,
+    status: &str,
+) {
+    let block = pane_block(
+        focused,
+        &format!("[3] Relations · {title}"),
+        overview_pane_border_style(focused),
+    );
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.width > 0 && inner.height > 0 {
+        frame.render_widget(
+            Paragraph::new(status)
+                .wrap(Wrap { trim: false })
+                .style(theme::overview_muted_style()),
+            inner,
+        );
+    }
 }
 
 struct MatrixContentLayout {
@@ -473,7 +583,9 @@ fn overview_help_sections(
     let mut current_actions = vec![help_dialog::HelpAction::new(
         "↑ / ↓ / j / k",
         if sidebar_available {
-            "select environments in [1] or rows in [2]"
+            "select environments in [1], rows in [2], or scroll [3]"
+        } else if sidebar_enabled {
+            "select rows in [2] or scroll [3]"
         } else {
             "select rows in [2]"
         },
@@ -501,7 +613,12 @@ fn overview_help_sections(
         ));
     }
     current_actions.push(if sidebar_available {
-        help_dialog::HelpAction::new("1 / 2", "focus Envs / Differs; 1 opens Envs")
+        help_dialog::HelpAction::new(
+            "1 / 2 / 3",
+            "focus Envs / Differs / Relations; 1 opens Envs",
+        )
+    } else if sidebar_enabled {
+        help_dialog::HelpAction::new("2 / 3", "focus Differs / Relations")
     } else {
         help_dialog::HelpAction::new("2", "focus Differs")
     });
@@ -510,57 +627,93 @@ fn overview_help_sections(
     }
     current_actions.extend([
         help_dialog::HelpAction::new("f", "maximize or restore the focused pane"),
-        help_dialog::HelpAction::new("Enter", "open the selected row at its source in [2]"),
-        help_dialog::HelpAction::new("/", "filter matrix addresses; display only"),
+        help_dialog::HelpAction::new(
+            "Enter",
+            "[1] or [3] opens the plan from the top; [2] opens the selected source",
+        ),
+        help_dialog::HelpAction::new(
+            "/",
+            "filter [2] addresses; [3] always shows the whole environment",
+        ),
         help_dialog::HelpAction::new("r", "retry the selected Error environment"),
     ]);
     vec![
         help_dialog::HelpSection::new("Current: Multi-environment Overview", current_actions),
-        help_dialog::HelpSection::new(
-            "Other",
-            vec![
-                help_dialog::HelpAction::new("← / →", "scroll environment columns in [2]"),
-                help_dialog::HelpAction::new("PageUp / PageDown", "move by a page of rows in [2]"),
-                help_dialog::HelpAction::new("Home / End", "select the first or last row in [2]"),
-                help_dialog::HelpAction::new("v", "open the full plan from the top"),
-                help_dialog::HelpAction::new("y", "copy the selected environment's plan"),
-                help_dialog::HelpAction::new("c", "show environment context"),
-                help_dialog::HelpAction::new("?", "show or close this help"),
-                help_dialog::HelpAction::new("q", "quit; confirms first while acquiring"),
-            ],
-        ),
-        help_dialog::HelpSection::new(
-            "Matrix legend",
-            vec![
-                help_dialog::HelpAction::new("+ / ~ / -", "create / update / delete"),
-                help_dialog::HelpAction::new(
-                    "+/- / -/+",
-                    "replace (create→delete / delete→create)",
-                ),
-                help_dialog::HelpAction::new("blank", "resource absent from this environment"),
-                help_dialog::HelpAction::new(".", "resource present, with no change"),
-                help_dialog::HelpAction::new("?", "plan unavailable; action unknown"),
-            ],
-        ),
-        help_dialog::HelpSection::new(
-            "Comparison",
-            vec![
-                help_dialog::HelpAction::new(
-                    "Same changes",
-                    "no differences found in Ready plans; unknown values may differ",
-                ),
-                help_dialog::HelpAction::new(
-                    "Excluded",
-                    "environments remain selectable and are not retried",
-                ),
-                help_dialog::HelpAction::new("Scope", "only Ready plans are compared"),
-                help_dialog::HelpAction::new(
-                    "why: missing",
-                    "resource is present in only some Ready plans",
-                ),
-            ],
-        ),
+        other_overview_help(sidebar_enabled),
+        matrix_legend_help(),
+        comparison_help(),
     ]
+}
+
+fn other_overview_help(sidebar_enabled: bool) -> help_dialog::HelpSection {
+    help_dialog::HelpSection::new(
+        "Other",
+        vec![
+            help_dialog::HelpAction::new(
+                "← / →",
+                if sidebar_enabled {
+                    "scroll columns in [2] or [3]"
+                } else {
+                    "scroll columns in [2]"
+                },
+            ),
+            help_dialog::HelpAction::new(
+                "PageUp / PageDown",
+                if sidebar_enabled {
+                    "move rows in [2] or scroll [3]"
+                } else {
+                    "move rows in [2]"
+                },
+            ),
+            help_dialog::HelpAction::new(
+                "Home / End",
+                if sidebar_enabled {
+                    "select first/last row in [2] or scroll [3] to an edge"
+                } else {
+                    "select the first or last row in [2]"
+                },
+            ),
+            help_dialog::HelpAction::new("v", "open the full plan from the top"),
+            help_dialog::HelpAction::new("y", "copy the selected environment's plan"),
+            help_dialog::HelpAction::new("c", "show environment context"),
+            help_dialog::HelpAction::new("?", "show or close this help"),
+            help_dialog::HelpAction::new("q", "quit; confirms first while acquiring"),
+        ],
+    )
+}
+
+fn matrix_legend_help() -> help_dialog::HelpSection {
+    help_dialog::HelpSection::new(
+        "Matrix legend",
+        vec![
+            help_dialog::HelpAction::new("+ / ~ / -", "create / update / delete"),
+            help_dialog::HelpAction::new("+/- / -/+", "replace (create→delete / delete→create)"),
+            help_dialog::HelpAction::new("blank", "resource absent from this environment"),
+            help_dialog::HelpAction::new(".", "resource present, with no change"),
+            help_dialog::HelpAction::new("?", "plan unavailable; action unknown"),
+        ],
+    )
+}
+
+fn comparison_help() -> help_dialog::HelpSection {
+    help_dialog::HelpSection::new(
+        "Comparison",
+        vec![
+            help_dialog::HelpAction::new(
+                "Same changes",
+                "no differences found in Ready plans; unknown values may differ",
+            ),
+            help_dialog::HelpAction::new(
+                "Excluded",
+                "environments remain selectable and are not retried",
+            ),
+            help_dialog::HelpAction::new("Scope", "only Ready plans are compared"),
+            help_dialog::HelpAction::new(
+                "why: missing",
+                "resource is present in only some Ready plans",
+            ),
+        ],
+    )
 }
 
 #[derive(Clone, Copy)]
@@ -653,11 +806,22 @@ fn overview_footer(context: OverviewFooterContext<'_>) -> Vec<Line<'static>> {
         );
     }
     if width < 45 {
-        return compact_overview_footer(width, expanded, enter_action, environment_navigation);
+        return compact_overview_footer(
+            width,
+            focus,
+            expanded,
+            enter_action,
+            selected,
+            maximized,
+            environment_navigation,
+        );
     }
     let mut items = Vec::new();
     if environment_navigation.is_multiple() {
         items.push(overview_footer_hint(&["[", "]"], "env"));
+    }
+    if sidebar_available && !maximized {
+        items.push(overview_footer_hint(&["b"], "toggle envs"));
     }
     if focus == environments::EnvironmentPane::Environments {
         items.extend([
@@ -666,10 +830,7 @@ fn overview_footer(context: OverviewFooterContext<'_>) -> Vec<Line<'static>> {
             overview_footer_hint(&["o"], "only"),
             overview_footer_hint(&["a"], "all"),
         ]);
-        if selected.is_some_and(|plan| matches!(plan.state(), EnvironmentState::Error)) {
-            items.push(overview_footer_hint(&["r"], "retry"));
-        }
-    } else {
+    } else if focus == environments::EnvironmentPane::Matrix {
         if let Some(action) = enter_action {
             items.push(overview_footer_hint(&["Enter"], action.label(false)));
         }
@@ -685,22 +846,22 @@ fn overview_footer(context: OverviewFooterContext<'_>) -> Vec<Line<'static>> {
                 },
             ));
         }
-    }
-    if sidebar_available && !maximized {
-        items.push(overview_footer_hint(&["b"], "toggle envs"));
-    }
-    if width < 45 {
-        items.push(overview_footer_hint(&["1", "2"], "focus"));
-        items.push(overview_footer_hint(&["?", "q"], "help/quit"));
     } else {
-        items.push(overview_footer_hint(&["?"], "help"));
-        items.push(overview_footer_hint(&["q"], "quit"));
-        items.push(if sidebar_available {
-            overview_footer_hint(&["1", "2"], "focus")
-        } else {
-            overview_footer_hint(&["2"], "focus")
-        });
+        items.push(overview_footer_hint(&["Enter"], "open plan"));
+        items.push(overview_footer_hint(&["v"], "full plan"));
     }
+    if selected.is_some_and(|plan| matches!(plan.state(), EnvironmentState::Error)) {
+        items.push(overview_footer_hint(&["r"], "retry"));
+    }
+    items.push(overview_footer_hint(&["?"], "help"));
+    items.push(overview_footer_hint(&["q"], "quit"));
+    items.push(if sidebar_available {
+        overview_footer_hint(&["1", "2", "3"], "focus")
+    } else if environment_navigation.is_multiple() {
+        overview_footer_hint(&["2", "3"], "focus")
+    } else {
+        overview_footer_hint(&["2"], "focus")
+    });
     items.push(if maximized {
         overview_footer_hint(&["f", "Esc"], "restore")
     } else {
@@ -711,28 +872,55 @@ fn overview_footer(context: OverviewFooterContext<'_>) -> Vec<Line<'static>> {
 
 fn compact_overview_footer(
     width: u16,
+    focus: environments::EnvironmentPane,
     expanded: Option<bool>,
     enter_action: Option<MatrixEnterAction>,
+    selected: Option<&EnvironmentPlan>,
+    maximized: bool,
     environment_navigation: EnvironmentNavigation,
 ) -> Vec<Line<'static>> {
     let mut items = Vec::new();
+    if focus == environments::EnvironmentPane::Environments {
+        items.push(overview_footer_hint(&["Space"], "include/exclude"));
+        items.push(overview_footer_hint(&["Enter"], "open plan"));
+    } else if focus == environments::EnvironmentPane::Matrix {
+        if let Some(action) = enter_action {
+            items.push(overview_footer_hint(&["Enter"], action.label(true)));
+        }
+        if let Some(expanded) = expanded {
+            items.push(overview_footer_hint(
+                &["Space"],
+                if expanded { "collapse" } else { "expand" },
+            ));
+        }
+    } else {
+        items.push(overview_footer_hint(&["Enter"], "open plan"));
+    }
+    if selected.is_some_and(|plan| matches!(plan.state(), EnvironmentState::Error)) {
+        items.push(overview_footer_hint(&["r"], "retry"));
+    }
+    items.push(overview_footer_hint(&["?", "q"], "help/quit"));
+    if focus == environments::EnvironmentPane::Matrix {
+        items.push(overview_footer_hint(&["v"], "full plan"));
+    }
     if environment_navigation.is_multiple() {
         items.push(overview_footer_hint(&["[", "]"], "env"));
     }
-    if let Some(action) = enter_action {
-        items.push(overview_footer_hint(&["Enter"], action.label(true)));
+    if environment_navigation.sidebar_available() && !maximized {
+        items.push(overview_footer_hint(&["b"], "toggle envs"));
     }
-    items.extend([
-        overview_footer_hint(&["v"], "full plan"),
-        overview_footer_hint(&["/"], "filter"),
-    ]);
-    if let Some(expanded) = expanded {
-        items.push(overview_footer_hint(
-            &["Space"],
-            if expanded { "collapse" } else { "expand" },
-        ));
-    }
-    items.push(overview_footer_hint(&["?", "q"], "help/quit"));
+    items.push(if environment_navigation.sidebar_available() {
+        overview_footer_hint(&["1", "2", "3"], "focus")
+    } else if environment_navigation.is_multiple() {
+        overview_footer_hint(&["2", "3"], "focus")
+    } else {
+        overview_footer_hint(&["2"], "focus")
+    });
+    items.push(if maximized {
+        overview_footer_hint(&["f", "Esc"], "restore")
+    } else {
+        overview_footer_hint(&["f"], "maximize")
+    });
     footer::layout(items, width)
 }
 

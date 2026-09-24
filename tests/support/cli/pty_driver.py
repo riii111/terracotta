@@ -438,6 +438,22 @@ try:
             observed.extend(("default_matrix_summary", "default_matrix"))
             send_key(b"q")
             exit_code = wait_exit()
+        elif scenario == "env_relations":
+            for name in ("a-dev", "b-stg", "c-prod"):
+                wait_environment(name, "Ready")
+            send_key(b"3")
+            wait_new("A ──> B", "relations_pane")
+            send_key(b"]")
+            wait_new("b-stg · whole env", "relations_environment_switched")
+            send_key(b"\r")
+            wait_new(
+                '# terraform_data.api will be updated in-place',
+                "relations_raw_plan",
+            )
+            send_key(b"0")
+            wait_new("b-stg · whole env", "relations_overview_restored")
+            send_key(b"q")
+            exit_code = wait_exit()
         elif scenario == "env_matrix":
             for name in ("a-dev", "b-stg", "c-prod"):
                 wait_environment(name, "Ready")
@@ -446,6 +462,8 @@ try:
             send_key(b"[")
             send_key(b"[")
             send_key(b"2")
+            if rows < 20:
+                send_key(b"f")
             send_key(b"/")
             wait_new("Filter:", "matrix_filter")
             send_text("[198]")

@@ -181,6 +181,41 @@ fn pending_running_ready_error_and_excluded_remain_distinct_at_supported_sizes()
 }
 
 #[test]
+fn relations_explain_pending_running_error_and_excluded_environments() {
+    let state = partial_session();
+    let size = Size::new(120, 40);
+    let mut view = EnvironmentView {
+        selection: EnvironmentSelection {
+            column: 1,
+            raw: None,
+        },
+        ..EnvironmentView::default()
+    };
+
+    let error = buffer_text(&render_to_buffer((size.width, size.height), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(error.contains("b-error · whole env"), "{error}");
+    assert!(error.contains("Plan failed"), "{error}");
+
+    for (next, status, explanation) in [
+        (2, "c-running", "Plan running"),
+        (3, "d-pending", "Plan pending"),
+        (4, "e-hcp", "Plan excluded"),
+    ] {
+        view.select_environment(next);
+        let rendered = buffer_text(&render_to_buffer((size.width, size.height), |frame| {
+            view.render(frame, &state);
+        }));
+        assert!(
+            rendered.contains(&format!("{status} · whole env")),
+            "{rendered}"
+        );
+        assert!(rendered.contains(explanation), "{rendered}");
+    }
+}
+
+#[test]
 fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
     let state = partial_session();
     let mut view = EnvironmentView::default();
@@ -246,7 +281,7 @@ fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
     let bottom = render_to_buffer((40, 16), |frame| view.render(frame, &state));
     let bottom_text = buffer_text(&bottom);
     assert!(bottom_text.contains("Excluded"));
-    assert!(bottom_text.contains("quit"));
+    assert!(bottom_text.contains("Scope"));
     assert_eq!(bottom_text.matches("close").count(), 1);
     insta::assert_snapshot!("environment_help_40x16_bottom", bottom_text);
 }
@@ -690,7 +725,10 @@ fn environment_sidebar_filters_comparison_without_changing_the_selected_plan() {
     }));
     assert!(text.contains("b-error"), "{text}");
     assert!(text.contains("Error"), "{text}");
-    assert!(text.contains("Pass a variable before retrying."), "{text}");
+    assert!(
+        text.contains("Plan failed: Missing required variable"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -739,7 +777,10 @@ fn short_terminal_keeps_the_matrix_frame_and_shows_resize_guidance() {
     let buffer = render_to_buffer((80, 5), |frame| view.render(frame, &state));
     let text = buffer_text(&buffer);
 
-    assert!(text.contains("Resize to view the matrix"), "{text}");
+    assert!(
+        text.contains("Resize terminal to view pane content"),
+        "{text}"
+    );
     assert_eq!(buffer.cell((0, 1)).unwrap().symbol(), "┌");
     assert_eq!(buffer.cell((79, 3)).unwrap().symbol(), "┘");
 }

@@ -6,22 +6,22 @@ terracotta ▸ env-11                                                    terrafo
 env-11 Pending
 ┌* [2] Differs across envs · Ready 0/12────────────────────────────────────────┐
 │                                                                              │
-│                                                                              │
 │Address     env-11       why                                                  │
 │                                                                              │
 │Waiting for environment plans.                                                │
 │                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
 │blank: absent   .: unchanged   ?: plan unavailable                            │
 └──────────────────────────────────────────────────────────────────────────────┘
-[/] env | v full plan | / filter | ? help | q quit | 2 focus | f maximize
+┌  [3] Relations · env-11 · whole env──────────────────────────────────────────┐
+│Plan pending; relations will appear after acquisition.                        │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+[/] env | v full plan | / filter | ? help | q quit | 2/3 focus | f maximize

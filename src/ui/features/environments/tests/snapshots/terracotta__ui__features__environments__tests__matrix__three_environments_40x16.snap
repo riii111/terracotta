@@ -3,7 +3,6 @@ source: src/ui/features/environments/tests/matrix.rs
 expression: rendered
 ---
 terracotta ▸ dev               terraform
-dev Ready ~21
 ┌* [2] Differs across envs─────────────┐
 │                                      │
 │                                      │
@@ -13,8 +12,9 @@ dev Ready ~21
 │> terraform_data.api~          action │
 │                                      │
 │  Same: 1 changes ~1  Space expand    │
+│                                      │
 │blank: absent   .: unchanged          │
 │?: plan unavailable                   │
 └──────────────────────────────────────┘
-[/] env | Enter open row | v full plan
-/ filter | ?/q help/quit
+Enter open row | ?/q help/quit
+v full plan | [/] env | 2/3 focus

@@ -10,7 +10,9 @@ use crate::app::environments::overview::OverviewRowId;
 use crate::app::{
     execution::{ExecutionContext, SensitiveValue},
     plan::{
-        Plan, PlanAction, PlanSummary, PlanValue, ResourceChange, ResourceChangeKind, ResourceMode,
+        ConfigurationRelationStatus, Plan, PlanAction, PlanRelations, PlanSummary, PlanValue,
+        RelationEndpoint, RelationEvidence, RelationSource, ResourceChange, ResourceChangeKind,
+        ResourceMode,
     },
     review::{PlanBlock, PlanBlockKind, PlanDocument},
 };
@@ -66,6 +68,14 @@ fn change(address: &str, kind: ResourceChangeKind) -> ResourceChange {
 }
 
 fn complete(state: &mut EnvironmentSession, changes: Vec<ResourceChange>) {
+    complete_with_relations(state, changes, PlanRelations::not_collected());
+}
+
+fn complete_with_relations(
+    state: &mut EnvironmentSession,
+    changes: Vec<ResourceChange>,
+    relations: PlanRelations,
+) {
     let mut lines = vec![
         "Terraform will perform the following actions:".to_owned(),
         String::new(),
@@ -87,7 +97,14 @@ fn complete(state: &mut EnvironmentSession, changes: Vec<ResourceChange>) {
             vec![change.address.clone()],
         ));
     }
-    complete_with_plan_document(state, changes, lines.join("\n"), blocks, Vec::new());
+    complete_with_plan_document_and_relations(
+        state,
+        changes,
+        lines.join("\n"),
+        blocks,
+        Vec::new(),
+        relations,
+    );
 }
 
 fn complete_with_plan_document(
@@ -96,6 +113,24 @@ fn complete_with_plan_document(
     text: String,
     blocks: Vec<PlanBlock>,
     sensitive_values: Vec<SensitiveValue>,
+) {
+    complete_with_plan_document_and_relations(
+        state,
+        changes,
+        text,
+        blocks,
+        sensitive_values,
+        PlanRelations::not_collected(),
+    );
+}
+
+fn complete_with_plan_document_and_relations(
+    state: &mut EnvironmentSession,
+    changes: Vec<ResourceChange>,
+    text: String,
+    blocks: Vec<PlanBlock>,
+    sensitive_values: Vec<SensitiveValue>,
+    relations: PlanRelations,
 ) {
     let index = state.start_next().expect("pending environment");
     let directory = state.plans()[index].directory().to_owned();
@@ -126,6 +161,7 @@ fn complete_with_plan_document(
         metadata,
         Vec::new(),
     )
+    .with_relations(relations)
     .with_context(
         ExecutionContext::loading(directory.display().to_string()).with_workspace("default"),
     )
@@ -218,6 +254,249 @@ fn text(view: &mut EnvironmentView, state: &EnvironmentSession, size: (u16, u16)
     buffer_text(&render_to_buffer(size, |frame| view.render(frame, state)))
 }
 
+fn relation_session() -> EnvironmentSession {
+    let mut state = session(&["dev", "stg", "prod"]);
+    for (environment, api_kind) in [
+        ResourceChangeKind::Update,
+        ResourceChangeKind::Create,
+        ResourceChangeKind::Replace,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut changes = vec![
+            change("terraform_data.api", api_kind),
+            change("terraform_data.worker[0]", ResourceChangeKind::Update),
+            change("terraform_data.worker[1]", ResourceChangeKind::Update),
+        ];
+        changes.extend((0..24).map(|index| {
+            change(
+                &format!(
+                    "terraform_data.node_{environment}_{index:02}_{}",
+                    "x".repeat(100)
+                ),
+                ResourceChangeKind::Update,
+            )
+        }));
+        let relations = PlanRelations::from_saved_plan(
+            ConfigurationRelationStatus::Available,
+            vec![RelationEvidence::resolved(
+                RelationEndpoint::Instance("terraform_data.api".to_owned()),
+                RelationEndpoint::Instance("terraform_data.worker[0]".to_owned()),
+                RelationSource::Configuration,
+            )],
+            false,
+        );
+        complete_with_relations(&mut state, changes, relations);
+    }
+    state
+}
+
+#[rstest]
+#[case::memo(165, 50)]
+#[case::medium(120, 40)]
+#[case::small(80, 24)]
+#[case::narrow(40, 16)]
+fn relations_pane_shows_the_selected_environment_at_supported_sizes(
+    #[case] width: u16,
+    #[case] height: u16,
+) {
+    let state = relation_session();
+    let mut view = EnvironmentView::default();
+    let rendered = text(&mut view, &state, (width, height));
+
+    assert!(
+        rendered.contains("[3] Relations"),
+        "{width}x{height}: {rendered}"
+    );
+    assert!(
+        rendered.contains("whole env"),
+        "{width}x{height}: {rendered}"
+    );
+    assert!(rendered.contains("A ──> B"), "{width}x{height}: {rendered}");
+    if width >= 120 {
+        assert!(
+            rendered.contains("[1] Envs"),
+            "{width}x{height}: {rendered}"
+        );
+    } else {
+        assert!(
+            !rendered.contains("[1] Envs"),
+            "{width}x{height}: {rendered}"
+        );
+    }
+}
+
+#[test]
+fn relations_focus_scrolls_per_environment_and_ignores_matrix_only_keys() {
+    let mut state = relation_session();
+    let size = Size::new(120, 40);
+    let mut view = EnvironmentView::default();
+    let _ = text(&mut view, &state, (size.width, size.height));
+
+    press_at(&mut view, &mut state, KeyCode::Char('3'), size);
+    assert_eq!(view.focus, EnvironmentPane::Relations);
+    let selected = view.selected_relation_node(&state).cloned();
+    assert!(selected.is_some());
+    let selection = view
+        .matrix
+        .relation_selection()
+        .map(|(row_id, child)| (row_id.clone(), child.map(str::to_owned)));
+
+    let initial_vertical = view.relation_scrolls[0].vertical;
+    press_at(&mut view, &mut state, KeyCode::Down, size);
+    let down_scroll = view.relation_scrolls[0].vertical;
+    assert_eq!(down_scroll, initial_vertical.saturating_add(1));
+    press_at(&mut view, &mut state, KeyCode::Char('j'), size);
+    assert_eq!(
+        view.relation_scrolls[0].vertical,
+        down_scroll.saturating_add(1)
+    );
+    press_at(&mut view, &mut state, KeyCode::Up, size);
+    let up_scroll = view.relation_scrolls[0].vertical;
+    assert_eq!(up_scroll, down_scroll);
+    press_at(&mut view, &mut state, KeyCode::Char('k'), size);
+    assert_eq!(view.relation_scrolls[0].vertical, initial_vertical);
+    press_at(&mut view, &mut state, KeyCode::Down, size);
+    press_at(&mut view, &mut state, KeyCode::Right, size);
+    let rendered = text(&mut view, &state, (size.width, size.height));
+    assert!(rendered.contains("[3] Relations"));
+    assert_eq!(
+        view.relation_scrolls[0].vertical,
+        initial_vertical.saturating_add(1)
+    );
+    assert!(view.relation_scrolls[0].horizontal > 0);
+    assert_eq!(view.matrix.filter(), "");
+    assert_eq!(
+        view.matrix
+            .relation_selection()
+            .map(|(row_id, child)| (row_id.clone(), child.map(str::to_owned))),
+        selection
+    );
+    assert_eq!(view.selected_relation_node(&state).cloned(), selected);
+
+    press_at(&mut view, &mut state, KeyCode::Char(']'), size);
+    let _ = text(&mut view, &state, (size.width, size.height));
+    assert_eq!(view.selection.column, 1);
+    assert_eq!(view.relation_scrolls[1].vertical, 0);
+    assert_eq!(view.relation_scrolls[1].horizontal, 0);
+    press_at(&mut view, &mut state, KeyCode::Down, size);
+    let _ = text(&mut view, &state, (size.width, size.height));
+    assert!(view.relation_scrolls[1].vertical > 0);
+    press_at(&mut view, &mut state, KeyCode::Char('['), size);
+    assert_eq!(view.selection.column, 0);
+    assert_eq!(
+        view.relation_scrolls[0].vertical,
+        initial_vertical.saturating_add(1)
+    );
+    assert_eq!(view.relation_scrolls[0].horizontal, 1);
+}
+
+#[test]
+fn excluded_selected_environment_keeps_its_graph_without_matrix_highlight() {
+    let mut state = relation_session();
+    let size = Size::new(120, 40);
+    let mut view = EnvironmentView::default();
+    let _ = text(&mut view, &state, (size.width, size.height));
+
+    press_at(&mut view, &mut state, KeyCode::Char(']'), size);
+    press_at(&mut view, &mut state, KeyCode::Char('1'), size);
+    press_at(&mut view, &mut state, KeyCode::Char(' '), size);
+    let rendered = text(&mut view, &state, (size.width, size.height));
+
+    assert!(rendered.contains("stg · not compared"), "{rendered}");
+    assert!(rendered.contains("terraform_data.api"), "{rendered}");
+    assert!(view.selected_relation_node(&state).is_none());
+
+    press_at(&mut view, &mut state, KeyCode::Char('o'), size);
+    let rendered = text(&mut view, &state, (size.width, size.height));
+    assert!(rendered.contains("stg · whole env"), "{rendered}");
+    assert!(view.selected_relation_node(&state).is_some());
+}
+
+#[test]
+fn relation_selection_highlights_only_matching_nodes_and_not_same_summary() {
+    let mut state = relation_session();
+    let size = Size::new(165, 50);
+    let mut view = EnvironmentView::default();
+    let _ = text(&mut view, &state, (size.width, size.height));
+    press_at(&mut view, &mut state, KeyCode::Char('3'), size);
+    let buffer = render_to_buffer((size.width, size.height), |frame| {
+        view.render(frame, &state);
+    });
+    assert!(view.selected_relation_node(&state).is_some());
+
+    let relation_row = (0..size.height)
+        .find(|row| {
+            (0..size.width)
+                .map(|column| buffer.cell((column, *row)).unwrap().symbol())
+                .collect::<String>()
+                .contains("[3] Relations")
+        })
+        .expect("Relations pane title");
+    let frame = buffer
+        .cell((view.sidebar_width, relation_row))
+        .expect("Relations pane top border");
+    assert_eq!(frame.fg, Color::Cyan);
+    assert_eq!(frame.bg, Color::Reset);
+    assert_underlined_address(&buffer, "terraform_data.api");
+
+    press_at(&mut view, &mut state, KeyCode::Char('2'), size);
+    press_at(&mut view, &mut state, KeyCode::Char('a'), size);
+    press_at(&mut view, &mut state, KeyCode::End, size);
+    let _ = text(&mut view, &state, (size.width, size.height));
+    assert_eq!(view.matrix.relation_selection(), None);
+    assert!(view.selected_relation_node(&state).is_none());
+}
+
+fn assert_underlined_address(buffer: &ratatui::buffer::Buffer, address: &str) {
+    let found = (0..buffer.area.height).any(|row| {
+        let line = (0..buffer.area.width)
+            .map(|column| buffer.cell((column, row)).unwrap().symbol())
+            .collect::<String>();
+        let Some(start) = line.find(address) else {
+            return false;
+        };
+        let selected = line[..start].contains('>');
+        let underlined = buffer
+            .cell((u16::try_from(start).unwrap(), row))
+            .is_some_and(|cell| cell.modifier.contains(ratatui::style::Modifier::UNDERLINED));
+        selected && underlined
+    });
+    assert!(found, "{address} should be underlined on its selected node");
+}
+
+#[test]
+fn relation_status_recovers_after_environment_retry() {
+    let mut state = session(&["ready", "error"]);
+    complete(
+        &mut state,
+        vec![change("terraform_data.api", ResourceChangeKind::Update)],
+    );
+    let error = state.start_next().unwrap();
+    state.complete(
+        error,
+        PlanResult::Error("synthetic error".to_owned()),
+        Vec::new(),
+    );
+    let mut view = EnvironmentView::default();
+    let size = Size::new(120, 40);
+
+    press_at(&mut view, &mut state, KeyCode::Char(']'), size);
+    assert!(text(&mut view, &state, (size.width, size.height)).contains("Plan failed"));
+    press_at(&mut view, &mut state, KeyCode::Char('r'), size);
+    assert!(text(&mut view, &state, (size.width, size.height)).contains("Plan pending"));
+    complete_with_relations(
+        &mut state,
+        vec![change("terraform_data.api", ResourceChangeKind::Create)],
+        PlanRelations::not_collected(),
+    );
+    let rendered = text(&mut view, &state, (size.width, size.height));
+    assert!(rendered.contains("Links unknown"), "{rendered}");
+    assert!(!rendered.contains("No links shown"), "{rendered}");
+    assert!(view.selected_relation_node(&state).is_some());
+}
+
 #[rstest]
 #[case::small(80, 24)]
 #[case::medium(120, 40)]
@@ -245,6 +524,18 @@ fn three_environments_show_matrix_actions_across_supported_widths(
         complete(&mut state, changes);
     }
     let mut view = EnvironmentView::default();
+    if (width, height) == (40, 16) {
+        view.handle_key(
+            KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE),
+            Size::new(width, height),
+            &state,
+        );
+        view.handle_key(
+            KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE),
+            Size::new(width, height),
+            &state,
+        );
+    }
     let buffer = render_to_buffer((width, height), |frame| view.render(frame, &state));
 
     let reversed_cells = buffer
@@ -445,57 +736,19 @@ fn same_change_summary_and_group_rows_expand_independently() {
         );
     }
     let mut view = EnvironmentView::default();
+    press(&mut view, &mut state, KeyCode::Char('2'));
 
     let _ = text(&mut view, &state, (80, 24));
+    press(&mut view, &mut state, KeyCode::Char('f'));
     press(&mut view, &mut state, KeyCode::End);
     let collapsed = text(&mut view, &state, (80, 24));
     assert!(collapsed.contains("Same change across envs: 1 changes ~1"));
     assert!(!collapsed.contains("terraform_data.server[*]"));
     assert!(collapsed.contains("Space expand selected"));
-    assert!(text(&mut view, &state, (40, 16)).contains("Space expand"));
-    for (width, height) in [(40, 16), (80, 24), (120, 40), (165, 50)] {
-        let rendered = text(&mut view, &state, (width, height));
-        let environment_hint = "[/] env";
-        for hint in [
-            environment_hint,
-            "/ filter",
-            if width == 40 {
-                "Space expand"
-            } else {
-                "Space expand selected"
-            },
-            if width == 40 {
-                "Enter toggle"
-            } else {
-                "Enter toggle same changes"
-            },
-            if width == 40 {
-                "?/q help/quit"
-            } else {
-                "? help"
-            },
-        ] {
-            assert!(
-                rendered.contains(hint),
-                "{width}x{height}: {hint}\n{rendered}"
-            );
-        }
-        if width != 40 {
-            assert!(rendered.contains("q quit"), "{width}x{height}");
-        }
-        assert!(
-            rendered.contains(if width == 40 {
-                "Enter toggle"
-            } else {
-                "Enter toggle same changes"
-            }),
-            "{width}x{height}"
-        );
-        assert!(rendered.contains("v full plan"), "{width}x{height}");
-        assert!(!rendered.contains("↑↓"), "{width}x{height}");
-        assert!(!rendered.contains("←→"), "{width}x{height}");
-    }
+    press(&mut view, &mut state, KeyCode::Char('f'));
+    assert_matrix_footer_actions(&mut view, &state);
 
+    press(&mut view, &mut state, KeyCode::Char('f'));
     press(&mut view, &mut state, KeyCode::Char(' '));
     let expanded_same = text(&mut view, &state, (80, 24));
     assert!(expanded_same.contains("Same change across envs: 1 changes ~1"));
@@ -533,6 +786,46 @@ fn same_change_summary_and_group_rows_expand_independently() {
     assert_eq!(text(&mut view, &state, (80, 24)), filtered);
 }
 
+fn assert_matrix_footer_actions(view: &mut EnvironmentView, state: &EnvironmentSession) {
+    for (width, height) in [(40, 16), (80, 24), (120, 40), (165, 50)] {
+        let rendered = text(view, state, (width, height));
+        let hints = [
+            "[/] env",
+            if width == 40 {
+                "Space expand"
+            } else {
+                "Space expand selected"
+            },
+            if width == 40 {
+                "Enter toggle"
+            } else {
+                "Enter toggle same changes"
+            },
+            if width == 40 {
+                "?/q help/quit"
+            } else {
+                "? help"
+            },
+        ];
+        for hint in hints {
+            assert!(
+                rendered.contains(hint),
+                "{width}x{height}: {hint}\n{rendered}"
+            );
+        }
+        if width != 40 {
+            assert!(
+                rendered.contains("/ filter"),
+                "{width}x{height}: {rendered}"
+            );
+            assert!(rendered.contains("q quit"), "{width}x{height}");
+        }
+        assert!(rendered.contains("v full plan"), "{width}x{height}");
+        assert!(!rendered.contains("↑↓"), "{width}x{height}");
+        assert!(!rendered.contains("←→"), "{width}x{height}");
+    }
+}
+
 #[test]
 fn short_terminal_keeps_major_environment_actions_without_movement_hints() {
     let state = session(&["dev", "prod", "stg"]);
@@ -540,9 +833,10 @@ fn short_terminal_keeps_major_environment_actions_without_movement_hints() {
     let rendered = text(&mut view, &state, (40, 14));
 
     assert!(!rendered.contains("Enter open row"));
-    for hint in ["[/] env", "/ filter", "?/q help/quit"] {
+    for hint in ["[/] env", "?/q help/quit"] {
         assert!(rendered.contains(hint), "{hint}");
     }
+    assert!(!rendered.contains("/ filter"));
     assert!(!rendered.contains("↑↓"));
     assert!(!rendered.contains("←→"));
     let lines = rendered.lines().collect::<Vec<_>>();
@@ -1019,18 +1313,23 @@ fn same_change_summary_counts_matrix_rows_and_replacements_once() {
     complete(&mut state, changes());
     complete(&mut state, changes());
     let mut view = EnvironmentView::default();
+    press(&mut view, &mut state, KeyCode::Char('2'));
     let rendered = text(&mut view, &state, (80, 24));
 
     assert!(rendered.contains("Same change across envs: 2 changes ~1 1 replace"));
     assert!(!rendered.contains("changes ~3"));
     assert!(!rendered.contains("3 replace"));
 
+    press(&mut view, &mut state, KeyCode::Char('f'));
     press(&mut view, &mut state, KeyCode::Char(' '));
     press(&mut view, &mut state, KeyCode::Down);
     press(&mut view, &mut state, KeyCode::Down);
     press(&mut view, &mut state, KeyCode::Char(' '));
     let expanded = text(&mut view, &state, (80, 24));
-    assert!(expanded.contains("Same change across envs: 2 changes ~1 1 replace"));
+    assert!(
+        expanded.contains("Same change across envs: 2 changes ~1 1 replace"),
+        "{expanded}"
+    );
     assert!(expanded.contains("terraform_data.server[0]"), "{expanded}");
 }
 
@@ -1247,6 +1546,7 @@ fn retry_and_new_ready_environment_keep_member_when_group_disappears() {
         Vec::new(),
     );
     let mut view = EnvironmentView::default();
+    press(&mut view, &mut state, KeyCode::Char('1'));
     press(&mut view, &mut state, KeyCode::Char(']'));
     press(&mut view, &mut state, KeyCode::Char(']'));
     press(&mut view, &mut state, KeyCode::Char('r'));

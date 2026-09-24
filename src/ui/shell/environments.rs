@@ -18,10 +18,6 @@ use crate::{
 pub(crate) enum EnvironmentPane {
     Environments,
     Matrix,
-    #[expect(
-        dead_code,
-        reason = "GR06 adds the Relations pane to the shared layout."
-    )]
     Relations,
 }
 
@@ -38,10 +34,6 @@ pub(crate) struct EnvironmentLayout {
     pub(crate) footer: Rect,
     pub(crate) environments: Rect,
     pub(crate) matrix: Rect,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "GR06 renders the Relations pane.")
-    )]
     pub(crate) relations: Rect,
 }
 

@@ -7,8 +7,8 @@ a┌Help────────────────────────
 ┌│   no differences found in Ready  ▲ │┐
 ││   plans; unknown values may      │ ││
 ││   differ                         │ ││
-││ Excluded                         │ ││
-││   environments remain selectable │ ││
+└│ Excluded                         │ │┘
+┌│   environments remain selectable │ │┐
 ││   and are not retried            │ ││
 ││ Scope                            │ ││
 ││   only Ready plans are compared  │ ││
@@ -16,5 +16,5 @@ a┌Help────────────────────────
 ││   resource is present in only    ┃ ││
 ││   some Ready plans               ▼ ││
 └│ ?/Esc close                        │┘
-[└────────────────────────────────────┘
-?/q help/quit
+?└────────────────────────────────────┘
+2/3 focus | f maximize

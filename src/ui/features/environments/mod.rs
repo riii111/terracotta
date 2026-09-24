@@ -16,10 +16,18 @@ use super::{
 use crate::{
     app::{
         copy::CopyTarget,
-        environments::{EnvironmentSession, EnvironmentState, comparison::CellState},
+        environments::{
+            EnvironmentSession, EnvironmentState,
+            comparison::{CellState, EnvironmentSelection as ComparisonSelection},
+            overview::{
+                EnvironmentOverviewWithRelations, environment_overview_with_relations_for_selection,
+            },
+        },
+        plan::RelationNodeId,
         session::{Action, ReviewSessionState},
     },
     ui::{
+        features::overview::relations::RelationGraphScroll,
         input::normalize_key,
         shell::environments::{self, EnvironmentPane, EnvironmentSelection},
     },
@@ -37,6 +45,10 @@ pub(crate) struct EnvironmentView {
     selection: EnvironmentSelection,
     selected_environments: Option<Vec<usize>>,
     matrix: MatrixView,
+    environment_relations: Option<EnvironmentOverviewWithRelations>,
+    relation_revision: Option<u64>,
+    relation_environments: Vec<usize>,
+    relation_scrolls: Vec<RelationGraphScroll>,
     confirming_quit: bool,
     reviews: Vec<PlanReviewViewState>,
     notice: Option<String>,
@@ -68,6 +80,10 @@ impl Default for EnvironmentView {
             selection: EnvironmentSelection::default(),
             selected_environments: None,
             matrix: MatrixView::default(),
+            environment_relations: None,
+            relation_revision: None,
+            relation_environments: Vec::new(),
+            relation_scrolls: Vec::new(),
             confirming_quit: false,
             reviews: Vec::new(),
             notice: None,
@@ -165,8 +181,54 @@ impl EnvironmentView {
         self.reviews
             .resize_with(state.plans().len(), PlanReviewViewState::default);
         let environments = self.compared_environments(state.plans().len());
+        self.relation_scrolls.resize(
+            state.plans().len(),
+            RelationGraphScroll {
+                vertical: 0,
+                horizontal: 0,
+            },
+        );
+        let selection =
+            ComparisonSelection::new(self.selected_environments.clone(), state.plans().len())
+                .expect("the displayed comparison indexes form a valid selection");
+        if self.relation_revision != Some(state.revision())
+            || self.relation_environments != selection.indexes()
+        {
+            self.environment_relations = Some(environment_overview_with_relations_for_selection(
+                state.plans(),
+                &selection,
+            ));
+            self.relation_revision = Some(state.revision());
+            self.relation_environments = selection.indexes().to_vec();
+        }
+        let relation_overview = self
+            .environment_relations
+            .as_ref()
+            .expect("environment relations are initialized during sync");
+        let matrix_overview = if environments.len() == state.plans().len() {
+            state.overview()
+        } else {
+            &relation_overview.overview
+        };
         self.matrix
-            .sync(state, &environments, self.selection.column);
+            .sync(state, &environments, self.selection.column, matrix_overview);
+    }
+
+    fn selected_relation_node(&self, state: &EnvironmentSession) -> Option<&RelationNodeId> {
+        if !self
+            .compared_environments(state.plans().len())
+            .contains(&self.selection.column)
+        {
+            return None;
+        }
+        let (row_id, _) = self.matrix.relation_selection()?;
+        self.environment_relations
+            .as_ref()?
+            .relations
+            .get(&self.selection.column)?
+            .row_node_ids
+            .get(row_id)?
+            .as_ref()
     }
 
     fn is_editing(&self) -> bool {
@@ -186,6 +248,12 @@ impl EnvironmentView {
             return self.raw_navigation(key, index, size, state);
         }
 
+        if self.active_pane(size.width) == EnvironmentPane::Relations
+            && let ControlFlow::Break(result) = self.relations_navigation(key, size, state)
+        {
+            return ControlFlow::Break(result);
+        }
+
         match key.code {
             KeyCode::Char('1') => {
                 if self.sidebar_enabled && size.width >= 90 {
@@ -201,12 +269,18 @@ impl EnvironmentView {
                 self.maximized = None;
                 return ControlFlow::Break(None);
             }
+            KeyCode::Char('3') if self.sidebar_enabled => {
+                self.focus = EnvironmentPane::Relations;
+                self.last_right_focus = EnvironmentPane::Relations;
+                self.maximized = None;
+                return ControlFlow::Break(None);
+            }
             KeyCode::Left | KeyCode::Right
                 if self.active_pane(size.width) == EnvironmentPane::Matrix =>
             {
                 return ControlFlow::Continue(());
             }
-            KeyCode::Char('3') | KeyCode::Left | KeyCode::Right => {
+            KeyCode::Left | KeyCode::Right => {
                 return ControlFlow::Break(None);
             }
             KeyCode::Char('b') if self.maximized.is_none() => {
@@ -264,6 +338,64 @@ impl EnvironmentView {
             _ => {}
         }
         ControlFlow::Continue(())
+    }
+
+    fn scroll_relations_horizontally(&mut self, key: KeyCode) {
+        let Some(scroll) = self.relation_scrolls.get_mut(self.selection.column) else {
+            return;
+        };
+        match key {
+            KeyCode::Left => scroll.horizontal = scroll.horizontal.saturating_sub(1),
+            KeyCode::Right => scroll.horizontal = scroll.horizontal.saturating_add(1),
+            _ => {}
+        }
+    }
+
+    fn relations_navigation(
+        &mut self,
+        key: KeyEvent,
+        size: Size,
+        state: &EnvironmentSession,
+    ) -> ControlFlow<Option<EnvironmentInput>> {
+        match key.code {
+            KeyCode::Left | KeyCode::Right => self.scroll_relations_horizontally(key.code),
+            KeyCode::Up | KeyCode::Char('k') => self.scroll_relations_vertically(KeyCode::Up, size),
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.scroll_relations_vertically(KeyCode::Down, size);
+            }
+            KeyCode::PageUp | KeyCode::PageDown | KeyCode::Home | KeyCode::End => {
+                self.scroll_relations_vertically(key.code, size);
+            }
+            KeyCode::Enter => return ControlFlow::Break(self.open(state, self.selection.column)),
+            KeyCode::Char(' ' | '/') => return ControlFlow::Break(None),
+            _ => return ControlFlow::Continue(()),
+        }
+        ControlFlow::Break(None)
+    }
+
+    fn scroll_relations_vertically(&mut self, key: KeyCode, size: Size) {
+        let sidebar_visible = self.sidebar_visible(size.width);
+        let layout = environments::overview_layout(
+            ratatui::layout::Rect::new(0, 0, size.width, size.height),
+            self.sidebar_width,
+            sidebar_visible,
+            self.maximized_for_width(size.width),
+            !sidebar_visible && self.maximized_for_width(size.width).is_none(),
+            self.sidebar_enabled,
+        );
+        let page = layout.relations.height.saturating_sub(5).max(1);
+        let Some(scroll) = self.relation_scrolls.get_mut(self.selection.column) else {
+            return;
+        };
+        match key {
+            KeyCode::Up => scroll.vertical = scroll.vertical.saturating_sub(1),
+            KeyCode::Down => scroll.vertical = scroll.vertical.saturating_add(1),
+            KeyCode::PageUp => scroll.vertical = scroll.vertical.saturating_sub(page),
+            KeyCode::PageDown => scroll.vertical = scroll.vertical.saturating_add(page),
+            KeyCode::Home => scroll.vertical = 0,
+            KeyCode::End => scroll.vertical = u16::MAX,
+            _ => {}
+        }
     }
 
     fn raw_navigation(
@@ -454,6 +586,8 @@ impl EnvironmentView {
         self.maximized_for_width(width).unwrap_or_else(|| {
             if self.focus == EnvironmentPane::Environments && self.sidebar_visible(width) {
                 EnvironmentPane::Environments
+            } else if self.focus == EnvironmentPane::Relations && self.sidebar_enabled {
+                EnvironmentPane::Relations
             } else {
                 EnvironmentPane::Matrix
             }

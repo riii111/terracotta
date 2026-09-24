@@ -200,6 +200,23 @@ mod pty_tests {
             assert_clean(&fixture, &result);
         }
 
+        #[test]
+        fn pty_multi_environment_relations_open_the_selected_raw_plan_and_restore_terminal() {
+            let fixture = fixture(&["a-dev", "b-stg", "c-prod"]);
+            fixture.use_overview_relations_plan();
+
+            let result = fixture.run("env_relations", 165, 50);
+
+            assert_eq!(result.exit_code, 0);
+            result.assert_restored();
+            result.observed("relations_pane");
+            result.observed("relations_environment_switched");
+            result.observed("relations_raw_plan");
+            result.observed("relations_overview_restored");
+            assert_eq!(calls(&fixture, "plan").len(), 3);
+            assert_clean(&fixture, &result);
+        }
+
         #[rstest]
         #[case::small(80, 24)]
         #[case::medium(120, 40)]
@@ -346,6 +363,24 @@ Plan: 0 to add, 1 to change, 0 to destroy.
   "output_changes": {"endpoint": {"change": {"actions":["update"],"after":"new"}}}
 }"#;
 
+    const OVERVIEW_RELATIONS_PLAN_JSON: &str = r#"{
+  "format_version": "1.0",
+  "applyable": true,
+  "resource_changes": [
+    {"address":"terraform_data.api","change":{"actions":["update"],"before":{"input":"old"},"after":{"input":"new"}}},
+    {"address":"terraform_data.server[\"one\"]","change":{"actions":["update"],"before":{"input":"old"},"after":{"input":"new"}}},
+    {"address":"terraform_data.server[\"two\"]","change":{"actions":["update"],"before":{"input":"old"},"after":{"input":"new"}}}
+  ],
+  "configuration": {
+    "root_module": {
+      "resources": [
+        {"mode":"managed","type":"terraform_data","name":"api","expressions":{"input":{"references":["terraform_data.server[\"one\"]"]}}},
+        {"mode":"managed","type":"terraform_data","name":"server","expressions":{}}
+      ]
+    }
+  }
+}"#;
+
     const OVERVIEW_PLAN_TEXT: &str = r#"Terraform will perform the following actions:
 
   # terraform_data.api will be updated in-place
@@ -444,6 +479,13 @@ Plan: 0 to add, 3 to change, 0 to destroy.
                 .expect("overview show JSON should be written");
             fs::write(&self.show_text, OVERVIEW_PLAN_TEXT)
                 .expect("overview show text should be written");
+        }
+
+        fn use_overview_relations_plan(&self) {
+            fs::write(&self.show_json, OVERVIEW_RELATIONS_PLAN_JSON)
+                .expect("overview relations JSON should be written");
+            fs::write(&self.show_text, OVERVIEW_PLAN_TEXT)
+                .expect("overview plan text should be written");
         }
 
         fn run_with_command(

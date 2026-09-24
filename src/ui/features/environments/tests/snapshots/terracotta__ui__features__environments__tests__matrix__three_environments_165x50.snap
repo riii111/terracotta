@@ -19,35 +19,35 @@ terracotta ▸ dev                                                              
 │                      ││                                                                                                                                           │
 │                      ││                                                                                                                                           │
 │                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
-│                      ││                                                                                                                                           │
 │                      ││blank: absent   .: unchanged   ?: plan unavailable                                                                                         │
+│                      │└───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+│                      │┌  [3] Relations · dev · whole env──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                      ││Links unknown                                                                                                                              │
+│                      ││> ~ terraform_data.api ! ?  configuration not collected, state not collected                                                               │
+│                      ││  ~ terraform_data.server[*] ×20 ! ?  configuration not collected, state not collected                                                     │
+│                      ││                                                                                                                                           │
+│                      ││                                                                                                                                           │
+│                      ││                                                                                                                                           │
+│                      ││                                                                                                                                           │
+│                      ││                                                                                                                                           │
+│                      ││                                                                                                                                           │
+│                      ││                                                                                                                                           │
+│                      ││                                                                                                                                           │
+│                      ││                                                                                                                                           │
+│                      ││                                                                                                                                           │
+│                      ││                                                                                                                                           │
+│                      ││                                                                                                                                           │
+│                      ││                                                                                                                                           │
+│                      ││                                                                                                                                           │
+│                      ││                                                                                                                                           │
+│                      ││                                                                                                                                           │
+│                      ││                                                                                                                                           │
+│                      ││                                                                                                                                           │
+│                      ││                                                                                                                                           │
+│                      ││                                                                                                                                           │
+│                      ││                                                                                                                                           │
+│                      ││A ──> B  B uses A                                                                                                                          │
+│                      ││solid=instance endpoints; dotted=block candidate                                                                                           │
+│                      ││state evidence=(state)                                                                                                                     │
 └──────────────────────┘└───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-[/] env | Enter open plan | Space include/exclude | o only | a all | b toggle envs | ? help | q quit | 1/2 focus | f maximize
+[/] env | b toggle envs | Enter open plan | Space include/exclude | o only | a all | ? help | q quit | 1/2/3 focus | f maximize
