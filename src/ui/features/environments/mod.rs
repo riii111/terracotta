@@ -12,7 +12,7 @@ use super::{
 };
 use crate::{
     app::{
-        copy::{self, CopyTarget},
+        copy::CopyTarget,
         environments::{EnvironmentSession, EnvironmentState},
         session::{Action, ReviewSessionState},
     },
@@ -44,9 +44,6 @@ pub(crate) struct EnvironmentView {
     sidebar: SidebarSetting,
     sidebar_width: u16,
     maximized: Option<EnvironmentPane>,
-    preview_open: bool,
-    preview_vertical: usize,
-    preview_horizontal: usize,
 }
 
 enum EnvironmentDialog {
@@ -77,17 +74,8 @@ impl Default for EnvironmentView {
             sidebar: SidebarSetting::Uninitialized,
             sidebar_width: 24,
             maximized: None,
-            preview_open: false,
-            preview_vertical: 0,
-            preview_horizontal: 0,
         }
     }
-}
-
-pub(crate) struct PlanPreview {
-    pub(crate) title: String,
-    pub(crate) text: String,
-    pub(crate) is_raw: bool,
 }
 
 impl EnvironmentView {
@@ -122,23 +110,16 @@ impl EnvironmentView {
         }
 
         let editing = self.is_editing();
-        let clearing_filter = self.selection.raw.is_none()
-            && !self.preview_open
-            && self.matrix.filtered()
-            && key.code == KeyCode::Esc;
-        let (matrix_page, preview_visible, preview_page) = if !editing && !clearing_filter {
-            self.overview_page_sizes(
-                size,
-                state,
-                matches!(key.code, KeyCode::PageUp | KeyCode::PageDown),
-            )
+        let clearing_filter =
+            self.selection.raw.is_none() && self.matrix.filtered() && key.code == KeyCode::Esc;
+        let matrix_page = if !editing && !clearing_filter {
+            self.overview_page_size(size, state)
         } else {
-            (1, false, 0)
+            1
         };
         if !editing
             && !clearing_filter
-            && let ControlFlow::Break(result) =
-                self.navigation(key, size, state, preview_visible, preview_page)
+            && let ControlFlow::Break(result) = self.navigation(key, size, state)
         {
             return result;
         }
@@ -193,15 +174,9 @@ impl EnvironmentView {
         key: KeyEvent,
         size: Size,
         state: &EnvironmentSession,
-        preview_visible: bool,
-        preview_page: usize,
     ) -> ControlFlow<Option<EnvironmentInput>> {
         if let Some(index) = self.selection.raw {
             return self.raw_navigation(key, index, size, state);
-        }
-
-        if self.navigate_preview(key, size.width, preview_visible, preview_page) {
-            return ControlFlow::Break(None);
         }
 
         match key.code {
@@ -279,47 +254,6 @@ impl EnvironmentView {
             _ => {}
         }
         ControlFlow::Continue(())
-    }
-
-    fn navigate_preview(
-        &mut self,
-        key: KeyEvent,
-        width: u16,
-        visible: bool,
-        page_size: usize,
-    ) -> bool {
-        if self.preview_open && key.code == KeyCode::Esc {
-            self.preview_open = false;
-            self.notice = None;
-            return true;
-        }
-        if !self.preview_open || !visible || self.active_pane(width) != EnvironmentPane::Matrix {
-            return false;
-        }
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.preview_vertical = self.preview_vertical.saturating_sub(1);
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.preview_vertical = self.preview_vertical.saturating_add(1);
-            }
-            KeyCode::PageUp => {
-                self.preview_vertical = self.preview_vertical.saturating_sub(page_size);
-            }
-            KeyCode::PageDown => {
-                self.preview_vertical = self.preview_vertical.saturating_add(page_size);
-            }
-            KeyCode::Home => self.preview_vertical = 0,
-            KeyCode::End => self.preview_vertical = usize::MAX,
-            KeyCode::Left => {
-                self.preview_horizontal = self.preview_horizontal.saturating_sub(1);
-            }
-            KeyCode::Right => {
-                self.preview_horizontal = self.preview_horizontal.saturating_add(1);
-            }
-            _ => return false,
-        }
-        true
     }
 
     fn raw_navigation(
@@ -412,11 +346,9 @@ impl EnvironmentView {
     ) -> Option<EnvironmentInput> {
         match input {
             OverviewInput::Quit => self.quit(state),
-            OverviewInput::Open => {
-                self.preview_open = true;
-                None
+            OverviewInput::Open | OverviewInput::ViewPlan => {
+                self.open(state, self.selection.column)
             }
-            OverviewInput::ViewPlan => self.open(state, self.selection.column),
             OverviewInput::Copy => Some(EnvironmentInput::Review(
                 self.selection.column,
                 Box::new(Action::Copy(CopyTarget::Plan)),
@@ -533,47 +465,6 @@ impl EnvironmentView {
         if self.selection.column != index {
             self.selection.column = index;
             self.notice = None;
-            self.preview_vertical = 0;
-            self.preview_horizontal = 0;
-        }
-    }
-
-    fn selected_plan_preview(&self, state: &EnvironmentSession) -> PlanPreview {
-        let Some(plan) = state.plans().get(self.selection.column) else {
-            return PlanPreview {
-                title: "No environment selected".to_owned(),
-                text: "Select an environment to preview its plan.".to_owned(),
-                is_raw: false,
-            };
-        };
-        let title = format!("{} · Plan preview", environments::name(plan));
-        if let Some(review) = plan.review() {
-            let review = review.review();
-            PlanPreview {
-                title,
-                text: copy::sanitize_text(
-                    review.document().text(),
-                    review.metadata().sensitive_values(),
-                ),
-                is_raw: true,
-            }
-        } else {
-            let text = match plan.state() {
-                EnvironmentState::Pending => "The plan has not been acquired yet.".to_owned(),
-                EnvironmentState::Running => "Plan acquisition is still in progress.".to_owned(),
-                EnvironmentState::Error => plan.diagnostic().text().to_owned(),
-                EnvironmentState::ExcludedHcp => {
-                    "This environment is excluded because it uses HCP execution.".to_owned()
-                }
-                EnvironmentState::Ready { .. } => {
-                    "No reviewable plan is available for this environment.".to_owned()
-                }
-            };
-            PlanPreview {
-                title,
-                text,
-                is_raw: false,
-            }
         }
     }
 

@@ -16,7 +16,7 @@ a-ready Ready No changes  │  b-error Error  │  c-running Running  │  d-pen
 │                                                                                                                                                              │
 │                                     ┌Help─────────────────────────────────────────────────────────────────────────────┐                                      │
 │                                     │ Current: Multi-environment Overview                                             │                                      │
-│                                     │ ↑ / ↓ / j / k select environments in [1], scroll [2], or move in the preview    │                                      │
+│                                     │ ↑ / ↓ / j / k select environments in [1] or scroll [2]                          │                                      │
 │                                     │ Space         include or exclude an environment in [1]                          │                                      │
 │                                     │ Space         expand or collapse groups in [2]                                  │                                      │
 │                                     │ o / a         compare only the selected environment / all environments in [1]   │                                      │
@@ -60,4 +60,4 @@ a-ready Ready No changes  │  b-error Error  │  c-running Running  │  d-pen
 │                                                                                                                                                              │
 │                                                                                                                                                              │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-[/] env | Enter preview | v full plan | / filter | b toggle envs | ? help | q quit | 1/2 focus | f maximize
+[/] env | Enter open plan | v full plan | / filter | b toggle envs | ? help | q quit | 1/2 focus | f maximize

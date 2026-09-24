@@ -2,8 +2,8 @@
 source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
-Target: main [PROD] Workspace: default Tool: terraform 1.9.0 Dir: ./environments/production/main
-Unique targets (replace once): +2 add  ~2 update  0 replace  -1 destroy
+Target: main [PROD] Workspace: default Tool: terraform 1.9.0 Dir: ./environments/production/main  Changes  +2 add  ~2 update  -1 destroy
+
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   # terraform_data.api will be updated in-place
   ~ resource "terraform_data" "api" {

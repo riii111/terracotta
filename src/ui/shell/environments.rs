@@ -177,18 +177,7 @@ pub(crate) fn render_header(
 }
 
 pub(crate) fn name(plan: &EnvironmentPlan) -> String {
-    plan.workspace()
-        .filter(|name| *name != "default")
-        .map_or_else(
-            || {
-                plan.directory()
-                    .file_name()
-                    .unwrap_or_else(|| plan.directory().as_os_str())
-                    .to_string_lossy()
-                    .into_owned()
-            },
-            str::to_owned,
-        )
+    plan.display_name()
 }
 
 fn directory_name(plan: &EnvironmentPlan) -> String {

@@ -3,17 +3,17 @@ source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
 Target: main [PROD] Workspace: default
-U┌Help────────────────────────────────┐~
-─│ Actions                          ▲ │─
- │ c                                │ │▲
- │   show execution context         │ │┃
+C┌Help────────────────────────────────┐
+ │ Actions                          ▲ │
+─│ c                                │ │─
+ │   show execution context         │ │▲
  │ y                                │ │┃
  │   copy the full plan             │ ││
  │ a                                │ ││
  │   apply the full plan            ┃ ││
  │                                  ┃ ││
  │ Exit                             ┃ ││
--│ q                                ┃ ││
+ │ q                                ┃ ││
 ◀︎│   quit                           ▼ │▶︎
 ─│ ?/Esc close                        │─
 s└────────────────────────────────────┘

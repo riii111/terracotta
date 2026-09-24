@@ -3,42 +3,42 @@ source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
 Target: main [PROD] Workspace: default Tool: terraform 1.9.0 Dir: ./environments/production/main
-Unique targets (replace once): +2 add  ~2 update  0 replace  -1 destroy
+Changes  +2 add  ~2 update  -1 destroy
+
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  # terraform_data.api will be updated in-place                                                                        ▲
- main [PROD]  ws:default  terraform 1.9.0  ./environments/production/main                                              ┃
+ main [PROD]  ws:default  terraform 1.9.0  ./environments/production/main                                              ▲
+  ~ resource "terraform_data" "api" {                                                                                  ┃
       id       = "api-20260920"                                                                                        ┃
       ~ input  = "before" -> "after"                                                                                   ┃
       # (4 unchanged attributes hidden)                                                                                ┃
     }                                                                                                                  ┃
                                                                                                                        ┃
-  # terraform_data.worker must be replaced                                                                             ┃
--/+ resource "terraform_data" "wo┌Apply help─────────────────────────────────────────┐                                 ┃
-      ~ input = "worker-before" -│ Navigation                                        │                                 ┃
-      - old_checksum┌────────────│ ↑ / ↓ / PgUp / PgDn scroll confirmation           │─────────────┐                   ┃
-      + new_checksum│            │ ← / →               move in confirmation input    │             │                   ┃
-    }               │ Apply this │ Home / End          move to input start or end    │             │                   ┃
-                    │            │                                                   │             │                   ┃
-  # terraform_data.o│ Target: mai│ Input                                             │             │                   ┃
-  - resource "terraf│ Workspace: │ Type                enter the confirmation text   │             │                   ┃
-      id = "old-2026│ Directory: │ Backspace           delete before the cursor      │             │                   ┃
-    }               │ Tool: terra│                                                   │             │                   ┃
-                    │ Plan: +2 ad│ Context                                           │             │                   ┃
-  # terraform_data.n│            │ Tab                 show execution context        │             │                   ┃
-  + resource "terraf│ Type main t│                                                   │             │                   ┃
-      input = "new-v│ > |        │ Apply                                             │             │                   ┃
-      note  = "A del│            │ Enter               confirm apply                 │             │                   ┃
-    }               └────────────│ Esc                 return to plan review         │─────────────┘                   ┃
-                    Enter confirm│ ?/Esc close                                       │                                 ┃
-Changes to Outputs:              └───────────────────────────────────────────────────┘                                 ┃
+  # terraform_data.worker must be┌Apply help─────────────────────────────────────────┐                                 ┃
+-/+ resource "terraform_data" "wo│ Navigation                                        │                                 ┃
+      ~ input = "wor┌────────────│ ↑ / ↓ / PgUp / PgDn scroll confirmation           │─────────────┐                   ┃
+      - old_checksum│            │ ← / →               move in confirmation input    │             │                   ┃
+      + new_checksum│ Apply this │ Home / End          move to input start or end    │             │                   ┃
+    }               │            │                                                   │             │                   ┃
+                    │ Target: mai│ Input                                             │             │                   ┃
+  # terraform_data.o│ Workspace: │ Type                enter the confirmation text   │             │                   ┃
+  - resource "terraf│ Directory: │ Backspace           delete before the cursor      │             │                   ┃
+      id = "old-2026│ Tool: terra│                                                   │             │                   ┃
+    }               │ Plan: +2 ad│ Context                                           │             │                   ┃
+                    │            │ Tab                 show execution context        │             │                   ┃
+  # terraform_data.n│ Type main t│                                                   │             │                   ┃
+  + resource "terraf│ > |        │ Apply                                             │             │                   ┃
+      input = "new-v│            │ Enter               confirm apply                 │             │                   ┃
+      note  = "A del└────────────│ Esc                 return to plan review         │─────────────┘                   ┃
+    }               Enter confirm│ ?/Esc close                                       │                                 ┃
+                                 └───────────────────────────────────────────────────┘                                 ┃
+Changes to Outputs:                                                                                                    ┃
   + endpoint = (known after apply)                                                                                     ┃
   ~ summary  = "old summary" -> "new summary with a deliberately long value for review"                                ┃
-                                                                                                                       ┃
+                                                                                                                       │
 Warning: Value for "pending" is not known until apply                                                                  │
                                                                                                                        │
 Plan: 2 to add, 2 to change, 1 to destroy.                                                                             │
                                                                                                                        │
-Synthetic review text continues below so the viewport and scrollbar remain meaningful.                                 │
-The same long body is intentionally reused across every review state and terminal size.                                ▼
+Synthetic review text continues below so the viewport and scrollbar remain meaningful.                                 ▼
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 s overview | / filter | ? help | q quit                                                                        Line 3/43

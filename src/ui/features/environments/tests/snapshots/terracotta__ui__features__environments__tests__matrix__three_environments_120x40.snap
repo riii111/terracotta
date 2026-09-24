@@ -6,13 +6,13 @@ terracotta ▸ dev                                                              
 ┌* [1] Envs────────────┐┌  [2] Differs across envs─────────────────────────────────────────────────────────────────────┐
 │> [x] dev             ││                                                                                              │
 │    Ready             ││                                                                                              │
-│        ~21           ││Address                      dev         prod        stg          why                         │
+│        ~21           ││Address                      dev         stg         prod         why                         │
 │                      ││                                                                                              │
-│  [x] prod [PROD]     ││Differs across envs                                                                           │
+│  [x] stg             ││Differs across envs                                                                           │
 │    Ready             ││terraform_data.api           ~           +/-         -            action                      │
 │        ~200          ││                                                                                              │
 │        1 replace     ││Same change across envs                                                                       │
-│  [x] stg             ││[+] terraform_data.server[*] ~ 20        ~ 200       ~ 20                                     │
+│  [x] prod [PROD]     ││[+] terraform_data.server[*] ~ 20        ~ 200       ~ 20                                     │
 │    Ready             ││                                                                                              │
 │        ~20           ││blank: absent   .: unchanged   ?: plan unavailable                                            │
 │    -1                ││                                                                                              │

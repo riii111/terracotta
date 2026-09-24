@@ -6,10 +6,9 @@ terracotta ▸ a-ready           terraform
 a┌Help────────────────────────────────┐
 ┌│ Current: Multi-environment       ▲ │┐
 ││ ↑ / ↓ / j / k                    ┃ ││
-││   select environments in [1],    ┃ ││
-││   scroll [2], or move in the     ┃ ││
-││   preview                        ┃ ││
-││ Space                            │ ││
+││   select environments in [1] or  ┃ ││
+││   scroll [2]                     ┃ ││
+││ Space                            ┃ ││
 ││   include or exclude an          │ ││
 ││   environment in [1]             │ ││
 ││ Space                            │ ││
@@ -22,7 +21,8 @@ a┌Help────────────────────────
 ││ [ / ]                            │ ││
 ││   select the previous or next    │ ││
 ││   environment                    │ ││
-││ 1 / 2                            ▼ ││
+││ 1 / 2                            │ ││
+││   focus Envs / Differs; 1 opens  ▼ ││
 └│ ?/Esc close                        │┘
 [└────────────────────────────────────┘
 / filter | ?/q help/quit

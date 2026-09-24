@@ -3,6 +3,7 @@ source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
 Target: main [PROD] Workspace: default Tool: terraform loading... Dir: /repo/environments/production/main
+Changes  +2 add  ~2 update  -1 destroy
 Filter: /terraform_data
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   # terraform_data.api will be updated in-place                                                                        ▲
@@ -35,10 +36,9 @@ Warning: Value for "pending" is not known until apply                           
                                                                                                                        ┃
 Plan: 2 to add, 2 to change, 1 to destroy.                                                                             ┃
                                                                                                                        ┃
-Synthetic review text continues below so the viewport and scrollbar remain meaningful.                                 ┃
+Synthetic review text continues below so the viewport and scrollbar remain meaningful.                                 │
 The same long body is intentionally reused across every review state and terminal size.                                │
 No Terraform process, provider, state file, or cloud credential is used by this fixture.                               │
-The review surface preserves Terraform order, attributes, output values, and diagnostics.                              │
-Long lines remain unwrapped in the plan body; horizontal movement exposes the hidden suffix.                           ▼
+The review surface preserves Terraform order, attributes, output values, and diagnostics.                              ▼
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 Enter confirm | Esc cancel                                                                         8 matches   Line 3/43

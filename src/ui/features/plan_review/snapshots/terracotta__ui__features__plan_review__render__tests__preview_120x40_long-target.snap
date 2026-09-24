@@ -3,7 +3,8 @@ source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
 Target: very-long-target-name-for-review [PROD] Workspace: default Tool: terraform 1.9.0 Dir: ./environment...for-review
-Unique targets (replace once): +2 add  ~2 update  0 replace  -1 destroy
+Changes  +2 add  ~2 update  -1 destroy
+
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ~ resource "terraform_data" "api" {                                                                                  ▲
       id       = "api-20260920"                                                                                        │
@@ -34,11 +35,10 @@ Changes to Outputs:                                                             
   ~ summary  = "old summary" -> "new summary with a deliberately long value for review"                                ┃
                                                                                                                        ┃
 Warning: Value for "pending" is not known until apply                                                                  ┃
-                                                                                                                       ┃
+                                                                                                                       │
 Plan: 2 to add, 2 to change, 1 to destroy.                                                                             │
                                                                                                                        │
 Synthetic review text continues below so the viewport and scrollbar remain meaningful.                                 │
-The same long body is intentionally reused across every review state and terminal size.                                │
-No Terraform process, provider, state file, or cloud credential is used by this fixture.                               ▼
+The same long body is intentionally reused across every review state and terminal size.                                ▼
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 s overview | / filter | a apply | ? help | q quit                                                              Line 4/43

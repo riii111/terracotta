@@ -2,8 +2,8 @@
 source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
-Target: empty Workspace: default Tool: terraform loading... Dir: /repo/environments/staging/empty
-Unique targets (replace once): +0 add  ~0 update  0 replace  -0 destroy
+Target: empty Workspace: default Tool: terraform loading... Dir: /repo/environments/staging/empty  Changes  No changes
+
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 

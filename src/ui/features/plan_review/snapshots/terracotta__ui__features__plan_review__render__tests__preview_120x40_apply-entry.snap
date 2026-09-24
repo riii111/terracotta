@@ -3,7 +3,8 @@ source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
 Target: main [PROD] Workspace: default Tool: terraform loading... Dir: /repo/environments/production/main
-Unique targets (replace once): +2 add  ~2 update  0 replace  -1 destroy
+Changes  +2 add  ~2 update  -1 destroy
+
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   # terraform_data.api will be updated in-place                                                                        ▲
   ~ resource "terraform_data" "api" {                                                                                  ┃
@@ -33,12 +34,11 @@ Unique targets (replace once): +2 add  ~2 update  0 replace  -1 destroy
 Changes to Outputs:                                                                                                    ┃
   + endpoint = (known after apply)                                                                                     ┃
   ~ summary  = "old summary" -> "new summary with a deliberately long value for review"                                ┃
-                                                                                                                       ┃
+                                                                                                                       │
 Warning: Value for "pending" is not known until apply                                                                  │
                                                                                                                        │
 Plan: 2 to add, 2 to change, 1 to destroy.                                                                             │
                                                                                                                        │
-Synthetic review text continues below so the viewport and scrollbar remain meaningful.                                 │
-The same long body is intentionally reused across every review state and terminal size.                                ▼
+Synthetic review text continues below so the viewport and scrollbar remain meaningful.                                 ▼
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 s overview | / filter | a apply | ? help | q quit                                                              Line 3/43

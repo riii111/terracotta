@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use crate::app::environments::is_production_token;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Tool {
     Terraform,
@@ -196,12 +198,7 @@ fn is_production(cwd: &Path, workspace: &str) -> bool {
         .filter_map(|component| component.as_os_str().to_str())
         .chain(std::iter::once(workspace))
         .flat_map(|component| component.split(['-', '_', '/']))
-        .any(|token| {
-            matches!(
-                token.to_ascii_lowercase().as_str(),
-                "prod" | "production" | "prd"
-            )
-        })
+        .any(is_production_token)
 }
 
 #[cfg(test)]
@@ -245,6 +242,24 @@ mod tests {
             Case {
                 name: "product_prefix",
                 cwd: "/repo/product",
+                workspace: "default",
+                expected: false,
+            },
+            Case {
+                name: "case_insensitive_production_token",
+                cwd: "/repo/Prod",
+                workspace: "default",
+                expected: true,
+            },
+            Case {
+                name: "production_sort_suffix_does_not_expand_badge",
+                cwd: "/repo/prod2",
+                workspace: "default",
+                expected: false,
+            },
+            Case {
+                name: "live_is_not_a_production_token",
+                cwd: "/repo/live",
                 workspace: "default",
                 expected: false,
             },

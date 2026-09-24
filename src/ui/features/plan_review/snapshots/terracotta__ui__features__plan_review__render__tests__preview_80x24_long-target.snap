@@ -3,7 +3,8 @@ source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
 Target: very...view [PROD] Workspace: default Tool: terraform 1.9.0 Dir: ./e...w
-Unique targets (replace once): +2 add  ~2 update  0 replace  -1 destroy
+Changes  +2 add  ~2 update  -1 destroy
+
 ────────────────────────────────────────────────────────────────────────────────
   # terraform_data.api will be updated in-place                                ▲
   ~ resource "terraform_data" "api" {                                          ┃
@@ -22,7 +23,6 @@ Unique targets (replace once): +2 add  ~2 update  0 replace  -1 destroy
   # terraform_data.old will be destroyed                                       │
   - resource "terraform_data" "old" {                                          │
       id = "old-20260920"                                                      │
-    }                                                                          │
 ◀︎═══════════════════════════════════════════════════════════════════───────────▶︎
 ────────────────────────────────────────────────────────────────────────────────
 s overview | / filter | a apply | ? help | q quit                      Line 3/43

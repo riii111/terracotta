@@ -329,7 +329,6 @@ fn layout_with_content(
         panel_width,
         footer_message,
     );
-    let fixed_status_height: u16 = 2;
     let footer_height = common_footer_height(
         applyable,
         content.matches.len(),
@@ -356,10 +355,22 @@ fn layout_with_content(
     } else {
         frame_required
     };
-    let shell = shell_layout::full_width_layout(area, footer_lines, required);
+    let shell = shell_layout::full_width_layout_with_header_height(
+        area,
+        footer_lines,
+        required,
+        header::plan_review_height(state.review(), area.width),
+    );
     let inner = shell.content_inner();
-    let status = Rect::new(inner.x, inner.y, inner.width, 1);
-    let separator = Rect::new(inner.x, inner.y.saturating_add(1), inner.width, 1);
+    let status_height = u16::from(inner.height > 3);
+    let fixed_status_height = status_height + 1;
+    let status = Rect::new(inner.x, inner.y, inner.width, status_height);
+    let separator = Rect::new(
+        inner.x,
+        inner.y.saturating_add(status_height),
+        inner.width,
+        1,
+    );
     let available = Rect::new(
         inner.x,
         inner.y.saturating_add(fixed_status_height),
@@ -1243,7 +1254,7 @@ fn render_status(
     let (line, horizontal) = if filter_active(view.searching(), state) {
         filter_status_line(view, state, layout.status().width)
     } else {
-        (plan_status_line(state), 0)
+        (Line::default(), 0)
     };
     frame.render_widget(
         Paragraph::new(line)
@@ -1476,19 +1487,6 @@ const fn terminal_notice_message(
     } else {
         "Terminal too small. Resize or press q to quit."
     }
-}
-
-fn plan_status_line(state: &ReviewSessionState) -> Line<'static> {
-    Line::from(Span::styled(
-        format!(
-            "Unique targets (replace once): +{} add  ~{} update  {} replace  -{} destroy",
-            state.review().metadata().additions(),
-            state.review().metadata().changes(),
-            state.review().metadata().replacements(),
-            state.review().metadata().deletions(),
-        ),
-        theme::body_style(),
-    ))
 }
 
 fn filter_status_line(
@@ -4306,10 +4304,7 @@ End of synthetic plan body."#;
             assert!(
                 position("Warning: Deprecated configuration") < position("warning detail line 1")
             );
-            assert!(
-                position("Unique targets (replace once): +1 add")
-                    < position("Error: Invalid configuration")
-            );
+            assert!(position("Changes  +1 add") < position("Error: Invalid configuration"));
             assert_text_prefix_uses_style(
                 &buffer,
                 "Error: Invalid configuration",

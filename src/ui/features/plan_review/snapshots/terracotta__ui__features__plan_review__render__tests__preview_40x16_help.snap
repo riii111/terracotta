@@ -3,17 +3,17 @@ source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
 Target: main [PROD] Workspace: default
-U┌Help────────────────────────────────┐~
-─│ Navigation                       ▲ │─
- │ ↑ / ↓ / j / k                    ┃ │▲
- │   scroll vertically              ┃ │┃
+C┌Help────────────────────────────────┐
+ │ Navigation                       ▲ │
+─│ ↑ / ↓ / j / k                    ┃ │─
+ │   scroll vertically              ┃ │▲
  │ ← / → / h / l                    ┃ │┃
  │   scroll horizontally            ┃ ││
  │ PgUp / PgDn                      │ ││
  │   scroll one page                │ ││
  │ Home / End                       │ ││
  │   go to the top or bottom        │ ││
--│ s                                │ ││
+ │ s                                │ ││
 ◀︎│   overview                       ▼ │▶︎
 ─│ ?/Esc close                        │─
 s└────────────────────────────────────┘

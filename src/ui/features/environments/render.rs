@@ -1,9 +1,9 @@
-use super::{EnvironmentDialog, EnvironmentView, PlanPreview, sidebar};
+use super::{EnvironmentDialog, EnvironmentView, sidebar};
 use crate::{
     app::environments::{EnvironmentPlan, EnvironmentSession, EnvironmentState},
     ui::{
         features::{overview::matrix, plan_review},
-        primitives::{atoms::scrollbar, molecules::help_dialog},
+        primitives::molecules::help_dialog,
         shell::{environments, footer},
         theme,
     },
@@ -17,18 +17,10 @@ use ratatui::{
 };
 use std::time::Instant;
 
-const MIN_MATRIX_HEIGHT: u16 = 5;
-const MIN_PREVIEW_HEIGHT: u16 = 4;
-
 impl EnvironmentView {
-    pub(super) fn overview_page_sizes(
-        &self,
-        size: Size,
-        state: &EnvironmentSession,
-        calculate_preview_page: bool,
-    ) -> (usize, bool, usize) {
+    pub(super) fn overview_page_size(&self, size: Size, state: &EnvironmentSession) -> usize {
         if self.selection.raw.is_some() {
-            return (1, false, 0);
+            return 1;
         }
         let area = Rect::new(0, 0, size.width, size.height);
         let sidebar_visible = self.sidebar_visible(size.width);
@@ -41,15 +33,7 @@ impl EnvironmentView {
             false,
         );
         let content = self.matrix_content_layout(pane_inner(layout.matrix), state);
-        let matrix_page = usize::from(content.matrix.height.saturating_sub(2)).max(1);
-        let preview_page = if calculate_preview_page {
-            content.preview.map_or(0, |area| {
-                preview_page_size(area, &self.selected_plan_preview(state))
-            })
-        } else {
-            0
-        };
-        (matrix_page, content.preview.is_some(), preview_page)
+        usize::from(content.matrix.height.saturating_sub(2)).max(1)
     }
 
     pub(crate) fn render(&mut self, frame: &mut Frame<'_>, state: &EnvironmentSession) {
@@ -131,22 +115,12 @@ impl EnvironmentView {
                 self.active_pane(layout.body.width) == environments::EnvironmentPane::Matrix,
             );
         }
-        let preview_visible = self.preview_open
-            && self
-                .matrix_content_layout(pane_inner(layout.matrix), state)
-                .preview
-                .is_some();
         let matrix_state = if self.matrix.searching() {
             MatrixFooterState::Searching
         } else if self.matrix.filter().is_empty() {
             MatrixFooterState::Unfiltered
         } else {
             MatrixFooterState::Filtered
-        };
-        let preview_state = match (self.preview_open, preview_visible) {
-            (false, _) => PreviewFooterState::Closed,
-            (true, true) => PreviewFooterState::Visible,
-            (true, false) => PreviewFooterState::Hidden,
         };
         let footer_lines = overview_footer(OverviewFooterContext {
             width: layout.footer.width,
@@ -156,7 +130,6 @@ impl EnvironmentView {
             selected: state.plans().get(self.selection.column),
             maximized: self.maximized.is_some(),
             sidebar_available: layout.body.width >= 90,
-            preview: preview_state,
             resize_guidance: layout.body.height < 3 || layout.matrix.width < 3,
         });
         frame.render_widget(
@@ -209,16 +182,6 @@ impl EnvironmentView {
             );
         }
         matrix::render(frame, layout.matrix, state, &mut self.matrix);
-        if let Some(preview_area) = layout.preview {
-            let preview = self.selected_plan_preview(state);
-            render_plan_preview(
-                frame,
-                preview_area,
-                &preview,
-                &mut self.preview_vertical,
-                &mut self.preview_horizontal,
-            );
-        }
     }
 
     fn matrix_content_layout(&self, area: Rect, state: &EnvironmentSession) -> MatrixContentLayout {
@@ -230,24 +193,13 @@ impl EnvironmentView {
             .unwrap_or_default();
         let (context_height, detail_height) = section_heights(area, &context, &detail);
         let y = area.y.saturating_add(context_height + detail_height);
-        let remaining = area.bottom().saturating_sub(y);
-        let preview_height = if self.preview_open {
-            let minimum = MIN_MATRIX_HEIGHT.saturating_add(MIN_PREVIEW_HEIGHT);
-            (remaining >= minimum).then_some(remaining / 2)
-        } else {
-            None
-        };
-        let matrix_height = remaining.saturating_sub(preview_height.unwrap_or(0));
-        let matrix = Rect::new(area.x, y, area.width, matrix_height);
-        let preview =
-            preview_height.map(|height| Rect::new(area.x, matrix.bottom(), area.width, height));
+        let matrix = Rect::new(area.x, y, area.width, area.bottom().saturating_sub(y));
         MatrixContentLayout {
             context,
             context_height,
             detail,
             detail_height,
             matrix,
-            preview,
         }
     }
 
@@ -344,7 +296,6 @@ struct MatrixContentLayout {
     detail: String,
     detail_height: u16,
     matrix: Rect,
-    preview: Option<Rect>,
 }
 
 fn pane_block(focused: bool, title: &str, border_style: Style) -> Block<'static> {
@@ -454,7 +405,7 @@ fn overview_help_sections() -> Vec<help_dialog::HelpSection> {
             vec![
                 help_dialog::HelpAction::new(
                     "↑ / ↓ / j / k",
-                    "select environments in [1], scroll [2], or move in the preview",
+                    "select environments in [1] or scroll [2]",
                 ),
                 help_dialog::HelpAction::new("Space", "include or exclude an environment in [1]"),
                 help_dialog::HelpAction::new("Space", "expand or collapse groups in [2]"),
@@ -524,13 +475,6 @@ enum MatrixFooterState {
 }
 
 #[derive(Clone, Copy)]
-enum PreviewFooterState {
-    Closed,
-    Visible,
-    Hidden,
-}
-
-#[derive(Clone, Copy)]
 struct OverviewFooterContext<'a> {
     width: u16,
     focus: environments::EnvironmentPane,
@@ -539,7 +483,6 @@ struct OverviewFooterContext<'a> {
     selected: Option<&'a EnvironmentPlan>,
     maximized: bool,
     sidebar_available: bool,
-    preview: PreviewFooterState,
     resize_guidance: bool,
 }
 
@@ -552,7 +495,6 @@ fn overview_footer(context: OverviewFooterContext<'_>) -> Vec<Line<'static>> {
         selected,
         maximized,
         sidebar_available,
-        preview,
         resize_guidance,
     } = context;
     if resize_guidance {
@@ -573,19 +515,11 @@ fn overview_footer(context: OverviewFooterContext<'_>) -> Vec<Line<'static>> {
             width,
         );
     }
-    if width < 45 && matches!(preview, PreviewFooterState::Closed) {
+    if width < 45 {
         return compact_overview_footer(width, matrix, expanded);
     }
     let mut items = vec![overview_footer_hint(&["[", "]"], "env")];
-    if !matches!(preview, PreviewFooterState::Closed) {
-        items.extend([overview_footer_hint(&["Esc"], "close")]);
-        items.push(overview_footer_hint(&["?"], "help"));
-        items.push(overview_footer_hint(&["q"], "quit"));
-        if matches!(preview, PreviewFooterState::Hidden) {
-            items.push(Line::from("Resize for preview"));
-        }
-        items.push(overview_footer_hint(&["v"], "full plan"));
-    } else if focus == environments::EnvironmentPane::Environments {
+    if focus == environments::EnvironmentPane::Environments {
         items.extend([
             overview_footer_hint(&["Enter"], "open plan"),
             overview_footer_hint(&["Space"], "include/exclude"),
@@ -596,7 +530,7 @@ fn overview_footer(context: OverviewFooterContext<'_>) -> Vec<Line<'static>> {
             items.push(overview_footer_hint(&["r"], "retry"));
         }
     } else {
-        items.push(overview_footer_hint(&["Enter"], "preview"));
+        items.push(overview_footer_hint(&["Enter"], "open plan"));
         items.push(overview_footer_hint(&["v"], "full plan"));
         items.push(overview_footer_hint(&["/"], "filter"));
         if matches!(matrix, MatrixFooterState::Unfiltered)
@@ -617,14 +551,12 @@ fn overview_footer(context: OverviewFooterContext<'_>) -> Vec<Line<'static>> {
     if sidebar_available && !maximized {
         items.push(overview_footer_hint(&["b"], "toggle envs"));
     }
-    if width < 45 && matches!(preview, PreviewFooterState::Closed) {
+    if width < 45 {
         items.push(overview_footer_hint(&["1", "2"], "focus"));
         items.push(overview_footer_hint(&["?", "q"], "help/quit"));
     } else {
-        if matches!(preview, PreviewFooterState::Closed) {
-            items.push(overview_footer_hint(&["?"], "help"));
-            items.push(overview_footer_hint(&["q"], "quit"));
-        }
+        items.push(overview_footer_hint(&["?"], "help"));
+        items.push(overview_footer_hint(&["q"], "quit"));
         items.push(overview_footer_hint(&["1", "2"], "focus"));
     }
     items.push(if maximized {
@@ -642,7 +574,7 @@ fn compact_overview_footer(
 ) -> Vec<Line<'static>> {
     let mut items = vec![
         overview_footer_hint(&["[", "]"], "env"),
-        overview_footer_hint(&["Enter"], "preview"),
+        overview_footer_hint(&["Enter"], "open plan"),
         overview_footer_hint(&["v"], "full plan"),
         overview_footer_hint(&["/"], "filter"),
     ];
@@ -671,122 +603,4 @@ fn overview_footer_hint(keys: &[&'static str], description: &'static str) -> Lin
         theme::overview_footer_text_style(),
     ));
     Line::from(spans)
-}
-
-fn render_plan_preview(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    preview: &PlanPreview,
-    vertical: &mut usize,
-    horizontal: &mut usize,
-) {
-    if area.height < MIN_PREVIEW_HEIGHT {
-        return;
-    }
-    frame.render_widget(
-        Paragraph::new(Line::styled(
-            preview.title.clone(),
-            theme::overview_preview_title_style(),
-        ))
-        .style(theme::overview_text_style()),
-        Rect::new(area.x, area.y, area.width, 1),
-    );
-    let body_area = Rect::new(
-        area.x,
-        area.y.saturating_add(1),
-        area.width,
-        area.height.saturating_sub(1),
-    );
-    let lines = preview
-        .text
-        .split('\n')
-        .map(|line| {
-            Line::styled(
-                line.to_owned(),
-                if preview.is_raw {
-                    theme::overview_plan_line_style(line)
-                } else {
-                    theme::overview_warning_style()
-                },
-            )
-        })
-        .collect::<Vec<_>>();
-    let line_width = lines.iter().map(Line::width).max().unwrap_or(0);
-    let line_count = lines.len();
-    let (vertical_scrollbar, horizontal_scrollbar) =
-        preview_scrollbars(line_count, line_width, body_area);
-    let content = Rect::new(
-        body_area.x,
-        body_area.y,
-        body_area
-            .width
-            .saturating_sub(u16::from(vertical_scrollbar)),
-        body_area
-            .height
-            .saturating_sub(u16::from(horizontal_scrollbar)),
-    );
-    *vertical = (*vertical).min(line_count.saturating_sub(usize::from(content.height)));
-    *horizontal = (*horizontal).min(line_width.saturating_sub(usize::from(content.width)));
-    frame.render_widget(
-        Paragraph::new(lines)
-            .style(theme::overview_text_style())
-            .scroll((
-                u16::try_from(*vertical).unwrap_or(u16::MAX),
-                u16::try_from(*horizontal).unwrap_or(u16::MAX),
-            )),
-        content,
-    );
-    if vertical_scrollbar {
-        scrollbar::render_vertical(
-            frame,
-            Rect::new(content.right(), content.y, 1, content.height),
-            line_count,
-            usize::from(content.height),
-            *vertical,
-        );
-    }
-    if horizontal_scrollbar {
-        scrollbar::render_horizontal(
-            frame,
-            Rect::new(content.x, content.bottom(), content.width, 1),
-            line_width,
-            usize::from(content.width),
-            *horizontal,
-        );
-    }
-}
-
-fn preview_scrollbars(line_count: usize, line_width: usize, area: Rect) -> (bool, bool) {
-    let mut vertical = line_count > usize::from(area.height);
-    let mut horizontal = line_width > usize::from(area.width);
-    for _ in 0..2 {
-        let width = usize::from(area.width).saturating_sub(usize::from(vertical));
-        let height = usize::from(area.height).saturating_sub(usize::from(horizontal));
-        horizontal = line_width > width;
-        vertical = line_count > height;
-    }
-    (vertical, horizontal)
-}
-
-fn preview_page_size(area: Rect, preview: &PlanPreview) -> usize {
-    let body_area = Rect::new(
-        area.x,
-        area.y.saturating_add(1),
-        area.width,
-        area.height.saturating_sub(1),
-    );
-    let line_width = preview
-        .text
-        .split('\n')
-        .map(|line| Line::from(line).width())
-        .max()
-        .unwrap_or(0);
-    let (_, horizontal_scrollbar) =
-        preview_scrollbars(preview.text.split('\n').count(), line_width, body_area);
-    usize::from(
-        body_area
-            .height
-            .saturating_sub(u16::from(horizontal_scrollbar)),
-    )
-    .max(1)
 }

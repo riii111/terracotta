@@ -51,10 +51,6 @@ pub(crate) fn overview_header_selected_style() -> Style {
         .add_modifier(Modifier::UNDERLINED)
 }
 
-pub(crate) fn overview_preview_title_style() -> Style {
-    Style::default().fg(Color::Reset).bg(Color::Reset)
-}
-
 pub(crate) fn overview_total_add_style() -> Style {
     Style::default().fg(Color::Green).bg(Color::Reset)
 }
@@ -73,18 +69,6 @@ pub(crate) fn overview_total_replace_style() -> Style {
 
 pub(crate) fn overview_warning_style() -> Style {
     Style::default().fg(Color::Yellow).bg(Color::Reset)
-}
-
-pub(crate) fn overview_plan_line_style(line: &str) -> Style {
-    let line = line.trim_start();
-    match line.chars().next() {
-        Some('+') if line.starts_with("+/-") => overview_total_replace_style(),
-        Some('-') if line.starts_with("-/+") => overview_total_replace_style(),
-        Some('+') => overview_total_add_style(),
-        Some('-') => overview_total_destroy_style(),
-        Some('~') => overview_total_update_style(),
-        _ => overview_text_style(),
-    }
 }
 
 pub(crate) fn overview_footer_key_style() -> Style {

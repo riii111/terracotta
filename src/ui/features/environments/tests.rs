@@ -8,7 +8,6 @@ use crate::{
         session::Effect,
     },
     ui::{
-        shell::environments,
         test_support::{buffer_text, render_to_buffer},
         theme,
     },
@@ -810,10 +809,6 @@ fn sidebar_focus_and_selected_name_use_ansi_colors_and_terminal_defaults() {
         (theme::overview_total_update_style(), Color::Yellow),
         (theme::overview_total_destroy_style(), Color::Red),
         (theme::overview_total_replace_style(), Color::Magenta),
-        (
-            theme::overview_plan_line_style("  -/+ resource change"),
-            Color::Magenta,
-        ),
     ] {
         assert_eq!(style.fg, Some(foreground));
         assert_eq!(style.bg, Some(Color::Reset));

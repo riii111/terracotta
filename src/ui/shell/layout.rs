@@ -98,7 +98,16 @@ pub(crate) fn full_width_layout(
     footer_lines: Vec<Line<'static>>,
     required_footer_lines: Vec<Line<'static>>,
 ) -> ShellLayout {
-    let header_height = u16::from(area.height > 0);
+    full_width_layout_with_header_height(area, footer_lines, required_footer_lines, 1)
+}
+
+pub(crate) fn full_width_layout_with_header_height(
+    area: Rect,
+    footer_lines: Vec<Line<'static>>,
+    required_footer_lines: Vec<Line<'static>>,
+    requested_header_height: u16,
+) -> ShellLayout {
+    let header_height = requested_header_height.min(area.height);
     let header = Rect::new(area.x, area.y, area.width, header_height);
     let after_header_y = area.y.saturating_add(header_height);
     let after_header_height = area.height.saturating_sub(header_height);
