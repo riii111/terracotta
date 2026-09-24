@@ -8,12 +8,10 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
-import sys
+
+import environment
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
-
-from fixtures.environments import testing  # noqa: E402
 
 
 def main():
@@ -25,11 +23,11 @@ def main():
     executable = shutil.which(args.tool)
     if executable is None:
         raise RuntimeError(f"Missing {args.tool}")
-    directory = testing.setup(args.tool)
+    directory = environment.setup(args.tool)
     try:
         before = {
             name: (directory / name / "terraform.tfstate").read_bytes()
-            for name in testing.NAMES
+            for name in environment.NAMES
         }
         support = directory / ".acceptance"
         support.mkdir()
@@ -61,7 +59,7 @@ def main():
             f"os.execv({executable!r}, [{executable!r}, *sys.argv[1:]])\n"
         )
         wrapper.chmod(0o700)
-        env = testing.environment()
+        env = environment.environment()
         env["PATH"] = str(wrappers) + os.pathsep + env["PATH"]
         env["TMPDIR"] = str(owned)
         env["TERRACOTTA_REAL_PLAN_GATE"] = str(gate)
@@ -105,14 +103,14 @@ def main():
         assert not list(owned.iterdir()), list(owned.iterdir())
         assert before == {
             name: (directory / name / "terraform.tfstate").read_bytes()
-            for name in testing.NAMES
+            for name in environment.NAMES
         }
         print(
             f"{args.tool}: init 3, plan dev=1/prod=2/stg=1; state unchanged; temporary plans removed"
         )
         print(result.stdout.strip())
     finally:
-        testing.clean(directory)
+        environment.clean(directory)
         print("Scenario removed")
 
 
