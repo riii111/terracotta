@@ -1,6 +1,5 @@
 ---
 source: src/ui/features/plan_review/render.rs
-assertion_line: 1930
 expression: buffer_text(buffer)
 ---
 Target: main [PROD] Workspace: default Tool: terraform loading... Dir: /re...ain

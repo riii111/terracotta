@@ -13,7 +13,7 @@ d-pending: Pending   e-hcp: Excluded: HCP execution
 
   No matching resource changes. v opens the full plan.
 
-  Total        No changes      Error              Running              Pending
+  Total       No changes   Error       Running       Pending
   blank: absent   .: unchanged   ?: plan unavailable
 
 

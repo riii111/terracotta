@@ -12,7 +12,7 @@ Ready: 12/12
   Same change across envs
   terraform_data.api ~           ~           ~           ~
 
-  Total               ~1                    ~1                    ~1
+  Total              ~1          ~1          ~1          ~1
   blank: absent   .: unchanged   ?: plan unavailable
 
 

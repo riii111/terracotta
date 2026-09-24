@@ -319,8 +319,10 @@ fn total_text(plan: &EnvironmentPlan) -> String {
                 parts.push(format!("{} replace", counts.replacements()));
             }
             if parts.is_empty() {
-                if counts.has_changes() {
-                    "No resource changes".to_owned()
+                if counts.nonstandard_changes() > 0 {
+                    "Other changes".to_owned()
+                } else if counts.has_changes() {
+                    "Outputs changed".to_owned()
                 } else {
                     "No changes".to_owned()
                 }
@@ -343,12 +345,7 @@ fn total_lines(
         let environment = view.environments[index];
         let text = total_text(&state.plans()[environment]);
         let text_width = column_width.saturating_sub(COLUMN_GAP);
-        spans.push(Span::styled(" ", style));
         spans.extend(total_spans(&state.plans()[environment], &text, text_width));
-        spans.push(Span::styled(
-            " ".repeat(text_width.saturating_sub(Line::from(text.as_str()).width())),
-            style,
-        ));
         spans.push(Span::styled(" ".repeat(COLUMN_GAP), style));
     }
     spans.push(Span::styled(" ".repeat(WHY_WIDTH + 1), style));
@@ -402,10 +399,14 @@ fn total_spans(plan: &EnvironmentPlan, text: &str, width: usize) -> Vec<Span<'st
         ),
     ] {
         let Some(value) = value else { continue };
+        if used >= width {
+            break;
+        }
         if !spans.is_empty() {
             spans.push(Span::styled(" ", theme::overview_total_style()));
             used += 1;
         }
+        let (value, _) = fit_parts(&value, width.saturating_sub(used), false);
         used += Line::from(value.as_str()).width();
         spans.push(Span::styled(value, style));
     }

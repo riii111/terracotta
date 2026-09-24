@@ -11,7 +11,7 @@ Compared: a-ready   b-error: Error   c-running: Running   d-pending: Pending   e
 
   No matching resource changes. v opens the full plan.
 
-  Total        No changes     ┌Help─────────────────────────────────────────────────────────────────────────────────────────────┐
+  Total       No changes   Err┌Help─────────────────────────────────────────────────────────────────────────────────────────────┐
   blank: absent   .: unchanged│ Current: Overview                                                                               │
                               │ ↑ / ↓ / j / k        scroll matrix; move through filter candidates                              │
                               │ ← / →                select env; move in filter search                                          │

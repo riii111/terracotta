@@ -24,44 +24,6 @@ pub(crate) struct EnvironmentLayout {
     pub(crate) ready_on_tabs: bool,
 }
 
-pub(crate) fn layout(
-    area: Rect,
-    state: &EnvironmentSession,
-    notice: Option<&str>,
-    filter_active: bool,
-    show_header_separator: bool,
-) -> EnvironmentLayout {
-    let tabs = Rect::new(area.x, area.y, area.width, area.height.min(1));
-    let summary_height =
-        wrapped_height(&summary(state, filter_active), area.width).min(area.height / 3);
-    let summary = Rect::new(area.x, tabs.bottom(), area.width, summary_height);
-    let remaining = area.bottom().saturating_sub(summary.bottom());
-    let notice_height = notice
-        .map_or(0, |text| wrapped_height(text, area.width))
-        .min(remaining / 3);
-    let notice = Rect::new(area.x, summary.bottom(), area.width, notice_height);
-    let header_separator = Rect::new(
-        area.x,
-        notice.bottom(),
-        area.width,
-        u16::from(show_header_separator),
-    );
-    let body = Rect::new(
-        area.x,
-        header_separator.bottom(),
-        area.width,
-        area.bottom().saturating_sub(header_separator.bottom()),
-    );
-    EnvironmentLayout {
-        tabs,
-        summary,
-        notice,
-        header_separator,
-        body,
-        ready_on_tabs: false,
-    }
-}
-
 pub(crate) fn overview_layout(
     area: Rect,
     state: &EnvironmentSession,
@@ -250,76 +212,6 @@ fn overview_tabs_width(
     width
 }
 
-pub(crate) fn render_tabs(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    state: &EnvironmentSession,
-    selection: &EnvironmentSelection,
-    visible_environments: &[usize],
-) {
-    let active = selection.active();
-    let labels: Vec<_> = visible_environments
-        .iter()
-        .enumerate()
-        .map(|(position, index)| {
-            let plan = &state.plans()[*index];
-            let production = plan
-                .review()
-                .is_some_and(|review| review.review().context().is_production() == Some(true));
-            format!(
-                " {} {}{} ",
-                position + 1,
-                name(plan),
-                if production { " [PROD]" } else { "" }
-            )
-        })
-        .collect();
-    let mut first = 0;
-    let active_position = visible_environments
-        .iter()
-        .position(|index| *index == active)
-        .unwrap_or(0);
-    let available = usize::from(area.width.saturating_sub(16));
-    while first < active_position
-        && labels[first..=active_position]
-            .iter()
-            .map(|label| Line::from(label.as_str()).width())
-            .sum::<usize>()
-            > available
-    {
-        first += 1;
-    }
-    let mut spans = vec![Span::styled(
-        "0 Overview  ",
-        if selection.raw.is_none() {
-            theme::search_match_style()
-        } else {
-            theme::body_style()
-        },
-    )];
-    if first > 0 {
-        spans.push(Span::raw("‹ "));
-    }
-    let mut used = spans.iter().map(Span::width).sum::<usize>();
-    for (position, label) in labels.iter().enumerate().skip(first) {
-        let width = Line::from(label.as_str()).width();
-        if used + width > usize::from(area.width) && position > active_position {
-            spans.push(Span::raw(" ›"));
-            break;
-        }
-        spans.push(Span::styled(
-            label.clone(),
-            if selection.raw.is_some() && visible_environments[position] == active {
-                theme::search_match_style()
-            } else {
-                theme::secondary_style()
-            },
-        ));
-        used += width;
-    }
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
-}
-
 pub(crate) fn render_overview_header(
     frame: &mut Frame<'_>,
     layout: &EnvironmentLayout,
@@ -361,7 +253,11 @@ pub(crate) fn render_overview_header(
     }
     let mut spans = vec![Span::styled(
         "0 Overview  ",
-        theme::overview_header_accent_style().add_modifier(Modifier::BOLD),
+        if selection.raw.is_none() {
+            theme::overview_header_accent_style().add_modifier(Modifier::BOLD)
+        } else {
+            theme::overview_header_muted_style()
+        },
     )];
     if first > 0 {
         spans.push(Span::styled("‹ ", theme::overview_header_muted_style()));
@@ -375,7 +271,11 @@ pub(crate) fn render_overview_header(
         }
         spans.push(Span::styled(
             label.clone(),
-            theme::overview_header_muted_style(),
+            if selection.raw == Some(visible_environments[position]) {
+                theme::overview_header_accent_style().add_modifier(Modifier::BOLD)
+            } else {
+                theme::overview_header_muted_style()
+            },
         ));
         used += width;
     }

@@ -329,7 +329,6 @@ fn layout_with_content(
         panel_width,
         footer_message,
     );
-    let fixed_status_height: u16 = 2;
     let footer_height = common_footer_height(
         applyable,
         content.matches.len(),
@@ -356,10 +355,22 @@ fn layout_with_content(
     } else {
         frame_required
     };
-    let shell = shell_layout::full_width_layout_with_header_height(area, footer_lines, required, 2);
+    let shell = shell_layout::full_width_layout_with_header_height(
+        area,
+        footer_lines,
+        required,
+        header::plan_review_height(state.review(), area.width),
+    );
     let inner = shell.content_inner();
-    let status = Rect::new(inner.x, inner.y, inner.width, 1);
-    let separator = Rect::new(inner.x, inner.y.saturating_add(1), inner.width, 1);
+    let status_height = u16::from(inner.height > 3);
+    let fixed_status_height = status_height + 1;
+    let status = Rect::new(inner.x, inner.y, inner.width, status_height);
+    let separator = Rect::new(
+        inner.x,
+        inner.y.saturating_add(status_height),
+        inner.width,
+        1,
+    );
     let available = Rect::new(
         inner.x,
         inner.y.saturating_add(fixed_status_height),

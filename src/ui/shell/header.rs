@@ -3,7 +3,7 @@ use std::path::Path;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::app::{
     execution::{ExecutionContext, ExecutionContextValue},
@@ -45,11 +45,33 @@ pub(crate) fn render_review(frame: &mut Frame<'_>, area: Rect, review: &PlanRevi
 }
 
 pub(crate) fn render_plan_review(frame: &mut Frame<'_>, area: Rect, review: &PlanReview) {
-    let mut lines = vec![plan_review_header_line(review, area.width)];
-    if area.height > 1 {
-        lines.push(plan_review_changes_line(review));
+    frame.render_widget(
+        Paragraph::new(plan_review_lines(review, area.width))
+            .wrap(Wrap { trim: false })
+            .style(theme::secondary_style()),
+        area,
+    );
+}
+
+pub(crate) fn plan_review_height(review: &PlanReview, width: u16) -> u16 {
+    u16::try_from(
+        Paragraph::new(plan_review_lines(review, width))
+            .wrap(Wrap { trim: false })
+            .line_count(width.max(1)),
+    )
+    .unwrap_or(u16::MAX)
+}
+
+fn plan_review_lines(review: &PlanReview, width: u16) -> Vec<Line<'static>> {
+    let mut context = plan_review_header_line(review, u16::MAX);
+    let changes = plan_review_changes_line(review);
+    if context.width() + GAP.len() + changes.width() <= usize::from(width) {
+        context.push_span(GAP);
+        context.extend(changes.spans);
+        vec![context]
+    } else {
+        vec![plan_review_header_line(review, width), changes]
     }
-    render(frame, area, lines);
 }
 
 pub(crate) fn render_execution(frame: &mut Frame<'_>, area: Rect, context: &ExecutionContext) {
@@ -153,7 +175,14 @@ fn plan_review_changes_line(review: &PlanReview) -> Line<'static> {
         && counts.replacements() == 0
         && counts.deletions() == 0
     {
-        line.push_span(Span::styled("  none", theme::secondary_style()));
+        let text = if counts.nonstandard_changes() > 0 {
+            "  Other changes"
+        } else if counts.has_changes() {
+            "  Outputs changed"
+        } else {
+            "  No changes"
+        };
+        line.push_span(Span::styled(text, theme::secondary_style()));
     }
     line
 }
@@ -409,6 +438,63 @@ fn header_line(path: &Path, workspace: Option<&str>, width: u16) -> Line<'static
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::review::{PlanDocument, PlanMetadata};
+
+    #[test]
+    fn zero_resource_counts_preserve_output_and_nonstandard_change_status() {
+        for (outputs, other, expected) in [
+            (Vec::new(), 0, "No changes"),
+            (vec!["endpoint".to_owned()], 0, "Outputs changed"),
+            (Vec::new(), 1, "Other changes"),
+        ] {
+            let metadata = PlanMetadata::new(Vec::new(), outputs, 0, 0, 0, false)
+                .with_nonstandard_changes(other);
+            let review = PlanReview::new(
+                "/dev".into(),
+                "default".to_owned(),
+                PlanDocument::with_blocks_and_line_kinds(String::new(), Vec::new(), Vec::new()),
+                metadata,
+                Vec::new(),
+            );
+
+            assert!(
+                plan_review_changes_line(&review)
+                    .to_string()
+                    .contains(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn compact_header_keeps_counts_when_narrow_and_combines_them_when_wide() {
+        let review = PlanReview::new(
+            "/dev".into(),
+            "default".to_owned(),
+            PlanDocument::with_blocks_and_line_kinds(String::new(), Vec::new(), Vec::new()),
+            PlanMetadata::new(Vec::new(), Vec::new(), 111, 222, 333, false)
+                .with_resource_changes(Vec::new(), 444),
+            Vec::new(),
+        );
+        assert_eq!(plan_review_height(&review, 240), 1);
+        let height = plan_review_height(&review, 40);
+        assert!(height > 2);
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, height)).unwrap();
+        terminal
+            .draw(|frame| render_plan_review(frame, frame.area(), &review))
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect::<String>();
+        let normalized = rendered.split_whitespace().collect::<Vec<_>>().join(" ");
+        for count in ["+111", "~222", "444 replace", "-333 destroy"] {
+            assert!(normalized.contains(count), "{rendered}");
+        }
+    }
 
     #[test]
     fn review_header_labels_context_and_preserves_target_identity_at_eighty_columns() {

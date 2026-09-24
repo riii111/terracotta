@@ -350,6 +350,17 @@ fn three_environments_show_groups_actions_and_totals(#[case] width: u16, #[case]
         Color::Reset
     );
     assert!(rendered.contains("Space expand all"));
+    if width >= 120 {
+        let lines: Vec<_> = rendered.lines().collect();
+        let data = lines
+            .iter()
+            .find(|line| line.contains("terraform_data.api"))
+            .unwrap();
+        let total = lines[total_line];
+        assert_eq!(data.find('~'), total.find("~21"));
+        assert_eq!(data.find("+/-"), total.find("~200"));
+        assert_eq!(data.rfind('-'), total.find("~20 -1"));
+    }
     insta::assert_snapshot!(format!("three_environments_{width}x{height}"), rendered);
 }
 

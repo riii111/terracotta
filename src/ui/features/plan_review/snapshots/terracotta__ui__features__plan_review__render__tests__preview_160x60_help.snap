@@ -2,8 +2,7 @@
 source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
-Target: main [PROD] Workspace: default Tool: terraform loading... Dir: /repo/environments/production/main
-Changes  +2 add  ~2 update  -1 destroy
+Target: main [PROD] Workspace: default Tool: terraform loading... Dir: /repo/environments/production/main  Changes  +2 add  ~2 update  -1 destroy
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   # terraform_data.api will be updated in-place
@@ -22,31 +21,32 @@ Changes  +2 add  ~2 update  -1 destroy
 
   # terraform_data.old will be destroyed
   - resource "terraform_data" "old" {
-      id = "old-20260920"                                 ┌Help─────────────────────────────────────┐
-    }                                                     │ Navigation                              │
-                                                          │ ↑ / ↓ / j / k scroll vertically         │
-  # terraform_data.new will be created                    │ ← / → / h / l scroll horizontally       │
-  + resource "terraform_data" "new" {                     │ PgUp / PgDn   scroll one page           │
-      input = "new-value"                                 │ Home / End    go to the top or bottom   │
-      note  = "A deliberately long synthetic value keeps h│ s             overview                  │
-    }                                                     │                                         │
-                                                          │ Review                                  │
-Changes to Outputs:                                       │ /             filter the full plan      │
-  + endpoint = (known after apply)                        │                                         │
-  ~ summary  = "old summary" -> "new summary with a delibe│ Actions                                 │
-                                                          │ c             show execution context    │
-Warning: Value for "pending" is not known until apply     │ y             copy the full plan        │
-                                                          │ a             apply the full plan       │
-Plan: 2 to add, 2 to change, 1 to destroy.                │                                         │
-                                                          │ Exit                                    │
-Synthetic review text continues below so the viewport and │ q             quit                      │
-The same long body is intentionally reused across every re│ ?/Esc close                             │
-No Terraform process, provider, state file, or cloud crede└─────────────────────────────────────────┘
-The review surface preserves Terraform order, attributes, output values, and diagnostics.
+      id = "old-20260920"
+    }                                                     ┌Help─────────────────────────────────────┐
+                                                          │ Navigation                              │
+  # terraform_data.new will be created                    │ ↑ / ↓ / j / k scroll vertically         │
+  + resource "terraform_data" "new" {                     │ ← / → / h / l scroll horizontally       │
+      input = "new-value"                                 │ PgUp / PgDn   scroll one page           │
+      note  = "A deliberately long synthetic value keeps h│ Home / End    go to the top or bottom   │
+    }                                                     │ s             overview                  │
+                                                          │                                         │
+Changes to Outputs:                                       │ Review                                  │
+  + endpoint = (known after apply)                        │ /             filter the full plan      │
+  ~ summary  = "old summary" -> "new summary with a delibe│                                         │
+                                                          │ Actions                                 │
+Warning: Value for "pending" is not known until apply     │ c             show execution context    │
+                                                          │ y             copy the full plan        │
+Plan: 2 to add, 2 to change, 1 to destroy.                │ a             apply the full plan       │
+                                                          │                                         │
+Synthetic review text continues below so the viewport and │ Exit                                    │
+The same long body is intentionally reused across every re│ q             quit                      │
+No Terraform process, provider, state file, or cloud crede│ ?/Esc close                             │
+The review surface preserves Terraform order, attributes, └─────────────────────────────────────────┘
 Long lines remain unwrapped in the plan body; horizontal movement exposes the hidden suffix.
 Vertical movement exposes later lines in this synthetic plan body.
 
 End of synthetic plan body.
+
 
 
 

@@ -1,12 +1,11 @@
 ---
 source: src/ui/features/plan_review/render.rs
-assertion_line: 1930
 expression: buffer_text(buffer)
 ---
-Target: empty Workspace: default Tool: terraform loading... Dir: /repo/environments/staging/empty
-Changes  none
+Target: empty Workspace: default Tool: terraform loading... Dir: /repo/environments/staging/empty  Changes  No changes
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
 
 
 

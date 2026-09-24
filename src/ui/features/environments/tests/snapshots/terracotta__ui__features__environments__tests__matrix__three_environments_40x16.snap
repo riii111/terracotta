@@ -1,6 +1,5 @@
 ---
 source: src/ui/features/environments/tests/matrix.rs
-assertion_line: 353
 expression: rendered
 ---
 0 Overview   1 dev  2 prod [PROD]  ›
@@ -15,7 +14,7 @@ Ready: 3/3
  Same change across envs
  …orm_data.server[*] ~ 20
 
- Total                ~21
+ Total               ~21
  [ ] env  Enter open  / filter
  e env filter  Space expand all
  ? help  q quit

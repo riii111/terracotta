@@ -381,12 +381,17 @@ impl EnvironmentView {
             PlanReviewInput::Apply | PlanReviewInput::OpenOverview => return None,
             _ => {}
         }
-        let area = environments::layout(
+        let visible = self
+            .selected_environments
+            .clone()
+            .unwrap_or_else(|| (0..state.plans().len()).collect());
+        let area = environments::overview_layout(
             Rect::new(0, 0, size.width, size.height),
             state,
             self.notice.as_deref(),
             self.selected_environments.is_some(),
-            false,
+            &self.selection,
+            &visible,
         )
         .body;
         let layout = plan_review::environment_layout(area, view.searching(), review);

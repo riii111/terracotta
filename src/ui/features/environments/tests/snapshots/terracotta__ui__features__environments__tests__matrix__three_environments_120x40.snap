@@ -1,6 +1,5 @@
 ---
 source: src/ui/features/environments/tests/matrix.rs
-assertion_line: 353
 expression: rendered
 ---
 0 Overview   1 dev  2 prod [PROD]  3 stg                                                                      Ready: 3/3
@@ -15,7 +14,7 @@ expression: rendered
   Same change across envs
   [+] terraform_data.server[*] ~ 20        ~ 200            ~ 20
 
-  Total                         ~21                  ~200 1 replace      ~20 -1
+  Total                        ~21         ~200 1 replace   ~20 -1
   blank: absent   .: unchanged   ?: plan unavailable
 
 

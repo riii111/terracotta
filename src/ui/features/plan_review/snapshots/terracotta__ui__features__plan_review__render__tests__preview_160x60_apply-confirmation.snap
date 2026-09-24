@@ -2,14 +2,13 @@
 source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
-Target: main [PROD] Workspace: default Tool: terraform loading... Dir: /repo/environments/production/main
-Changes  +2 add  ~2 update  -1 destroy
+Target: main [PROD] Workspace: default Tool: terraform loading... Dir: /repo/environments/production/main  Changes  +2 add  ~2 update  -1 destroy
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   # terraform_data.api will be updated in-place
   ~ resource "terraform_data" "api" {
+      id       = "api-20260920"
  main [PROD]  ws:default  terraform loading...  /repo/environments/production/main
-      ~ input  = "before" -> "after"
       # (4 unchanged attributes hidden)
     }
 
@@ -25,28 +24,29 @@ Changes  +2 add  ~2 update  -1 destroy
       id = "old-20260920"
     }
 
-  # terraform_data.new will be created  ┌──────────────────────────────────────────────────────────────────────────────┐
-  + resource "terraform_data" "new" {   │                                                                              │
-      input = "new-value"               │ Apply this reviewed plan?                                                    │
-      note  = "A deliberately long synth│                                                                              │
-    }                                   │ Target: main [PROD]                                                          │
-                                        │ Workspace: default                                                           │
-Changes to Outputs:                     │ Directory: /repo/environments/production/main                                │
-  + endpoint = (known after apply)      │ Tool: terraform loading...                                                   │
-  ~ summary  = "old summary" -> "new sum│ Plan: +2 add  ~2 update  0 replace  -1 destroy                               │
+  # terraform_data.new will be created
+  + resource "terraform_data" "new" {   ┌──────────────────────────────────────────────────────────────────────────────┐
+      input = "new-value"               │                                                                              │
+      note  = "A deliberately long synth│ Apply this reviewed plan?                                                    │
+    }                                   │                                                                              │
+                                        │ Target: main [PROD]                                                          │
+Changes to Outputs:                     │ Workspace: default                                                           │
+  + endpoint = (known after apply)      │ Directory: /repo/environments/production/main                                │
+  ~ summary  = "old summary" -> "new sum│ Tool: terraform loading...                                                   │
+                                        │ Plan: +2 add  ~2 update  0 replace  -1 destroy                               │
+Warning: Value for "pending" is not know│                                                                              │
+                                        │ Type main to apply (exact match).                                            │
+Plan: 2 to add, 2 to change, 1 to destro│ > |                                                                          │
                                         │                                                                              │
-Warning: Value for "pending" is not know│ Type main to apply (exact match).                                            │
-                                        │ > |                                                                          │
-Plan: 2 to add, 2 to change, 1 to destro│                                                                              │
-                                        └──────────────────────────────────────────────────────────────────────────────┘
-Synthetic review text continues below soEnter confirm | Esc back | ? helpn meaningful.
-The same long body is intentionally reused across every review state and terminal size.
+Synthetic review text continues below so└──────────────────────────────────────────────────────────────────────────────┘
+The same long body is intentionally reusEnter confirm | Esc back | ? helpterminal size.
 No Terraform process, provider, state file, or cloud credential is used by this fixture.
 The review surface preserves Terraform order, attributes, output values, and diagnostics.
 Long lines remain unwrapped in the plan body; horizontal movement exposes the hidden suffix.
 Vertical movement exposes later lines in this synthetic plan body.
 
 End of synthetic plan body.
+
 
 
 

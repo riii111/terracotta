@@ -47,33 +47,23 @@ impl EnvironmentView {
         if is_overview {
             frame.render_widget(Block::new().style(theme::overview_background_style()), area);
         }
-        let layout = if is_overview {
-            environments::overview_layout(
-                area,
-                state,
-                self.notice.as_deref(),
-                self.selected_environments.is_some(),
-                &self.selection,
-                &visible_environments,
-            )
-        } else {
-            environments::layout(
-                area,
-                state,
-                self.notice.as_deref(),
-                self.selected_environments.is_some(),
-                false,
-            )
-        };
+        let layout = environments::overview_layout(
+            area,
+            state,
+            self.notice.as_deref(),
+            self.selected_environments.is_some(),
+            &self.selection,
+            &visible_environments,
+        );
+        environments::render_overview_header(
+            frame,
+            &layout,
+            state,
+            &self.selection,
+            &visible_environments,
+            self.selected_environments.is_some(),
+        );
         if is_overview {
-            environments::render_overview_header(
-                frame,
-                &layout,
-                state,
-                &self.selection,
-                &visible_environments,
-                self.selected_environments.is_some(),
-            );
             if let Some(notice) = &self.notice {
                 frame.render_widget(
                     Paragraph::new(notice.as_str())
@@ -83,22 +73,6 @@ impl EnvironmentView {
                 );
             }
         } else {
-            environments::render_tabs(
-                frame,
-                layout.tabs,
-                state,
-                &self.selection,
-                &visible_environments,
-            );
-            frame.render_widget(
-                Paragraph::new(environments::summary(
-                    state,
-                    self.selected_environments.is_some(),
-                ))
-                .wrap(Wrap { trim: false })
-                .style(theme::secondary_style()),
-                layout.summary,
-            );
             if let Some(notice) = &self.notice {
                 frame.render_widget(
                     Paragraph::new(notice.as_str())
