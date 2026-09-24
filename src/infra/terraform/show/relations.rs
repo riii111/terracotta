@@ -47,62 +47,13 @@ pub(super) fn parse_configuration(
         for resource in &module.resources {
             let source_addresses = source_addresses_for(path, &resource.identity, known_addresses);
             for (dependent, context) in source_addresses {
-                if resource.invalid {
-                    evidence.push(RelationEvidence::unresolved(
-                        dependent.clone(),
-                        RelationSource::Configuration,
-                        RelationUnresolvedReason::InvalidConfiguration,
-                    ));
-                }
-                let mut stack = BTreeSet::new();
-                for group in &resource.expressions {
-                    let resolved = tree.resolve_group(group, &context, known_addresses, &mut stack);
-                    append_evidence(
-                        &mut evidence,
-                        &dependent,
-                        RelationSource::Configuration,
-                        resolved,
-                    );
-                }
-                for reference in &resource.depends_on {
-                    let resolved =
-                        tree.resolve_reference(reference, &context, known_addresses, &mut stack);
-                    append_evidence(
-                        &mut evidence,
-                        &dependent,
-                        RelationSource::Configuration,
-                        resolved,
-                    );
-                }
-                if let Some(parent) = &module.parent
-                    && let Some(call) = tree
-                        .modules
-                        .get(&parent.parent_path)
-                        .and_then(|parent_module| parent_module.calls.get(&parent.call_name))
-                {
-                    let parent_context = context.parent();
-                    if call.invalid {
-                        evidence.push(RelationEvidence::unresolved(
-                            dependent.clone(),
-                            RelationSource::Configuration,
-                            RelationUnresolvedReason::InvalidConfiguration,
-                        ));
-                    }
-                    for reference in &call.depends_on {
-                        let resolved = tree.resolve_reference(
-                            reference,
-                            &parent_context,
-                            known_addresses,
-                            &mut stack,
-                        );
-                        append_evidence(
-                            &mut evidence,
-                            &dependent,
-                            RelationSource::Configuration,
-                            resolved,
-                        );
-                    }
-                }
+                evidence.extend(tree.relations_for_resource(
+                    path,
+                    resource,
+                    &dependent,
+                    &context,
+                    known_addresses,
+                ));
             }
         }
     }
@@ -188,6 +139,7 @@ struct ParentCall {
 struct ModuleCall {
     child_path: Vec<String>,
     inputs: BTreeMap<String, Vec<Vec<String>>>,
+    expressions: Vec<Vec<String>>,
     depends_on: Vec<String>,
     repeated: bool,
     invalid: bool,
@@ -208,6 +160,84 @@ struct ConfigurationTree {
 }
 
 impl ConfigurationTree {
+    fn relations_for_resource(
+        &self,
+        path: &[String],
+        resource: &ResourceDefinition,
+        dependent: &RelationEndpoint,
+        context: &ResolutionContext,
+        known_addresses: &BTreeSet<String>,
+    ) -> Vec<RelationEvidence> {
+        let mut evidence = Vec::new();
+        if resource.invalid {
+            evidence.push(RelationEvidence::unresolved(
+                dependent.clone(),
+                RelationSource::Configuration,
+                RelationUnresolvedReason::InvalidConfiguration,
+            ));
+        }
+        let mut stack = BTreeSet::new();
+        for group in &resource.expressions {
+            let resolved = self.resolve_group(group, context, known_addresses, &mut stack);
+            append_evidence(
+                &mut evidence,
+                dependent,
+                RelationSource::Configuration,
+                resolved,
+            );
+        }
+        for reference in &resource.depends_on {
+            let resolved = self.resolve_reference(reference, context, known_addresses, &mut stack);
+            append_evidence(
+                &mut evidence,
+                dependent,
+                RelationSource::Configuration,
+                resolved,
+            );
+        }
+        for (depth, call_name) in path.iter().enumerate() {
+            let parent_path = path[..depth].to_vec();
+            let Some(call) = self
+                .modules
+                .get(&parent_path)
+                .and_then(|parent_module| parent_module.calls.get(call_name))
+            else {
+                continue;
+            };
+            let parent_context = ResolutionContext {
+                modules: context.modules.iter().take(depth).cloned().collect(),
+            };
+            if call.invalid {
+                evidence.push(RelationEvidence::unresolved(
+                    dependent.clone(),
+                    RelationSource::Configuration,
+                    RelationUnresolvedReason::InvalidConfiguration,
+                ));
+            }
+            for group in &call.expressions {
+                let resolved =
+                    self.resolve_group(group, &parent_context, known_addresses, &mut stack);
+                append_evidence(
+                    &mut evidence,
+                    dependent,
+                    RelationSource::Configuration,
+                    resolved,
+                );
+            }
+            for reference in &call.depends_on {
+                let resolved =
+                    self.resolve_reference(reference, &parent_context, known_addresses, &mut stack);
+                append_evidence(
+                    &mut evidence,
+                    dependent,
+                    RelationSource::Configuration,
+                    resolved,
+                );
+            }
+        }
+        evidence
+    }
+
     fn collect_module(&mut self, value: &Value, path: &[String], parent: Option<ParentCall>) {
         let Some(object) = value.as_object() else {
             self.partial = true;
@@ -385,6 +415,13 @@ impl ConfigurationTree {
                         invalid = true;
                     }
                 }
+                let mut declaration_expressions = Vec::new();
+                for key in ["count_expression", "for_each_expression"] {
+                    if let Some(expression) = call.get(key) {
+                        invalid |= !expression.is_object()
+                            || !collect_expression_groups(expression, &mut declaration_expressions);
+                    }
+                }
                 let mut depends_on = parse_string_array(call.get("depends_on"), &mut invalid);
                 depends_on.sort();
                 let repeated = call.contains_key("count_expression")
@@ -394,6 +431,7 @@ impl ConfigurationTree {
                     ModuleCall {
                         child_path,
                         inputs,
+                        expressions: declaration_expressions,
                         depends_on,
                         repeated,
                         invalid,
@@ -482,7 +520,7 @@ impl ConfigurationTree {
         match reference {
             ResourceReference::Resource(address) => {
                 let Some((module_path, target_context, module_issue)) =
-                    self.target_context(context, &address.modules)
+                    self.target_context(context, &address.modules, false)
                 else {
                     return Resolution::issue(RelationUnresolvedReason::MissingAddress);
                 };
@@ -513,7 +551,7 @@ impl ConfigurationTree {
             }
             ResourceReference::Module { modules } => {
                 let Some((module_path, target_context, module_issue)) =
-                    self.target_context(context, &modules)
+                    self.target_context(context, &modules, true)
                 else {
                     return Resolution::issue(RelationUnresolvedReason::MissingAddress);
                 };
@@ -590,7 +628,8 @@ impl ConfigurationTree {
         known_addresses: &BTreeSet<String>,
         stack: &mut BTreeSet<String>,
     ) -> Resolution {
-        let Some((module_path, child_context, issue)) = self.target_context(context, selectors)
+        let Some((module_path, child_context, issue)) =
+            self.target_context(context, selectors, false)
         else {
             return Resolution::issue(RelationUnresolvedReason::MissingAddress);
         };
@@ -664,6 +703,7 @@ impl ConfigurationTree {
         &self,
         context: &ResolutionContext,
         selectors: &[ModuleAddressSegment],
+        allow_repeated_block: bool,
     ) -> Option<(
         Vec<String>,
         ResolutionContext,
@@ -681,7 +721,9 @@ impl ConfigurationTree {
                     Some(RelationUnresolvedReason::InvalidConfiguration),
                 ));
             }
-            if call.repeated != selector.index.is_some() {
+            if call.repeated != selector.index.is_some()
+                && !(allow_repeated_block && call.repeated && selector.index.is_none())
+            {
                 return Some((
                     call.child_path.clone(),
                     context.clone(),
@@ -834,7 +876,7 @@ fn collect_expression_groups(value: &Value, groups: &mut Vec<Vec<String>>) -> bo
                 }
             }
             for (key, value) in object {
-                if key != "references" {
+                if key != "references" && key != "constant_value" {
                     valid &= collect_expression_groups(value, groups);
                 }
             }
@@ -1213,7 +1255,7 @@ mod tests {
                 "resources": [
                     resource("terraform_data.input_source", "input_source", json!({}), json!([])),
                     resource("terraform_data.output_consumer", "output_consumer", json!({
-                        "input": {"references": ["module.child.output", "module.child"]}
+                    "input": {"references": ["module.child.output[0]", "module.child.output", "module.child"]}
                     }), json!([])),
                     resource("terraform_data.module_dependent", "module_dependent", json!({}), json!(["module.child"]))
                 ],
@@ -1254,6 +1296,10 @@ mod tests {
                     .referenced
                     .as_ref()
                     .is_some_and(|target| target.address() == "module.child.terraform_data.inside")
+        }));
+        assert!(!relations.configuration.iter().any(|edge| {
+            edge.dependent.address() == "terraform_data.output_consumer"
+                && edge.unresolved == Some(RelationUnresolvedReason::MissingAddress)
         }));
         assert!(!relations.configuration.iter().any(|edge| {
             edge.dependent.address() == "terraform_data.output_consumer"
@@ -1303,6 +1349,168 @@ mod tests {
                 .configuration_status,
             ConfigurationRelationStatus::Unavailable
         );
+    }
+
+    #[test]
+    fn excludes_deleted_instances_from_configuration_relationships() {
+        let document = json!({
+            "format_version": "1.2",
+            "prior_state": {"values": {"root_module": {"resources": [
+                {"address": "terraform_data.source"},
+                {"address": "terraform_data.counted[0]"},
+                {"address": "terraform_data.counted[1]"}
+            ]}}},
+            "planned_values": {"root_module": {"resources": [
+                {"address": "terraform_data.source"},
+                {"address": "terraform_data.counted[0]"}
+            ]}},
+            "resource_changes": [{
+                "address": "terraform_data.counted[1]",
+                "mode": "managed",
+                "change": {"actions": ["delete"]}
+            }],
+            "configuration": {"root_module": {"resources": [
+                resource("terraform_data.source", "source", json!({}), json!([])),
+                resource("terraform_data.counted", "counted", json!({
+                    "input": {"references": ["terraform_data.source.id"]}
+                }), json!([]))
+            ]}}
+        });
+
+        let (_, _, analysis) = super::super::json::parse_plan_json_with_metadata(
+            document.to_string().as_bytes(),
+            false,
+        )
+        .expect("plan with a deleted count instance should parse");
+
+        assert!(analysis.relations.configuration.iter().any(|edge| {
+            edge.dependent.address() == "terraform_data.counted[0]"
+                && edge
+                    .referenced
+                    .as_ref()
+                    .is_some_and(|target| target.address() == "terraform_data.source")
+        }));
+        assert!(
+            !analysis
+                .relations
+                .configuration
+                .iter()
+                .any(|edge| { edge.dependent.address() == "terraform_data.counted[1]" })
+        );
+    }
+
+    #[test]
+    fn does_not_read_reference_shaped_data_from_constant_values() {
+        let relations = evidence(
+            json!({
+                "configuration": {"root_module": {"resources": [
+                    resource("terraform_data.source", "source", json!({}), json!([])),
+                    resource("terraform_data.consumer", "consumer", json!({
+                        "input": {"constant_value": {"references": ["terraform_data.source"]}}
+                    }), json!([]))
+                ]}}
+            }),
+            &["terraform_data.source", "terraform_data.consumer"],
+        );
+
+        assert!(!relations.configuration.iter().any(|edge| {
+            edge.dependent.address() == "terraform_data.consumer"
+                && edge
+                    .referenced
+                    .as_ref()
+                    .is_some_and(|target| target.address() == "terraform_data.source")
+        }));
+    }
+
+    #[test]
+    fn propagates_module_call_expressions_and_ancestor_dependencies_to_child_resources() {
+        let document = json!({
+            "configuration": {"root_module": {
+                "resources": [
+                    resource("terraform_data.expression_source", "expression_source", json!({}), json!([])),
+                    resource("terraform_data.explicit_source", "explicit_source", json!({}), json!([]))
+                ],
+                "module_calls": {"outer": {
+                    "count_expression": {"references": [
+                        "terraform_data.expression_source.input",
+                        "terraform_data.expression_source"
+                    ]},
+                    "depends_on": ["terraform_data.explicit_source"],
+                    "module": {
+                        "resources": [resource("terraform_data.inside", "inside", json!({}), json!([]))],
+                        "module_calls": {"inner": {
+                            "module": {
+                                "resources": [resource("terraform_data.deep", "deep", json!({}), json!([]))]
+                            }
+                        }}
+                    }
+                }}
+            }}
+        });
+
+        let relations = evidence(
+            document,
+            &[
+                "terraform_data.expression_source",
+                "terraform_data.explicit_source",
+                "module.outer[0].terraform_data.inside",
+                "module.outer[0].module.inner.terraform_data.deep",
+            ],
+        );
+
+        for dependent in [
+            "module.outer[0].terraform_data.inside",
+            "module.outer[0].module.inner.terraform_data.deep",
+        ] {
+            for referenced in [
+                "terraform_data.expression_source",
+                "terraform_data.explicit_source",
+            ] {
+                assert!(relations.configuration.iter().any(|edge| {
+                    edge.dependent.address() == dependent
+                        && edge
+                            .referenced
+                            .as_ref()
+                            .is_some_and(|target| target.address() == referenced)
+                }));
+            }
+        }
+    }
+
+    #[test]
+    fn resolves_repeated_module_block_dependencies_to_block_endpoints() {
+        let document = json!({
+            "configuration": {"root_module": {
+                "resources": [resource("terraform_data.consumer", "consumer", json!({}), json!(["module.child"]))],
+                "module_calls": {"child": {
+                    "count_expression": {"constant_value": 2},
+                    "module": {
+                        "resources": [resource("terraform_data.inside", "inside", json!({}), json!([]))]
+                    }
+                }}
+            }}
+        });
+
+        let relations = evidence(
+            document,
+            &[
+                "terraform_data.consumer",
+                "module.child[0].terraform_data.inside",
+                "module.child[1].terraform_data.inside",
+            ],
+        );
+
+        assert!(relations.configuration.iter().any(|edge| {
+            edge.dependent.address() == "terraform_data.consumer"
+                && edge.referenced.as_ref().is_some_and(|target| {
+                    target.address() == "module.child.terraform_data.inside"
+                        && !target.is_instance()
+                })
+        }));
+        assert!(!relations.configuration.iter().any(|edge| {
+            edge.dependent.address() == "terraform_data.consumer"
+                && edge.unresolved == Some(RelationUnresolvedReason::AmbiguousModule)
+        }));
     }
 
     #[test]

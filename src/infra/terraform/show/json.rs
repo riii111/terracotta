@@ -44,13 +44,8 @@ pub(super) fn parse_plan_json_with_metadata(
         .ok_or(PlanParseError::RootMustBeObject)?;
     let plan = parse_plan_document(&document)?;
     let metadata = super::metadata::metadata_from_document(root, &plan, detailed_exit_has_changes);
-    let mut known_addresses = plan.value_addresses.clone();
-    known_addresses.extend(
-        plan.resource_changes
-            .iter()
-            .map(|change| change.address.clone()),
-    );
-    let relations = super::relations::parse_configuration(&document, &known_addresses);
+    let planned_addresses = parse_value_addresses(root, false)?;
+    let relations = super::relations::parse_configuration(&document, &planned_addresses);
     Ok((plan, metadata, relations))
 }
 
@@ -94,19 +89,26 @@ pub(super) fn parse_plan_document(document: &Value) -> Result<Plan, PlanParseErr
 
     Ok(Plan {
         resource_changes,
-        value_addresses: parse_value_addresses(root)?,
+        value_addresses: parse_value_addresses(root, true)?,
         summary,
         unsupported_changes,
         output_changes,
     })
 }
 
-fn parse_value_addresses(root: &Map<String, Value>) -> Result<BTreeSet<String>, PlanParseError> {
+fn parse_value_addresses(
+    root: &Map<String, Value>,
+    include_prior_state: bool,
+) -> Result<BTreeSet<String>, PlanParseError> {
     let mut addresses = BTreeSet::new();
-    let prior = optional_object(root, "prior_state")?
-        .map(|state| optional_object(state, "values"))
-        .transpose()?
-        .flatten();
+    let prior = if include_prior_state {
+        optional_object(root, "prior_state")?
+            .map(|state| optional_object(state, "values"))
+            .transpose()?
+            .flatten()
+    } else {
+        None
+    };
     for values in [prior, optional_object(root, "planned_values")?]
         .into_iter()
         .flatten()

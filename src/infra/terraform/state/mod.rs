@@ -81,6 +81,9 @@ fn parse_state(input: &[u8]) -> StateParseResult<Vec<RelationEvidence>> {
             _ => return Err(StateParseError::Invalid),
         };
         let mode = required_string(resource, "mode")?;
+        if !matches!(mode, "managed" | "data") {
+            return Err(StateParseError::Invalid);
+        }
         let resource_type = required_string(resource, "type")?;
         let name = required_string(resource, "name")?;
         let state_instances = resource
@@ -384,6 +387,9 @@ mod tests {
             })
         }));
         assert!(parse(json!({"resources": [{"instances": "bad"}]})).is_err());
+        let mut unknown_mode = resource(None, "unknown_mode", vec![instance(None, json!([]))]);
+        unknown_mode["mode"] = json!("future");
+        assert!(parse(json!({"resources": [unknown_mode]})).is_err());
         assert!(
             parse(json!({"resources": []}))
                 .expect("empty state is valid")

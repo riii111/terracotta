@@ -109,10 +109,8 @@ pub(super) fn parse_reference(reference: &str) -> Option<ResourceReference> {
         return (!modules.is_empty()).then_some(ResourceReference::Module { modules });
     }
     if !modules.is_empty() {
-        return Some(ResourceReference::ModuleOutput {
-            modules,
-            output: rest[0].clone(),
-        });
+        let output = parse_indexed_segment(&rest[0])?.name;
+        return Some(ResourceReference::ModuleOutput { modules, output });
     }
 
     parse_resource_parts(rest, true).map(ResourceReference::Resource)
@@ -169,9 +167,6 @@ fn parse_resource_parts(parts: &[String], allow_modules: bool) -> Option<Resourc
     };
     let resource_type = parse_segment(rest.get(resource_offset)?)?;
     let resource_name = parse_indexed_segment(rest.get(resource_offset + 1)?)?;
-    if rest.len() < resource_offset + 2 {
-        return None;
-    }
     Some(ResourceAddress {
         modules,
         mode: mode.to_owned(),
@@ -313,6 +308,10 @@ mod tests {
         assert!(parse_resource_address("aws_instance.api.id").is_none());
         assert!(matches!(
             parse_reference("module.child.output.secret"),
+            Some(ResourceReference::ModuleOutput { ref output, .. }) if output == "output"
+        ));
+        assert!(matches!(
+            parse_reference("module.child.output[0]"),
             Some(ResourceReference::ModuleOutput { ref output, .. }) if output == "output"
         ));
     }
