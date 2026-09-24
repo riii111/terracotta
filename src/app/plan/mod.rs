@@ -10,12 +10,17 @@ mod attribute_diff;
 pub(crate) mod comparison;
 pub(crate) mod grouping;
 mod number;
+mod relations;
 #[expect(
     unused_imports,
     reason = "grouping result types are the app contract for the Overview SBI"
 )]
 pub(crate) use grouping::{ChangeGroup, PlanGrouping, group_resource_changes};
 pub(crate) mod path;
+pub(crate) use relations::{
+    ConfigurationRelationStatus, PlanRelations, RelationEndpoint, RelationEvidence, RelationSource,
+    RelationUnresolvedReason, StateRelationStatus,
+};
 
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum PlanValue {

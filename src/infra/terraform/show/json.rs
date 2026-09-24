@@ -36,7 +36,7 @@ pub(crate) fn parse_plan_json_bytes(input: &[u8]) -> Result<Plan, PlanParseError
 pub(super) fn parse_plan_json_with_metadata(
     input: &[u8],
     detailed_exit_has_changes: bool,
-) -> Result<(Plan, PlanMetadata), PlanParseError> {
+) -> Result<(Plan, PlanMetadata, super::relations::ConfigurationAnalysis), PlanParseError> {
     let document =
         serde_json::from_slice::<Value>(input).map_err(|_| PlanParseError::InvalidJson)?;
     let root = document
@@ -44,7 +44,14 @@ pub(super) fn parse_plan_json_with_metadata(
         .ok_or(PlanParseError::RootMustBeObject)?;
     let plan = parse_plan_document(&document)?;
     let metadata = super::metadata::metadata_from_document(root, &plan, detailed_exit_has_changes);
-    Ok((plan, metadata))
+    let mut known_addresses = plan.value_addresses.clone();
+    known_addresses.extend(
+        plan.resource_changes
+            .iter()
+            .map(|change| change.address.clone()),
+    );
+    let relations = super::relations::parse_configuration(&document, &known_addresses);
+    Ok((plan, metadata, relations))
 }
 
 pub(super) fn parse_plan_document(document: &Value) -> Result<Plan, PlanParseError> {

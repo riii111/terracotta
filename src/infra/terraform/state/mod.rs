@@ -1,0 +1,487 @@
+use std::{collections::BTreeSet, ffi::OsString, path::Path};
+
+use serde_json::{Map, Value};
+
+use crate::app::{
+    execution::Tool,
+    plan::{RelationEndpoint, RelationEvidence, RelationSource, RelationUnresolvedReason},
+};
+use crate::infra::CancellationToken;
+
+use super::address::{
+    AddressIndex, format_resource_address, parse_module_address, parse_resource_address,
+};
+use super::command::{
+    ProcessRunner, ProcessStatus, TerraformCommand, TerraformExecutionError, interrupted_error,
+    non_zero_error, run_command,
+};
+
+pub(super) enum StateReadError {
+    Execution(TerraformExecutionError),
+    InvalidFormat,
+}
+
+pub(super) fn read_state_with_arguments(
+    tool: Tool,
+    root: &Path,
+    global_arguments: &[OsString],
+    cancellation: &CancellationToken,
+    runner: &dyn ProcessRunner,
+) -> Result<Vec<RelationEvidence>, StateReadError> {
+    let mut arguments = global_arguments.to_vec();
+    arguments.extend([OsString::from("state"), OsString::from("pull")]);
+    let output = run_command(
+        tool,
+        root,
+        TerraformCommand::StatePull,
+        &arguments,
+        cancellation,
+        runner,
+    )
+    .map_err(StateReadError::Execution)?;
+    if output.interrupted {
+        return Err(StateReadError::Execution(interrupted_error(
+            tool,
+            TerraformCommand::StatePull,
+            output,
+        )));
+    }
+    if !output.status.is_some_and(ProcessStatus::is_success) {
+        return Err(StateReadError::Execution(non_zero_error(
+            tool,
+            TerraformCommand::StatePull,
+            output,
+        )));
+    }
+    parse_state(&output.output.stdout).map_err(|_| StateReadError::InvalidFormat)
+}
+
+#[derive(Debug, Clone, Copy)]
+enum StateParseError {
+    Invalid,
+}
+
+type StateParseResult<T> = Result<T, StateParseError>;
+
+fn parse_state(input: &[u8]) -> StateParseResult<Vec<RelationEvidence>> {
+    let state = serde_json::from_slice::<Value>(input).map_err(|_| StateParseError::Invalid)?;
+    let root = state.as_object().ok_or(StateParseError::Invalid)?;
+    let resources = root
+        .get("resources")
+        .and_then(Value::as_array)
+        .ok_or(StateParseError::Invalid)?;
+    let mut instances = Vec::new();
+    for resource in resources {
+        let resource = resource.as_object().ok_or(StateParseError::Invalid)?;
+        let module = match resource.get("module") {
+            Some(Value::String(module)) => {
+                parse_module_address(module).ok_or(StateParseError::Invalid)?
+            }
+            Some(Value::Null) | None => Vec::new(),
+            _ => return Err(StateParseError::Invalid),
+        };
+        let mode = required_string(resource, "mode")?;
+        let resource_type = required_string(resource, "type")?;
+        let name = required_string(resource, "name")?;
+        let state_instances = resource
+            .get("instances")
+            .and_then(Value::as_array)
+            .ok_or(StateParseError::Invalid)?;
+        for instance in state_instances {
+            let instance = instance.as_object().ok_or(StateParseError::Invalid)?;
+            let index = match instance.get("index_key") {
+                Some(Value::String(value)) => Some(AddressIndex::String(value.clone())),
+                Some(Value::Number(value)) => Some(AddressIndex::Number(value.to_string())),
+                Some(Value::Null) | None => None,
+                _ => return Err(StateParseError::Invalid),
+            };
+            let dependencies = parse_dependencies(instance)?;
+            let address =
+                format_resource_address(&module, mode, resource_type, name, index.as_ref());
+            instances.push(StateInstance {
+                address,
+                block: format_resource_address(&module, mode, resource_type, name, None),
+                dependencies,
+            });
+        }
+    }
+    Ok(relations_for_state(&instances))
+}
+
+fn required_string<'a>(object: &'a Map<String, Value>, field: &str) -> StateParseResult<&'a str> {
+    object
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or(StateParseError::Invalid)
+}
+
+fn parse_dependencies(instance: &Map<String, Value>) -> StateParseResult<Vec<String>> {
+    match instance.get("dependencies") {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(dependencies)) => dependencies
+            .iter()
+            .map(|dependency| {
+                dependency
+                    .as_str()
+                    .map(str::to_owned)
+                    .ok_or(StateParseError::Invalid)
+            })
+            .collect(),
+        _ => Err(StateParseError::Invalid),
+    }
+}
+
+struct StateInstance {
+    address: String,
+    block: String,
+    dependencies: Vec<String>,
+}
+
+fn relations_for_state(instances: &[StateInstance]) -> Vec<RelationEvidence> {
+    let addresses = instances
+        .iter()
+        .map(|instance| instance.address.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut relations = Vec::new();
+    for instance in instances {
+        let dependent = RelationEndpoint::Instance(instance.address.clone());
+        for dependency in &instance.dependencies {
+            let Some(address) = parse_resource_address(dependency) else {
+                relations.push(RelationEvidence::unresolved(
+                    dependent.clone(),
+                    RelationSource::State,
+                    RelationUnresolvedReason::InvalidState,
+                ));
+                continue;
+            };
+            if address.index.is_some() {
+                let full = address.full();
+                if addresses.contains(full.as_str()) {
+                    relations.push(RelationEvidence::resolved(
+                        dependent.clone(),
+                        RelationEndpoint::Instance(full),
+                        RelationSource::State,
+                    ));
+                } else {
+                    relations.push(RelationEvidence::unresolved(
+                        dependent.clone(),
+                        RelationSource::State,
+                        RelationUnresolvedReason::MissingAddress,
+                    ));
+                }
+                continue;
+            }
+            let block = address.block();
+            let targets = instances
+                .iter()
+                .filter(|candidate| candidate.block == block)
+                .collect::<Vec<_>>();
+            match targets.as_slice() {
+                [target] if target.address == block => relations.push(RelationEvidence::resolved(
+                    dependent.clone(),
+                    RelationEndpoint::Instance(target.address.clone()),
+                    RelationSource::State,
+                )),
+                [] => relations.push(RelationEvidence::unresolved(
+                    dependent.clone(),
+                    RelationSource::State,
+                    RelationUnresolvedReason::MissingAddress,
+                )),
+                _ => relations.push(RelationEvidence::resolved(
+                    dependent.clone(),
+                    RelationEndpoint::Block(block),
+                    RelationSource::State,
+                )),
+            }
+        }
+    }
+    relations.sort();
+    relations.dedup();
+    relations
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        cell::{Cell, RefCell},
+        io,
+        path::PathBuf,
+        rc::Rc,
+    };
+
+    use serde_json::json;
+
+    use crate::infra::terraform::command::{ProcessOutput, RunningProcess};
+
+    use super::*;
+
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "JSON fixture values are serialized directly into the parser input"
+    )]
+    fn parse(value: Value) -> StateParseResult<Vec<RelationEvidence>> {
+        parse_state(value.to_string().as_bytes())
+    }
+
+    struct FakeRunner {
+        output: Vec<u8>,
+        status: ProcessStatus,
+        calls: RefCell<Vec<(Tool, PathBuf, Vec<OsString>)>>,
+        cancellation: Option<CancellationToken>,
+        waits: Rc<Cell<usize>>,
+        interrupts: Rc<Cell<usize>>,
+    }
+
+    struct FakeProcess {
+        output: Vec<u8>,
+        status: ProcessStatus,
+        cancellation: Option<CancellationToken>,
+        waits: Rc<Cell<usize>>,
+        interrupts: Rc<Cell<usize>>,
+    }
+
+    impl ProcessRunner for FakeRunner {
+        fn start(
+            &self,
+            tool: Tool,
+            root: &Path,
+            arguments: &[OsString],
+        ) -> io::Result<Box<dyn RunningProcess>> {
+            self.calls
+                .borrow_mut()
+                .push((tool, root.to_owned(), arguments.to_vec()));
+            Ok(Box::new(FakeProcess {
+                output: self.output.clone(),
+                status: self.status,
+                cancellation: self.cancellation.clone(),
+                waits: Rc::clone(&self.waits),
+                interrupts: Rc::clone(&self.interrupts),
+            }))
+        }
+    }
+
+    impl RunningProcess for FakeProcess {
+        fn try_wait(&mut self) -> io::Result<Option<ProcessStatus>> {
+            if let Some(cancellation) = &self.cancellation {
+                cancellation.cancel();
+                Ok(None)
+            } else {
+                Ok(Some(self.status))
+            }
+        }
+
+        fn request_interrupt(&mut self) -> io::Result<()> {
+            self.interrupts.set(self.interrupts.get() + 1);
+            Ok(())
+        }
+
+        fn wait(&mut self) -> io::Result<ProcessStatus> {
+            self.waits.set(self.waits.get() + 1);
+            Ok(ProcessStatus::Signaled)
+        }
+
+        fn collect_output(self: Box<Self>) -> io::Result<ProcessOutput> {
+            Ok(ProcessOutput::new(self.output, Vec::new()))
+        }
+    }
+
+    fn runner(output: &[u8], status: ProcessStatus) -> FakeRunner {
+        FakeRunner {
+            output: output.to_vec(),
+            status,
+            calls: RefCell::new(Vec::new()),
+            cancellation: None,
+            waits: Rc::new(Cell::new(0)),
+            interrupts: Rc::new(Cell::new(0)),
+        }
+    }
+
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "JSON fixture values are moved into the synthetic state document"
+    )]
+    fn instance(index_key: Option<Value>, dependencies: Value) -> Value {
+        let mut value = json!({"dependencies": dependencies});
+        if let Some(index_key) = index_key {
+            value["index_key"] = index_key;
+        }
+        value
+    }
+
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "JSON fixture values are moved into the synthetic state document"
+    )]
+    fn resource(module: Option<&str>, name: &str, instances: Vec<Value>) -> Value {
+        let mut resource = json!({
+            "mode": "managed",
+            "type": "terraform_data",
+            "name": name,
+            "instances": instances,
+        });
+        if let Some(module) = module {
+            resource["module"] = json!(module);
+        }
+        resource
+    }
+
+    #[test]
+    fn reads_only_state_addresses_and_classifies_exact_and_block_dependencies() {
+        let state = json!({
+            "resources": [
+                resource(None, "single", vec![{
+                    let mut instance = instance(None, json!([]));
+                    instance["attributes"] = json!({"token": "synthetic-secret"});
+                    instance
+                }]),
+                resource(None, "many", vec![
+                    instance(Some(json!(0)), json!([])),
+                    instance(Some(json!(1)), json!([])),
+                ]),
+                resource(None, "dependent", vec![instance(None, json!([
+                    "terraform_data.single", "terraform_data.many", "terraform_data.many[1]"
+                ]))]),
+            ]
+        });
+
+        let relations = parse(state).expect("state should parse");
+
+        assert_eq!(relations.len(), 3);
+        assert!(relations.iter().any(|edge| {
+            edge.referenced.as_ref().is_some_and(|target| {
+                target.address() == "terraform_data.single" && target.is_instance()
+            })
+        }));
+        assert!(relations.iter().any(|edge| {
+            edge.referenced.as_ref().is_some_and(|target| {
+                target.address() == "terraform_data.many" && !target.is_instance()
+            })
+        }));
+        assert!(relations.iter().any(|edge| {
+            edge.referenced.as_ref().is_some_and(|target| {
+                target.address() == "terraform_data.many[1]" && target.is_instance()
+            })
+        }));
+        assert!(!format!("{relations:?}").contains("attributes"));
+        assert!(!format!("{relations:?}").contains("synthetic-secret"));
+    }
+
+    #[test]
+    fn retains_module_instance_addresses_and_marks_unresolvable_state_format_unavailable() {
+        let state = json!({
+            "resources": [
+                resource(Some("module.child[\"blue\"]"), "source", vec![instance(None, json!([]))]),
+                resource(None, "dependent", vec![instance(None, json!(["module.child[\"blue\"].terraform_data.source"]))]),
+            ]
+        });
+
+        let relations = parse(state).expect("state should parse");
+
+        assert!(relations.iter().any(|edge| {
+            edge.referenced.as_ref().is_some_and(|target| {
+                target.address() == "module.child[\"blue\"].terraform_data.source"
+                    && target.is_instance()
+            })
+        }));
+        assert!(parse(json!({"resources": [{"instances": "bad"}]})).is_err());
+        assert!(
+            parse(json!({"resources": []}))
+                .expect("empty state is valid")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn malformed_dependency_identifiers_remain_unresolved() {
+        let state = json!({
+            "resources": [
+                resource(None, "single", vec![instance(None, json!([]))]),
+                resource(None, "dependent", vec![instance(None, json!([
+                    "terraform_data.single.id"
+                ]))]),
+            ]
+        });
+
+        let relations = parse(state).expect("state shape should parse");
+
+        assert!(relations.iter().any(|edge| {
+            edge.dependent.address() == "terraform_data.dependent"
+                && edge.source == RelationSource::State
+                && edge.unresolved == Some(RelationUnresolvedReason::InvalidState)
+        }));
+        assert!(!relations.iter().any(|edge| {
+            edge.dependent.address() == "terraform_data.dependent"
+                && edge
+                    .referenced
+                    .as_ref()
+                    .is_some_and(|target| target.address() == "terraform_data.single")
+        }));
+    }
+
+    #[test]
+    fn runs_state_pull_with_the_plan_root_and_global_arguments() {
+        let runner = runner(br#"{"resources":[]}"#, ProcessStatus::Exited(0));
+        let root = Path::new("/workspace with spaces");
+        let arguments = [OsString::from("-chdir=/workspace with spaces")];
+
+        let Ok(relations) = read_state_with_arguments(
+            Tool::OpenTofu,
+            root,
+            &arguments,
+            &CancellationToken::new(),
+            &runner,
+        ) else {
+            panic!("state should be read");
+        };
+
+        assert!(relations.is_empty());
+        let calls = runner.calls.borrow();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, Tool::OpenTofu);
+        assert_eq!(calls[0].1, root);
+        assert_eq!(
+            calls[0].2,
+            [
+                OsString::from("-chdir=/workspace with spaces"),
+                OsString::from("state"),
+                OsString::from("pull"),
+            ]
+        );
+    }
+
+    #[test]
+    fn state_pull_failure_does_not_expose_process_output() {
+        let runner = runner(b"synthetic-secret state data", ProcessStatus::Exited(1));
+
+        let Err(StateReadError::Execution(error)) = read_state_with_arguments(
+            Tool::Terraform,
+            Path::new("/workspace"),
+            &[],
+            &CancellationToken::new(),
+            &runner,
+        ) else {
+            panic!("failed state pull should be an execution error");
+        };
+
+        assert!(!format!("{error}").contains("synthetic-secret"));
+    }
+
+    #[test]
+    fn cancellation_interrupts_and_reaps_state_pull() {
+        let cancellation = CancellationToken::new();
+        let mut runner = runner(b"synthetic-secret", ProcessStatus::Exited(0));
+        runner.cancellation = Some(cancellation.clone());
+
+        let result = read_state_with_arguments(
+            Tool::Terraform,
+            Path::new("/workspace"),
+            &[],
+            &cancellation,
+            &runner,
+        );
+
+        assert!(matches!(result, Err(StateReadError::Execution(error)) if error.is_interrupted()));
+        assert_eq!(runner.interrupts.get(), 1);
+        assert_eq!(runner.waits.get(), 1);
+    }
+}

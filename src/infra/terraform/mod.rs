@@ -1,3 +1,4 @@
+mod address;
 mod apply;
 mod command;
 pub(crate) mod configuration;
@@ -5,6 +6,7 @@ pub(crate) mod discovery;
 mod events;
 mod line_buffer;
 mod providers;
+mod state;
 // HCL parsing is dormant with Git attribution and remains covered by unit tests.
 #[cfg(test)]
 pub(crate) mod hcl;
