@@ -61,6 +61,24 @@ fn partial_session() -> EnvironmentSession {
     state
 }
 
+fn complete_acquisition_with_errors(state: &mut EnvironmentSession) {
+    while state.acquiring() {
+        let running = state
+            .plans()
+            .iter()
+            .position(|plan| matches!(plan.state(), EnvironmentState::Running));
+        let index = running.or_else(|| state.start_next());
+        let Some(index) = index else {
+            break;
+        };
+        state.complete(
+            index,
+            PlanResult::Error("Synthetic acquisition error".to_owned()),
+            Vec::new(),
+        );
+    }
+}
+
 fn overview_plan_session(names: &[&str]) -> EnvironmentSession {
     use crate::app::{
         plan::{Plan, PlanAction, ResourceChange, ResourceChangeKind, ResourceMode},
@@ -455,6 +473,328 @@ fn ready_review_remains_available_and_quit_requires_confirmation_while_acquiring
         ),
         Some(EnvironmentInput::Interrupt)
     ));
+}
+
+#[test]
+fn quit_confirmation_uses_the_execution_state_when_enter_is_pressed() {
+    let size = Size::new(80, 24);
+    let state = partial_session();
+    let mut view = EnvironmentView::default();
+
+    assert!(
+        view.handle_key(
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            size,
+            &state,
+        )
+        .is_none()
+    );
+    assert!(view.confirming_quit);
+    assert!(
+        view.handle_key(
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            size,
+            &state,
+        )
+        .is_none()
+    );
+
+    let acquiring = buffer_text(&render_to_buffer((80, 24), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(acquiring.contains("Stop acquiring environment plans?"));
+    assert!(!acquiring.contains("q quit"), "{acquiring}");
+    assert!(matches!(
+        view.handle_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            size,
+            &state,
+        ),
+        Some(EnvironmentInput::Interrupt)
+    ));
+
+    let mut state = partial_session();
+    let mut view = EnvironmentView::default();
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    complete_acquisition_with_errors(&mut state);
+    assert!(!state.acquiring());
+
+    let completed = buffer_text(&render_to_buffer((80, 24), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(completed.contains("Quit"), "{completed}");
+    assert!(!completed.contains("Stop acquiring"), "{completed}");
+    assert!(matches!(
+        view.handle_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            size,
+            &state,
+        ),
+        Some(EnvironmentInput::Quit)
+    ));
+}
+
+#[test]
+fn completed_quit_confirmation_is_visible_at_supported_sizes() {
+    for names in [vec!["dev"], vec!["dev", "stg", "prod"]] {
+        let state = overview_plan_session(&names);
+
+        for size in [(40, 16), (80, 24), (120, 40)] {
+            let terminal_size = Size::new(size.0, size.1);
+            let mut view = EnvironmentView::default();
+            let normal = buffer_text(&render_to_buffer(size, |frame| {
+                view.render(frame, &state);
+            }));
+            assert!(
+                view.handle_key(
+                    KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+                    terminal_size,
+                    &state,
+                )
+                .is_none()
+            );
+
+            let confirmation = buffer_text(&render_to_buffer(size, |frame| {
+                view.render(frame, &state);
+            }));
+            assert!(confirmation.contains("[Enter]"), "{size:?}: {confirmation}");
+            assert!(confirmation.contains("[Esc]"), "{size:?}: {confirmation}");
+            assert!(confirmation.contains("Quit"), "{size:?}: {confirmation}");
+            assert!(!confirmation.contains("q quit"), "{size:?}: {confirmation}");
+            assert!(
+                view.handle_key(
+                    KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+                    terminal_size,
+                    &state,
+                )
+                .is_none()
+            );
+            let cancelled = buffer_text(&render_to_buffer(size, |frame| {
+                view.render(frame, &state);
+            }));
+            assert_eq!(cancelled, normal, "{size:?}");
+        }
+    }
+}
+
+#[test]
+fn acquiring_quit_confirmation_is_visible_without_footer_actions_at_supported_sizes() {
+    for size in [(40, 16), (80, 24), (120, 40)] {
+        let state = partial_session();
+        let terminal_size = Size::new(size.0, size.1);
+        let mut view = EnvironmentView::default();
+        assert!(
+            view.handle_key(
+                KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+                terminal_size,
+                &state,
+            )
+            .is_none()
+        );
+
+        let confirmation = buffer_text(&render_to_buffer(size, |frame| {
+            view.render(frame, &state);
+        }));
+        assert!(
+            confirmation.contains("Stop acquiring"),
+            "{size:?}: {confirmation}"
+        );
+        assert!(!confirmation.contains("q quit"), "{size:?}: {confirmation}");
+        assert!(
+            view.handle_key(
+                KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+                terminal_size,
+                &state,
+            )
+            .is_none()
+        );
+        assert!(!view.confirming_quit);
+    }
+}
+
+#[test]
+fn completed_quit_confirmation_cancel_preserves_overview_state() {
+    let state = overview_plan_session(&["dev", "stg"]);
+    let size = Size::new(80, 24);
+    let mut view = EnvironmentView::default();
+    let _ = render_to_buffer((80, 24), |frame| view.render(frame, &state));
+    view.selection.column = 1;
+    view.focus = EnvironmentPane::Relations;
+    view.maximized = Some(EnvironmentPane::Relations);
+    view.matrix.apply(OverviewInput::SearchStart, 3);
+    for character in "api".chars() {
+        view.matrix.apply(OverviewInput::SearchChar(character), 3);
+    }
+    view.handle_key(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    for _ in 0..4 {
+        view.matrix.apply(OverviewInput::Down, 3);
+    }
+    let overview_before = buffer_text(&render_to_buffer((80, 24), |frame| {
+        view.render(frame, &state);
+    }));
+
+    assert!(
+        view.handle_key(
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            size,
+            &state,
+        )
+        .is_none()
+    );
+    let confirmation = buffer_text(&render_to_buffer((80, 24), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(confirmation.contains("Quit"), "{confirmation}");
+    assert!(!confirmation.contains("q quit"), "{confirmation}");
+    assert!(
+        view.handle_key(
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            size,
+            &state,
+        )
+        .is_none()
+    );
+
+    assert!(!view.confirming_quit);
+    assert_eq!(view.selection.column, 1);
+    assert_eq!(view.focus, EnvironmentPane::Relations);
+    assert_eq!(view.maximized, Some(EnvironmentPane::Relations));
+    assert_eq!(view.matrix.filter(), "api");
+    let overview_after = buffer_text(&render_to_buffer((80, 24), |frame| {
+        view.render(frame, &state);
+    }));
+    assert_eq!(overview_after, overview_before);
+}
+
+#[test]
+fn completed_quit_confirmation_cancel_preserves_raw_review_state() {
+    let state = overview_plan_session(&["dev", "stg"]);
+    let size = Size::new(80, 24);
+    let mut view = EnvironmentView::default();
+    let _ = render_to_buffer((80, 24), |frame| view.render(frame, &state));
+    view.selection.raw = Some(0);
+    view.handle_key(
+        KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    let review_scroll = view.reviews[0].scroll();
+    let raw_before = buffer_text(&render_to_buffer((80, 24), |frame| {
+        view.render(frame, &state);
+    }));
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    let raw_confirmation = buffer_text(&render_to_buffer((80, 24), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(raw_confirmation.contains("Quit"), "{raw_confirmation}");
+    assert!(!raw_confirmation.contains("q quit"), "{raw_confirmation}");
+    view.handle_key(
+        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    assert_eq!(view.selection.raw, Some(0));
+    assert_eq!(view.reviews[0].scroll(), review_scroll);
+    let raw_after = buffer_text(&render_to_buffer((80, 24), |frame| {
+        view.render(frame, &state);
+    }));
+    assert_eq!(raw_after, raw_before);
+    assert!(
+        view.handle_key(
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            size,
+            &state,
+        )
+        .is_none()
+    );
+    assert!(matches!(
+        view.handle_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            size,
+            &state,
+        ),
+        Some(EnvironmentInput::Quit)
+    ));
+}
+
+#[test]
+fn completed_mixed_results_use_normal_quit_confirmation() {
+    let mut state = partial_session();
+    complete_acquisition_with_errors(&mut state);
+    let size = Size::new(120, 40);
+    let mut view = EnvironmentView::default();
+    let _ = render_to_buffer((120, 40), |frame| view.render(frame, &state));
+
+    for (key, focus) in [
+        (KeyCode::Char('1'), EnvironmentPane::Environments),
+        (KeyCode::Char('2'), EnvironmentPane::Matrix),
+        (KeyCode::Char('3'), EnvironmentPane::Relations),
+    ] {
+        view.handle_key(KeyEvent::new(key, KeyModifiers::NONE), size, &state);
+        assert_eq!(view.focus, focus);
+        assert!(
+            view.handle_key(
+                KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+                size,
+                &state,
+            )
+            .is_none()
+        );
+        assert!(view.confirming_quit);
+        assert!(matches!(
+            view.handle_key(
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+                size,
+                &state,
+            ),
+            Some(EnvironmentInput::Quit)
+        ));
+    }
+}
+
+#[test]
+fn q_remains_search_text_in_the_matrix_filter() {
+    let state = overview_plan_session(&["dev"]);
+    let size = Size::new(80, 24);
+    let mut view = EnvironmentView::default();
+    let _ = render_to_buffer((80, 24), |frame| view.render(frame, &state));
+
+    assert!(
+        view.handle_key(
+            KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE),
+            size,
+            &state,
+        )
+        .is_none()
+    );
+    assert!(view.matrix.searching());
+    assert!(
+        view.handle_key(
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            size,
+            &state,
+        )
+        .is_none()
+    );
+    assert!(!view.confirming_quit);
+    view.handle_key(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    assert_eq!(view.matrix.filter(), "q");
 }
 
 #[test]

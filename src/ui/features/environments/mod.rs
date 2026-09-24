@@ -27,8 +27,10 @@ use crate::{
         session::{Action, ReviewSessionState},
     },
     ui::{
+        QuitConfirmationInput,
         features::overview::relations::RelationGraphScroll,
         input::normalize_key,
+        quit_confirmation_key_to_input,
         shell::environments::{self, EnvironmentPane, EnvironmentSelection},
     },
 };
@@ -132,17 +134,34 @@ impl EnvironmentView {
             return Some(EnvironmentInput::Interrupt);
         }
         if self.confirming_quit {
-            return match key.code {
-                KeyCode::Enter => Some(EnvironmentInput::Interrupt),
-                KeyCode::Esc => {
+            if state.acquiring() {
+                return match key.code {
+                    KeyCode::Enter => Some(EnvironmentInput::Interrupt),
+                    KeyCode::Esc => {
+                        self.confirming_quit = false;
+                        None
+                    }
+                    _ => None,
+                };
+            }
+            return match quit_confirmation_key_to_input(key) {
+                QuitConfirmationInput::Confirm => {
+                    self.confirming_quit = false;
+                    Some(EnvironmentInput::Quit)
+                }
+                QuitConfirmationInput::Cancel => {
                     self.confirming_quit = false;
                     None
                 }
-                _ => None,
+                QuitConfirmationInput::Consume => None,
+                QuitConfirmationInput::Forward(key) => {
+                    self.confirming_quit = false;
+                    self.handle_key(key, size, state)
+                }
             };
         }
         if self.dialog.is_some() {
-            return self.handle_dialog_key(key, state);
+            return self.handle_dialog_key(key);
         }
 
         let editing = self.is_editing();
@@ -167,7 +186,7 @@ impl EnvironmentView {
             return result;
         }
         if let Some(index) = self.selection.raw {
-            return self.handle_review_key(key, size, state, state.plans()[index].review()?);
+            return self.handle_review_key(key, size, state.plans()[index].review()?);
         }
 
         if self.active_pane(size.width) == EnvironmentPane::Environments
@@ -515,7 +534,7 @@ impl EnvironmentView {
     ) -> Option<EnvironmentInput> {
         self.notice = None;
         match input {
-            OverviewInput::Quit => self.quit(state),
+            OverviewInput::Quit => self.quit(),
             OverviewInput::Open => self.open_selected_matrix_row(state, matrix_page),
             OverviewInput::ViewPlan => self.open(state, self.selection.column),
             OverviewInput::Copy => Some(EnvironmentInput::Review(
@@ -555,7 +574,6 @@ impl EnvironmentView {
         &mut self,
         key: KeyEvent,
         size: Size,
-        state: &EnvironmentSession,
         review: &ReviewSessionState,
     ) -> Option<EnvironmentInput> {
         let index = self.selection.raw?;
@@ -588,7 +606,7 @@ impl EnvironmentView {
             !review.review().search_query().is_empty(),
         )?;
         match input {
-            PlanReviewInput::Quit => return self.quit(state),
+            PlanReviewInput::Quit => return self.quit(),
             PlanReviewInput::Copy => {
                 return Some(EnvironmentInput::Review(
                     index,
@@ -817,11 +835,7 @@ impl EnvironmentView {
         Some(self.open_at(index, line, notice))
     }
 
-    fn handle_dialog_key(
-        &mut self,
-        key: KeyEvent,
-        state: &EnvironmentSession,
-    ) -> Option<EnvironmentInput> {
+    fn handle_dialog_key(&mut self, key: KeyEvent) -> Option<EnvironmentInput> {
         let is_help = matches!(self.dialog, Some(EnvironmentDialog::Help));
         match key.code {
             KeyCode::Esc | KeyCode::Char('?') => self.dialog = None,
@@ -839,7 +853,7 @@ impl EnvironmentView {
             KeyCode::PageDown => {
                 self.dialog_scroll = self.dialog_scroll.saturating_add(4);
             }
-            KeyCode::Char('q') => return self.quit(state),
+            KeyCode::Char('q') => return self.quit(),
             _ => {}
         }
         None
@@ -855,13 +869,9 @@ impl EnvironmentView {
         self.dialog_scroll = 0;
     }
 
-    fn quit(&mut self, state: &EnvironmentSession) -> Option<EnvironmentInput> {
-        if state.acquiring() {
-            self.confirming_quit = true;
-            None
-        } else {
-            Some(EnvironmentInput::Quit)
-        }
+    const fn quit(&mut self) -> Option<EnvironmentInput> {
+        self.confirming_quit = true;
+        None
     }
 }
 
