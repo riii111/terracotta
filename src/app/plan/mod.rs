@@ -11,6 +11,7 @@ pub(crate) mod comparison;
 pub(crate) mod grouping;
 mod number;
 mod relations;
+mod relations_graph;
 #[expect(
     unused_imports,
     reason = "grouping result types are the app contract for the Overview SBI"
@@ -20,6 +21,14 @@ pub(crate) mod path;
 pub(crate) use relations::{
     ConfigurationRelationStatus, PlanRelations, RelationEndpoint, RelationEvidence, RelationSource,
     RelationUnresolvedReason, StateRelationStatus,
+};
+#[expect(
+    unused_imports,
+    reason = "relation graph types are the app contract for GR02B and the Overview"
+)]
+pub(crate) use relations_graph::{
+    RelationGraph, RelationGraphGroup, RelationGraphLink, RelationGraphLinkKind, RelationNode,
+    RelationNodeId, RelationNodeInput, build_relation_graph,
 };
 
 #[derive(Clone, PartialEq, Eq)]
