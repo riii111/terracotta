@@ -2,19 +2,19 @@
 source: src/ui/features/environments/tests/matrix.rs
 expression: rendered
 ---
-> 0 Overview  1 dev  2 stg ›
-Ready: 3/3
-
-
- Address             > dev      why
-
- Differs across envs
- terraform_data.api  ~          action
-
- Same change across envs
- …orm_data.server[*] ~ 20
-
- Total               ~21
- [ ] env  Enter open  / filter
- e env filter  Space expand all
- ? help  q quit
+terracotta ▸ dev               terraform
+dev Ready ~21
+┌* [2] Differs across envs─────────────┐
+│                                      │
+│                                      │
+│Address             dev        why    │
+│                                      │
+│Differs across envs                   │
+│terraform_data.api  ~          action │
+│                                      │
+│Same change across envs               │
+│…orm_data.server[*] ~ 20              │
+│                                      │
+└──────────────────────────────────────┘
+[/] env | Enter open plan | v full plan
+/ filter | Space expand | ?/q help/quit

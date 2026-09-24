@@ -928,8 +928,8 @@ fn plan_help_sections(
     let mut move_actions = Vec::new();
     if navigation == ReviewNavigation::Environments {
         move_actions.push(help_dialog::HelpAction::new(
-            "Tab / Shift-Tab",
-            "next / previous environment",
+            "[ / ]",
+            "previous / next environment",
         ));
     }
     move_actions.extend([
@@ -4489,7 +4489,7 @@ End of synthetic plan body."#;
         }
 
         #[test]
-        fn environment_help_shows_tab_navigation_at_supported_widths() {
+        fn environment_help_shows_bracket_navigation_at_supported_widths() {
             let sections = plan_help_sections(&review(), ReviewNavigation::Environments, false);
             for size in [(40, 16), (40, 24), (80, 24), (120, 40), (160, 60)] {
                 let text = buffer_text(&render_to_buffer(size, |frame| {
@@ -4500,8 +4500,7 @@ End of synthetic plan body."#;
                     .filter(|character| !character.is_whitespace())
                     .collect::<String>();
 
-                assert!(compact.contains("Tab"), "{size:?}: {text}");
-                assert!(compact.contains("Shift-Tab"), "{size:?}: {text}");
+                assert!(compact.contains("[/]"), "{size:?}: {text}");
                 assert!(compact.contains("next"), "{size:?}: {text}");
                 assert!(compact.contains("previous"), "{size:?}: {text}");
                 assert!(compact.contains("environment"), "{size:?}: {text}");

@@ -219,6 +219,48 @@ def wait_parts(markers, name, timeout=20):
     wait_screen(lambda current: all(marker in current for marker in markers), name, markers, timeout)
 
 
+def wait_environment(name, status, timeout=20):
+    def matches(current):
+        lines = current.splitlines()
+        for index, line in enumerate(lines):
+            if ("[x]" in line or "[ ]" in line) and name in line:
+                if index + 1 < len(lines):
+                    status_line = lines[index + 1].split("││", 1)[0]
+                    if status in status_line:
+                        return True
+            if not ("[x]" in line or "[ ]" in line):
+                for part in line.split("│"):
+                    if name in part and status in part:
+                        return True
+        return False
+
+    if matches(screen.text()):
+        observed.append(f"{name}_{status.lower()}")
+    else:
+        wait_screen(matches, f"{name} {status}", f"{name} {status}", timeout)
+
+
+def wait_sidebar_statuses(statuses, timeout=20):
+    expected = list(statuses)
+
+    def matches(current):
+        lines = current.splitlines()
+        actual = [
+            lines[index + 1].split("││", 1)[0].strip("│ ")
+            for index, line in enumerate(lines[:-1])
+            if "[x]" in line or "[ ]" in line
+        ]
+        return all(
+            sum(status in line for line in actual) >= expected.count(status)
+            for status in set(expected)
+        )
+
+    if matches(screen.text()):
+        observed.append("sidebar_statuses")
+    else:
+        wait_screen(matches, "sidebar_statuses", expected, timeout)
+
+
 def wait_file(path, name, timeout=20):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -245,7 +287,7 @@ def wait_exit(timeout=20):
             return drain_after_exit(status)
         read_available()
     raise RuntimeError(
-        f"child did not exit; head={bytes(output)[:4000]!r}; tail={bytes(output)[-1200:]!r}"
+        f"child did not exit; screen={screen.text()!r}; observed={observed!r}; head={bytes(output)[:4000]!r}; tail={bytes(output)[-1200:]!r}"
     )
 
 
@@ -326,25 +368,28 @@ try:
         if scenario == "env_child_interrupt":
             exit_code = wait_exit()
         elif scenario in ("env_partial", "env_cancel"):
-            wait_parts(["Ready: 1/2", "Running", "z-slow"], "partial_results")
-            send_key(b"\r")
+            wait_environment("a-ready", "Ready")
+            wait_environment("z-slow", "Running")
+            send_key(b"v")
             wait_new("terraform_data.api", "ready_review_while_running")
-            send_key(b"a")
-            send_key(b"\x1b")
-            wait_new("0 Overview", "back_to_environments")
+            send_key(b"0")
+            wait_new("a-ready", "back_to_environments")
             if scenario == "env_cancel":
                 wait_file(os.environ["TERRACOTTA_FAKE_PID_PATH"], "active_process")
                 send_key(b"q")
                 wait_new("Stop acquiring", "cancel_confirmation")
                 send_key(b"\x1b")
-                wait_new("0 Overview", "continue_acquisition")
+                wait_new("a-ready Ready", "acquisition_continues_after_cancel")
+                with open(os.environ["TERRACOTTA_FAKE_PID_PATH"]) as pid_file:
+                    active_pid = int(pid_file.read().strip())
+                os.kill(active_pid, 0)
                 send_key(b"q")
-                wait_new("Stop acquiring", "cancel_again")
+                wait_new("Stop acquiring", "cancel_confirmation_reopened")
                 send_key(b"\r")
                 exit_code = wait_exit()
             else:
                 open(os.path.join(root, "z-slow/release-plan"), "w").close()
-                wait_new("Ready: 2/2", "all_ready")
+                wait_environment("z-slow", "Ready")
                 send_key(b"q")
                 exit_code = wait_exit()
         elif scenario == "env_example":
@@ -378,12 +423,20 @@ try:
             send_key(b"q")
             exit_code = wait_exit()
         elif scenario == "env_default_matrix":
-            wait_parts(["Ready: 3/3", "terraform_data.server[*]"], "default_matrix")
+            for name in ("a-dev", "b-stg", "c-prod"):
+                wait_environment(name, "Ready")
+            observe_current_or_wait("terraform_data.server[*]", "default_matrix")
             observed.append("default_matrix")
             send_key(b"q")
             exit_code = wait_exit()
         elif scenario == "env_matrix":
-            wait_parts(["Ready: 3/3", "~ 200"], "matrix_ready")
+            for name in ("a-dev", "b-stg", "c-prod"):
+                wait_environment(name, "Ready")
+                if name != "c-prod":
+                    send_key(b"]")
+            send_key(b"[")
+            send_key(b"[")
+            send_key(b"2")
             send_key(b"/")
             wait_new("Filter:", "matrix_filter")
             send_text("[198]")
@@ -396,17 +449,16 @@ try:
                 ["terraform_data.server[0]", "Esc overview"],
                 "matrix_full_plan",
             )
-            send_key(b"3")
+            send_key(b"]")
             wait_new("c-prod", "matrix_digit_environment")
             send_key(b"\x1b")
-            wait_parts(["Filter: /[198]", "Total", "~200"], "restored_matrix_selection")
+            wait_parts(["Filter: /[198]", "server[198]"], "restored_matrix_selection")
             send_key(b"q")
             exit_code = wait_exit()
         elif scenario == "env_many":
-            wait_new("Ready: 12/12", "many_ready")
             for _ in range(11):
                 send_key(b"]")
-            wait_new("env-11", "twelfth_column")
+            wait_environment("env-11", "Ready")
             send_key(b"v")
             wait_parts(
                 ["terraform_data.api", "env-11", "Esc overview"], "twelfth_environment"
@@ -418,28 +470,45 @@ try:
             send_key(b"q")
             exit_code = wait_exit()
         elif scenario == "env_show_failure":
-            wait_parts(["Ready: 1/2", "Error"], "failed_environment")
+            wait_environment("a-ready", "Ready")
+            wait_environment("b-error", "Error")
             send_key(b"]")
+            send_key(b"\r")
             wait_parts(["show output could not be parsed", "synthetic plan warning"], "warning_and_failure")
+            send_key(b"\x1b")
             send_key(b"q")
             exit_code = wait_exit()
         elif scenario == "env_retry":
-            wait_parts(["Ready: 1/2", "Error"], "failed_environment")
+            wait_environment("a-ready", "Ready")
+            wait_environment("b-error", "Error")
             send_key(b"]")
+            send_key(b"\r")
             wait_new("Missing required variable", "error_diagnostic")
+            send_key(b"\x1b")
+            wait_new("a-ready", "error_dialog_closed")
             send_key(b"r")
-            wait_new("Ready: 2/2", "retry_success")
+            wait_environment("b-error", "Ready")
             send_key(b"q")
             exit_code = wait_exit()
         else:
-            expected = "Ready: 1/2" if scenario in ("env_init_failure", "env_excluded", "env_reinit_failure") else "Ready: 2/2"
-            observe_current_or_wait(expected, "final_environment_results")
+            if scenario in ("env_init_failure", "env_reinit_failure"):
+                wait_environment("a-ready", "Ready")
+                wait_environment("b-other", "Error")
+            elif scenario == "env_excluded":
+                wait_environment("a-ready", "Ready")
+                wait_environment("b-other", "Excluded")
+            elif scenario == "env_detailed":
+                wait_sidebar_statuses(["Ready", "Ready"])
+            else:
+                wait_environment("a-ready", "Ready")
+                wait_environment("b-other", "Ready")
             if scenario in ("env_init_failure", "env_reinit_failure"):
                 send_key(b"]")
                 observe_current_or_wait("Error", "failed_environment")
             if scenario == "env_detailed":
-                send_key(b"\r")
+                send_key(b"c")
                 wait_new("chosen-production", "selected_workspace")
+                send_key(b"\x1b")
             send_key(b"q")
             exit_code = wait_exit()
     elif scenario == "filter_navigation":

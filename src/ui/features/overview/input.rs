@@ -23,7 +23,6 @@ pub(crate) enum OverviewInput {
     SearchEnd,
     SearchConfirm,
     SearchCancel,
-    OpenEnvironmentFilter,
     OpenHelp,
     OpenContext,
     Copy,
@@ -52,7 +51,6 @@ pub(crate) fn key_to_input(
         (KeyCode::Char(' '), KeyModifiers::NONE) => Some(OverviewInput::ToggleExpand),
         (KeyCode::Enter, _) => Some(OverviewInput::Open),
         (KeyCode::Char('v'), KeyModifiers::NONE) => Some(OverviewInput::ViewPlan),
-        (KeyCode::Char('e'), KeyModifiers::NONE) => Some(OverviewInput::OpenEnvironmentFilter),
         (KeyCode::Char('y'), KeyModifiers::NONE) => Some(OverviewInput::Copy),
         (KeyCode::Char('?'), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
             Some(OverviewInput::OpenHelp)
@@ -159,26 +157,6 @@ mod tests {
                 false
             ),
             Some(OverviewInput::Back)
-        );
-    }
-
-    #[test]
-    fn e_opens_the_temporary_environment_filter() {
-        assert_eq!(
-            key_to_input(
-                KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE),
-                false,
-                false,
-            ),
-            Some(OverviewInput::OpenEnvironmentFilter)
-        );
-        assert_eq!(
-            key_to_input(
-                KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE),
-                true,
-                false,
-            ),
-            Some(OverviewInput::SearchChar('e'))
         );
     }
 }

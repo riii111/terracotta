@@ -2,27 +2,27 @@
 source: src/ui/features/environments/tests/matrix.rs
 expression: rendered
 ---
-> 0 Overview  1 dev  2 stg  3 prod [PROD]                             Ready: 3/3
-
-
-
-  Address                      > dev         stg             why
-
-  Differs across envs
-  terraform_data.api           ~           +/-               action
-
-  Same change across envs
-  [+] terraform_data.server[*] ~ 20        ~ 200
-
-  Total                        ~21         ~200 1 replace
-  blank: absent   .: unchanged   ?: plan unavailable
-
-
-
-
-
-
-
-
-  [ ] environment | Enter open | / filter | e environments | Space expand all
-  ? help | q quit
+terracotta ▸ dev                                                       terraform
+dev Ready ~21  │  stg Ready ~200 1 replace  │  prod Ready ~20 -1
+┌* [2] Differs across envs─────────────────────────────────────────────────────┐
+│                                                                              │
+│                                                                              │
+│Address                      dev         stg         prod         why         │
+│                                                                              │
+│Differs across envs                                                           │
+│terraform_data.api           ~           +/-         -            action      │
+│                                                                              │
+│Same change across envs                                                       │
+│[+] terraform_data.server[*] ~ 20        ~ 200       ~ 20                     │
+│                                                                              │
+│blank: absent   .: unchanged   ?: plan unavailable                            │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+[/] env | Enter open plan | v full plan | / filter | Space expand all | ? help
+q quit | 2 focus | f maximize

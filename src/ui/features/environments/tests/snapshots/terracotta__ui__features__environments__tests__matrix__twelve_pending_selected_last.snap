@@ -2,27 +2,27 @@
 source: src/ui/features/environments/tests/matrix.rs
 expression: "text(&mut view, &state, (80, 24))"
 ---
-> 0 Overview  ‹  7 env-06  8 env-07  9 env-08  10 env-09  11 env-10  12 env-11
-Ready: 0/12   Compared: none   env-00: Pending   env-01: Pending   env-02:
-Pending   env-03: Pending   env-04: Pending   env-05: Pending   env-06: Pending
- env-07: Pending   env-08: Pending   env-09: Pending   env-10: Pending   env-11:
-Pending
-
-
-
-  Address       env-08      env-09      env-10    > env-11     why
-
-  Waiting for environment plans.
-
-  Total       Pending     Pending     Pending     Pending
-  blank: absent   .: unchanged   ?: plan unavailable
-
-
-
-
-
-
-
-
-
-  [ ] environment | Enter open | / filter | e environments | ? help | q quit
+terracotta ▸ env-11                                                    terraform
+env-11 Pending
+┌* [2] Differs across envs─────────────────────────────────────────────────────┐
+│                                                                              │
+│                                                                              │
+│Address     env-08      env-09      env-10      env-11       why              │
+│                                                                              │
+│Waiting for environment plans.                                                │
+│                                                                              │
+│blank: absent   .: unchanged   ?: plan unavailable                            │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+[/] env | Enter open plan | v full plan | / filter | ? help | q quit | 2 focus
+f maximize

@@ -17,9 +17,7 @@ pub(crate) fn body_style() -> Style {
 }
 
 pub(crate) fn overview_background_style() -> Style {
-    Style::default()
-        .fg(Color::Rgb(0xde, 0xd8, 0xd1))
-        .bg(Color::Reset)
+    Style::default().fg(Color::Reset).bg(Color::Reset)
 }
 
 pub(crate) fn overview_text_style() -> Style {
@@ -27,118 +25,82 @@ pub(crate) fn overview_text_style() -> Style {
 }
 
 pub(crate) fn overview_muted_style() -> Style {
-    Style::default()
-        .fg(Color::Rgb(0xb8, 0xb5, 0xae))
-        .bg(Color::Reset)
+    Style::default().fg(Color::DarkGray).bg(Color::Reset)
 }
 
 pub(crate) fn overview_accent_style() -> Style {
-    Style::default()
-        .fg(Color::Rgb(0xef, 0xae, 0x6d))
-        .bg(Color::Reset)
+    Style::default().fg(Color::Green).bg(Color::Reset)
 }
 
 pub(crate) fn overview_header_style() -> Style {
-    Style::default()
-        .fg(Color::Rgb(0xde, 0xd8, 0xd1))
-        .bg(Color::Reset)
+    Style::default().fg(Color::Reset).bg(Color::Reset)
 }
 
 pub(crate) fn overview_header_muted_style() -> Style {
-    Style::default()
-        .fg(Color::Rgb(0xb8, 0xb5, 0xae))
-        .bg(Color::Reset)
+    overview_muted_style()
 }
 
 pub(crate) fn overview_header_accent_style() -> Style {
-    Style::default()
-        .fg(Color::Rgb(0xef, 0xae, 0x6d))
-        .bg(Color::Reset)
+    overview_accent_style()
 }
 
 pub(crate) fn overview_header_selected_style() -> Style {
     Style::default()
-        .fg(Color::Rgb(0xde, 0xd8, 0xd1))
-        .bg(Color::Rgb(0x50, 0x48, 0x3e))
-}
-
-pub(crate) fn overview_selected_column_style() -> Style {
-    Style::default()
-        .fg(Color::Rgb(0xde, 0xd8, 0xd1))
+        .fg(Color::Reset)
         .bg(Color::Reset)
-}
-
-pub(crate) fn overview_total_style() -> Style {
-    Style::default()
-        .fg(Color::Rgb(0xde, 0xd8, 0xd1))
-        .bg(Color::Reset)
-}
-
-pub(crate) fn overview_total_muted_style() -> Style {
-    Style::default()
-        .fg(Color::Rgb(0xb8, 0xb5, 0xae))
-        .bg(Color::Reset)
+        .add_modifier(Modifier::UNDERLINED)
 }
 
 pub(crate) fn overview_total_add_style() -> Style {
-    success_style().bg(Color::Reset)
-}
-
-pub(crate) fn overview_total_update_style() -> Style {
-    warning_style().bg(Color::Reset)
-}
-
-pub(crate) fn overview_total_destroy_style() -> Style {
-    error_style().bg(Color::Reset)
-}
-
-pub(crate) fn overview_total_replace_style() -> Style {
-    Style::default()
-        .fg(Color::Rgb(0xb4, 0x8e, 0xc8))
-        .bg(Color::Reset)
-        .add_modifier(Modifier::BOLD)
-}
-
-pub(crate) fn overview_warning_style() -> Style {
-    warning_style().bg(Color::Reset)
-}
-
-pub(crate) fn relation_text_style() -> Style {
-    Style::default().fg(Color::Reset).bg(Color::Reset)
-}
-
-pub(crate) fn relation_muted_style() -> Style {
-    Style::default().fg(Color::DarkGray).bg(Color::Reset)
-}
-
-pub(crate) fn relation_section_style() -> Style {
-    Style::default()
-        .fg(Color::Green)
-        .bg(Color::Reset)
-        .add_modifier(Modifier::BOLD)
-}
-
-pub(crate) fn relation_warning_style() -> Style {
-    Style::default()
-        .fg(Color::Yellow)
-        .bg(Color::Reset)
-        .add_modifier(Modifier::BOLD)
-}
-
-pub(crate) fn relation_create_style() -> Style {
     Style::default().fg(Color::Green).bg(Color::Reset)
 }
 
-pub(crate) fn relation_update_style() -> Style {
+pub(crate) fn overview_total_update_style() -> Style {
     Style::default().fg(Color::Yellow).bg(Color::Reset)
 }
 
-pub(crate) fn relation_replace_style() -> Style {
+pub(crate) fn overview_total_destroy_style() -> Style {
+    Style::default().fg(Color::Red).bg(Color::Reset)
+}
+
+pub(crate) fn overview_total_replace_style() -> Style {
     Style::default().fg(Color::Magenta).bg(Color::Reset)
 }
 
+pub(crate) fn overview_warning_style() -> Style {
+    Style::default().fg(Color::Yellow).bg(Color::Reset)
+}
+
+pub(crate) fn relation_text_style() -> Style {
+    overview_background_style()
+}
+
+pub(crate) fn relation_muted_style() -> Style {
+    overview_muted_style()
+}
+
+pub(crate) fn relation_section_style() -> Style {
+    overview_accent_style().add_modifier(Modifier::BOLD)
+}
+
+pub(crate) fn relation_warning_style() -> Style {
+    overview_warning_style().add_modifier(Modifier::BOLD)
+}
+
+pub(crate) fn relation_create_style() -> Style {
+    overview_total_add_style()
+}
+
+pub(crate) fn relation_update_style() -> Style {
+    overview_total_update_style()
+}
+
+pub(crate) fn relation_replace_style() -> Style {
+    overview_total_replace_style()
+}
+
 pub(crate) fn relation_delete_style() -> Style {
-    Style::default().fg(Color::Red).bg(Color::Reset)
+    overview_total_destroy_style()
 }
 
 pub(crate) fn relation_frame_style(focused: bool) -> Style {
@@ -151,12 +113,8 @@ pub(crate) fn relation_frame_style(focused: bool) -> Style {
         .bg(Color::Reset)
 }
 
-pub(crate) fn overview_header_warning_style() -> Style {
-    warning_style().bg(Color::Rgb(0x2c, 0x2d, 0x2b))
-}
-
 pub(crate) fn overview_footer_key_style() -> Style {
-    overview_text_style()
+    Style::default().fg(Color::Yellow).bg(Color::Reset)
 }
 
 pub(crate) fn overview_footer_text_style() -> Style {

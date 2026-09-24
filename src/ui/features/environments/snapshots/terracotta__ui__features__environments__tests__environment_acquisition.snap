@@ -2,27 +2,27 @@
 source: src/ui/features/environments/tests.rs
 expression: text
 ---
-> 0 Overview  1 a-ready  2 b-error  3 c-running  4 d-pending  5 e-hcp
-Ready: 1/5   Compared: a-ready   b-error: Error   c-running: Running
-d-pending: Pending   e-hcp: Excluded: HCP execution
-
-
-  Missing required variable
-  Pass a variable before retrying.
-  Address       a-ready    > b-error     c-running     d-pending    why
-
-  No matching resource changes. v opens the full plan.
-
-  Total       No changes   Error       Running       Pending
-  blank: absent   .: unchanged   ?: plan unavailable
-
-
-
-
-
-
-
-
-
-
-  [ ] environment | Enter open | / filter | e environments | ? help | q quit
+terracotta ▸ b-error                                                   terraform
+b-error Error
+┌* [2] Differs across envs─────────────────────────────────────────────────────┐
+│                                                                              │
+│Missing required variable                                                     │
+│Pass a variable before retrying.                                              │
+│Address     a-ready     b-error     c-running     d-pending      why          │
+│                                                                              │
+│No matching resource changes. v opens the full plan.                          │
+│                                                                              │
+│blank: absent   .: unchanged   ?: plan unavailable                            │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+[/] env | Enter open plan | v full plan | / filter | ? help | q quit | 2 focus
+f maximize

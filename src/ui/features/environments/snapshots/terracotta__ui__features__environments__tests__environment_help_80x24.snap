@@ -2,27 +2,27 @@
 source: src/ui/features/environments/tests.rs
 expression: text
 ---
-> 0 Overview  1 a-ready  2 b-error  3 c-running  4 d-pending  5 e-hcp
-R┌Help────────────────────────────────────────────────────────────────────────┐
-d│ Current: Overview                                                        ▲ │
- │ ↑ / ↓ / j / k        scroll matrix; move through filter candidates       ┃ │
- │ ← / →                select env; move in filter search                   ┃ │
- │ [ / ]                select previous or next environment                 ┃ │
- │ Enter                open the selected environment's full plan; apply    ┃ │
- │                      filter or accept search                             ┃ │
- │ Esc                  return from plan; cancel filter; restore search     ┃ │
- │ 1–9                  open the numbered environment's full plan           ┃ │
- │ Space                expand or collapse groups; toggle a filter          │ │
- │                      candidate                                           │ │
- │ /                    filter addresses; search environment names in       │ │
- │                      filter                                              │ │
- │ e                    filter compared environments                        │ │
- │                                                                          │ │
- │ Other                                                                    │ │
- │ PgUp / PgDn          move a page in the active view or candidate list    │ │
- │ Home / End           go to an endpoint or the start/end of search text   │ │
- │ a                    clear filter search and select all                  │ │
- │ v                    show the full plan from the top                     ▼ │
- │ ?/Esc close                                                                │
- └────────────────────────────────────────────────────────────────────────────┘
-  [ ] environment | Enter open | / filter | e environments | ? help | q quit
+terracotta ▸ a-ready                                                   terraform
+a┌Help────────────────────────────────────────────────────────────────────────┐
+┌│ Current: Multi-environment Overview                                      ▲ │┐
+││ ↑ / ↓ / j / k scroll [2]                                                 ┃ ││
+││ Space         expand or collapse groups in [2]                           ┃ ││
+││ [ / ]         select the previous or next environment                    ┃ ││
+││ 2             focus Differs                                              ┃ ││
+││ f             maximize or restore the focused pane                       ┃ ││
+││ Enter         open the selected environment's full plan                  ┃ ││
+││ /             filter matrix addresses; display only                      ┃ ││
+││ r             retry the selected Error environment                       ┃ ││
+││                                                                          ┃ ││
+││ Other                                                                    ┃ ││
+││ ← / →         select an environment while [2] is focused                 │ ││
+││ v             open the full plan from the top                            │ ││
+││ y             copy the selected environment's plan                       │ ││
+││ c             show environment context                                   │ ││
+││ ?             show or close this help                                    │ ││
+││ q             quit; confirms first while acquiring                       │ ││
+││                                                                          │ ││
+││ Matrix legend                                                            ▼ ││
+└│ ?/Esc close                                                                │┘
+[└────────────────────────────────────────────────────────────────────────────┘
+f maximize

@@ -1,7 +1,6 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::Modifier,
     text::{Line, Span},
     widgets::Paragraph,
 };
@@ -9,15 +8,12 @@ use ratatui::{
 use super::{MatrixCell, MatrixView, view::Row};
 use crate::app::{
     environments::{
-        EnvironmentPlan, EnvironmentSession,
+        EnvironmentSession,
         comparison::{CellState, ComparisonScope, DifferenceReason},
     },
     plan::{PlanAction, ResourceChangeKind},
 };
-use crate::ui::{
-    shell::environments::{name, status},
-    theme,
-};
+use crate::ui::{shell::environments::name, theme};
 
 const WHY_WIDTH: usize = 7;
 const MIN_CELL_WIDTH: usize = 9;
@@ -41,31 +37,15 @@ pub(crate) fn render(
         return;
     }
     let address_width = address_width(area, view);
-    let selected_column = view.selected_column(selected_environment);
     let column_widths = column_widths(state, view);
     let column_budget =
         usize::from(area.width).saturating_sub(address_width + WHY_WIDTH + COLUMN_GAP);
+    let selected_column = view.selected_column(selected_environment);
     let columns = visible_columns(view, &column_widths, column_budget, selected_column);
 
-    render_column_headers(
-        frame,
-        area,
-        state,
-        view,
-        &columns,
-        address_width,
-        selected_column,
-    );
+    render_column_headers(frame, area, state, view, &columns, address_width);
 
-    render_content(
-        frame,
-        area,
-        state,
-        view,
-        &columns,
-        address_width,
-        selected_column,
-    );
+    render_content(frame, area, state, view, &columns, address_width);
 }
 
 fn render_content(
@@ -75,7 +55,6 @@ fn render_content(
     view: &mut MatrixView,
     columns: &[(usize, usize)],
     address_width: usize,
-    selected_column: usize,
 ) {
     let filtered = view.environments.len() != state.plans().len();
     let partial = view
@@ -120,7 +99,7 @@ fn render_content(
                 },
             ));
         }
-        lines.push(row_line(row, view, columns, address_width, selected_column));
+        lines.push(row_line(row, view, columns, address_width));
     }
     if lines.is_empty() {
         let waiting = view
@@ -134,7 +113,6 @@ fn render_content(
         }));
     }
     lines.push(Line::default());
-    lines.extend(total_lines(state, view, columns, address_width));
     let legend = symbol_legend(area.width);
     lines.extend(legend);
     let body = Rect::new(
@@ -161,7 +139,6 @@ fn render_column_headers(
     view: &MatrixView,
     columns: &[(usize, usize)],
     address_width: usize,
-    selected_column: usize,
 ) {
     let mut header = vec![Span::styled("Address", theme::overview_muted_style())];
     header.push(Span::styled(
@@ -171,21 +148,10 @@ fn render_column_headers(
     for &(column, column_width) in columns {
         let environment = view.environments[column];
         let label = name(&state.plans()[environment]);
-        let selected = column == selected_column;
-        let marker = if selected { "> " } else { "  " };
-        let (label, padding) = fit_parts(
-            &label,
-            column_width.saturating_sub(COLUMN_GAP + marker.len()),
-            false,
-        );
-        let style = if selected {
-            theme::overview_header_selected_style().add_modifier(Modifier::BOLD)
-        } else {
-            theme::overview_muted_style()
-        };
+        let (label, padding) = fit_parts(&label, column_width.saturating_sub(COLUMN_GAP), false);
         header.push(Span::styled(
-            format!("{marker}{label}{} ", " ".repeat(padding)),
-            style,
+            format!("{label}{} ", " ".repeat(padding)),
+            theme::overview_muted_style(),
         ));
     }
     header.push(Span::styled(" ", theme::overview_muted_style()));
@@ -226,7 +192,6 @@ fn column_widths(state: &EnvironmentSession, view: &MatrixView) -> Vec<usize> {
         .enumerate()
         .map(|(column, environment)| {
             let plan = &state.plans()[*environment];
-            let total = total_text(plan);
             let widest_cell = view
                 .rows
                 .iter()
@@ -235,7 +200,6 @@ fn column_widths(state: &EnvironmentSession, view: &MatrixView) -> Vec<usize> {
                 .unwrap_or(0);
             (Line::from(name(plan).as_str()).width() + 2)
                 .max(widest_cell)
-                .max(Line::from(total.as_str()).width())
                 .max(MIN_CELL_WIDTH)
                 + COLUMN_GAP * 3
         })
@@ -246,13 +210,13 @@ fn visible_columns(
     view: &mut MatrixView,
     widths: &[usize],
     budget: usize,
-    selected_environment: usize,
+    selected_column: usize,
 ) -> Vec<(usize, usize)> {
     if widths.is_empty() || budget == 0 {
         view.first_column = 0;
         return Vec::new();
     }
-    let selected = selected_environment.min(widths.len() - 1);
+    let selected = selected_column.min(widths.len() - 1);
     let mut first = view.first_column.min(widths.len() - 1);
     if selected < first {
         first = selected;
@@ -300,125 +264,6 @@ fn visible_columns(
         .collect()
 }
 
-fn total_text(plan: &EnvironmentPlan) -> String {
-    plan.review().map_or_else(
-        || status(plan).split(':').next().unwrap_or("?").to_owned(),
-        |review| {
-            let counts = review.review().metadata();
-            let mut parts = Vec::new();
-            if counts.additions() > 0 {
-                parts.push(format!("+{}", counts.additions()));
-            }
-            if counts.changes() > 0 {
-                parts.push(format!("~{}", counts.changes()));
-            }
-            if counts.deletions() > 0 {
-                parts.push(format!("-{}", counts.deletions()));
-            }
-            if counts.replacements() > 0 {
-                parts.push(format!("{} replace", counts.replacements()));
-            }
-            if parts.is_empty() {
-                if counts.nonstandard_changes() > 0 {
-                    "Other changes".to_owned()
-                } else if counts.has_changes() {
-                    "Outputs changed".to_owned()
-                } else {
-                    "No changes".to_owned()
-                }
-            } else {
-                parts.join(" ")
-            }
-        },
-    )
-}
-
-fn total_lines(
-    state: &EnvironmentSession,
-    view: &MatrixView,
-    columns: &[(usize, usize)],
-    address_width: usize,
-) -> [Line<'static>; 1] {
-    let style = theme::overview_total_style();
-    let mut spans = vec![Span::styled(fit("Total", address_width, false), style)];
-    for &(index, column_width) in columns {
-        let environment = view.environments[index];
-        let text = total_text(&state.plans()[environment]);
-        let text_width = column_width.saturating_sub(COLUMN_GAP);
-        spans.extend(total_spans(&state.plans()[environment], &text, text_width));
-        spans.push(Span::styled(" ".repeat(COLUMN_GAP), style));
-    }
-    spans.push(Span::styled(" ".repeat(WHY_WIDTH + 1), style));
-    let table_width = address_width
-        .saturating_add(1)
-        .saturating_add(columns.iter().map(|(_, width)| *width).sum::<usize>())
-        .saturating_add(WHY_WIDTH);
-    let line_width = spans.iter().map(Span::width).sum::<usize>();
-    if line_width < table_width {
-        spans.push(Span::styled(" ".repeat(table_width - line_width), style));
-    }
-    [Line::from(spans)]
-}
-
-fn total_spans(plan: &EnvironmentPlan, text: &str, width: usize) -> Vec<Span<'static>> {
-    let Some(review) = plan.review() else {
-        return vec![Span::styled(
-            fit(text, width, false),
-            theme::overview_total_muted_style(),
-        )];
-    };
-    let counts = review.review().metadata();
-    if counts.additions() == 0
-        && counts.changes() == 0
-        && counts.deletions() == 0
-        && counts.replacements() == 0
-    {
-        return vec![Span::styled(
-            fit(text, width, false),
-            theme::overview_total_muted_style(),
-        )];
-    }
-    let mut spans = Vec::new();
-    let mut used = 0;
-    for (value, style) in [
-        (
-            (counts.additions() > 0).then(|| format!("+{}", counts.additions())),
-            theme::overview_total_add_style(),
-        ),
-        (
-            (counts.changes() > 0).then(|| format!("~{}", counts.changes())),
-            theme::overview_total_update_style(),
-        ),
-        (
-            (counts.deletions() > 0).then(|| format!("-{}", counts.deletions())),
-            theme::overview_total_destroy_style(),
-        ),
-        (
-            (counts.replacements() > 0).then(|| format!("{} replace", counts.replacements())),
-            theme::overview_total_replace_style(),
-        ),
-    ] {
-        let Some(value) = value else { continue };
-        if used >= width {
-            break;
-        }
-        if !spans.is_empty() {
-            spans.push(Span::styled(" ", theme::overview_total_style()));
-            used += 1;
-        }
-        let (value, _) = fit_parts(&value, width.saturating_sub(used), false);
-        used += Line::from(value.as_str()).width();
-        spans.push(Span::styled(value, style));
-    }
-    if used < width {
-        spans.push(Span::styled(
-            " ".repeat(width - used),
-            theme::overview_total_style(),
-        ));
-    }
-    spans
-}
-
 fn symbol_legend(width: u16) -> Vec<Line<'static>> {
     if width < 50 {
         vec![
@@ -441,7 +286,6 @@ fn row_line(
     view: &MatrixView,
     columns: &[(usize, usize)],
     address_width: usize,
-    selected_environment: usize,
 ) -> Line<'static> {
     let expansion = row
         .group
@@ -471,14 +315,9 @@ fn row_line(
             column_width - COLUMN_GAP,
             false,
         );
-        let style = if index == selected_environment {
-            theme::overview_selected_column_style()
-        } else {
-            theme::overview_text_style()
-        };
         spans.push(Span::styled(
             format!("{text}{} ", " ".repeat(padding)),
-            style,
+            cell_style(cell),
         ));
     }
     let reason = match row.difference {
@@ -495,6 +334,25 @@ fn row_line(
         theme::overview_muted_style(),
     ));
     Line::from(spans)
+}
+
+fn cell_style(cell: &MatrixCell) -> ratatui::style::Style {
+    match &cell.state {
+        CellState::Change { kind, .. } => match kind {
+            ResourceChangeKind::Create => theme::overview_total_add_style(),
+            ResourceChangeKind::Update => theme::overview_total_update_style(),
+            ResourceChangeKind::Delete => theme::overview_total_destroy_style(),
+            ResourceChangeKind::Replace => theme::overview_total_replace_style(),
+            ResourceChangeKind::Read
+            | ResourceChangeKind::Move
+            | ResourceChangeKind::Import
+            | ResourceChangeKind::NoOp
+            | ResourceChangeKind::Unknown
+            | ResourceChangeKind::Unsupported => theme::overview_text_style(),
+        },
+        CellState::Unavailable => theme::overview_muted_style(),
+        CellState::Missing | CellState::NoOp => theme::overview_text_style(),
+    }
 }
 
 fn cell_text(cell: &MatrixCell, grouped: bool) -> String {
