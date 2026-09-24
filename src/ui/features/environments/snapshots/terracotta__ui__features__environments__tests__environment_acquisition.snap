@@ -6,7 +6,7 @@ terracotta ▸ b-error                                                   terrafo
 b-error Error
 ┌* [2] Differs across envs · Ready 1/5─────────────────────────────────────────┐
 │                                                                              │
-│Address     b-error     c-running     d-pending     e-hcp        why          │
+│Address     a-ready     b-error     c-running     d-pending      why          │
 │                                                                              │
 │No matching resource changes. v opens the full plan.                          │
 │                                                                              │

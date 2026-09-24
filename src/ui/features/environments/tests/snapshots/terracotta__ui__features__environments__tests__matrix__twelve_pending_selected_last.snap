@@ -6,7 +6,7 @@ terracotta ▸ env-11                                                    terrafo
 env-11 Pending
 ┌* [2] Differs across envs · Ready 0/12────────────────────────────────────────┐
 │                                                                              │
-│Address     env-11       why                                                  │
+│Address     env-08      env-09      env-10      env-11       why              │
 │                                                                              │
 │Waiting for environment plans.                                                │
 │                                                                              │

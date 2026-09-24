@@ -250,12 +250,55 @@ fn column_widths(state: &EnvironmentSession, view: &MatrixView) -> Vec<usize> {
 }
 
 fn visible_columns(view: &mut MatrixView, widths: &[usize], budget: usize) -> Vec<(usize, usize)> {
-    if widths.is_empty() || budget == 0 {
+    if widths.is_empty() {
         view.first_column = 0;
         return Vec::new();
     }
-    let first = view.first_column.min(widths.len() - 1);
+    if budget == 0 {
+        return Vec::new();
+    }
+
+    let mut first = view.first_column.min(widths.len() - 1);
+    if !view.manual_horizontal_scroll
+        && let Some(environment) = view.selected_environment
+        && let Some(selected) = view.selected_column(environment)
+        && !visible_columns_from(first, widths, budget)
+            .iter()
+            .any(|(column, _)| *column == selected)
+    {
+        first = if selected < first {
+            selected
+        } else {
+            first_column_showing_selection(first, selected, widths, budget)
+        };
+    }
     view.first_column = first;
+    visible_columns_from(first, widths, budget)
+}
+
+fn first_column_showing_selection(
+    current: usize,
+    selected: usize,
+    widths: &[usize],
+    budget: usize,
+) -> usize {
+    let mut first = current.saturating_add(1);
+    let mut last = selected;
+    while first < last {
+        let middle = first + last.saturating_sub(first) / 2;
+        if visible_columns_from(middle, widths, budget)
+            .iter()
+            .any(|(column, _)| *column == selected)
+        {
+            last = middle;
+        } else {
+            first = middle.saturating_add(1);
+        }
+    }
+    first
+}
+
+fn visible_columns_from(first: usize, widths: &[usize], budget: usize) -> Vec<(usize, usize)> {
     let mut last = first;
     let mut used = 0;
     while last < widths.len() {
@@ -537,4 +580,86 @@ fn fit_parts(text: &str, width: usize, suffix: bool) -> (String, usize) {
     }
     let padding = width.saturating_sub(Line::from(value.as_str()).width());
     (value, padding)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::features::overview::OverviewInput;
+
+    fn matrix_view(first_column: usize) -> MatrixView {
+        let mut view = MatrixView::default();
+        view.first_column = first_column;
+        view.environments = vec![0, 1, 2];
+        view.selected_environment = Some(2);
+        view
+    }
+
+    #[test]
+    fn selected_right_column_shifts_only_enough_to_keep_the_previous_column() {
+        let mut view = matrix_view(0);
+
+        let columns = visible_columns(&mut view, &[12, 12, 12], 25);
+
+        assert_eq!(view.first_column, 1);
+        assert_eq!(columns, [(1, 12), (2, 12)]);
+    }
+
+    #[test]
+    fn selected_visible_column_keeps_the_current_start() {
+        let mut view = matrix_view(0);
+
+        let columns = visible_columns(&mut view, &[12, 12, 12], 36);
+
+        assert_eq!(view.first_column, 0);
+        assert_eq!(columns, [(0, 12), (1, 12), (2, 12)]);
+    }
+
+    #[test]
+    fn selected_left_column_becomes_the_start_when_it_is_hidden() {
+        let mut view = matrix_view(2);
+        view.selected_environment = Some(0);
+
+        let columns = visible_columns(&mut view, &[12, 12, 12], 25);
+
+        assert_eq!(view.first_column, 0);
+        assert_eq!(columns, [(0, 12), (1, 12)]);
+    }
+
+    #[test]
+    fn excluded_environment_keeps_the_current_start() {
+        let mut view = MatrixView::default();
+        view.first_column = 1;
+        view.environments = vec![0, 1];
+        view.selected_environment = Some(2);
+
+        let columns = visible_columns(&mut view, &[12, 12], 12);
+
+        assert_eq!(view.first_column, 1);
+        assert_eq!(columns, [(1, 12)]);
+    }
+
+    #[test]
+    fn manual_scroll_keeps_its_start_when_the_selected_column_is_hidden() {
+        let mut view = matrix_view(0);
+        view.apply(OverviewInput::Right, 1);
+        view.apply(OverviewInput::Left, 1);
+
+        let columns = visible_columns(&mut view, &[12, 12, 12], 12);
+
+        assert_eq!(view.first_column, 0);
+        assert_eq!(columns, [(0, 12)]);
+    }
+
+    #[test]
+    fn a_narrower_view_keeps_the_selected_column_visible_after_a_wide_render() {
+        let mut view = matrix_view(0);
+
+        let wide = visible_columns(&mut view, &[12, 12, 12], 36);
+        let narrow = visible_columns(&mut view, &[12, 12, 12], 25);
+
+        assert_eq!(wide, [(0, 12), (1, 12), (2, 12)]);
+        assert_eq!(view.first_column, 1);
+        assert_eq!(narrow, [(1, 12), (2, 12)]);
+    }
 }

@@ -75,6 +75,8 @@ pub(crate) struct MatrixView {
     pub(super) rows: Vec<Row>,
     pub(super) vertical: usize,
     pub(super) first_column: usize,
+    pub(super) selected_environment: Option<usize>,
+    pub(super) manual_horizontal_scroll: bool,
     pub(super) expanded: BTreeSet<GroupId>,
     pub(super) same_expanded: bool,
     pub(super) filter: String,
@@ -93,17 +95,13 @@ impl MatrixView {
         selected_environment: usize,
         overview: &EnvironmentOverview,
     ) {
+        if self.selected_environment != Some(selected_environment) {
+            self.selected_environment = Some(selected_environment);
+            self.manual_horizontal_scroll = false;
+        }
         if self.revision != Some(state.revision()) || self.environments != environments {
-            let environment_selection_changed = self.environments != environments;
             self.overview = Some(overview.clone());
             self.environments = environments.to_vec();
-            if environment_selection_changed {
-                if self.selected_column(selected_environment).is_some() {
-                    self.reveal_environment(selected_environment);
-                } else {
-                    self.first_column = 0;
-                }
-            }
             self.rebuild();
             self.revision = Some(state.revision());
         }
@@ -204,12 +202,18 @@ impl MatrixView {
             }
             OverviewInput::Top => self.select_index(Some(0)),
             OverviewInput::Bottom => self.select_index(self.rows.len().checked_sub(1)),
-            OverviewInput::Left => self.first_column = self.first_column.saturating_sub(1),
+            OverviewInput::Left => {
+                let first = self.first_column.saturating_sub(1);
+                self.manual_horizontal_scroll |= first != self.first_column;
+                self.first_column = first;
+            }
             OverviewInput::Right => {
-                self.first_column = self
+                let first = self
                     .first_column
                     .saturating_add(1)
                     .min(self.environments.len().saturating_sub(1));
+                self.manual_horizontal_scroll |= first != self.first_column;
+                self.first_column = first;
             }
             OverviewInput::ToggleExpand => self.toggle_selected_expansion(),
             OverviewInput::SearchStart => {
@@ -223,12 +227,6 @@ impl MatrixView {
                 self.rebuild();
             }
             _ => {}
-        }
-    }
-
-    pub(crate) fn reveal_environment(&mut self, environment: usize) {
-        if let Some(column) = self.selected_column(environment) {
-            self.first_column = column;
         }
     }
 

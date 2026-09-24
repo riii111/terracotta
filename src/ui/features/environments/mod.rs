@@ -640,7 +640,6 @@ impl EnvironmentView {
     fn select_environment(&mut self, index: usize) {
         if self.selection.column != index {
             self.selection.column = index;
-            self.matrix.reveal_environment(index);
             self.notice = None;
         }
     }
