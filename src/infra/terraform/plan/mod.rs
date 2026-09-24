@@ -1215,7 +1215,7 @@ mod tests {
     #[ignore = "requires Terraform CLI"]
     fn gets_saved_plan_from_the_basic_terraform_scenario() {
         let setup = Command::new("python3")
-            .args(["tests/support/cli/basic_fixture.py", "setup"])
+            .args(["fixtures/basic/plan.py", "test", "setup"])
             .output()
             .expect("scenario setup should start");
         assert!(
@@ -1240,7 +1240,7 @@ mod tests {
             &mut ignore_phase,
         );
         let cleanup = Command::new("python3")
-            .args(["tests/support/cli/basic_fixture.py", "clean"])
+            .args(["fixtures/basic/plan.py", "test", "clean"])
             .arg(&directory)
             .output()
             .expect("scenario cleanup should start");

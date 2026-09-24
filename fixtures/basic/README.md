@@ -14,6 +14,6 @@ checks that a real `time_sleep` provider plan contains two known repeated-resour
 updates. Run it with either supported CLI:
 
 ```sh
-python3 fixtures/basic/acceptance.py --tool terraform
-python3 fixtures/basic/acceptance.py --tool tofu
+python3 fixtures/basic/plan.py accept --tool terraform
+python3 fixtures/basic/plan.py accept --tool tofu
 ```

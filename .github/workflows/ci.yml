@@ -118,7 +118,7 @@ jobs:
           tofu_wrapper: false
       - run: cargo build --locked --bin terracotta
       - name: Verify single and repeated-resource plans
-        run: python3 fixtures/basic/acceptance.py --tool '${{ matrix.tool }}'
+        run: python3 fixtures/basic/plan.py accept --tool '${{ matrix.tool }}'
       - name: Verify multi-environment CLI retry
         run: python3 fixtures/environments/acceptance.py --binary target/debug/terracotta --tool '${{ matrix.tool }}'
       - name: Verify Terraform-backed Rust integration tests
