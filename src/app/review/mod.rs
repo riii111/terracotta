@@ -11,7 +11,7 @@ use super::{
         ApplyStatus, Diagnostic, ExecutionContext, ExecutionContextValue, ExecutionEvent,
         ExecutionTargetSpec, SensitiveValue,
     },
-    plan::{Plan, PlanResource, ProviderSchemas, ResourceChangeKind},
+    plan::{Plan, PlanRelations, PlanResource, ProviderSchemas, ResourceChangeKind},
 };
 
 #[cfg(test)]
@@ -383,6 +383,7 @@ pub(crate) struct PlanReview {
     document: PlanDocument,
     metadata: PlanMetadata,
     plan: Plan,
+    relations: PlanRelations,
     provider_schemas: Option<ProviderSchemas>,
     diagnostics: Vec<Diagnostic>,
     search_query: String,
@@ -409,6 +410,7 @@ impl PlanReview {
             document,
             metadata,
             plan: Plan::empty(),
+            relations: PlanRelations::not_collected(),
             provider_schemas: None,
             diagnostics,
             search_query: String::new(),
@@ -482,6 +484,12 @@ impl PlanReview {
     }
 
     #[must_use]
+    pub(crate) fn with_relations(mut self, relations: PlanRelations) -> Self {
+        self.relations = relations;
+        self
+    }
+
+    #[must_use]
     pub(crate) fn with_provider_schemas(mut self, schemas: Option<ProviderSchemas>) -> Self {
         self.provider_schemas = schemas;
         self
@@ -514,6 +522,15 @@ impl PlanReview {
     #[must_use]
     pub(crate) const fn plan(&self) -> &Plan {
         &self.plan
+    }
+
+    #[must_use]
+    #[expect(
+        dead_code,
+        reason = "relation evidence is consumed by the planned graph review"
+    )]
+    pub(crate) const fn relations(&self) -> &PlanRelations {
+        &self.relations
     }
 
     #[must_use]

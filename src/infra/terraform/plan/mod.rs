@@ -13,15 +13,18 @@ use std::os::unix::fs::OpenOptionsExt;
 use crate::app::execution::{
     Diagnostic, ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionPhase, Tool,
 };
-use crate::app::review::PlanReview;
+use crate::app::{plan::StateRelationStatus, review::PlanReview};
 use crate::infra::CancellationToken;
 
 use super::{
     command::{
-        ProcessRunner, ProcessStatus, TerraformCommand, TerraformExecutionError, run_passthrough,
+        ProcessOutput as EmptyProcessOutput, ProcessRunner, ProcessStatus, TerraformCommand,
+        TerraformExecutionError, TerraformExecutionErrorKind as ExecutionErrorKind,
+        run_passthrough,
     },
     read_provider_schema_with_arguments,
     show::read_review_with_arguments,
+    state::{StateReadError, read_state_with_arguments},
     workspace::read_workspace_with_arguments,
 };
 
@@ -240,7 +243,7 @@ pub(crate) fn read_saved_plan_review(
         received_at: std::time::Instant::now(),
         kind: ExecutionEventKind::Workspace(workspace.clone()),
     });
-    let (document, metadata, plan) = read_review_with_arguments(
+    let (document, metadata, plan, mut relations, has_prior_state) = read_review_with_arguments(
         tool,
         launch_root,
         global_arguments,
@@ -249,6 +252,27 @@ pub(crate) fn read_saved_plan_review(
         cancellation,
         runner,
     )?;
+    if has_prior_state {
+        relations = match read_state_with_arguments(
+            tool,
+            launch_root,
+            global_arguments,
+            cancellation,
+            runner,
+        ) {
+            Ok(state) => relations.with_state(StateRelationStatus::Available, state),
+            Err(StateReadError::Execution(error)) if error.is_interrupted() => {
+                return Err(error);
+            }
+            Err(_) if cancellation.is_cancelled() => {
+                return Err(cancelled_state_read_error(tool));
+            }
+            Err(_) => relations.with_state(StateRelationStatus::Unavailable, Vec::new()),
+        };
+    }
+    if cancellation.is_cancelled() {
+        return Err(cancelled_state_read_error(tool));
+    }
     let provider_schemas = read_provider_schema_with_arguments(
         tool,
         launch_root,
@@ -267,11 +291,23 @@ pub(crate) fn read_saved_plan_review(
         Vec::new(),
     )
     .with_plan(plan)
+    .with_relations(relations)
     .with_provider_schemas(provider_schemas)
     .with_context(context)
     .with_apply_allowed(apply_entry)
     .with_apply_entry(apply_entry);
     Ok(review)
+}
+
+fn cancelled_state_read_error(tool: Tool) -> TerraformExecutionError {
+    TerraformExecutionError::new_for_tool(
+        tool,
+        ExecutionErrorKind::Interrupted {
+            command: TerraformCommand::StatePull,
+            output: Box::new(EmptyProcessOutput::empty()),
+            interrupt_error: None,
+        },
+    )
 }
 
 fn initialize_environment(
