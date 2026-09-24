@@ -71,6 +71,48 @@ pub(crate) fn overview_warning_style() -> Style {
     Style::default().fg(Color::Yellow).bg(Color::Reset)
 }
 
+pub(crate) fn relation_text_style() -> Style {
+    overview_background_style()
+}
+
+pub(crate) fn relation_muted_style() -> Style {
+    overview_muted_style()
+}
+
+pub(crate) fn relation_section_style() -> Style {
+    overview_accent_style().add_modifier(Modifier::BOLD)
+}
+
+pub(crate) fn relation_warning_style() -> Style {
+    overview_warning_style().add_modifier(Modifier::BOLD)
+}
+
+pub(crate) fn relation_create_style() -> Style {
+    overview_total_add_style()
+}
+
+pub(crate) fn relation_update_style() -> Style {
+    overview_total_update_style()
+}
+
+pub(crate) fn relation_replace_style() -> Style {
+    overview_total_replace_style()
+}
+
+pub(crate) fn relation_delete_style() -> Style {
+    overview_total_destroy_style()
+}
+
+pub(crate) fn relation_frame_style(focused: bool) -> Style {
+    Style::default()
+        .fg(if focused {
+            Color::Cyan
+        } else {
+            Color::DarkGray
+        })
+        .bg(Color::Reset)
+}
+
 pub(crate) fn overview_footer_key_style() -> Style {
     Style::default().fg(Color::Yellow).bg(Color::Reset)
 }

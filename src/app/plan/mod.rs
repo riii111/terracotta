@@ -23,14 +23,8 @@ pub(crate) use relations::{
     RelationUnresolvedReason, StateRelationStatus,
 };
 pub(crate) use relations_graph::{
-    RelationGraph, RelationNodeId, RelationNodeInput, build_relation_graph,
-};
-#[expect(
-    unused_imports,
-    reason = "graph nodes and links are consumed by the GR03 renderer"
-)]
-pub(crate) use relations_graph::{
-    RelationGraphGroup, RelationGraphLink, RelationGraphLinkKind, RelationNode,
+    RelationGraph, RelationGraphGroup, RelationGraphLink, RelationGraphLinkKind, RelationNode,
+    RelationNodeId, RelationNodeInput, build_relation_graph,
 };
 
 #[derive(Clone, PartialEq, Eq)]
