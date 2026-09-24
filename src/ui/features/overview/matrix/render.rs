@@ -1,6 +1,7 @@
 use ratatui::{
     Frame,
     layout::Rect,
+    style::Modifier,
     text::{Line, Span},
     widgets::Paragraph,
 };
@@ -26,7 +27,6 @@ pub(crate) fn render(
     area: Rect,
     state: &EnvironmentSession,
     view: &mut MatrixView,
-    selected_environment: usize,
 ) {
     if area.width < 30 || area.height < 5 {
         frame.render_widget(
@@ -40,11 +40,9 @@ pub(crate) fn render(
     let column_widths = column_widths(state, view);
     let column_budget =
         usize::from(area.width).saturating_sub(address_width + WHY_WIDTH + COLUMN_GAP);
-    let selected_column = view.selected_column(selected_environment);
-    let columns = visible_columns(view, &column_widths, column_budget, selected_column);
+    let columns = visible_columns(view, &column_widths, column_budget);
 
     render_column_headers(frame, area, state, view, &columns, address_width);
-
     render_content(frame, area, state, view, &columns, address_width);
 }
 
@@ -56,50 +54,109 @@ fn render_content(
     columns: &[(usize, usize)],
     address_width: usize,
 ) {
+    let (lines, selected_line) = content_lines(view, state, area.width, columns, address_width);
+    let legend = symbol_legend(area.width);
+    let body = Rect::new(
+        area.x,
+        area.y.saturating_add(2),
+        area.width,
+        area.height
+            .saturating_sub(2)
+            .saturating_sub(u16::try_from(legend.len()).unwrap_or(u16::MAX)),
+    );
+    let body_height = usize::from(body.height);
+    let max_vertical = lines.len().saturating_sub(body_height);
+    view.vertical = view.vertical.min(max_vertical);
+    if let Some(selected_line) = selected_line
+        && body_height > 0
+    {
+        let visible_end = view.vertical.saturating_add(body_height);
+        if selected_line < view.vertical {
+            view.vertical = selected_line;
+        } else if selected_line >= visible_end {
+            view.vertical = selected_line.saturating_add(1).saturating_sub(body_height);
+        }
+    }
+    frame.render_widget(
+        Paragraph::new(lines)
+            .style(theme::overview_text_style())
+            .scroll((u16::try_from(view.vertical).unwrap_or(u16::MAX), 0)),
+        body,
+    );
+    for (index, line) in legend.into_iter().enumerate() {
+        let y = area
+            .bottom()
+            .saturating_sub(u16::try_from(legend_height(area.width)).unwrap_or(u16::MAX))
+            .saturating_add(u16::try_from(index).unwrap_or(u16::MAX));
+        frame.render_widget(Paragraph::new(line), Rect::new(area.x, y, area.width, 1));
+    }
+}
+
+fn content_lines(
+    view: &MatrixView,
+    state: &EnvironmentSession,
+    width: u16,
+    columns: &[(usize, usize)],
+    address_width: usize,
+) -> (Vec<Line<'static>>, Option<usize>) {
     let filtered = view.environments.len() != state.plans().len();
     let partial = view
         .overview
         .as_ref()
         .is_none_or(|overview| !matches!(overview.scope, ComparisonScope::All { .. }));
     let mut lines = Vec::new();
+    let mut selected_line = None;
     let mut section = None;
+    let mut summary_seen = false;
     for row in &view.rows {
-        if !row.child && section != Some(row.difference.is_some()) {
+        let selected = row.selection.as_ref() == view.selected.as_ref();
+        if let Some(summary) = &row.summary {
             if section.is_some() {
                 lines.push(Line::default());
             }
-            section = Some(row.difference.is_some());
-            let title = if filtered && partial {
-                if row.difference.is_some() {
-                    "Differs across selected envs (Ready only)"
+            section = Some(false);
+            summary_seen = true;
+            if selected {
+                selected_line = Some(lines.len());
+            }
+            lines.push(summary_line(summary, selected, view.same_expanded, width));
+            continue;
+        }
+        if row.difference.is_some() && section != Some(true) {
+            if section.is_some() {
+                lines.push(Line::default());
+            }
+            section = Some(true);
+            lines.push(Line::styled(
+                if view.environments.len() == 1 {
+                    "Changes"
                 } else {
-                    "Same change across selected envs (Ready only)"
-                }
+                    "Differs across envs"
+                },
+                theme::overview_accent_style(),
+            ));
+        } else if row.difference.is_none() && !summary_seen && section != Some(false) {
+            if section.is_some() {
+                lines.push(Line::default());
+            }
+            section = Some(false);
+            let title = if view.environments.len() == 1 {
+                "Changes"
+            } else if filtered && partial {
+                "Same change across selected envs (Ready only)"
             } else if filtered {
-                if row.difference.is_some() {
-                    "Differs across selected envs"
-                } else {
-                    "Same change across selected envs"
-                }
-            } else if partial && row.difference.is_some() {
-                "Differs across envs (Ready only)"
+                "Same change across selected envs"
             } else if partial {
                 "Same change across envs (Ready only)"
-            } else if row.difference.is_some() {
-                "Differs across envs"
             } else {
                 "Same change across envs"
             };
-            lines.push(Line::styled(
-                title,
-                if row.difference.is_some() {
-                    theme::overview_accent_style()
-                } else {
-                    theme::overview_text_style()
-                },
-            ));
+            lines.push(Line::styled(title, theme::overview_text_style()));
         }
-        lines.push(row_line(row, view, columns, address_width));
+        if selected {
+            selected_line = Some(lines.len());
+        }
+        lines.push(row_line(row, view, selected, columns, address_width));
     }
     if lines.is_empty() {
         let waiting = view
@@ -112,24 +169,8 @@ fn render_content(
             "No matching resource changes. v opens the full plan."
         }));
     }
-    lines.push(Line::default());
-    let legend = symbol_legend(area.width);
-    lines.extend(legend);
-    let body = Rect::new(
-        area.x,
-        area.y.saturating_add(2),
-        area.width,
-        area.height.saturating_sub(2),
-    );
-    view.vertical = view
-        .vertical
-        .min(lines.len().saturating_sub(usize::from(body.height)));
-    frame.render_widget(
-        Paragraph::new(lines)
-            .style(theme::overview_text_style())
-            .scroll((u16::try_from(view.vertical).unwrap_or(u16::MAX), 0)),
-        body,
-    );
+
+    (lines, selected_line)
 }
 
 fn render_column_headers(
@@ -170,12 +211,13 @@ fn address_width(area: Rect, view: &MatrixView) -> usize {
     let content_width = view
         .rows
         .iter()
+        .filter(|row| row.summary.is_none())
         .map(|row| {
             let expansion = row
                 .group
                 .as_ref()
                 .map_or(if row.child { 2 } else { 0 }, |_| 4);
-            1 + expansion + Line::from(row.address.as_str()).width()
+            2 + expansion + Line::from(row.address.as_str()).width()
         })
         .max()
         .unwrap_or(0)
@@ -195,6 +237,7 @@ fn column_widths(state: &EnvironmentSession, view: &MatrixView) -> Vec<usize> {
             let widest_cell = view
                 .rows
                 .iter()
+                .filter(|row| row.summary.is_none())
                 .map(|row| Line::from(cell_text(&row.cells[column], row.group.is_some())).width())
                 .max()
                 .unwrap_or(0);
@@ -206,21 +249,13 @@ fn column_widths(state: &EnvironmentSession, view: &MatrixView) -> Vec<usize> {
         .collect()
 }
 
-fn visible_columns(
-    view: &mut MatrixView,
-    widths: &[usize],
-    budget: usize,
-    selected_column: usize,
-) -> Vec<(usize, usize)> {
+fn visible_columns(view: &mut MatrixView, widths: &[usize], budget: usize) -> Vec<(usize, usize)> {
     if widths.is_empty() || budget == 0 {
         view.first_column = 0;
         return Vec::new();
     }
-    let selected = selected_column.min(widths.len() - 1);
-    let mut first = view.first_column.min(widths.len() - 1);
-    if selected < first {
-        first = selected;
-    }
+    let first = view.first_column.min(widths.len() - 1);
+    view.first_column = first;
     let mut last = first;
     let mut used = 0;
     while last < widths.len() {
@@ -238,20 +273,6 @@ fn visible_columns(
             break;
         }
     }
-    if selected >= last {
-        first = selected;
-        used = widths[selected].min(budget);
-        while first > 0 && widths[first - 1] <= budget.saturating_sub(used) {
-            first -= 1;
-            used += widths[first];
-        }
-        last = selected + 1;
-        while last < widths.len() && widths[last] <= budget.saturating_sub(used) {
-            used += widths[last];
-            last += 1;
-        }
-    }
-    view.first_column = first;
     (first..last)
         .map(|index| {
             let width = if index == first {
@@ -281,9 +302,14 @@ fn symbol_legend(width: u16) -> Vec<Line<'static>> {
     }
 }
 
+fn legend_height(width: u16) -> usize {
+    symbol_legend(width).len()
+}
+
 fn row_line(
     row: &Row,
     view: &MatrixView,
+    selected: bool,
     columns: &[(usize, usize)],
     address_width: usize,
 ) -> Line<'static> {
@@ -297,22 +323,30 @@ fn row_line(
                 "[+] "
             }
         });
-    let mut spans = vec![Span::styled(
-        format!(
-            "{} ",
-            fit(
-                &format!("{expansion}{}", row.address),
-                address_width.saturating_sub(1),
-                true
-            )
+    let address_budget = address_width.saturating_sub(2 + expansion.len());
+    let (address, address_padding) = fit_parts(&row.address, address_budget, true);
+    let mut spans = vec![
+        Span::styled(
+            if selected { ">" } else { " " },
+            theme::overview_text_style(),
         ),
-        theme::overview_text_style(),
-    )];
+        Span::raw(" "),
+        Span::styled(expansion.to_owned(), theme::overview_text_style()),
+        Span::styled(
+            address,
+            if selected {
+                theme::overview_text_style().add_modifier(Modifier::UNDERLINED)
+            } else {
+                theme::overview_text_style()
+            },
+        ),
+        Span::raw(" ".repeat(address_padding)),
+    ];
     for &(index, column_width) in columns {
         let cell = &row.cells[index];
         let (text, padding) = fit_parts(
             &cell_text(cell, row.group.is_some()),
-            column_width - COLUMN_GAP,
+            column_width.saturating_sub(COLUMN_GAP),
             false,
         );
         spans.push(Span::styled(
@@ -334,6 +368,95 @@ fn row_line(
         theme::overview_muted_style(),
     ));
     Line::from(spans)
+}
+
+fn summary_line(
+    summary: &super::view::SameChangeSummary,
+    selected: bool,
+    expanded: bool,
+    width: u16,
+) -> Line<'static> {
+    let label = if width < 64 {
+        format!("Same: {} changes", summary.rows)
+    } else {
+        format!("Same change across envs: {} changes", summary.rows)
+    };
+    let mut spans = vec![
+        Span::styled(
+            if selected { ">" } else { " " },
+            theme::overview_text_style(),
+        ),
+        Span::raw(" "),
+        Span::styled(label, theme::overview_text_style()),
+    ];
+    push_count(
+        &mut spans,
+        summary.actions.creates,
+        "+",
+        theme::overview_total_add_style(),
+    );
+    push_count(
+        &mut spans,
+        summary.actions.updates,
+        "~",
+        theme::overview_total_update_style(),
+    );
+    push_count(
+        &mut spans,
+        summary.actions.deletes,
+        "-",
+        theme::overview_total_destroy_style(),
+    );
+    if summary.actions.replacements > 0 {
+        spans.push(Span::styled(
+            format!(" {} replace", summary.actions.replacements),
+            theme::overview_total_replace_style(),
+        ));
+    }
+    push_count(
+        &mut spans,
+        summary.actions.reads,
+        "read",
+        theme::overview_muted_style(),
+    );
+    push_count(
+        &mut spans,
+        summary.actions.moves,
+        "move",
+        theme::overview_muted_style(),
+    );
+    push_count(
+        &mut spans,
+        summary.actions.imports,
+        "import",
+        theme::overview_muted_style(),
+    );
+    push_count(
+        &mut spans,
+        summary.actions.unknown,
+        "?",
+        theme::overview_warning_style(),
+    );
+    spans.push(Span::styled(
+        if expanded {
+            "  Space collapse"
+        } else {
+            "  Space expand"
+        },
+        theme::overview_muted_style(),
+    ));
+    Line::from(spans)
+}
+
+fn push_count(
+    spans: &mut Vec<Span<'static>>,
+    count: usize,
+    label: &str,
+    style: ratatui::style::Style,
+) {
+    if count > 0 {
+        spans.push(Span::styled(format!(" {label}{count}"), style));
+    }
 }
 
 fn cell_style(cell: &MatrixCell) -> ratatui::style::Style {

@@ -10,6 +10,8 @@ pub(crate) enum OverviewInput {
     PageDown,
     Top,
     Bottom,
+    Left,
+    Right,
     ToggleExpand,
     Open,
     ViewPlan,
@@ -79,6 +81,8 @@ const fn navigation_key_to_input(key: KeyEvent) -> Option<OverviewInput> {
         (KeyCode::PageDown, _) => Some(OverviewInput::PageDown),
         (KeyCode::Home, _) => Some(OverviewInput::Top),
         (KeyCode::End, _) => Some(OverviewInput::Bottom),
+        (KeyCode::Left, _) => Some(OverviewInput::Left),
+        (KeyCode::Right, _) => Some(OverviewInput::Right),
         _ => None,
     }
 }
