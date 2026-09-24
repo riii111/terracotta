@@ -13,7 +13,8 @@ use crate::app::{
 use crate::infra::CancellationToken;
 
 use super::address::{
-    AddressIndex, format_resource_address, parse_module_address, parse_resource_address,
+    AddressIndex, ModuleAddressSegment, ResourceAddress, format_resource_address,
+    parse_module_address, parse_resource_address,
 };
 use super::command::{
     ProcessRunner, ProcessStatus, TerraformCommand, TerraformExecutionError, interrupted_error,
@@ -90,6 +91,13 @@ fn parse_state(input: &[u8]) -> StateParseResult<Vec<RelationEvidence>> {
         }
         let resource_type = required_string(resource, "type")?;
         let name = required_string(resource, "name")?;
+        let block_key = format_resource_address(
+            &unindexed_module_path(&module),
+            mode,
+            resource_type,
+            name,
+            None,
+        );
         let state_instances = resource
             .get("instances")
             .and_then(Value::as_array)
@@ -109,7 +117,9 @@ fn parse_state(input: &[u8]) -> StateParseResult<Vec<RelationEvidence>> {
                 format_resource_address(&module, mode, resource_type, name, index.as_ref());
             instances.push(StateInstance {
                 address,
-                block: format_resource_address(&module, mode, resource_type, name, None),
+                block_key: block_key.clone(),
+                modules: module.clone(),
+                index,
                 dependencies,
             });
         }
@@ -142,8 +152,41 @@ fn parse_dependencies(instance: &Map<String, Value>) -> StateParseResult<Vec<Str
 
 struct StateInstance {
     address: String,
-    block: String,
+    block_key: String,
+    modules: Vec<super::address::ModuleAddressSegment>,
+    index: Option<AddressIndex>,
     dependencies: Vec<String>,
+}
+
+fn unindexed_module_path(modules: &[ModuleAddressSegment]) -> Vec<ModuleAddressSegment> {
+    modules
+        .iter()
+        .map(|module| ModuleAddressSegment {
+            name: module.name.clone(),
+            index: None,
+        })
+        .collect()
+}
+
+fn dependency_block_key(address: &ResourceAddress) -> String {
+    format_resource_address(
+        &unindexed_module_path(&address.modules),
+        &address.mode,
+        &address.resource_type,
+        &address.name,
+        None,
+    )
+}
+
+fn module_path_matches(
+    candidate: &[ModuleAddressSegment],
+    selectors: &[ModuleAddressSegment],
+) -> bool {
+    candidate.len() == selectors.len()
+        && selectors.iter().zip(candidate).all(|(selector, actual)| {
+            selector.name == actual.name
+                && (selector.index.is_none() || selector.index == actual.index)
+        })
 }
 
 fn relations_for_state(instances: &[StateInstance]) -> Vec<RelationEvidence> {
@@ -154,7 +197,7 @@ fn relations_for_state(instances: &[StateInstance]) -> Vec<RelationEvidence> {
     let mut instances_by_block = BTreeMap::<&str, Vec<&StateInstance>>::new();
     for instance in instances {
         instances_by_block
-            .entry(&instance.block)
+            .entry(&instance.block_key)
             .or_default()
             .push(instance);
     }
@@ -170,7 +213,7 @@ fn relations_for_state(instances: &[StateInstance]) -> Vec<RelationEvidence> {
                 ));
                 continue;
             };
-            if address.index.is_some() {
+            if let Some(index) = address.index.as_ref() {
                 let full = address.full();
                 if addresses.contains(full.as_str()) {
                     relations.push(RelationEvidence::resolved(
@@ -178,25 +221,52 @@ fn relations_for_state(instances: &[StateInstance]) -> Vec<RelationEvidence> {
                         RelationEndpoint::Instance(full),
                         RelationSource::State,
                     ));
-                } else {
-                    relations.push(RelationEvidence::unresolved(
+                    continue;
+                }
+                let block_key = dependency_block_key(&address);
+                let mut targets = instances_by_block
+                    .get(block_key.as_str())
+                    .into_iter()
+                    .flatten()
+                    .filter(|candidate| {
+                        candidate.index.as_ref() == Some(index)
+                            && module_path_matches(&candidate.modules, &address.modules)
+                    });
+                match (targets.next(), targets.next()) {
+                    (Some(target), None) => relations.push(RelationEvidence::resolved(
+                        dependent.clone(),
+                        RelationEndpoint::Instance(target.address.clone()),
+                        RelationSource::State,
+                    )),
+                    (Some(_), Some(_)) => relations.push(RelationEvidence::resolved(
+                        dependent.clone(),
+                        RelationEndpoint::Block(full),
+                        RelationSource::State,
+                    )),
+                    _ => relations.push(RelationEvidence::unresolved(
                         dependent.clone(),
                         RelationSource::State,
                         RelationUnresolvedReason::MissingAddress,
-                    ));
+                    )),
                 }
                 continue;
             }
             let block = address.block();
-            match instances_by_block.get(block.as_str()).map(Vec::as_slice) {
-                Some([target]) if target.address == block => {
+            let block_key = dependency_block_key(&address);
+            let mut targets = instances_by_block
+                .get(block_key.as_str())
+                .into_iter()
+                .flatten()
+                .filter(|candidate| module_path_matches(&candidate.modules, &address.modules));
+            match (targets.next(), targets.next()) {
+                (Some(target), None) if target.address == block => {
                     relations.push(RelationEvidence::resolved(
                         dependent.clone(),
                         RelationEndpoint::Instance(target.address.clone()),
                         RelationSource::State,
                     ));
                 }
-                None | Some([]) => relations.push(RelationEvidence::unresolved(
+                (None, _) => relations.push(RelationEvidence::unresolved(
                     dependent.clone(),
                     RelationSource::State,
                     RelationUnresolvedReason::MissingAddress,
@@ -378,6 +448,33 @@ mod tests {
         }));
         assert!(!format!("{relations:?}").contains("attributes"));
         assert!(!format!("{relations:?}").contains("synthetic-secret"));
+    }
+
+    #[test]
+    fn resolves_state_block_dependencies_with_omitted_repeated_module_indexes() {
+        let state = json!({
+            "resources": [
+                resource(Some("module.child[0]"), "inside", vec![instance(None, json!([]))]),
+                resource(Some("module.child[1]"), "inside", vec![instance(None, json!([]))]),
+                resource(None, "waiter", vec![instance(None, json!([
+                    "module.child.terraform_data.inside"
+                ]))]),
+            ]
+        });
+
+        let relations = parse(state).expect("repeated module block dependency should parse");
+
+        assert!(relations.iter().any(|edge| {
+            edge.dependent.address() == "terraform_data.waiter"
+                && edge.referenced.as_ref().is_some_and(|target| {
+                    target.address() == "module.child.terraform_data.inside"
+                        && !target.is_instance()
+                })
+        }));
+        assert!(!relations.iter().any(|edge| {
+            edge.dependent.address() == "terraform_data.waiter"
+                && edge.unresolved == Some(RelationUnresolvedReason::MissingAddress)
+        }));
     }
 
     #[test]
