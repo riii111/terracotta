@@ -28,6 +28,7 @@ pub(crate) struct OverviewRow {
     pub(crate) display_address: String,
     pub(crate) action: String,
     pub(crate) count: usize,
+    pub(crate) has_unknown: bool,
     pub(crate) node_id: Option<RelationNodeId>,
 }
 
@@ -79,6 +80,7 @@ impl OverviewContent {
                     display_address: group.display_address.clone(),
                     action: action_text(&group.members[0]),
                     count: matching.len(),
+                    has_unknown: group.has_unknown,
                     node_id: node_id.clone(),
                 });
                 if expanded.contains(&group_index) {
@@ -90,6 +92,7 @@ impl OverviewContent {
                         display_address: group.members[member_index].address.clone(),
                         action: action_text(&group.members[member_index]),
                         count: 1,
+                        has_unknown: false,
                         node_id: node_id.clone(),
                     }));
                 }
@@ -102,6 +105,7 @@ impl OverviewContent {
                     display_address: group.members[member_index].address.clone(),
                     action: action_text(&group.members[member_index]),
                     count: 1,
+                    has_unknown: false,
                     node_id: node_id.clone(),
                 }));
             }
@@ -856,6 +860,7 @@ mod tests {
                     display_address: format!("resource.{index}"),
                     action: "~".to_owned(),
                     count: 1,
+                    has_unknown: false,
                     node_id: None,
                 })
                 .collect(),

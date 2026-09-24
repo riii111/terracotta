@@ -4,12 +4,12 @@ expression: bottom_text
 ---
 terracotta ▸ a-ready           terraform
 a┌Help────────────────────────────────┐
-┌│ (state)                          ▲ │┐
-││   recorded in state at review    │ ││
-││   start                          │ ││
-└│ ? unresolved                     │ │┘
-┌│   a relationship could not be    │ │┐
-││   determined                     │ ││
+┌│   start                          ▲ │┐
+││ ? unresolved                     │ ││
+││   a relationship could not be    │ ││
+└│   determined                     │ │┘
+┌│ Grouped links                    │ │┐
+││   may apply to only some members │ ││
 ││ Scope                            │ ││
 ││   configuration references and   │ ││
 ││   recorded dependencies; not     │ ││

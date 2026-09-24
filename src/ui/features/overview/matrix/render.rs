@@ -217,7 +217,12 @@ fn address_width(area: Rect, view: &MatrixView) -> usize {
                 .group
                 .as_ref()
                 .map_or(if row.child { 2 } else { 0 }, |_| 4);
-            2 + expansion + Line::from(row.address.as_str()).width()
+            let unknown_width = if row.has_unknown {
+                Line::from(" [unknown values]").width()
+            } else {
+                0
+            };
+            2 + expansion + Line::from(row.address.as_str()).width() + unknown_width
         })
         .max()
         .unwrap_or(0)
@@ -225,7 +230,21 @@ fn address_width(area: Rect, view: &MatrixView) -> usize {
     let max_width = usize::from(area.width)
         .saturating_sub(WHY_WIDTH + MIN_CELL_WIDTH + COLUMN_GAP * 2)
         .clamp(MIN_ADDRESS_WIDTH, MAX_ADDRESS_WIDTH);
-    content_width.clamp(MIN_ADDRESS_WIDTH, max_width)
+    let address_width = content_width.clamp(MIN_ADDRESS_WIDTH, max_width);
+    let unknown_label_width = view
+        .rows
+        .iter()
+        .filter(|row| row.summary.is_none() && row.has_unknown)
+        .map(|row| {
+            let expansion = row
+                .group
+                .as_ref()
+                .map_or(if row.child { 2 } else { 0 }, |_| 4);
+            2 + expansion + Line::from(" [unknown values]").width()
+        })
+        .max()
+        .unwrap_or(0);
+    address_width.max(unknown_label_width)
 }
 
 fn column_widths(state: &EnvironmentSession, view: &MatrixView) -> Vec<usize> {
@@ -364,7 +383,10 @@ fn row_line(
             }
         });
     let address_budget = address_width.saturating_sub(2 + expansion.len());
-    let (address, address_padding) = fit_parts(&row.address, address_budget, true);
+    let unknown_label = row.has_unknown.then_some("[unknown values]");
+    let label_width = unknown_label.map_or(0, |label| Line::from(Span::raw(label)).width() + 1);
+    let address_text_budget = address_budget.saturating_sub(label_width);
+    let (address, address_padding) = fit_parts(&row.address, address_text_budget, true);
     let mut spans = vec![
         Span::styled(
             if selected { ">" } else { " " },
@@ -382,6 +404,12 @@ fn row_line(
         ),
         Span::raw(" ".repeat(address_padding)),
     ];
+    if let Some(label) = unknown_label {
+        spans.push(Span::styled(
+            format!(" {label}"),
+            theme::overview_muted_style(),
+        ));
+    }
     for &(index, column_width) in columns {
         let cell = &row.cells[index];
         let (text, padding) = fit_parts(
@@ -429,6 +457,12 @@ fn summary_line(
         Span::raw(" "),
         Span::styled(label, theme::overview_text_style()),
     ];
+    if summary.has_unknown {
+        spans.push(Span::styled(
+            " [unknown values]",
+            theme::overview_muted_style(),
+        ));
+    }
     push_count(
         &mut spans,
         summary.actions.creates,
@@ -590,6 +624,45 @@ mod tests {
         view.environments = vec![0, 1, 2];
         view.selected_environment = Some(2);
         view
+    }
+
+    #[test]
+    fn unknown_group_note_is_kept_when_the_address_column_is_narrow() {
+        let row = Row {
+            address: "terraform_data.server[*]".to_owned(),
+            group: None,
+            group_members: Vec::new(),
+            selection: None,
+            child: false,
+            cells: Vec::new(),
+            difference: None,
+            summary: None,
+            has_unknown: true,
+        };
+        let mut view = matrix_view(0);
+        view.rows.push(row);
+        let address_width = address_width(Rect::new(0, 0, 40, 16), &view);
+
+        assert!(address_width >= 19);
+        let line = row_line(&view.rows[0], &view, false, &[], address_width).to_string();
+
+        assert!(line.contains("[unknown values]"), "{line}");
+    }
+
+    #[test]
+    fn collapsed_same_change_summary_keeps_unknown_group_note() {
+        let summary = super::super::view::SameChangeSummary {
+            rows: 1,
+            actions: super::super::view::ChangeCounts {
+                updates: 1,
+                ..Default::default()
+            },
+            has_unknown: true,
+        };
+
+        let line = summary_line(&summary, false, false, 40).to_string();
+
+        assert!(line.contains("[unknown values]"), "{line}");
     }
 
     #[test]

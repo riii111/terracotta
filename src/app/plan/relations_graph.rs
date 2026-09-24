@@ -30,6 +30,7 @@ pub(crate) struct RelationNodeInput {
     pub(crate) change_count: usize,
     pub(crate) breadcrumbs: Vec<String>,
     pub(crate) differs: bool,
+    pub(crate) has_unknown: bool,
 }
 
 impl RelationNodeInput {
@@ -41,6 +42,7 @@ impl RelationNodeInput {
         change_count: usize,
         breadcrumbs: Vec<String>,
         differs: bool,
+        has_unknown: bool,
     ) -> Option<Self> {
         Some(Self {
             id: RelationNodeId::from_addresses(full_addresses)?,
@@ -49,6 +51,7 @@ impl RelationNodeInput {
             change_count,
             breadcrumbs,
             differs,
+            has_unknown,
         })
     }
 }
@@ -75,6 +78,7 @@ pub(crate) struct RelationNode {
     pub(crate) change_count: usize,
     pub(crate) breadcrumbs: Vec<String>,
     pub(crate) differs: bool,
+    pub(crate) has_unknown: bool,
     pub(crate) unresolved: BTreeSet<RelationUnresolvedReason>,
 }
 
@@ -107,6 +111,7 @@ pub(crate) fn build_relation_graph(
                 change_count: input.change_count,
                 breadcrumbs: input.breadcrumbs.clone(),
                 differs: input.differs,
+                has_unknown: input.has_unknown,
                 unresolved: BTreeSet::new(),
             };
             (node.id.clone(), node)
@@ -372,6 +377,7 @@ mod tests {
             addresses.len(),
             Vec::new(),
             false,
+            false,
         )
         .expect("non-empty addresses should create a node")
     }
@@ -423,6 +429,7 @@ mod tests {
             2,
             Vec::new(),
             false,
+            false,
         )
         .expect("addresses should create a node");
 
@@ -437,6 +444,7 @@ mod tests {
                 ResourceChangeKind::Update,
                 0,
                 Vec::new(),
+                false,
                 false,
             )
             .is_none()
@@ -537,6 +545,7 @@ mod tests {
             2,
             vec!["app".to_owned()],
             true,
+            true,
         )
         .expect("aggregate addresses should create a node");
         let aggregate_id = aggregate.id.clone();
@@ -570,6 +579,7 @@ mod tests {
         assert_eq!(aggregate.change_count, 2);
         assert_eq!(aggregate.breadcrumbs, ["app"]);
         assert!(aggregate.differs);
+        assert!(aggregate.has_unknown);
         assert_eq!(
             aggregate.id.addresses(),
             &[
@@ -962,6 +972,7 @@ mod tests {
             1,
             vec!["app".to_owned()],
             true,
+            false,
         )
         .expect("address should create a node");
         let graph = graph(

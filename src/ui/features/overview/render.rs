@@ -454,12 +454,19 @@ fn overview_lines(
         } else {
             theme::overview_text_style()
         };
-        lines.push(Line::from(vec![
+        let mut spans = vec![
             Span::styled(format!("{marker} "), theme::overview_text_style()),
             Span::styled(format!("{action:<6} "), action_style(&row.action)),
             Span::styled(label_prefix, theme::overview_text_style()),
             Span::styled(row.display_address.clone(), address_style),
-        ]));
+        ];
+        if row.has_unknown {
+            spans.push(Span::styled(
+                " [unknown values]",
+                theme::overview_muted_style(),
+            ));
+        }
+        lines.push(Line::from(spans));
     }
     lines
 }
@@ -602,6 +609,10 @@ fn render_overlay(
                             "Space",
                             "expand or collapse only on [+]/[-] group rows",
                         ),
+                        help_dialog::HelpAction::new(
+                            "[unknown values]",
+                            "known changes and unknown paths match; final values may differ",
+                        ),
                         help_dialog::HelpAction::new("v", "show the full plan from the top"),
                     ],
                 ),
@@ -703,11 +714,12 @@ mod tests {
     use crate::{
         app::{
             plan::{
-                ConfigurationRelationStatus, Plan, PlanAction, PlanRelations, PlanSummary,
-                PlanValue, RelationEndpoint, RelationEvidence, RelationGraph, RelationGraphGroup,
-                RelationGraphLink, RelationGraphLinkKind, RelationNode, RelationNodeId,
-                RelationSource, RelationUnresolvedReason, ResourceChange, ResourceChangeKind,
-                ResourceMode, StateRelationStatus,
+                AttributeType, ConfigurationRelationStatus, Plan, PlanAction, PlanRelations,
+                PlanSummary, PlanValue, ProviderSchema, ProviderSchemas, RelationEndpoint,
+                RelationEvidence, RelationGraph, RelationGraphGroup, RelationGraphLink,
+                RelationGraphLinkKind, RelationNode, RelationNodeId, RelationSource,
+                RelationUnresolvedReason, ResourceChange, ResourceChangeKind, ResourceMode,
+                ResourceSchema, StateRelationStatus,
             },
             review::{PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata},
         },
@@ -773,6 +785,45 @@ mod tests {
         })
     }
 
+    fn unknown_review() -> PlanReview {
+        let base = review();
+        let provider = "registry.example/provider".to_owned();
+        let mut plan = base.plan().clone();
+        for change in &mut plan.resource_changes {
+            change.provider = Some(provider.clone());
+            change.before = Some(PlanValue::Object(BTreeMap::from([(
+                "input".to_owned(),
+                PlanValue::String("old".to_owned()),
+            )])));
+            change.after = Some(PlanValue::Object(BTreeMap::from([
+                ("input".to_owned(), PlanValue::String("new".to_owned())),
+                ("output".to_owned(), PlanValue::Null),
+            ])));
+            change.after_unknown = Some(PlanValue::Object(BTreeMap::from([(
+                "output".to_owned(),
+                PlanValue::Bool(true),
+            )])));
+        }
+        base.with_plan(plan)
+            .with_provider_schemas(Some(ProviderSchemas {
+                providers: BTreeMap::from([(
+                    provider,
+                    ProviderSchema {
+                        resources: BTreeMap::from([(
+                            "terraform_data".to_owned(),
+                            ResourceSchema {
+                                attributes: BTreeMap::from([
+                                    ("input".to_owned(), AttributeType::String),
+                                    ("output".to_owned(), AttributeType::String),
+                                ]),
+                                block_types: BTreeMap::new(),
+                            },
+                        )]),
+                    },
+                )]),
+            }))
+    }
+
     fn related_review() -> PlanReview {
         let base = review();
         let mut plan = base.plan().clone();
@@ -822,6 +873,7 @@ mod tests {
             change_count: 1,
             breadcrumbs: Vec::new(),
             differs: false,
+            has_unknown: false,
             unresolved,
         })
         .collect::<Vec<_>>();
@@ -959,6 +1011,19 @@ mod tests {
         let text = buffer_text(&buffer);
         assert!(!text.contains("Space expand"));
         insta::assert_snapshot!(text);
+    }
+
+    #[test]
+    fn unknown_group_note_reaches_changes_and_relation_nodes() {
+        let state = OverviewSessionState::new(unknown_review());
+        let view = OverviewViewState::default();
+        let buffer = render_to_buffer((120, 40), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+
+        let text = buffer_text(&buffer);
+        assert!(text.contains("[unknown values]"), "{text}");
+        assert_eq!(text.matches("[unknown values]").count(), 2, "{text}");
     }
 
     #[test]

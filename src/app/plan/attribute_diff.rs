@@ -67,6 +67,12 @@ impl AttributeValue {
     pub(crate) fn grouping_value(&self) -> Option<GroupingValue> {
         match (&self.kind, self.original.as_ref()) {
             (AttributeValueKind::Absent, None) => Some(GroupingValue::Absent),
+            (AttributeValueKind::Null, Some(PlanValue::Null)) => Some(GroupingValue::Null),
+            (AttributeValueKind::Unknown, _) => self
+                .unknown_marker
+                .as_ref()
+                .and_then(UnknownShape::from_marker)
+                .map(GroupingValue::Unknown),
             (AttributeValueKind::Known, Some(PlanValue::Bool(value))) => {
                 Some(GroupingValue::Bool(*value))
             }
@@ -120,9 +126,37 @@ impl AttributeValue {
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum GroupingValue {
     Absent,
+    Null,
     Bool(bool),
     Number(CanonicalNumber),
     String(String),
+    Unknown(UnknownShape),
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum UnknownShape {
+    Bool(bool),
+    Array(Vec<Self>),
+    Object(std::collections::BTreeMap<String, Self>),
+}
+
+impl UnknownShape {
+    fn from_marker(marker: &PlanValue) -> Option<Self> {
+        match marker {
+            PlanValue::Bool(value) => Some(Self::Bool(*value)),
+            PlanValue::Array(values) => values
+                .iter()
+                .map(Self::from_marker)
+                .collect::<Option<Vec<_>>>()
+                .map(Self::Array),
+            PlanValue::Object(values) => values
+                .iter()
+                .map(|(key, value)| Some((key.clone(), Self::from_marker(value)?)))
+                .collect::<Option<std::collections::BTreeMap<_, _>>>()
+                .map(Self::Object),
+            PlanValue::Null | PlanValue::Number(_) | PlanValue::String(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

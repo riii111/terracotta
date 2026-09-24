@@ -31,13 +31,13 @@ a-r┌Help───────────────────────�
 │  │ + / ~ / -          create / update / delete                                                                  ┃ │  │
 │  │ +/- / -/+          replace (create→delete / delete→create)                                                   ┃ │  │
 │  │ blank              resource absent from this environment                                                     ┃ │  │
-│  │ .                  resource present, with no change                                                          ┃ │  │
-│  │ ?                  plan unavailable; action unknown                                                          ┃ │  │
+│  │ .                  resource present, with no change                                                          │ │  │
+│  │ ?                  plan unavailable; action unknown                                                          │ │  │
+│  │ [unknown values]   known changes and unknown paths match; final values may differ                            │ │  │
 │  │                                                                                                              │ │  │
 │  │ Comparison                                                                                                   │ │  │
 │  │ Same changes       no differences found in Ready plans; unknown values may differ                            │ │  │
 │  │ Excluded           environments remain selectable and are not retried                                        │ │  │
-│  │ Scope              only Ready plans are compared                                                             │ │  │
-│  │ why: missing       resource is present in only some Ready plans                                              ▼ │  │
+│  │ Scope              only Ready plans are compared                                                             ▼ │  │
 └──│ ?/Esc close                                                                                                    │──┘
 v f└────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

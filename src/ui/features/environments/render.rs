@@ -723,6 +723,10 @@ fn matrix_legend_help() -> help_dialog::HelpSection {
             help_dialog::HelpAction::new("blank", "resource absent from this environment"),
             help_dialog::HelpAction::new(".", "resource present, with no change"),
             help_dialog::HelpAction::new("?", "plan unavailable; action unknown"),
+            help_dialog::HelpAction::new(
+                "[unknown values]",
+                "known changes and unknown paths match; final values may differ",
+            ),
         ],
     )
 }
