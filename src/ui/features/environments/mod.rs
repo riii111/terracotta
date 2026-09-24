@@ -442,7 +442,7 @@ impl EnvironmentView {
     }
 
     fn active_pane(&self, width: u16) -> EnvironmentPane {
-        self.maximized.unwrap_or_else(|| {
+        self.maximized_for_width(width).unwrap_or_else(|| {
             if self.focus == EnvironmentPane::Environments && self.sidebar_visible(width) {
                 EnvironmentPane::Environments
             } else {
@@ -453,6 +453,11 @@ impl EnvironmentView {
 
     const fn sidebar_visible(&self, width: u16) -> bool {
         matches!(self.sidebar, SidebarSetting::Open) && width >= 90
+    }
+
+    fn maximized_for_width(&self, width: u16) -> Option<EnvironmentPane> {
+        self.maximized
+            .filter(|pane| *pane != EnvironmentPane::Environments || width >= 90)
     }
 
     fn compared_environments(&self, count: usize) -> Vec<usize> {

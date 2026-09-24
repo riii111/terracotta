@@ -28,8 +28,8 @@ impl EnvironmentView {
             area,
             self.sidebar_width,
             sidebar_visible,
-            self.maximized,
-            !sidebar_visible && self.maximized.is_none(),
+            self.maximized_for_width(size.width),
+            !sidebar_visible && self.maximized_for_width(size.width).is_none(),
             false,
         );
         let content = self.matrix_content_layout(pane_inner(layout.matrix), state);
@@ -49,8 +49,8 @@ impl EnvironmentView {
                 area,
                 self.sidebar_width,
                 sidebar_visible,
-                self.maximized,
-                !sidebar_visible && self.maximized.is_none(),
+                self.maximized_for_width(area.width),
+                !sidebar_visible && self.maximized_for_width(area.width).is_none(),
                 false,
             )
         };
@@ -122,15 +122,17 @@ impl EnvironmentView {
         } else {
             MatrixFooterState::Filtered
         };
+        let focus = self.active_pane(layout.body.width);
         let footer_lines = overview_footer(OverviewFooterContext {
             width: layout.footer.width,
-            focus: self.active_pane(layout.body.width),
+            focus,
             matrix: matrix_state,
             expanded: self.matrix.groups_expanded(),
             selected: state.plans().get(self.selection.column),
             maximized: self.maximized.is_some(),
             sidebar_available: layout.body.width >= 90,
-            resize_guidance: layout.body.height < 3 || layout.matrix.width < 3,
+            resize_guidance: layout.body.height < 3
+                || (focus == environments::EnvironmentPane::Matrix && layout.matrix.width < 3),
         });
         frame.render_widget(
             Paragraph::new(footer_lines).style(theme::overview_text_style()),

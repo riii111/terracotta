@@ -133,7 +133,18 @@ pub(crate) fn sidebar_width(plans: &[EnvironmentPlan]) -> u16 {
         .map(|plan| Line::from(name(plan)).width())
         .max()
         .unwrap_or(0);
-    u16::try_from(longest_name.saturating_add(10).clamp(24, 41)).unwrap_or(41)
+    let production_width = if plans.iter().any(EnvironmentPlan::is_production) {
+        6
+    } else {
+        0
+    };
+    u16::try_from(
+        longest_name
+            .saturating_add(production_width)
+            .saturating_add(4)
+            .clamp(24, 41),
+    )
+    .unwrap_or(41)
 }
 
 pub(crate) fn render_header(

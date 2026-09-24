@@ -738,6 +738,21 @@ fn sidebar_focus_and_maximize_shortcuts_preserve_each_other() {
     let _ = render_to_buffer((120, 40), |frame| view.render(frame, &state));
     press(&mut view, KeyCode::Char('f'));
     assert_eq!(view.maximized, Some(EnvironmentPane::Environments));
+    let maximized = buffer_text(&render_to_buffer((120, 40), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(!maximized.contains("Resize terminal to view pane content"));
+
+    let hidden = buffer_text(&render_to_buffer((89, 40), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(!hidden.contains("[1] Envs"), "{hidden}");
+    assert_eq!(view.maximized, Some(EnvironmentPane::Environments));
+    let restored = buffer_text(&render_to_buffer((90, 40), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(restored.contains("[1] Envs"), "{restored}");
+
     press(&mut view, KeyCode::Char('b'));
     assert_eq!(view.sidebar, SidebarSetting::Open);
     assert_eq!(view.maximized, Some(EnvironmentPane::Environments));
@@ -770,6 +785,33 @@ fn environment_layout_reserves_the_sidebar_and_four_six_right_panes() {
     assert_eq!(layout.relations.height, 30);
 
     assert_eq!(environments::sidebar_width(partial_session().plans()), 24);
+
+    let ordinary_name = "x".repeat(20);
+    let ordinary = EnvironmentSession::new(
+        vec![Environment {
+            tool: Tool::Terraform,
+            availability: EnvironmentAvailability::Available(EnvironmentIdentity {
+                directory: PathBuf::from(format!("/synthetic/{ordinary_name}")),
+                workspace: "default".to_owned(),
+            }),
+        }],
+        false,
+    );
+    assert_eq!(environments::sidebar_width(ordinary.plans()), 24);
+
+    let production_name = format!("prod-{}", "x".repeat(15));
+    let production = EnvironmentSession::new(
+        vec![Environment {
+            tool: Tool::Terraform,
+            availability: EnvironmentAvailability::Available(EnvironmentIdentity {
+                directory: PathBuf::from(format!("/synthetic/{production_name}")),
+                workspace: "default".to_owned(),
+            }),
+        }],
+        false,
+    );
+    assert_eq!(environments::sidebar_width(production.plans()), 30);
+
     let name = "x".repeat(60);
     let state = EnvironmentSession::new(
         vec![Environment {
@@ -782,6 +824,28 @@ fn environment_layout_reserves_the_sidebar_and_four_six_right_panes() {
         false,
     );
     assert_eq!(environments::sidebar_width(state.plans()), 41);
+}
+
+#[test]
+fn pending_production_environment_shows_its_badge_before_the_plan_finishes() {
+    let state = EnvironmentSession::new(
+        vec![Environment {
+            tool: Tool::Terraform,
+            availability: EnvironmentAvailability::Available(EnvironmentIdentity {
+                directory: PathBuf::from("/synthetic/prod"),
+                workspace: "default".to_owned(),
+            }),
+        }],
+        false,
+    );
+    let mut view = EnvironmentView::default();
+
+    let text = buffer_text(&render_to_buffer((120, 40), |frame| {
+        view.render(frame, &state);
+    }));
+
+    assert!(text.contains("prod [PROD]"), "{text}");
+    assert!(text.contains("Pending"), "{text}");
 }
 
 #[test]

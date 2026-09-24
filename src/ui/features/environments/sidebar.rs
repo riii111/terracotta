@@ -121,9 +121,7 @@ fn environment_name_line(
 ) -> Line<'static> {
     let marker = if selected { "> " } else { "  " };
     let checkbox = if compared { "[x]" } else { "[ ]" };
-    let production = plan
-        .review()
-        .is_some_and(|review| review.review().context().is_production() == Some(true));
+    let production = plan.is_production();
     let suffix = if production { " [PROD]" } else { "" };
     let reserved =
         Line::from(marker).width() + Line::from(checkbox).width() + 1 + Line::from(suffix).width();
