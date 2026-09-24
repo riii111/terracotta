@@ -393,6 +393,103 @@ fn relations_focus_scrolls_per_environment_and_ignores_matrix_only_keys() {
 }
 
 #[test]
+fn vim_navigation_uses_the_focused_multi_environment_pane() {
+    let mut state = session(&["development", "staging", "production"]);
+    complete(
+        &mut state,
+        vec![change("terraform_data.alpha", ResourceChangeKind::Update)],
+    );
+    complete(
+        &mut state,
+        vec![change("terraform_data.beta", ResourceChangeKind::Update)],
+    );
+    complete(
+        &mut state,
+        vec![change("terraform_data.gamma", ResourceChangeKind::Update)],
+    );
+
+    let size = Size::new(120, 40);
+    let mut view = EnvironmentView::default();
+    let _ = text(&mut view, &state, (size.width, size.height));
+
+    assert_eq!(view.focus, EnvironmentPane::Environments);
+    let environment_pane = text(&mut view, &state, (size.width, size.height));
+    press_at(&mut view, &mut state, KeyCode::Char('h'), size);
+    press_at(&mut view, &mut state, KeyCode::Char('l'), size);
+    assert_eq!(view.selection.column, 0);
+    assert_eq!(
+        text(&mut view, &state, (size.width, size.height)),
+        environment_pane
+    );
+    press_at(&mut view, &mut state, KeyCode::Char('G'), size);
+    assert_eq!(view.selection.column, 2);
+    press_at(&mut view, &mut state, KeyCode::Char('g'), size);
+    assert_eq!(view.selection.column, 0);
+
+    press_at(&mut view, &mut state, KeyCode::Char('2'), size);
+    press_at(&mut view, &mut state, KeyCode::Char('G'), size);
+    assert!(matches!(
+        view.matrix.relation_selection(),
+        Some((OverviewRowId::Individual(address), None)) if address == "terraform_data.gamma"
+    ));
+    press_at(&mut view, &mut state, KeyCode::Char('g'), size);
+    assert!(matches!(
+        view.matrix.relation_selection(),
+        Some((OverviewRowId::Individual(address), None)) if address == "terraform_data.alpha"
+    ));
+    let matrix_start = text(&mut view, &state, (size.width, size.height));
+    press_at(&mut view, &mut state, KeyCode::Char('l'), size);
+    let matrix_right = text(&mut view, &state, (size.width, size.height));
+    assert_ne!(matrix_right, matrix_start);
+    assert_eq!(view.selection.column, 0);
+    press_at(&mut view, &mut state, KeyCode::Char('h'), size);
+    assert_eq!(
+        text(&mut view, &state, (size.width, size.height)),
+        matrix_start
+    );
+
+    press_at(&mut view, &mut state, KeyCode::Char('3'), size);
+    press_at(&mut view, &mut state, KeyCode::Char('l'), size);
+    assert_eq!(view.relation_scrolls[0].horizontal, 1);
+    press_at(&mut view, &mut state, KeyCode::Char('h'), size);
+    assert_eq!(view.relation_scrolls[0].horizontal, 0);
+    press_at(&mut view, &mut state, KeyCode::Char('G'), size);
+    assert_eq!(view.relation_scrolls[0].vertical, u16::MAX);
+    press_at(&mut view, &mut state, KeyCode::Char('g'), size);
+    assert_eq!(view.relation_scrolls[0].vertical, 0);
+    assert_eq!(view.selection.column, 0);
+}
+
+#[test]
+fn matrix_search_keeps_vim_navigation_aliases_as_query_text() {
+    let mut state = session(&["development", "production"]);
+    complete(
+        &mut state,
+        vec![change(
+            "terraform_data.resource",
+            ResourceChangeKind::Update,
+        )],
+    );
+    complete(
+        &mut state,
+        vec![change(
+            "terraform_data.resource",
+            ResourceChangeKind::Update,
+        )],
+    );
+    let size = Size::new(120, 40);
+    let mut view = EnvironmentView::default();
+    press_at(&mut view, &mut state, KeyCode::Char('2'), size);
+    press_at(&mut view, &mut state, KeyCode::Char('/'), size);
+    for character in ['h', 'l', 'g', 'G'] {
+        press_at(&mut view, &mut state, KeyCode::Char(character), size);
+    }
+    assert_eq!(view.matrix.filter(), "hlgG");
+    press_at(&mut view, &mut state, KeyCode::Enter, size);
+    assert_eq!(view.matrix.filter(), "hlgG");
+}
+
+#[test]
 fn excluded_selected_environment_keeps_its_graph_without_matrix_highlight() {
     let mut state = relation_session();
     let size = Size::new(120, 40);

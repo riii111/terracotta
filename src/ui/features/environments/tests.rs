@@ -297,6 +297,16 @@ fn help_scroll_keys_do_not_reach_the_environment_overview() {
         size,
         &state,
     );
+    for character in ['h', 'l', 'g', 'G'] {
+        view.handle_key(
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+            size,
+            &state,
+        );
+    }
+    assert!(view.dialog.is_some());
+    assert_eq!(view.dialog_scroll, 0);
+    assert_eq!(view.focus, EnvironmentPane::Matrix);
     view.handle_key(
         KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
         size,
@@ -418,6 +428,15 @@ fn ready_review_remains_available_and_quit_requires_confirmation_while_acquiring
         )
         .is_none()
     );
+    assert!(view.confirming_quit);
+    for character in ['h', 'l', 'g', 'G'] {
+        view.handle_key(
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+            size,
+            &state,
+        );
+    }
+    assert!(view.confirming_quit);
     let confirmation = buffer_text(&render_to_buffer((80, 24), |frame| {
         view.render(frame, &state);
     }));

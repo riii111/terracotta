@@ -644,21 +644,25 @@ fn overview_help_sections(
     };
     vec![
         help_dialog::HelpSection::new(current_title, current_actions),
-        other_overview_help(),
+        other_overview_help(sidebar_available),
         matrix_legend_help(),
         comparison_help(),
     ]
 }
 
-fn other_overview_help() -> help_dialog::HelpSection {
+fn other_overview_help(sidebar_available: bool) -> help_dialog::HelpSection {
     help_dialog::HelpSection::new(
         "Other",
         vec![
-            help_dialog::HelpAction::new("← / →", "scroll columns in [2] or [3]"),
+            help_dialog::HelpAction::new("← / → / h / l", "scroll columns in [2] or [3]"),
             help_dialog::HelpAction::new("PageUp / PageDown", "move rows in [2] or scroll [3]"),
             help_dialog::HelpAction::new(
-                "Home / End",
-                "select first/last row in [2] or scroll [3] to an edge",
+                "Home / End / g / G",
+                if sidebar_available {
+                    "select first/last environment in [1] or row in [2]; scroll [3] to an edge"
+                } else {
+                    "select first/last row in [2] or scroll [3] to an edge"
+                },
             ),
             help_dialog::HelpAction::new("v", "open the full plan from the top"),
             help_dialog::HelpAction::new("y", "copy the selected environment's plan"),

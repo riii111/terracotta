@@ -67,6 +67,21 @@ enum EnvironmentDialog {
     Message(String),
 }
 
+fn overview_navigation_alias(key: KeyEvent, pane: EnvironmentPane) -> KeyEvent {
+    let code = match (key.code, key.modifiers) {
+        (KeyCode::Char('h'), KeyModifiers::NONE) if pane != EnvironmentPane::Environments => {
+            KeyCode::Left
+        }
+        (KeyCode::Char('l'), KeyModifiers::NONE) if pane != EnvironmentPane::Environments => {
+            KeyCode::Right
+        }
+        (KeyCode::Char('g'), KeyModifiers::NONE) => KeyCode::Home,
+        (KeyCode::Char('G'), KeyModifiers::NONE) => KeyCode::End,
+        _ => return key,
+    };
+    KeyEvent::new(code, KeyModifiers::NONE)
+}
+
 pub(crate) enum EnvironmentInput {
     Retry(usize),
     Review(usize, Box<Action>),
@@ -135,6 +150,11 @@ impl EnvironmentView {
             && self.matrix.filtered()
             && self.maximized.is_none()
             && key.code == KeyCode::Esc;
+        let key = if !editing && !clearing_filter && self.selection.raw.is_none() {
+            overview_navigation_alias(key, self.active_pane(size.width))
+        } else {
+            key
+        };
         let matrix_page = if !editing && !clearing_filter {
             self.overview_page_size(size, state)
         } else {
@@ -281,6 +301,12 @@ impl EnvironmentView {
                 if self.active_pane(size.width) == EnvironmentPane::Matrix =>
             {
                 return ControlFlow::Continue(());
+            }
+            KeyCode::Char('h' | 'l')
+                if key.modifiers == KeyModifiers::NONE
+                    && self.active_pane(size.width) == EnvironmentPane::Environments =>
+            {
+                return ControlFlow::Break(None);
             }
             KeyCode::Left | KeyCode::Right => {
                 return ControlFlow::Break(None);

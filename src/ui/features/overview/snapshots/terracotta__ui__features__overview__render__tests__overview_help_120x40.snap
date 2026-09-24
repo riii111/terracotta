@@ -10,29 +10,29 @@ Ready  ~2 update  Repeated: 2
 │Other changes: 1 output/import/move or unsupported change(s). Press v for the full plan.                              │
 │  ~ x2   [+] terraform_data.server[*]                                                                                 │
 │                                                                                                                      │
-│                          ┌Help───────────────────────────────────────────────────────────┐                           │
-│                          │ Navigation                                                    │                           │
-│                          │ 2 / 3         focus Changes / Relations                       │                           │
-│                          │ ↑ / ↓ / j / k select a Changes row or scroll Relations        │                           │
-│                          │ ← / →         scroll Changes or Relations horizontally        │                           │
-│                          │ PgUp / PgDn   move one page                                   │                           │
-│                          │ Home / End    go to the top or bottom                         │                           │
-│                          │ f             maximize or restore the focused pane            │                           │
-└──────────────────────────│                                                               │───────────────────────────┘
-┌  [3] Relations · whole en│ Review                                                        │───────────────────────────┐
-│Links unknown             │ Enter         open the selected raw block                     │                           │
-│  ~ terraform_data.server[│ /             filter Changes full addresses                   │                           │
-│                          │ Space         expand or collapse only on [+]/[-] group rows   │                           │
-│                          │ v             show the full plan from the top                 │                           │
-│                          │                                                               │                           │
-│                          │ Actions                                                       │                           │
-│                          │ y             copy the full plan                              │                           │
-│                          │ c             show execution context                          │                           │
-│                          │                                                               │                           │
-│                          │ Exit                                                          │                           │
-│                          │ q             quit                                            │                           │
-│                          │ ?/Esc close                                                   │                           │
-│                          └───────────────────────────────────────────────────────────────┘                           │
+│                        ┌Help────────────────────────────────────────────────────────────────┐                        │
+│                        │ Navigation                                                         │                        │
+│                        │ 2 / 3              focus Changes / Relations                       │                        │
+│                        │ ↑ / ↓ / j / k      select a Changes row or scroll Relations        │                        │
+│                        │ ← / → / h / l      scroll Changes or Relations horizontally        │                        │
+│                        │ PgUp / PgDn        move one page                                   │                        │
+│                        │ Home / End / g / G go to the top or bottom                         │                        │
+│                        │ f                  maximize or restore the focused pane            │                        │
+└────────────────────────│                                                                    │────────────────────────┘
+┌  [3] Relations · whole │ Review                                                             │────────────────────────┐
+│Links unknown           │ Enter              open the selected raw block                     │                        │
+│  ~ terraform_data.serve│ /                  filter Changes full addresses                   │                        │
+│                        │ Space              expand or collapse only on [+]/[-] group rows   │                        │
+│                        │ v                  show the full plan from the top                 │                        │
+│                        │                                                                    │                        │
+│                        │ Actions                                                            │                        │
+│                        │ y                  copy the full plan                              │                        │
+│                        │ c                  show execution context                          │                        │
+│                        │                                                                    │                        │
+│                        │ Exit                                                               │                        │
+│                        │ q                  quit                                            │                        │
+│                        │ ?/Esc close                                                        │                        │
+│                        └────────────────────────────────────────────────────────────────────┘                        │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
