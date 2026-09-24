@@ -64,19 +64,11 @@ pub(crate) fn render(
         };
     }
 
-    let legend = legend_lines(graph);
-    let requested_legend_height = legend
-        .iter()
-        .map(|line| {
-            u16::try_from(
-                Paragraph::new(line.clone())
-                    .wrap(ratatui::widgets::Wrap { trim: false })
-                    .line_count(inner.width),
-            )
-            .unwrap_or(u16::MAX)
-        })
-        .fold(0_u16, u16::saturating_add);
-    let legend_height = requested_legend_height.min(inner.height.saturating_sub(1));
+    let (legend, legend_height) = visible_legend_lines(
+        legend_lines(graph),
+        inner.width,
+        inner.height.saturating_sub(1),
+    );
     let content_height = inner.height.saturating_sub(legend_height);
     let content_area = Rect::new(inner.x, inner.y, inner.width, content_height);
     let legend_area = Rect::new(
@@ -116,6 +108,29 @@ pub(crate) fn render(
         );
     }
     scroll
+}
+
+fn visible_legend_lines(
+    lines: Vec<Line<'static>>,
+    width: u16,
+    available_height: u16,
+) -> (Vec<Line<'static>>, u16) {
+    let mut visible = Vec::new();
+    let mut height = 0_u16;
+    for line in lines {
+        let line_height = u16::try_from(
+            Paragraph::new(line.clone())
+                .wrap(ratatui::widgets::Wrap { trim: false })
+                .line_count(width),
+        )
+        .unwrap_or(u16::MAX);
+        if line_height > available_height.saturating_sub(height) {
+            break;
+        }
+        height = height.saturating_add(line_height);
+        visible.push(line);
+    }
+    (visible, height)
 }
 
 fn legend_lines(graph: &RelationGraph) -> Vec<Line<'static>> {

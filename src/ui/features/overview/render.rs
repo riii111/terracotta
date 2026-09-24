@@ -704,8 +704,10 @@ mod tests {
         app::{
             plan::{
                 ConfigurationRelationStatus, Plan, PlanAction, PlanRelations, PlanSummary,
-                PlanValue, RelationEndpoint, RelationEvidence, RelationSource, ResourceChange,
-                ResourceChangeKind, ResourceMode, StateRelationStatus,
+                PlanValue, RelationEndpoint, RelationEvidence, RelationGraph, RelationGraphGroup,
+                RelationGraphLink, RelationGraphLinkKind, RelationNode, RelationNodeId,
+                RelationSource, RelationUnresolvedReason, ResourceChange, ResourceChangeKind,
+                ResourceMode, StateRelationStatus,
             },
             review::{PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata},
         },
@@ -802,6 +804,60 @@ mod tests {
         .with_relations(relations)
     }
 
+    fn mixed_relation_graph() -> RelationGraph {
+        let nodes = [
+            ("terraform_data.source", BTreeSet::new()),
+            ("terraform_data.config", BTreeSet::new()),
+            ("terraform_data.candidate", BTreeSet::new()),
+            (
+                "terraform_data.unknown",
+                BTreeSet::from([RelationUnresolvedReason::Variable]),
+            ),
+        ]
+        .into_iter()
+        .map(|(address, unresolved)| RelationNode {
+            id: RelationNodeId::from_addresses([address.to_owned()]).unwrap(),
+            display_address: address.to_owned(),
+            operation: ResourceChangeKind::Update,
+            change_count: 1,
+            breadcrumbs: Vec::new(),
+            differs: false,
+            unresolved,
+        })
+        .collect::<Vec<_>>();
+        let link = |from: usize, to: usize, kind, sources: &[RelationSource]| RelationGraphLink {
+            from: nodes[from].id.clone(),
+            to: nodes[to].id.clone(),
+            kind,
+            sources: sources.iter().copied().collect(),
+        };
+        let links = vec![
+            link(
+                0,
+                1,
+                RelationGraphLinkKind::Solid,
+                &[RelationSource::Configuration],
+            ),
+            link(
+                1,
+                2,
+                RelationGraphLinkKind::Dotted,
+                &[RelationSource::Configuration],
+            ),
+            link(2, 3, RelationGraphLinkKind::Solid, &[RelationSource::State]),
+        ];
+        RelationGraph {
+            connected_groups: vec![RelationGraphGroup {
+                nodes: nodes.iter().map(|node| node.id.clone()).collect(),
+                contains_destructive_change: false,
+            }],
+            nodes,
+            links,
+            links_unknown: Vec::new(),
+            no_links_shown: Vec::new(),
+        }
+    }
+
     fn scroll_filtered_row_into_view(
         state: &OverviewSessionState,
         view: &mut OverviewViewState,
@@ -855,6 +911,36 @@ mod tests {
             assert!(!text.contains("q quit"), "{width}x{height}: {text}");
             assert!(!text.contains("Enter open raw"), "{width}x{height}: {text}");
         }
+    }
+
+    #[test]
+    fn narrow_mixed_relations_keep_legend_entries_complete() {
+        let state = OverviewSessionState::new(related_review());
+        let view = OverviewViewState::default();
+        let mut content =
+            OverviewContent::from_review(state.review(), view.filter(), view.expanded());
+        content.relations = Some(mixed_relation_graph());
+        let relations_area = layout(Rect::new(0, 0, 40, 16), &state, &view, &content).relations();
+        let output = render_to_buffer((40, 16), |frame| {
+            relations::render(
+                frame,
+                relations_area,
+                content.relations.as_ref().unwrap(),
+                &RelationGraphView {
+                    title: "whole env",
+                    selected_node: None,
+                    focused: true,
+                    maximized: false,
+                    scroll: relations::RelationGraphScroll::default(),
+                },
+            );
+        });
+        let text = buffer_text(&output);
+
+        assert!(text.contains("A ──> B  B uses A"), "{text}");
+        assert!(text.contains("block-level, may not apply"), "{text}");
+        assert!(text.contains("(state) from state"), "{text}");
+        assert!(!text.contains("? unresolved means"), "{text}");
     }
 
     #[test]
