@@ -343,11 +343,28 @@ fn relations_focus_scrolls_per_environment_and_ignores_matrix_only_keys() {
         .relation_selection()
         .map(|(row_id, child)| (row_id.clone(), child.map(str::to_owned)));
 
+    let initial_vertical = view.relation_scrolls[0].vertical;
+    press_at(&mut view, &mut state, KeyCode::Down, size);
+    let down_scroll = view.relation_scrolls[0].vertical;
+    assert_eq!(down_scroll, initial_vertical.saturating_add(1));
+    press_at(&mut view, &mut state, KeyCode::Char('j'), size);
+    assert_eq!(
+        view.relation_scrolls[0].vertical,
+        down_scroll.saturating_add(1)
+    );
+    press_at(&mut view, &mut state, KeyCode::Up, size);
+    let up_scroll = view.relation_scrolls[0].vertical;
+    assert_eq!(up_scroll, down_scroll);
+    press_at(&mut view, &mut state, KeyCode::Char('k'), size);
+    assert_eq!(view.relation_scrolls[0].vertical, initial_vertical);
     press_at(&mut view, &mut state, KeyCode::Down, size);
     press_at(&mut view, &mut state, KeyCode::Right, size);
     let rendered = text(&mut view, &state, (size.width, size.height));
     assert!(rendered.contains("[3] Relations"));
-    assert!(view.relation_scrolls[0].vertical > 0);
+    assert_eq!(
+        view.relation_scrolls[0].vertical,
+        initial_vertical.saturating_add(1)
+    );
     assert!(view.relation_scrolls[0].horizontal > 0);
     assert_eq!(view.matrix.filter(), "");
     assert_eq!(
@@ -368,7 +385,10 @@ fn relations_focus_scrolls_per_environment_and_ignores_matrix_only_keys() {
     assert!(view.relation_scrolls[1].vertical > 0);
     press_at(&mut view, &mut state, KeyCode::Char('['), size);
     assert_eq!(view.selection.column, 0);
-    assert_eq!(view.relation_scrolls[0].vertical, 1);
+    assert_eq!(
+        view.relation_scrolls[0].vertical,
+        initial_vertical.saturating_add(1)
+    );
     assert_eq!(view.relation_scrolls[0].horizontal, 1);
 }
 

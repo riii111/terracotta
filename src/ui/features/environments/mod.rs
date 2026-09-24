@@ -359,12 +359,13 @@ impl EnvironmentView {
     ) -> ControlFlow<Option<EnvironmentInput>> {
         match key.code {
             KeyCode::Left | KeyCode::Right => self.scroll_relations_horizontally(key.code),
-            KeyCode::Up
-            | KeyCode::Down
-            | KeyCode::PageUp
-            | KeyCode::PageDown
-            | KeyCode::Home
-            | KeyCode::End => self.scroll_relations_vertically(key.code, size),
+            KeyCode::Up | KeyCode::Char('k') => self.scroll_relations_vertically(KeyCode::Up, size),
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.scroll_relations_vertically(KeyCode::Down, size);
+            }
+            KeyCode::PageUp | KeyCode::PageDown | KeyCode::Home | KeyCode::End => {
+                self.scroll_relations_vertically(key.code, size);
+            }
             KeyCode::Enter => return ControlFlow::Break(self.open(state, self.selection.column)),
             KeyCode::Char(' ' | '/') => return ControlFlow::Break(None),
             _ => return ControlFlow::Continue(()),
