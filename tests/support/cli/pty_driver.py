@@ -316,7 +316,11 @@ def send_text(text):
 
 def quit_with_enter():
     send_key(b"q")
-    wait_new("Quit Terracotta?", "quit_confirmation")
+    wait_screen(
+        lambda current: "Quit Terracotta?" in current or "Quit?" in current,
+        "quit_confirmation",
+        "quit confirmation",
+    )
     send_key(b"\r")
     return wait_exit()
 
@@ -390,15 +394,13 @@ try:
             else:
                 open(os.path.join(root, "z-slow/release-plan"), "w").close()
                 wait_environment("z-slow", "Ready")
-                send_key(b"q")
-                exit_code = wait_exit()
+                exit_code = quit_with_enter()
         elif scenario == "env_example":
             wait_parts(["Ready: 2/3", "Error", "~ 20"], "example_comparison")
             send_key(b"]")
             send_key(b"r")
             wait_parts(["Ready: 3/3", "~ 200"], "example_retry")
-            send_key(b"q")
-            exit_code = wait_exit()
+            exit_code = quit_with_enter()
         elif scenario == "env_real":
             wait_environment("dev", "Ready", row_only=True)
             wait_environment("prod", "Running", row_only=True)
@@ -426,8 +428,7 @@ try:
             wait_parts(["terraform_data.api", "prod"], "real_retried_plan_review")
             send_key(b"0")
             wait_new("Address", "real_complete_comparison")
-            send_key(b"q")
-            exit_code = wait_exit()
+            exit_code = quit_with_enter()
         elif scenario == "env_default_matrix":
             for name in ("a-dev", "b-stg", "c-prod"):
                 wait_environment(name, "Ready")
@@ -436,8 +437,7 @@ try:
             send_key(b" ")
             observe_current_or_wait("terraform_data.server[*]", "default_matrix")
             observed.extend(("default_matrix_summary", "default_matrix"))
-            send_key(b"q")
-            exit_code = wait_exit()
+            exit_code = quit_with_enter()
         elif scenario == "env_relations":
             for name in ("a-dev", "b-stg", "c-prod"):
                 wait_environment(name, "Ready")
@@ -452,8 +452,7 @@ try:
             )
             send_key(b"0")
             wait_new("b-stg · whole env", "relations_overview_restored")
-            send_key(b"q")
-            exit_code = wait_exit()
+            exit_code = quit_with_enter()
         elif scenario == "env_matrix":
             for name in ("a-dev", "b-stg", "c-prod"):
                 wait_environment(name, "Ready")
@@ -480,8 +479,7 @@ try:
             wait_new("c-prod", "matrix_digit_environment")
             send_key(b"\x1b")
             wait_parts(["Filter: /[198]", "server[198]"], "restored_matrix_selection")
-            send_key(b"q")
-            exit_code = wait_exit()
+            exit_code = quit_with_enter()
         elif scenario == "env_many":
             for _ in range(11):
                 send_key(b"]")
@@ -494,8 +492,7 @@ try:
             wait_new("env-10", "eleventh_environment")
             send_key(b"0")
             wait_new("blank: absent", "restored_last_column")
-            send_key(b"q")
-            exit_code = wait_exit()
+            exit_code = quit_with_enter()
         elif scenario == "env_show_failure":
             wait_environment("a-ready", "Ready")
             wait_environment("b-error", "Error")
@@ -503,8 +500,7 @@ try:
             send_key(b"\r")
             wait_parts(["show output could not be parsed", "synthetic plan warning"], "warning_and_failure")
             send_key(b"\x1b")
-            send_key(b"q")
-            exit_code = wait_exit()
+            exit_code = quit_with_enter()
         elif scenario == "env_retry":
             wait_environment("a-ready", "Ready")
             wait_environment("b-error", "Error")
@@ -515,8 +511,7 @@ try:
             wait_new("a-ready", "error_dialog_closed")
             send_key(b"r")
             wait_environment("b-error", "Ready")
-            send_key(b"q")
-            exit_code = wait_exit()
+            exit_code = quit_with_enter()
         else:
             if scenario in ("env_init_failure", "env_reinit_failure"):
                 wait_environment("a-ready", "Ready")
@@ -536,8 +531,7 @@ try:
                 send_key(b"c")
                 wait_new("chosen-production", "selected_workspace")
                 send_key(b"\x1b")
-            send_key(b"q")
-            exit_code = wait_exit()
+            exit_code = quit_with_enter()
     elif scenario == "filter_navigation":
         wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
         observe_current_or_wait("3/", "plan_position")

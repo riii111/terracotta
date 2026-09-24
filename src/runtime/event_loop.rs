@@ -168,9 +168,11 @@ pub(crate) fn run_connected(
                         )?
                     };
                     if let Some(action) = action {
-                        if matches!(action, Action::Quit) && !confirmed_quit {
-                            quit_confirmation = true;
-                        } else if let Some(outcome) =
+                        if let Some(action) = action_after_quit_confirmation(
+                            action,
+                            confirmed_quit,
+                            &mut quit_confirmation,
+                        ) && let Some(outcome) =
                             dispatch(&mut state, action, &mut execution_view, &mut effects)
                         {
                             return Ok(outcome);
@@ -195,6 +197,19 @@ pub(crate) fn run_connected(
                 _ => {}
             }
         }
+    }
+}
+
+fn action_after_quit_confirmation(
+    action: Action,
+    confirmed_quit: bool,
+    quit_confirmation: &mut bool,
+) -> Option<Action> {
+    if matches!(&action, Action::Quit) && !confirmed_quit {
+        *quit_confirmation = true;
+        None
+    } else {
+        Some(action)
     }
 }
 
@@ -625,7 +640,13 @@ fn draw_with_quit_confirmation<B: Backend>(
         }
         SessionState::Overview(overview_state) => {
             terminal.draw(|frame| {
-                overview::render(frame, overview_state, review_view.overview(), now);
+                overview::render_with_quit_confirmation(
+                    frame,
+                    overview_state,
+                    review_view.overview(),
+                    now,
+                    quit_confirmation,
+                );
             })?;
         }
         SessionState::ApplyConfirmation(confirmation) => {
@@ -1782,6 +1803,83 @@ mod tests {
     }
 
     #[test]
+    fn overview_quit_is_visible_before_runtime_dispatch() {
+        let now = Instant::now();
+        let mut state = overview_state();
+        session::update(
+            &mut state,
+            Action::CopyCompleted {
+                target: CopyTarget::Plan,
+                result: CopyResult::Written,
+            },
+            now,
+        );
+        let terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+        let mut execution_view = execution::ExecutionViewState::default();
+        let mut review_view = plan_review::PlanReviewViewState::default();
+        let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
+
+        let action = handle_key_event(
+            &terminal,
+            &state,
+            &mut execution_view,
+            &mut review_view,
+            &mut confirmation_view,
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+        )
+        .expect("overview quit input should be handled");
+        assert_eq!(action, Some(Action::Quit));
+
+        let mut quit_confirmation = false;
+        assert_eq!(
+            action_after_quit_confirmation(
+                action.expect("quit should produce an action"),
+                false,
+                &mut quit_confirmation,
+            ),
+            None
+        );
+        assert!(quit_confirmation);
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+        draw_with_quit_confirmation(
+            &state,
+            &mut terminal,
+            execution_view,
+            &review_view,
+            &confirmation_view,
+            now,
+            quit_confirmation,
+        )
+        .expect("overview confirmation should render");
+        let text = terminal_text(&terminal);
+        assert!(text.contains("Quit Terracotta?"), "{text}");
+        assert!(text.contains("Copied."), "{text}");
+        assert!(!text.contains("q quit"), "{text}");
+
+        assert_eq!(
+            quit_confirmation_key_to_input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            QuitConfirmationInput::Cancel
+        );
+        quit_confirmation = false;
+        assert!(!quit_confirmation);
+        assert!(matches!(&state, SessionState::Overview(_)));
+
+        assert_eq!(
+            quit_confirmation_key_to_input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            QuitConfirmationInput::Confirm
+        );
+        assert!(matches!(
+            action_after_quit_confirmation(Action::Quit, true, &mut quit_confirmation),
+            Some(Action::Quit)
+        ));
+        assert!(matches!(
+            session::update(&mut state, Action::Quit, now),
+            Some(Effect::Finish(SessionOutcome::Reviewed(_)))
+        ));
+    }
+
+    #[test]
     fn forwarded_quit_confirmation_key_reaches_the_current_screen_once() {
         let state = confirmation_state();
         let terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
@@ -2688,6 +2786,15 @@ mod tests {
             PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
             Vec::new(),
         ))))
+    }
+
+    fn overview_state() -> SessionState {
+        let SessionState::Review(review) = review_state() else {
+            unreachable!();
+        };
+        SessionState::Overview(Box::new(session::OverviewSessionState::new(
+            review.review().clone(),
+        )))
     }
 
     fn confirmation_state() -> SessionState {

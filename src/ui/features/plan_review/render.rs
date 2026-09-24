@@ -143,6 +143,13 @@ enum ReviewNavigation {
     Environments,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FooterMode {
+    Actions,
+    QuitConfirmation,
+    Suppressed,
+}
+
 pub(crate) struct PlanReviewLayout {
     shell: shell_layout::ShellLayout,
     body: Rect,
@@ -203,7 +210,7 @@ pub(crate) fn environment_layout(
         area,
         searching,
         state,
-        false,
+        FooterMode::Actions,
         ReviewNavigation::Environments,
     )
 }
@@ -218,7 +225,11 @@ pub(crate) fn layout_with_quit_confirmation(
         area,
         searching,
         state,
-        quit_confirmation,
+        if quit_confirmation {
+            FooterMode::QuitConfirmation
+        } else {
+            FooterMode::Actions
+        },
         ReviewNavigation::Standalone,
     )
 }
@@ -227,7 +238,7 @@ fn layout_for_navigation(
     area: Rect,
     searching: bool,
     state: &ReviewSessionState,
-    quit_confirmation: bool,
+    footer_mode: FooterMode,
     navigation: ReviewNavigation,
 ) -> PlanReviewLayout {
     let filtered_view = filter_active(searching, state);
@@ -238,7 +249,7 @@ fn layout_for_navigation(
         state,
         &content,
         state.copy_feedback().notice(),
-        quit_confirmation,
+        footer_mode,
         navigation,
     )
 }
@@ -253,7 +264,7 @@ fn layout_with_content(
     state: &ReviewSessionState,
     content: &PreparedContent<'_>,
     copy_notice: Option<CopyNotice>,
-    quit_confirmation: bool,
+    footer_mode: FooterMode,
     navigation: ReviewNavigation,
 ) -> PlanReviewLayout {
     let panel_width = area.width;
@@ -267,10 +278,19 @@ fn layout_with_content(
         content.matches.len(),
         panel_width,
     );
-    let footer_status = if quit_confirmation {
-        None
-    } else {
-        copy_notice
+    let footer_status = match footer_mode {
+        FooterMode::QuitConfirmation => None,
+        FooterMode::Suppressed => copy_notice.map(|notice| {
+            (
+                notice.message().to_owned(),
+                if matches!(notice, CopyNotice::Failed) {
+                    theme::error_style()
+                } else {
+                    theme::accent_style()
+                },
+            )
+        }),
+        FooterMode::Actions => copy_notice
             .map(|notice| {
                 (
                     notice.message().to_owned(),
@@ -308,7 +328,7 @@ fn layout_with_content(
                         theme::secondary_style(),
                     ))
                 }
-            })
+            }),
     };
     let footer_message = footer_status.as_ref().map(|(message, _)| message.as_str());
     let available_footer_width = footer::available_width(panel_width, footer_message);
@@ -339,21 +359,22 @@ fn layout_with_content(
     );
     let frame_footer_lines = footer::pad_lines(normal_footer_lines, footer_height);
     let frame_required = footer::pad_lines(normal_required, footer_height);
-    let footer_lines = if quit_confirmation {
+    let confirmation_lines = || {
         footer::pad_lines(
             footer::quit_confirmation_lines(panel_width, copy_notice.map(CopyNotice::message)),
             footer_height,
         )
-    } else {
-        frame_footer_lines
     };
-    let required = if quit_confirmation {
-        footer::pad_lines(
-            footer::quit_confirmation_lines(panel_width, copy_notice.map(CopyNotice::message)),
-            footer_height,
-        )
-    } else {
-        frame_required
+    let suppressed_lines = || footer::pad_lines(vec![Line::default()], footer_height);
+    let footer_lines = match footer_mode {
+        FooterMode::Actions => frame_footer_lines,
+        FooterMode::QuitConfirmation => confirmation_lines(),
+        FooterMode::Suppressed => suppressed_lines(),
+    };
+    let required = match footer_mode {
+        FooterMode::Actions => frame_required,
+        FooterMode::QuitConfirmation => confirmation_lines(),
+        FooterMode::Suppressed => suppressed_lines(),
     };
     let shell = shell_layout::full_width_layout_with_header_height(
         area,
@@ -1065,7 +1086,30 @@ pub(crate) fn render_environment(
         state,
         view,
         now,
-        false,
+        FooterMode::Actions,
+        ReviewNavigation::Environments,
+        area,
+    );
+}
+
+pub(crate) fn render_environment_with_quit_confirmation(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &ReviewSessionState,
+    view: &mut PlanReviewViewState,
+    now: Instant,
+    acquiring: bool,
+) {
+    render_for_navigation(
+        frame,
+        state,
+        view,
+        now,
+        if acquiring {
+            FooterMode::Suppressed
+        } else {
+            FooterMode::QuitConfirmation
+        },
         ReviewNavigation::Environments,
         area,
     );
@@ -1084,7 +1128,11 @@ pub(crate) fn render_with_quit_confirmation(
         state,
         &mut view,
         now,
-        quit_confirmation,
+        if quit_confirmation {
+            FooterMode::QuitConfirmation
+        } else {
+            FooterMode::Actions
+        },
         ReviewNavigation::Standalone,
         frame.area(),
     );
@@ -1099,7 +1147,7 @@ fn render_for_navigation(
     state: &ReviewSessionState,
     view: &mut PlanReviewViewState,
     now: Instant,
-    quit_confirmation: bool,
+    footer_mode: FooterMode,
     navigation: ReviewNavigation,
     area: Rect,
 ) {
@@ -1110,7 +1158,7 @@ fn render_for_navigation(
             terminal_notice_message(
                 view.searching(),
                 filter_active(view.searching(), state),
-                quit_confirmation,
+                footer_mode,
             ),
         );
         return;
@@ -1124,7 +1172,7 @@ fn render_for_navigation(
         state,
         &content,
         state.copy_feedback().notice_at(now),
-        quit_confirmation,
+        footer_mode,
         navigation,
     );
     if layout.body().width == 0 || layout.body().height == 0 {
@@ -1134,7 +1182,7 @@ fn render_for_navigation(
             terminal_notice_message(
                 view.searching(),
                 filter_active(view.searching(), state),
-                quit_confirmation,
+                footer_mode,
             ),
         );
         return;
@@ -1198,14 +1246,15 @@ fn render_for_navigation(
             usize::from(horizontal),
         );
     }
-    let footer_status = if quit_confirmation || state.copy_feedback().notice_at(now).is_some() {
-        layout.footer_status.clone()
-    } else {
-        Some((
-            review_footer_status(state, view, &content, layout.shell.footer().width),
-            theme::secondary_style(),
-        ))
-    };
+    let footer_status =
+        if footer_mode != FooterMode::Actions || state.copy_feedback().notice_at(now).is_some() {
+            layout.footer_status.clone()
+        } else {
+            Some((
+                review_footer_status(state, view, &content, layout.shell.footer().width),
+                theme::secondary_style(),
+            ))
+        };
     footer::render(
         frame,
         layout.shell.footer(),
@@ -1473,13 +1522,15 @@ fn filter_active(searching: bool, state: &ReviewSessionState) -> bool {
     searching || !state.review().search_query().is_empty()
 }
 
-const fn terminal_notice_message(
+fn terminal_notice_message(
     searching: bool,
     filtered: bool,
-    quit_confirmation: bool,
+    footer_mode: FooterMode,
 ) -> &'static str {
-    if quit_confirmation {
+    if footer_mode == FooterMode::QuitConfirmation {
         "Quit? Enter exit / Esc cancel"
+    } else if footer_mode == FooterMode::Suppressed {
+        "Stop? Enter stop / Esc continue"
     } else if searching {
         "Terminal too small. Resize or press Esc to cancel filter."
     } else if filtered {

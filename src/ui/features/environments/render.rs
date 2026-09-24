@@ -71,23 +71,36 @@ impl EnvironmentView {
                 area.width,
                 area.bottom().saturating_sub(layout.header.bottom()),
             );
-            plan_review::render_environment(
-                frame,
-                body,
-                review,
-                &mut self.reviews[index],
-                Instant::now(),
-            );
+            if self.confirming_quit {
+                plan_review::render_environment_with_quit_confirmation(
+                    frame,
+                    body,
+                    review,
+                    &mut self.reviews[index],
+                    Instant::now(),
+                    state.acquiring(),
+                );
+            } else {
+                plan_review::render_environment(
+                    frame,
+                    body,
+                    review,
+                    &mut self.reviews[index],
+                    Instant::now(),
+                );
+            }
         } else {
             self.render_overview(frame, &layout, state);
         }
-        if self.confirming_quit {
+        if self.confirming_quit && state.acquiring() {
             self.render_dialog(
                 frame,
                 area,
                 "Stop acquiring environment plans?\nEnter stop and quit   Esc continue",
             );
-        } else if let Some(dialog) = &self.dialog {
+        } else if !self.confirming_quit
+            && let Some(dialog) = &self.dialog
+        {
             match dialog {
                 EnvironmentDialog::Help => render_help_dialog(
                     frame,
@@ -150,27 +163,35 @@ impl EnvironmentView {
             Some(MatrixSelectedItem::SameChanges) => Some(MatrixEnterAction::ToggleSameChanges),
             Some(MatrixSelectedItem::Resource { .. }) => Some(MatrixEnterAction::OpenRow),
         };
-        let footer_lines = overview_footer(OverviewFooterContext {
-            width: layout.footer.width,
-            focus,
-            matrix: matrix_state,
-            expanded: self.matrix.selected_expanded(),
-            enter_action,
-            selected: state.plans().get(self.selection.column),
-            maximized: self.maximized.is_some(),
-            environment_navigation: if self.sidebar_enabled {
-                EnvironmentNavigation::Multiple {
-                    sidebar_available: layout.header.width >= 90,
-                }
+        let footer_lines = if self.confirming_quit {
+            if state.acquiring() {
+                vec![Line::default()]
             } else {
-                EnvironmentNavigation::Single
-            },
-            resize_guidance: layout.body.height < 3
-                || (focus == EnvironmentPane::Matrix
-                    && (layout.matrix.width < 3 || layout.matrix.height < 3))
-                || (focus == EnvironmentPane::Relations
-                    && (layout.relations.width < 3 || layout.relations.height < 3)),
-        });
+                footer::quit_confirmation_lines(layout.footer.width, None)
+            }
+        } else {
+            overview_footer(OverviewFooterContext {
+                width: layout.footer.width,
+                focus,
+                matrix: matrix_state,
+                expanded: self.matrix.selected_expanded(),
+                enter_action,
+                selected: state.plans().get(self.selection.column),
+                maximized: self.maximized.is_some(),
+                environment_navigation: if self.sidebar_enabled {
+                    EnvironmentNavigation::Multiple {
+                        sidebar_available: layout.header.width >= 90,
+                    }
+                } else {
+                    EnvironmentNavigation::Single
+                },
+                resize_guidance: layout.body.height < 3
+                    || (focus == EnvironmentPane::Matrix
+                        && (layout.matrix.width < 3 || layout.matrix.height < 3))
+                    || (focus == EnvironmentPane::Relations
+                        && (layout.relations.width < 3 || layout.relations.height < 3)),
+            })
+        };
         frame.render_widget(
             Paragraph::new(footer_lines).style(theme::overview_text_style()),
             layout.footer,
