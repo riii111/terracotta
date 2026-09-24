@@ -4,17 +4,17 @@ expression: bottom_text
 ---
 terracotta ▸ a-ready           terraform
 a┌Help────────────────────────────────┐
-┌│   no differences found in Ready  ▲ │┐
-││   plans; unknown values may      │ ││
-││   differ                         │ ││
-└│ Excluded                         │ │┘
-┌│   environments remain selectable │ │┐
-││   and are not retried            │ ││
+┌│ (state)                          ▲ │┐
+││   recorded in state at review    │ ││
+││   start                          │ ││
+└│ ? unresolved                     │ │┘
+┌│   a relationship could not be    │ │┐
+││   determined                     │ ││
 ││ Scope                            │ ││
-││   only Ready plans are compared  │ ││
-││ why: missing                     │ ││
-││   resource is present in only    ┃ ││
-││   some Ready plans               ▼ ││
+││   configuration references and   │ ││
+││   recorded dependencies; not     │ ││
+││   cause, impact, or execution    ┃ ││
+││   order                          ▼ ││
 └│ ?/Esc close                        │┘
-?└────────────────────────────────────┘
-2/3 focus | f maximize
+v└────────────────────────────────────┘
+f maximize | ? help | q quit

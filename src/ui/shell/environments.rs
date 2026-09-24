@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use ratatui::{
     Frame,
     layout::Rect,
@@ -143,7 +145,12 @@ pub(crate) fn render_header(
     let Some(plan) = state.plans().get(selection.active()) else {
         return;
     };
-    let title = format!("terracotta ▸ {}", directory_name(plan));
+    let title = format!(
+        "terracotta ▸ {}",
+        state
+            .exploration_root()
+            .map_or_else(|| directory_name(plan), path_directory_name)
+    );
     let tool = plan.review().map_or_else(
         || plan.tool.display_name().to_owned(),
         |review| {
@@ -179,9 +186,12 @@ pub(crate) fn name(plan: &EnvironmentPlan) -> String {
 }
 
 fn directory_name(plan: &EnvironmentPlan) -> String {
-    plan.directory()
-        .file_name()
-        .unwrap_or_else(|| plan.directory().as_os_str())
+    path_directory_name(plan.directory())
+}
+
+fn path_directory_name(path: &Path) -> String {
+    path.file_name()
+        .unwrap_or(path.as_os_str())
         .to_string_lossy()
         .into_owned()
 }

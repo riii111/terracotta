@@ -108,6 +108,7 @@ impl EnvironmentView {
                     self.dialog_scroll,
                     self.sidebar_enabled,
                     self.sidebar_enabled && area.width >= 90,
+                    &matrix_pane_name(self, state),
                 ),
                 EnvironmentDialog::Message(text) => self.render_dialog(frame, area, text),
             }
@@ -450,19 +451,27 @@ struct MatrixContentLayout {
 
 fn pane_block(focused: bool, title: &str, border_style: Style) -> Block<'static> {
     let mark = if focused { "* " } else { "  " };
+    let (pane_name, context) = title.split_once(" · ").unwrap_or((title, ""));
+    let mut title_spans = vec![
+        Span::styled(
+            mark,
+            if focused {
+                Style::default().fg(Color::Cyan).bg(Color::Reset)
+            } else {
+                theme::overview_muted_style()
+            },
+        ),
+        Span::styled(pane_name.to_owned(), theme::overview_pane_title_style()),
+    ];
+    if !context.is_empty() {
+        title_spans.push(Span::styled(
+            format!(" · {context}"),
+            theme::overview_header_muted_style(),
+        ));
+    }
     Block::new()
         .borders(Borders::ALL)
-        .title(Line::from(vec![
-            Span::styled(
-                mark,
-                if focused {
-                    Style::default().fg(Color::Cyan).bg(Color::Reset)
-                } else {
-                    theme::overview_muted_style()
-                },
-            ),
-            Span::styled(title.to_owned(), theme::overview_header_accent_style()),
-        ]))
+        .title(Line::from(title_spans))
         .border_style(border_style)
         .style(theme::overview_background_style())
 }
@@ -499,14 +508,7 @@ fn overview_context(view: &EnvironmentView, state: &EnvironmentSession) -> Strin
 
 fn matrix_title(view: &EnvironmentView, state: &EnvironmentSession, width: u16) -> String {
     let compared = view.compared_environments(state.plans().len());
-    let mut title = if compared.len() == 1 {
-        format!(
-            "[2] Changes · {}",
-            environments::name(&state.plans()[compared[0]])
-        )
-    } else {
-        "[2] Differs across envs".to_owned()
-    };
+    let mut title = format!("[2] {}", matrix_pane_name(view, state));
     if compared.len() < state.plans().len() {
         if width < 50 {
             let _ = write!(
@@ -537,6 +539,18 @@ fn matrix_title(view: &EnvironmentView, state: &EnvironmentSession, width: u16) 
         let _ = write!(title, " · Ready {ready}/{}", compared.len());
     }
     title
+}
+
+fn matrix_pane_name(view: &EnvironmentView, state: &EnvironmentSession) -> String {
+    let compared = view.compared_environments(state.plans().len());
+    if compared.len() == 1 {
+        format!(
+            "Changes · {}",
+            environments::name(&state.plans()[compared[0]])
+        )
+    } else {
+        "Compare".to_owned()
+    }
 }
 
 fn overview_detail(plan: &EnvironmentPlan) -> String {
@@ -587,12 +601,13 @@ fn render_help_dialog(
     scroll: u16,
     sidebar_enabled: bool,
     sidebar_available: bool,
+    matrix_name: &str,
 ) {
     help_dialog::render(
         frame,
         area,
         "Help",
-        &overview_help_sections(sidebar_enabled, sidebar_available),
+        &overview_help_sections(sidebar_enabled, sidebar_available, matrix_name),
         scroll,
     );
 }
@@ -600,6 +615,7 @@ fn render_help_dialog(
 fn overview_help_sections(
     sidebar_enabled: bool,
     sidebar_available: bool,
+    matrix_name: &str,
 ) -> Vec<help_dialog::HelpSection> {
     let mut current_actions = vec![help_dialog::HelpAction::new(
         "↑ / ↓ / j / k",
@@ -634,16 +650,19 @@ fn overview_help_sections(
     current_actions.push(if sidebar_available {
         help_dialog::HelpAction::new(
             "1 / 2 / 3",
-            "focus Envs / Differs / Relations; 1 opens Envs",
+            format!("focus Envs / {matrix_name} / Relations; 1 opens Envs"),
         )
     } else {
-        help_dialog::HelpAction::new("2 / 3", "focus Differs / Relations")
+        help_dialog::HelpAction::new("2 / 3", format!("focus {matrix_name} / Relations"))
     });
     if sidebar_available {
         current_actions.push(help_dialog::HelpAction::new("b", "toggle the Envs sidebar"));
     }
     current_actions.extend([
-        help_dialog::HelpAction::new("f", "maximize or restore the focused pane"),
+        help_dialog::HelpAction::new(
+            "f",
+            format!("maximize or restore [2] {matrix_name} / [3] Relations"),
+        ),
         help_dialog::HelpAction::new(
             "Enter",
             if sidebar_available {
@@ -668,6 +687,7 @@ fn overview_help_sections(
         other_overview_help(sidebar_available),
         matrix_legend_help(),
         comparison_help(),
+        relations::help_section(),
     ]
 }
 
@@ -798,12 +818,18 @@ fn overview_footer(context: OverviewFooterContext<'_>) -> Vec<Line<'static>> {
         environment_navigation,
         resize_guidance,
     } = context;
-    let sidebar_available = environment_navigation.sidebar_available();
     if resize_guidance {
-        return footer::layout(
+        return footer::layout_prioritized(
             vec![
-                Line::from("Resize terminal to view pane content"),
-                overview_footer_hint(&["q"], "quit"),
+                (
+                    80,
+                    Line::from(Span::styled(
+                        "Resize terminal to view pane content",
+                        theme::overview_footer_text_style(),
+                    )),
+                ),
+                (110, overview_footer_hint(&["?"], "help")),
+                (120, overview_footer_hint(&["q"], "quit")),
             ],
             width,
         );
@@ -829,55 +855,79 @@ fn overview_footer(context: OverviewFooterContext<'_>) -> Vec<Line<'static>> {
         );
     }
     let mut items = Vec::new();
-    if environment_navigation.is_multiple() {
-        items.push(overview_footer_hint(&["[", "]"], "env"));
-    }
-    if sidebar_available && !maximized {
-        items.push(overview_footer_hint(&["b"], "toggle envs"));
-    }
     if focus == environments::EnvironmentPane::Environments {
-        items.extend([
-            overview_footer_hint(&["Enter"], "open plan"),
-            overview_footer_hint(&["Space"], "include/exclude"),
-            overview_footer_hint(&["o"], "only"),
-            overview_footer_hint(&["a"], "all"),
-        ]);
+        items.push((100, overview_footer_hint(&["Enter"], "open plan")));
+        items.push((90, overview_footer_hint(&["Space"], "include/exclude")));
+        items.push((55, overview_footer_hint(&["o"], "only")));
+        items.push((55, overview_footer_hint(&["a"], "all")));
     } else if focus == environments::EnvironmentPane::Matrix {
         if let Some(action) = enter_action {
-            items.push(overview_footer_hint(&["Enter"], action.label(false)));
+            items.push((100, overview_footer_hint(&["Enter"], action.label(false))));
         }
-        items.push(overview_footer_hint(&["v"], "full plan"));
-        items.push(overview_footer_hint(&["/"], "filter"));
+        items.push((75, overview_footer_hint(&["v"], "full plan")));
+        items.push((65, overview_footer_hint(&["/"], "filter")));
         if let Some(expanded) = expanded {
-            items.push(overview_footer_hint(
-                &["Space"],
-                if expanded {
-                    "collapse selected"
-                } else {
-                    "expand selected"
-                },
+            items.push((
+                90,
+                overview_footer_hint(
+                    &["Space"],
+                    if expanded {
+                        "collapse selected"
+                    } else {
+                        "expand selected"
+                    },
+                ),
             ));
         }
     } else {
-        items.push(overview_footer_hint(&["Enter"], "open plan"));
-        items.push(overview_footer_hint(&["v"], "full plan"));
+        items.push((100, overview_footer_hint(&["Enter"], "open plan")));
+        items.push((75, overview_footer_hint(&["v"], "full plan")));
     }
     if selected.is_some_and(|plan| matches!(plan.state(), EnvironmentState::Error)) {
-        items.push(overview_footer_hint(&["r"], "retry"));
+        items.push((95, overview_footer_hint(&["r"], "retry")));
     }
-    items.push(overview_footer_hint(&["?"], "help"));
-    items.push(overview_footer_hint(&["q"], "quit"));
-    items.push(if sidebar_available {
-        overview_footer_hint(&["1", "2", "3"], "focus")
-    } else {
-        overview_footer_hint(&["2", "3"], "focus")
-    });
-    items.push(if maximized {
-        overview_footer_hint(&["f", "Esc"], "restore")
-    } else {
-        overview_footer_hint(&["f"], "maximize")
-    });
-    footer::layout(items, width)
+    items.extend(overview_common_footer_items(
+        focus,
+        maximized,
+        environment_navigation,
+    ));
+    footer::layout_prioritized(items, width)
+}
+
+fn overview_common_footer_items(
+    focus: environments::EnvironmentPane,
+    maximized: bool,
+    environment_navigation: EnvironmentNavigation,
+) -> Vec<(u8, Line<'static>)> {
+    let sidebar_available = environment_navigation.sidebar_available();
+    let mut items = Vec::new();
+    if environment_navigation.is_multiple() {
+        items.push((70, overview_footer_hint(&["[", "]"], "env")));
+    }
+    if sidebar_available && !maximized {
+        items.push((45, overview_footer_hint(&["b"], "toggle envs")));
+    }
+    items.push((
+        60,
+        if sidebar_available {
+            overview_footer_hint(&["1", "2", "3"], "focus")
+        } else {
+            overview_footer_hint(&["2", "3"], "focus")
+        },
+    ));
+    if focus != environments::EnvironmentPane::Environments {
+        items.push((
+            50,
+            if maximized {
+                overview_footer_hint(&["f", "Esc"], "restore")
+            } else {
+                overview_footer_hint(&["f"], "maximize")
+            },
+        ));
+    }
+    items.push((110, overview_footer_hint(&["?"], "help")));
+    items.push((120, overview_footer_hint(&["q"], "quit")));
+    items
 }
 
 fn compact_overview_footer(
@@ -891,45 +941,33 @@ fn compact_overview_footer(
 ) -> Vec<Line<'static>> {
     let mut items = Vec::new();
     if focus == environments::EnvironmentPane::Environments {
-        items.push(overview_footer_hint(&["Space"], "include/exclude"));
-        items.push(overview_footer_hint(&["Enter"], "open plan"));
+        items.push((100, overview_footer_hint(&["Enter"], "open plan")));
+        items.push((90, overview_footer_hint(&["Space"], "include/exclude")));
     } else if focus == environments::EnvironmentPane::Matrix {
         if let Some(action) = enter_action {
-            items.push(overview_footer_hint(&["Enter"], action.label(true)));
+            items.push((100, overview_footer_hint(&["Enter"], action.label(true))));
         }
         if let Some(expanded) = expanded {
-            items.push(overview_footer_hint(
-                &["Space"],
-                if expanded { "collapse" } else { "expand" },
+            items.push((
+                90,
+                overview_footer_hint(&["Space"], if expanded { "collapse" } else { "expand" }),
             ));
         }
     } else {
-        items.push(overview_footer_hint(&["Enter"], "open plan"));
+        items.push((100, overview_footer_hint(&["Enter"], "open plan")));
     }
     if selected.is_some_and(|plan| matches!(plan.state(), EnvironmentState::Error)) {
-        items.push(overview_footer_hint(&["r"], "retry"));
+        items.push((95, overview_footer_hint(&["r"], "retry")));
     }
-    items.push(overview_footer_hint(&["?", "q"], "help/quit"));
     if focus == environments::EnvironmentPane::Matrix {
-        items.push(overview_footer_hint(&["v"], "full plan"));
+        items.push((75, overview_footer_hint(&["v"], "full plan")));
     }
-    if environment_navigation.is_multiple() {
-        items.push(overview_footer_hint(&["[", "]"], "env"));
-    }
-    if environment_navigation.sidebar_available() && !maximized {
-        items.push(overview_footer_hint(&["b"], "toggle envs"));
-    }
-    items.push(if environment_navigation.sidebar_available() {
-        overview_footer_hint(&["1", "2", "3"], "focus")
-    } else {
-        overview_footer_hint(&["2", "3"], "focus")
-    });
-    items.push(if maximized {
-        overview_footer_hint(&["f", "Esc"], "restore")
-    } else {
-        overview_footer_hint(&["f"], "maximize")
-    });
-    footer::layout(items, width)
+    items.extend(overview_common_footer_items(
+        focus,
+        maximized,
+        environment_navigation,
+    ));
+    footer::layout_prioritized(items, width)
 }
 
 fn overview_footer_hint(keys: &[&'static str], description: &'static str) -> Line<'static> {

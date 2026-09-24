@@ -8,7 +8,10 @@ use ratatui::{
     widgets::{Block, Clear, Paragraph, Wrap},
 };
 
-use crate::app::{copy::CopyNotice, review::PlanReview, session::OverviewSessionState};
+use crate::app::{
+    copy::CopyNotice, execution::ExecutionContextValue, review::PlanReview,
+    session::OverviewSessionState,
+};
 use crate::ui::{
     primitives::{
         atoms::{scrollbar, separator},
@@ -80,10 +83,11 @@ fn prepare(
     quit_confirmation: bool,
 ) -> PreparedOverview {
     let footer_message = state.copy_feedback().notice().map(CopyNotice::message);
+    let available_footer_width = footer::available_width(area.width, footer_message);
     let full_footer =
-        footer::layout_with_notice(footer_items(view, content), area.width, footer_message);
+        footer::layout_prioritized(footer_items(view, content), available_footer_width);
     let required_footer =
-        footer::layout_with_notice(required_footer_items(view), area.width, footer_message);
+        footer::layout_prioritized(required_footer_items(view), available_footer_width);
     let (full_footer, required_footer) = if quit_confirmation {
         let lines = footer::quit_confirmation_lines(area.width, footer_message);
         (
@@ -191,7 +195,14 @@ pub(crate) fn render_with_quit_confirmation(
         prepared_lines
     };
     if layout.changes.width > 0 && layout.changes.height > 0 {
-        render_changes_panel(frame, layout.changes, &lines, view, layout.max_vertical());
+        render_changes_panel(
+            frame,
+            layout.changes,
+            &lines,
+            view,
+            layout.max_vertical(),
+            state.review(),
+        );
     }
     if layout.relations.width > 0
         && layout.relations.height > 0
@@ -330,14 +341,23 @@ fn render_changes_panel(
     lines: &[Line<'static>],
     view: &OverviewViewState,
     max_vertical: u16,
+    review: &PlanReview,
 ) {
     let focused = view.focus() == OverviewPane::Changes;
+    let title = changes_pane_title(review);
+    let (pane_name, environment) = title
+        .split_once(" · ")
+        .expect("the changes pane title has an environment name");
     let title = Line::from(vec![
         Span::styled(
             if focused { "* " } else { "  " },
             theme::relation_frame_style(focused),
         ),
-        Span::styled("[2] Changes", theme::overview_text_style()),
+        Span::styled(pane_name.to_owned(), theme::overview_pane_title_style()),
+        Span::styled(
+            format!(" · {environment}"),
+            theme::overview_header_muted_style(),
+        ),
     ]);
     let block = Block::bordered()
         .title(title)
@@ -373,14 +393,22 @@ fn render_changes_panel(
     }
 }
 
+fn changes_pane_title(review: &PlanReview) -> String {
+    let environment = match review.context().display_name() {
+        ExecutionContextValue::Known(name) => name.clone(),
+        ExecutionContextValue::Loading => context::target(review.root()),
+    };
+    format!("[2] Changes · {environment}")
+}
+
 fn overview_lines(
     content: &OverviewContent,
     review: &PlanReview,
     view: &OverviewViewState,
 ) -> Vec<Line<'static>> {
     let mut lines = vec![Line::from(vec![
-        Span::styled("  Change ", theme::overview_muted_style()),
-        Span::styled("Address", theme::overview_muted_style()),
+        Span::styled("  Change ", theme::overview_text_style()),
+        Span::styled("Address", theme::overview_text_style()),
     ])];
     if content.unsupported > 0 {
         lines.push(Line::from(Span::styled(
@@ -457,62 +485,63 @@ fn copy_flash_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
         .collect()
 }
 
-fn footer_items(view: &OverviewViewState, content: &OverviewContent) -> Vec<Line<'static>> {
+fn footer_items(view: &OverviewViewState, content: &OverviewContent) -> Vec<(u8, Line<'static>)> {
     if view.searching() {
         vec![
-            footer::hint(&["Enter"], "confirm"),
-            footer::hint(&["Esc"], "cancel"),
+            (100, footer::overview_hint(&["Enter"], "confirm")),
+            (90, footer::overview_hint(&["Esc"], "cancel")),
         ]
     } else {
         let mut items = match view.focus() {
             OverviewPane::Changes => vec![
-                footer::hint(&["/"], "filter"),
-                footer::hint(&["Enter"], "open raw"),
+                (75, footer::overview_hint(&["/"], "filter")),
+                (100, footer::overview_hint(&["Enter"], "open raw")),
             ],
-            OverviewPane::Relations => vec![footer::hint(&["Enter"], "open raw")],
+            OverviewPane::Relations => vec![(100, footer::overview_hint(&["Enter"], "open raw"))],
         };
         if view.focus() == OverviewPane::Changes
             && let Some(expanded) = view.selected_group_expanded(content)
         {
-            items.push(footer::hint(
-                &["Space"],
-                if expanded { "collapse" } else { "expand" },
+            items.push((
+                90,
+                footer::overview_hint(&["Space"], if expanded { "collapse" } else { "expand" }),
             ));
         }
         items.extend([
-            footer::hint(&["v"], "full plan"),
-            footer::hint(&["2", "3"], "focus"),
+            (70, footer::overview_hint(&["v"], "full plan")),
+            (60, footer::overview_hint(&["2", "3"], "focus")),
             if view.maximized().is_some() {
-                footer::hint(&["f", "Esc"], "restore")
+                (50, footer::overview_hint(&["f", "Esc"], "restore"))
             } else {
-                footer::hint(&["f"], "maximize")
+                (50, footer::overview_hint(&["f"], "maximize"))
             },
-            footer::hint(&["?"], "help"),
-            footer::hint(&["q"], "quit"),
+            (110, footer::overview_hint(&["?"], "help")),
+            (120, footer::overview_hint(&["q"], "quit")),
         ]);
         if !view.filter().is_empty() && view.maximized().is_none() {
-            items.insert(0, footer::hint(&["Esc"], "clear filter"));
+            items.insert(0, (80, footer::overview_hint(&["Esc"], "clear filter")));
         }
         items
     }
 }
 
-fn required_footer_items(view: &OverviewViewState) -> Vec<Line<'static>> {
+fn required_footer_items(view: &OverviewViewState) -> Vec<(u8, Line<'static>)> {
     if view.searching() {
         vec![
-            footer::hint(&["Enter"], "confirm"),
-            footer::hint(&["Esc"], "cancel"),
+            (100, footer::overview_hint(&["Enter"], "confirm")),
+            (90, footer::overview_hint(&["Esc"], "cancel")),
         ]
     } else {
         vec![
-            footer::hint(&["Enter"], "open raw"),
-            footer::hint(&["2", "3"], "focus"),
+            (100, footer::overview_hint(&["Enter"], "open raw")),
+            (60, footer::overview_hint(&["2", "3"], "focus")),
             if view.maximized().is_some() {
-                footer::hint(&["f", "Esc"], "restore")
+                (50, footer::overview_hint(&["f", "Esc"], "restore"))
             } else {
-                footer::hint(&["f"], "maximize")
+                (50, footer::overview_hint(&["f"], "maximize"))
             },
-            footer::hint(&["?", "q"], "help/quit"),
+            (110, footer::overview_hint(&["?"], "help")),
+            (120, footer::overview_hint(&["q"], "quit")),
         ]
     }
 }
@@ -535,7 +564,13 @@ fn render_overlay(
                 help_dialog::HelpSection::new(
                     "Navigation",
                     vec![
-                        help_dialog::HelpAction::new("2 / 3", "focus Changes / Relations"),
+                        help_dialog::HelpAction::new(
+                            "2 / 3",
+                            format!(
+                                "focus {} / Relations",
+                                changes_pane_title(review).trim_start_matches("[2] ")
+                            ),
+                        ),
                         help_dialog::HelpAction::new(
                             "↑ / ↓ / j / k",
                             "select a Changes row or scroll Relations",
@@ -549,7 +584,13 @@ fn render_overlay(
                             "Home / End / g / G",
                             "go to the top or bottom",
                         ),
-                        help_dialog::HelpAction::new("f", "maximize or restore the focused pane"),
+                        help_dialog::HelpAction::new(
+                            "f",
+                            format!(
+                                "maximize or restore {} / [3] Relations",
+                                changes_pane_title(review)
+                            ),
+                        ),
                     ],
                 ),
                 help_dialog::HelpSection::new(
@@ -571,6 +612,7 @@ fn render_overlay(
                         help_dialog::HelpAction::new("c", "show execution context"),
                     ],
                 ),
+                relations::help_section(),
                 help_dialog::HelpSection::new(
                     "Exit",
                     vec![help_dialog::HelpAction::new("q", "quit")],
@@ -662,8 +704,10 @@ mod tests {
         app::{
             plan::{
                 ConfigurationRelationStatus, Plan, PlanAction, PlanRelations, PlanSummary,
-                PlanValue, RelationEndpoint, RelationEvidence, RelationSource, ResourceChange,
-                ResourceChangeKind, ResourceMode, StateRelationStatus,
+                PlanValue, RelationEndpoint, RelationEvidence, RelationGraph, RelationGraphGroup,
+                RelationGraphLink, RelationGraphLinkKind, RelationNode, RelationNodeId,
+                RelationSource, RelationUnresolvedReason, ResourceChange, ResourceChangeKind,
+                ResourceMode, StateRelationStatus,
             },
             review::{PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata},
         },
@@ -760,6 +804,60 @@ mod tests {
         .with_relations(relations)
     }
 
+    fn mixed_relation_graph() -> RelationGraph {
+        let nodes = [
+            ("terraform_data.source", BTreeSet::new()),
+            ("terraform_data.config", BTreeSet::new()),
+            ("terraform_data.candidate", BTreeSet::new()),
+            (
+                "terraform_data.unknown",
+                BTreeSet::from([RelationUnresolvedReason::Variable]),
+            ),
+        ]
+        .into_iter()
+        .map(|(address, unresolved)| RelationNode {
+            id: RelationNodeId::from_addresses([address.to_owned()]).unwrap(),
+            display_address: address.to_owned(),
+            operation: ResourceChangeKind::Update,
+            change_count: 1,
+            breadcrumbs: Vec::new(),
+            differs: false,
+            unresolved,
+        })
+        .collect::<Vec<_>>();
+        let link = |from: usize, to: usize, kind, sources: &[RelationSource]| RelationGraphLink {
+            from: nodes[from].id.clone(),
+            to: nodes[to].id.clone(),
+            kind,
+            sources: sources.iter().copied().collect(),
+        };
+        let links = vec![
+            link(
+                0,
+                1,
+                RelationGraphLinkKind::Solid,
+                &[RelationSource::Configuration],
+            ),
+            link(
+                1,
+                2,
+                RelationGraphLinkKind::Dotted,
+                &[RelationSource::Configuration],
+            ),
+            link(2, 3, RelationGraphLinkKind::Solid, &[RelationSource::State]),
+        ];
+        RelationGraph {
+            connected_groups: vec![RelationGraphGroup {
+                nodes: nodes.iter().map(|node| node.id.clone()).collect(),
+                contains_destructive_change: false,
+            }],
+            nodes,
+            links,
+            links_unknown: Vec::new(),
+            no_links_shown: Vec::new(),
+        }
+    }
+
     fn scroll_filtered_row_into_view(
         state: &OverviewSessionState,
         view: &mut OverviewViewState,
@@ -813,6 +911,41 @@ mod tests {
             assert!(!text.contains("q quit"), "{width}x{height}: {text}");
             assert!(!text.contains("Enter open raw"), "{width}x{height}: {text}");
         }
+    }
+
+    #[test]
+    fn narrow_mixed_relations_keep_legend_entries_complete() {
+        let state = OverviewSessionState::new(related_review());
+        let view = OverviewViewState::default();
+        let mut content =
+            OverviewContent::from_review(state.review(), view.filter(), view.expanded());
+        content.relations = Some(mixed_relation_graph());
+        let relations_area = layout(Rect::new(0, 0, 40, 16), &state, &view, &content).relations();
+        let output = render_to_buffer((40, 16), |frame| {
+            relations::render(
+                frame,
+                relations_area,
+                content.relations.as_ref().unwrap(),
+                &RelationGraphView {
+                    title: "whole env",
+                    selected_node: None,
+                    focused: true,
+                    maximized: false,
+                    scroll: relations::RelationGraphScroll::default(),
+                },
+            );
+        });
+        let text = buffer_text(&output);
+
+        assert!(
+            text.contains("A→B uses A; block-level may not apply"),
+            "{text}"
+        );
+        assert!(text.contains("(state) from state"), "{text}");
+        assert!(
+            text.contains("? unresolved: relationship unknown"),
+            "{text}"
+        );
     }
 
     #[test]
@@ -927,7 +1060,7 @@ mod tests {
         assert!(lines.iter().any(|line| line.to_string().contains(&address)));
 
         let initial = render_to_buffer((32, 5), |frame| {
-            render_changes_panel(frame, frame.area(), &lines, &view, 0);
+            render_changes_panel(frame, frame.area(), &lines, &view, 0, state.review());
         });
         assert!(!buffer_text(&initial).contains("tail-marker"));
 
@@ -941,7 +1074,7 @@ mod tests {
             );
         }
         let scrolled = render_to_buffer((32, 5), |frame| {
-            render_changes_panel(frame, frame.area(), &lines, &view, 0);
+            render_changes_panel(frame, frame.area(), &lines, &view, 0, state.review());
         });
         assert!(buffer_text(&scrolled).contains("tail-marker"));
         let max_horizontal = view.changes_horizontal();
@@ -972,7 +1105,7 @@ mod tests {
             );
         }
         let short = render_to_buffer((40, 5), |frame| {
-            render_changes_panel(frame, frame.area(), &short_lines, &view, 0);
+            render_changes_panel(frame, frame.area(), &short_lines, &view, 0, state.review());
         });
         assert!(
             buffer_text(&short).contains("terraform_data.short"),
@@ -1004,7 +1137,7 @@ mod tests {
 
         let footer_text = footer_items(&view, &content)
             .into_iter()
-            .map(|line| line.to_string())
+            .map(|(_, line)| line.to_string())
             .collect::<Vec<_>>()
             .join(" ");
         assert!(footer_text.contains("Enter open raw"));
@@ -1117,7 +1250,8 @@ mod tests {
         });
         let filtered_text = buffer_text(&filtered);
         assert!(filtered_text.contains("server[\"one\"]"), "{filtered_text}");
-        assert!(!filtered_text.contains("terraform_data.server[*]"));
+        assert!(filtered_text.contains("[3] Relations"));
+        assert!(filtered_text.contains("terraform_data.server[*]"));
         assert!(!filtered_text.contains("Space expand"));
     }
 

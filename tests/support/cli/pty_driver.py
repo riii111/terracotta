@@ -442,7 +442,7 @@ try:
             for name in ("a-dev", "b-stg", "c-prod"):
                 wait_environment(name, "Ready")
             send_key(b"3")
-            wait_new("A ──> B", "relations_pane")
+            wait_new("* [3] Relations", "relations_pane")
             send_key(b"]")
             wait_new("b-stg · whole env", "relations_environment_switched")
             send_key(b"\r")

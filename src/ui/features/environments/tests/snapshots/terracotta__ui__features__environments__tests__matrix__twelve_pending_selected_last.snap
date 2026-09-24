@@ -4,7 +4,7 @@ expression: "text(&mut view, &state, (80, 24))"
 ---
 terracotta ▸ env-11                                                    terraform
 env-11 Pending
-┌* [2] Differs across envs · Ready 0/12────────────────────────────────────────┐
+┌* [2] Compare · Ready 0/12────────────────────────────────────────────────────┐
 │                                                                              │
 │Address     env-08      env-09      env-10      env-11       why              │
 │                                                                              │
@@ -24,4 +24,4 @@ env-11 Pending
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
-[/] env | v full plan | / filter | ? help | q quit | 2/3 focus | f maximize
+v full plan | / filter | [/] env | 2/3 focus | f maximize | ? help | q quit

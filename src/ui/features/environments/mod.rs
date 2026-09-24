@@ -344,10 +344,12 @@ impl EnvironmentView {
                 return ControlFlow::Break(None);
             }
             KeyCode::Char('f') => {
-                if self.maximized.is_some() {
-                    self.maximized = None;
-                } else {
-                    self.maximized = Some(self.active_pane(size.width));
+                if self.active_pane(size.width) != EnvironmentPane::Environments {
+                    if self.maximized.is_some() {
+                        self.maximized = None;
+                    } else {
+                        self.maximized = Some(self.active_pane(size.width));
+                    }
                 }
                 return ControlFlow::Break(None);
             }

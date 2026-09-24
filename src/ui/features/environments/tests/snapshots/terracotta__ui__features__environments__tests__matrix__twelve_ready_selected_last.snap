@@ -4,7 +4,7 @@ expression: rendered.as_str()
 ---
 terracotta ▸ env-11                                                    terraform
 env-11 Ready ~1
-┌* [2] Differs across envs─────────────────────────────────────────────────────┐
+┌* [2] Compare─────────────────────────────────────────────────────────────────┐
 │                                                                              │
 │Address     env-08      env-09      env-10      env-11       why              │
 │                                                                              │
@@ -20,9 +20,9 @@ env-11 Ready ~1
 │                                                                              │
 │                                                                              │
 │                                                                              │
-│A ──> B  B uses A                                                             │
-│solid=instance endpoints; dotted=block candidate                              │
-│state evidence=(state)                                                        │
+│                                                                              │
+│                                                                              │
+│? unresolved means a relationship could not be determined                     │
 └──────────────────────────────────────────────────────────────────────────────┘
-[/] env | Enter toggle same changes | v full plan | / filter
-Space expand selected | ? help | q quit | 2/3 focus | f maximize
+Enter toggle same changes | v full plan | / filter | Space expand selected
+[/] env | 2/3 focus | f maximize | ? help | q quit

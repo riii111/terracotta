@@ -662,7 +662,7 @@ fn three_environments_show_matrix_actions_across_supported_widths(
         assert!(rendered.contains("?: plan unavailable"));
     }
     assert!(rendered.contains("> terraform_data.api"));
-    assert!(rendered.contains("[2] Differs across envs"));
+    assert!(rendered.contains("[2] Compare"));
     assert!(!rendered.contains("Total"));
     let matrix_header = rendered
         .lines()
@@ -725,6 +725,26 @@ fn three_environments_show_matrix_actions_across_supported_widths(
         assert!(!rendered.contains("[1] Envs"));
     }
     insta::assert_snapshot!(format!("three_environments_{width}x{height}"), rendered);
+}
+
+#[test]
+fn why_reasons_use_the_default_terminal_foreground() {
+    let mut state = session(&["dev", "prod"]);
+    complete(
+        &mut state,
+        vec![change("terraform_data.api", ResourceChangeKind::Update)],
+    );
+    complete(
+        &mut state,
+        vec![change("terraform_data.api", ResourceChangeKind::Create)],
+    );
+    let mut view = EnvironmentView::default();
+    let buffer = render_to_buffer((120, 40), |frame| view.render(frame, &state));
+
+    let (x, y) = text_position(&buffer, "action").expect("why reason is rendered");
+    let reason = buffer.cell((x, y)).expect("reason cell exists");
+    assert_eq!(reason.fg, Color::Reset);
+    assert_eq!(reason.bg, Color::Reset);
 }
 
 #[test]
@@ -898,11 +918,7 @@ fn assert_matrix_footer_actions(view: &mut EnvironmentView, state: &EnvironmentS
             } else {
                 "Enter toggle same changes"
             },
-            if width == 40 {
-                "?/q help/quit"
-            } else {
-                "? help"
-            },
+            "? help",
         ];
         for hint in hints {
             assert!(
@@ -910,12 +926,12 @@ fn assert_matrix_footer_actions(view: &mut EnvironmentView, state: &EnvironmentS
                 "{width}x{height}: {hint}\n{rendered}"
             );
         }
+        assert!(rendered.contains("q quit"), "{width}x{height}");
         if width != 40 {
             assert!(
                 rendered.contains("/ filter"),
                 "{width}x{height}: {rendered}"
             );
-            assert!(rendered.contains("q quit"), "{width}x{height}");
         }
         assert!(rendered.contains("v full plan"), "{width}x{height}");
         assert!(!rendered.contains("↑↓"), "{width}x{height}");
@@ -930,7 +946,7 @@ fn short_terminal_keeps_major_environment_actions_without_movement_hints() {
     let rendered = text(&mut view, &state, (40, 14));
 
     assert!(!rendered.contains("Enter open row"));
-    for hint in ["[/] env", "?/q help/quit"] {
+    for hint in ["[/] env", "? help", "q quit"] {
         assert!(rendered.contains(hint), "{hint}");
     }
     assert!(!rendered.contains("/ filter"));

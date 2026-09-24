@@ -15,8 +15,6 @@ use crate::{
     ui::{shell::environments, theme},
 };
 
-const ROW_HEIGHT: u16 = 4;
-
 #[derive(Clone, Copy)]
 struct CountWidths {
     additions: usize,
@@ -43,7 +41,7 @@ pub(crate) fn render(
                 theme::overview_muted_style()
             },
         ),
-        Span::styled("[1] Envs", theme::overview_header_accent_style()),
+        Span::styled("[1] Envs", theme::overview_pane_title_style()),
     ]);
     let block = Block::new()
         .borders(Borders::ALL)
@@ -56,53 +54,107 @@ pub(crate) fn render(
         return;
     }
 
-    let visible_rows = usize::from(inner.height / ROW_HEIGHT).max(1);
-    let first = selected
-        .saturating_sub(visible_rows.saturating_sub(1) / 2)
-        .min(plans.len().saturating_sub(visible_rows));
     let widths = count_widths(plans);
     let wrap_counts = count_width(widths).saturating_add(4) > usize::from(inner.width);
     let mut lines = Vec::new();
-    for (position, plan) in plans.iter().enumerate().skip(first).take(visible_rows) {
+    let mut selected_range = None;
+    let mut visual_offset = 0_usize;
+    for (position, plan) in plans.iter().enumerate() {
+        let start = visual_offset;
         let is_selected = position == selected;
         let is_compared = compared.contains(&position);
-        lines.push(environment_name_line(
+        let environment_lines = environment_lines(
             plan,
             inner.width,
             is_selected,
             is_compared,
-        ));
-        lines.push(status_line(plan, inner.width));
-        match plan.state() {
-            EnvironmentState::Ready { .. } => {
-                let metadata = plan
-                    .review()
-                    .expect("ready environment has a review")
-                    .review()
-                    .metadata();
-                let (first_counts, second_counts) =
-                    count_lines(metadata, widths, wrap_counts, inner.width.into());
-                lines.push(first_counts);
-                lines.push(second_counts);
-            }
-            EnvironmentState::Error => {
-                lines.push(error_reason_line(plan, inner.width));
-                lines.push(retry_hint_line());
-            }
-            EnvironmentState::Pending
-            | EnvironmentState::Running
-            | EnvironmentState::ExcludedHcp => {
-                lines.push(Line::default());
-                lines.push(Line::default());
-            }
+            widths,
+            wrap_counts,
+        );
+        for line in environment_lines {
+            visual_offset += visual_line_count(&line, inner.width);
+            lines.push(line);
+        }
+        if is_selected {
+            selected_range = Some(start..visual_offset);
         }
     }
+    let viewport = usize::from(inner.height);
+    let max_scroll = visual_offset.saturating_sub(viewport);
+    let scroll = selected_range.map_or(0, |range| {
+        range
+            .start
+            .saturating_sub(viewport.saturating_sub(range.len()) / 2)
+            .min(max_scroll)
+    });
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
-            .style(theme::overview_text_style()),
+            .style(theme::overview_text_style())
+            .scroll((u16::try_from(scroll).unwrap_or(u16::MAX), 0)),
         inner,
     );
+}
+
+fn environment_lines(
+    plan: &EnvironmentPlan,
+    width: u16,
+    selected: bool,
+    compared: bool,
+    widths: CountWidths,
+    wrap_counts: bool,
+) -> Vec<Line<'static>> {
+    let mut lines = vec![environment_name_line(plan, width, selected, compared)];
+    let status = status_line(plan, width);
+    match plan.state() {
+        EnvironmentState::Ready { .. } => {
+            let metadata = plan
+                .review()
+                .expect("ready environment has a review")
+                .review()
+                .metadata();
+            if !metadata.has_changes() && metadata.nonstandard_changes() == 0 {
+                let mut line = status;
+                line.push_span(Span::styled("  No changes", theme::overview_muted_style()));
+                lines.push(line);
+                return lines;
+            }
+            let (first_counts, second_counts) =
+                count_lines(metadata, widths, wrap_counts, usize::from(width));
+            let combined = append_counts(status.clone(), first_counts.clone());
+            if combined.width() <= usize::from(width) {
+                lines.push(combined);
+            } else {
+                lines.push(status);
+                lines.push(first_counts);
+            }
+            if second_counts.width() > 0 {
+                lines.push(second_counts);
+            }
+        }
+        EnvironmentState::Error => {
+            lines.push(status);
+            lines.push(error_reason_line(plan, width));
+            lines.push(retry_hint_line());
+        }
+        EnvironmentState::Pending | EnvironmentState::Running | EnvironmentState::ExcludedHcp => {
+            lines.push(status);
+        }
+    }
+    lines
+}
+
+fn append_counts(mut status: Line<'static>, counts: Line<'static>) -> Line<'static> {
+    status.push_span(Span::styled(" ", theme::overview_text_style()));
+    status.spans.extend(counts.spans.into_iter().skip(1));
+    status
+}
+
+fn visual_line_count(line: &Line<'static>, width: u16) -> usize {
+    Paragraph::new(line.clone())
+        .wrap(Wrap { trim: false })
+        .line_count(width.max(1))
+        .max(1)
 }
 
 pub(crate) fn pane_border_style(focused: bool) -> Style {

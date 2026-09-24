@@ -4,14 +4,14 @@ expression: bottom_text
 ---
 infra  ws:default  ...ng...  /repo/infra
 R┌Help────────────────────────────────┐
-─│   top                            ▲ │─
-┌│                                  │ │┐
-││ Actions                          │ ││
-││ y                                │ ││
-└│   copy the full plan             │ │┘
-┌│ c                                │ │┐
-││   show execution context         │ ││
-││                                  ┃ ││
+─│   a relationship could not be    ▲ │─
+┌│   determined                     │ │┐
+││ Scope                            │ ││
+││   configuration references and   │ ││
+└│   recorded dependencies; not     │ │┘
+┌│   cause, impact, or execution    │ │┐
+││   order                          │ ││
+││                                  │ ││
 ││ Exit                             ┃ ││
 ││ q                                ┃ ││
 └│   quit                           ▼ │┘

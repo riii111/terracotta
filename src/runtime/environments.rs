@@ -28,7 +28,8 @@ struct Completion {
 }
 
 pub(super) fn run(invocation: &Invocation, environments: Vec<Environment>) -> io::Result<ExitCode> {
-    let mut state = EnvironmentSession::new(environments, invocation.detailed_exitcode());
+    let mut state = EnvironmentSession::new(environments, invocation.detailed_exitcode())
+        .with_exploration_root(invocation.directory().to_owned());
     let cancellation = CancellationToken::new();
     let (sender, receiver) = mpsc::channel();
     let mut plans: Vec<Option<terraform::SavedPlan>> =

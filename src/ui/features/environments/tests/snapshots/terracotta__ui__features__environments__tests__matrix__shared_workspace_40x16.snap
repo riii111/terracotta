@@ -4,7 +4,7 @@ expression: output
 ---
 terracotta ▸ prod                   tofu
 staging Error  │  staging Error
-┌* [2] Differs across envs · Ready 0/2─┐
+┌* [2] Compare · Ready 0/2─────────────┐
 │Resize to view the matrix. ? help   q │
 │                                      │
 └──────────────────────────────────────┘
@@ -16,5 +16,5 @@ staging Error  │  staging Error
 │                                      │
 │                                      │
 └──────────────────────────────────────┘
-r retry | ?/q help/quit | v full plan
-[/] env | 2/3 focus | f maximize
+r retry | v full plan | [/] env
+2/3 focus | f maximize | ? help | q quit

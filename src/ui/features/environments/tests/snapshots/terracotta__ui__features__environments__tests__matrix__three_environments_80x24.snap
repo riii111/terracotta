@@ -4,7 +4,7 @@ expression: rendered
 ---
 terracotta ▸ dev                                                       terraform
 dev Ready ~21  │  stg Ready ~200 1 replace  │  prod Ready ~20 -1
-┌* [2] Differs across envs─────────────────────────────────────────────────────┐
+┌* [2] Compare─────────────────────────────────────────────────────────────────┐
 │                                                                              │
 │Address             dev         stg         prod         why                  │
 │                                                                              │
@@ -20,9 +20,9 @@ dev Ready ~21  │  stg Ready ~200 1 replace  │  prod Ready ~20 -1
 │                                                                              │
 │                                                                              │
 │                                                                              │
-│A ──> B  B uses A                                                             │
-│solid=instance endpoints; dotted=block candidate                              │
-│state evidence=(state)                                                        │
+│                                                                              │
+│                                                                              │
+│? unresolved means a relationship could not be determined                     │
 └──────────────────────────────────────────────────────────────────────────────┘
-[/] env | Enter open selected row | v full plan | / filter | ? help | q quit
-2/3 focus | f maximize
+Enter open selected row | v full plan | / filter | [/] env | 2/3 focus
+f maximize | ? help | q quit
