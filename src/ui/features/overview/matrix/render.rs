@@ -187,6 +187,15 @@ const fn scroll_selected_range_into_view(
     selected_lines: (usize, usize),
     body_height: usize,
 ) {
+    if selected_lines
+        .1
+        .saturating_sub(selected_lines.0)
+        .saturating_add(1)
+        > body_height
+    {
+        view.vertical = selected_lines.0;
+        return;
+    }
     if selected_lines.0 < view.vertical {
         view.vertical = selected_lines.0;
     }
@@ -655,6 +664,7 @@ fn fit_parts(text: &str, width: usize, suffix: bool) -> (String, usize) {
 mod tests {
     use super::*;
     use crate::ui::features::overview::OverviewInput;
+    use crate::ui::test_support::{buffer_text, render_to_buffer};
 
     fn matrix_view(first_column: usize) -> MatrixView {
         let mut view = MatrixView::default();
@@ -710,6 +720,32 @@ mod tests {
         assert_eq!(view.vertical, 4);
         assert!(view.vertical <= 10);
         assert!(view.vertical + 8 > 11);
+    }
+
+    #[test]
+    fn one_line_body_keeps_the_selected_unknown_address_visible() {
+        let selection = super::super::view::SelectionKey::SameSummary;
+        let mut view = MatrixView::default();
+        view.selected = Some(selection.clone());
+        view.rows.push(Row {
+            address: "terraform_data.server[*]".to_owned(),
+            group: None,
+            group_members: Vec::new(),
+            selection: Some(selection),
+            child: false,
+            cells: Vec::new(),
+            difference: None,
+            summary: None,
+            has_unknown: true,
+        });
+        let state = EnvironmentSession::new(Vec::new(), false);
+        let output = render_to_buffer((40, 5), |frame| {
+            render(frame, frame.area(), &state, &mut view);
+        });
+        let text = buffer_text(&output);
+
+        assert!(text.contains("server[*]"), "{text}");
+        assert!(!text.contains("[unknown values]"), "{text}");
     }
 
     #[test]
