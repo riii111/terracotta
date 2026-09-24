@@ -10,7 +10,7 @@ R┌Help────────────────────────
 ││ ↑ / ↓ / j / k                    ┃ ││
 └│   select a Changes row or scroll │ │┘
 ┌│   Relations                      │ │┐
-││ ← / →                            │ ││
+││ ← / → / h / l                    │ ││
 ││   scroll Changes or Relations    │ ││
 ││   horizontally                   │ ││
 ││ PgUp / PgDn                      │ ││

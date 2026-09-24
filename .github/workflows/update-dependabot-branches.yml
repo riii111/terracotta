@@ -1,0 +1,71 @@
+name: Update Dependabot branches
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '17 */6 * * *'
+
+concurrency:
+  group: update-dependabot-branches
+  cancel-in-progress: false
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-branches:
+    name: Rebase stale Dependabot pull requests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update branches and run CI
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          failures=0
+          dependabot_prs=$(gh pr list --state open --author 'app/dependabot' --limit 100 \
+            --json number,headRefName,headRefOid,mergeStateStatus \
+            --jq '.[] | select(.mergeStateStatus == "BEHIND") | [.number, .headRefName, .headRefOid] | @tsv')
+          while IFS=$'\t' read -r number head_ref head_sha; do
+            [ -n "$number" ] || continue
+
+            # GITHUB_TOKEN cannot update a branch containing workflow files.
+            if [[ "$head_ref" == dependabot/github_actions/* ]]; then
+              echo "::notice::Dependabot will rebase the Actions PR #$number on its next update run"
+              continue
+            fi
+
+            if ! gh api --method PUT "/repos/$GH_REPO/pulls/$number/update-branch" \
+                -f "expected_head_sha=$head_sha" >/dev/null; then
+              echo "::error::Could not update Dependabot PR #$number"
+              failures=1
+              continue
+            fi
+
+            updated_head=$head_sha
+            for _ in $(seq 1 30); do
+              if ! updated_head=$(gh pr view "$number" --json headRefOid --jq .headRefOid); then
+                updated_head=$head_sha
+                break
+              fi
+              [ "$updated_head" != "$head_sha" ] && break
+              sleep 2
+            done
+            if [ "$updated_head" = "$head_sha" ]; then
+              echo "::error::Dependabot PR #$number was not updated"
+              failures=1
+              continue
+            fi
+
+            if ! gh workflow run ci.yml --ref "$head_ref"; then
+              echo "::error::Could not run CI for Dependabot PR #$number"
+              failures=1
+            fi
+          done <<< "$dependabot_prs"
+          exit "$failures"

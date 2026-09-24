@@ -1138,7 +1138,7 @@ Plan: 0 to add, 3 to change, 0 to destroy.
         fn setup() -> Self {
             let output = Command::new("python3")
                 .current_dir(env!("CARGO_MANIFEST_DIR"))
-                .args(["tests/support/cli/basic_fixture.py", "setup"])
+                .args(["fixtures/basic/plan.py", "test", "setup"])
                 .output()
                 .expect("basic scenario setup should start");
             assert!(
@@ -1189,7 +1189,7 @@ Plan: 0 to add, 3 to change, 0 to destroy.
     fn clean_basic_scenario(directory: &Path) {
         let output = Command::new("python3")
             .current_dir(env!("CARGO_MANIFEST_DIR"))
-            .args(["tests/support/cli/basic_fixture.py", "clean"])
+            .args(["fixtures/basic/plan.py", "test", "clean"])
             .arg(directory)
             .output()
             .expect("basic scenario cleanup should start");

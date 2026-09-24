@@ -7,11 +7,10 @@ import shutil
 import subprocess
 import sys
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+from basic import plan as single_fixture
+from environments import environment as multi_fixture
 
-from fixtures.basic import testing as single_fixture  # noqa: E402
-from fixtures.environments import testing as multi_fixture  # noqa: E402
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():

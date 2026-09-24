@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import json
 import os
 from pathlib import Path
@@ -25,59 +26,22 @@ def setup(tool="terraform"):
         if shutil.which(executable) is None:
             raise RuntimeError(f"Required executable not found: {executable}")
 
-    directory = Path(tempfile.mkdtemp(prefix="terracotta-basic-")).resolve()
-    (directory / MARKER).write_text(str(directory) + "\n")
+    directory = new_scenario("terracotta-basic-")
     environment = isolated_environment(directory)
     try:
-        for source in (FIXTURES / "baseline").glob("*.tf"):
-            shutil.copyfile(source, directory / source.name)
-        (directory / ".gitignore").write_text(
-            ".terraform/\n*.tfstate\n*.tfstate.*\n*.tfplan\n*.tfplan.json\n"
-            ".terraform.lock.hcl\n" + MARKER + "\n"
-        )
-        run(directory, environment, "git", "init", "--initial-branch=main")
-        run(directory, environment, "git", "add", ".")
-        commit(directory, environment, "test: establish applied baseline")
-        run(directory, environment, tool, "init", "-input=false", "-no-color")
-        run(
+        apply_baseline(
             directory,
             environment,
             tool,
-            "apply",
-            "-auto-approve",
-            "-input=false",
-            "-no-color",
+            FIXTURES / "baseline",
+            "test: establish applied baseline",
         )
 
         shutil.copyfile(FIXTURES / "changes" / "pending.tf", directory / "pending.tf")
         run(directory, environment, "git", "add", "pending.tf")
         commit(directory, environment, "test: leave committed change unapplied")
         shutil.copyfile(FIXTURES / "changes" / "main.tf", directory / "main.tf")
-
-        run(
-            directory,
-            environment,
-            tool,
-            "plan",
-            "-input=false",
-            "-no-color",
-            "-out=review.tfplan",
-        )
-        plan_json = run(directory, environment, tool, "show", "-json", "review.tfplan")
-        plan = json.loads(plan_json)
-        actual = {
-            change["address"]: change["change"]["actions"]
-            for change in plan["resource_changes"]
-            if change["change"]["actions"] != ["no-op"]
-        }
-        if actual != EXPECTED_ACTIONS:
-            raise RuntimeError(f"Unexpected plan actions: {actual}")
-        changed = run(
-            directory, environment, "git", "diff", "--name-only", "HEAD"
-        ).splitlines()
-        if changed != ["main.tf"]:
-            raise RuntimeError(f"Unexpected Git changes: {changed}")
-        (directory / "review.tfplan.json").write_text(plan_json)
+        save_plan(directory, environment, tool, validate_basic_plan)
     except BaseException:
         shutil.rmtree(directory)
         raise
@@ -158,57 +122,87 @@ def setup_group_expansion(tool="terraform"):
         if shutil.which(executable) is None:
             raise RuntimeError(f"Required executable not found: {executable}")
 
-    directory = Path(tempfile.mkdtemp(prefix="terracotta-basic-group-")).resolve()
-    (directory / MARKER).write_text(str(directory) + "\n")
+    directory = new_scenario("terracotta-basic-group-")
     environment = isolated_environment(directory)
     try:
-        shutil.copyfile(
-            FIXTURES / "group-expansion" / "baseline.tf", directory / "main.tf"
-        )
-        (directory / ".gitignore").write_text(
-            ".terraform/\n*.tfstate\n*.tfstate.*\n*.tfplan\n*.tfplan.json\n"
-            ".terraform.lock.hcl\n" + MARKER + "\n"
-        )
-        run(directory, environment, "git", "init", "--initial-branch=main")
-        run(directory, environment, "git", "add", ".")
-        commit(directory, environment, "test: establish repeated-resource baseline")
-        run(directory, environment, tool, "init", "-input=false", "-no-color")
-        run(
+        apply_baseline(
             directory,
             environment,
             tool,
-            "apply",
-            "-auto-approve",
-            "-input=false",
-            "-no-color",
+            FIXTURES / "group-expansion" / "baseline.tf",
+            "test: establish repeated-resource baseline",
         )
-
         shutil.copyfile(
             FIXTURES / "group-expansion" / "changes.tf", directory / "main.tf"
         )
-        run(
-            directory,
-            environment,
-            tool,
-            "plan",
-            "-input=false",
-            "-no-color",
-            "-out=review.tfplan",
-        )
-        plan_json = run(directory, environment, tool, "show", "-json", "review.tfplan")
-        validate_group_expansion_plan(json.loads(plan_json))
-        changed = run(
-            directory, environment, "git", "diff", "--name-only", "HEAD"
-        ).splitlines()
-        if changed != ["main.tf"]:
-            raise RuntimeError(f"Unexpected Git changes: {changed}")
-        (directory / "review.tfplan.json").write_text(plan_json)
+        save_plan(directory, environment, tool, validate_group_expansion_plan)
     except BaseException:
         shutil.rmtree(directory)
         raise
 
     print("Verified: 2 known in-place time_sleep updates", file=sys.stderr)
     return directory
+
+
+def new_scenario(prefix):
+    directory = Path(tempfile.mkdtemp(prefix=prefix)).resolve()
+    (directory / MARKER).write_text(str(directory) + "\n")
+    return directory
+
+
+def apply_baseline(directory, environment, tool, baseline, message):
+    if baseline.is_dir():
+        sources = baseline.glob("*.tf")
+        for source in sources:
+            shutil.copyfile(source, directory / source.name)
+    else:
+        shutil.copyfile(baseline, directory / "main.tf")
+
+    (directory / ".gitignore").write_text(
+        ".terraform/\n*.tfstate\n*.tfstate.*\n*.tfplan\n*.tfplan.json\n"
+        ".terraform.lock.hcl\n" + MARKER + "\n"
+    )
+    run(directory, environment, "git", "init", "--initial-branch=main")
+    run(directory, environment, "git", "add", ".")
+    commit(directory, environment, message)
+    run(directory, environment, tool, "init", "-input=false", "-no-color")
+    run(
+        directory,
+        environment,
+        tool,
+        "apply",
+        "-auto-approve",
+        "-input=false",
+        "-no-color",
+    )
+
+
+def save_plan(directory, environment, tool, validate):
+    run(
+        directory,
+        environment,
+        tool,
+        "plan",
+        "-input=false",
+        "-no-color",
+        "-out=review.tfplan",
+    )
+    plan_json = run(directory, environment, tool, "show", "-json", "review.tfplan")
+    validate(json.loads(plan_json))
+    changed = run(directory, environment, "git", "diff", "--name-only", "HEAD")
+    if changed.splitlines() != ["main.tf"]:
+        raise RuntimeError(f"Unexpected Git changes: {changed}")
+    (directory / "review.tfplan.json").write_text(plan_json)
+
+
+def validate_basic_plan(plan):
+    actual = {
+        change["address"]: change["change"]["actions"]
+        for change in plan["resource_changes"]
+        if change["change"]["actions"] != ["no-op"]
+    }
+    if actual != EXPECTED_ACTIONS:
+        raise RuntimeError(f"Unexpected plan actions: {actual}")
 
 
 def isolated_environment(directory):
@@ -281,3 +275,38 @@ def clean(directory):
         raise RuntimeError("Not a scenario directory created by this script")
     shutil.rmtree(directory)
     print(f"Removed: {directory}")
+
+
+def accept(tool):
+    for create in (setup, setup_group_expansion):
+        directory = create(tool)
+        try:
+            print(f"Verified {directory.name} with {tool}")
+        finally:
+            clean(directory)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Verify plans and provide fixtures to integration tests."
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+    acceptance = commands.add_parser("accept")
+    acceptance.add_argument("--tool", choices=("terraform", "tofu"), required=True)
+    tests = commands.add_parser("test", help="Manage fixtures for integration tests.")
+    test_commands = tests.add_subparsers(dest="test_command", required=True)
+    test_commands.add_parser("setup")
+    clean_command = test_commands.add_parser("clean")
+    clean_command.add_argument("directory", type=Path)
+    args = parser.parse_args()
+
+    if args.command == "accept":
+        accept(args.tool)
+    elif args.test_command == "setup":
+        print(setup())
+    else:
+        clean(args.directory)
+
+
+if __name__ == "__main__":
+    main()
