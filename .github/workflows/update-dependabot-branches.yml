@@ -29,10 +29,34 @@ jobs:
           set -euo pipefail
 
           failures=0
-          gh pr list --state open --author 'app/dependabot' --limit 100 \
-            --json number,headRefName,headRefOid,mergeStateStatus \
-            --jq '.[] | select(.mergeStateStatus == "BEHIND") | [.number, .headRefName, .headRefOid] | @tsv' |
+          dependabot_prs=$(gh pr list --state open --author 'app/dependabot' --limit 100 \
+            --json number,headRefName,headRefOid \
+            --jq '.[] | [.number, .headRefName, .headRefOid] | @tsv')
           while IFS=$'\t' read -r number head_ref head_sha; do
+            [ -n "$number" ] || continue
+
+            # GITHUB_TOKEN cannot update a branch containing workflow files.
+            if [[ "$head_ref" == dependabot/github_actions/* ]]; then
+              echo "::notice::Dependabot will rebase the Actions PR #$number on its next update run"
+              continue
+            fi
+
+            merge_state=UNKNOWN
+            for _ in $(seq 1 15); do
+              if ! merge_state=$(gh pr view "$number" --json mergeStateStatus --jq .mergeStateStatus); then
+                merge_state=UNKNOWN
+                break
+              fi
+              [ "$merge_state" != UNKNOWN ] && break
+              sleep 2
+            done
+            if [ "$merge_state" = UNKNOWN ]; then
+              echo "::error::Could not determine whether Dependabot PR #$number is behind main"
+              failures=1
+              continue
+            fi
+            [ "$merge_state" = BEHIND ] || continue
+
             if ! gh api --method PUT "/repos/$GH_REPO/pulls/$number/update-branch" \
                 -f "expected_head_sha=$head_sha" >/dev/null; then
               echo "::error::Could not update Dependabot PR #$number"
@@ -59,5 +83,5 @@ jobs:
               echo "::error::Could not run CI for Dependabot PR #$number"
               failures=1
             fi
-          done
+          done <<< "$dependabot_prs"
           exit "$failures"
