@@ -2,19 +2,19 @@
 source: src/ui/features/environments/tests.rs
 expression: bottom_text
 ---
-0 Overview   1 a-ready  2 b-error  ›
-R┌Help────────────────────────────────┐
-b│                                  ▲ │
-d│ Comparison                       │ │
-H│ Same changes                     │ │
- │   no differences found in Ready  │ │
- │   plans; unknown values may      │ │
- │   differ                         │ │
- │ Scope                            │ │
- │   only Ready environments are    │ │
- │   compared                       │ │
- │ Excluded                         ┃ │
- │   environments are not retried   ▼ │
- │ ?/Esc close                        │
- └────────────────────────────────────┘
- v full plan  ? help  q quit
+terracotta ▸ a-ready           terraform
+a┌Help────────────────────────────────┐
+┌│   no differences found in Ready  ▲ │┐
+││   plans; unknown values may      │ ││
+││   differ                         │ ││
+││ Excluded                         │ ││
+││   environments remain selectable │ ││
+││   and are not retried            │ ││
+││ Scope                            │ ││
+││   only Ready plans are compared  │ ││
+││ why: missing                     │ ││
+││   resource is present in only    ┃ ││
+││   some Ready plans               ▼ ││
+└│ ?/Esc close                        │┘
+[└────────────────────────────────────┘
+/ filter | ?/q help/quit

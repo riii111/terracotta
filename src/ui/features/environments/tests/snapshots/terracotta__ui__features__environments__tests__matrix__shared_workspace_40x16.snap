@@ -2,19 +2,19 @@
 source: src/ui/features/environments/tests/matrix.rs
 expression: output
 ---
-0 Overview   1 staging  2 staging
-Ready: 0/2   Compared: none   staging:
-Error   staging: Error
-
- Synthetic acquisition error
- Address     > staging    why
-
- Waiting for environment plans.
-
- Total       Error
-
- blank: absent   .: unchanged
- ?: plan unavailable
- [ ] env  Enter preview  / filter
- e env filter
- v full plan  ? help  q quit
+terracotta ▸ prod                   tofu
+staging Error  │  staging Error
+┌* [2] Differs across envs─────────────┐
+│                                      │
+│Synthetic acquisition error           │
+│Address     staging      why          │
+│                                      │
+│Waiting for environment plans.        │
+│                                      │
+│blank: absent   .: unchanged          │
+│?: plan unavailable                   │
+│                                      │
+│                                      │
+└──────────────────────────────────────┘
+[/] env | Enter preview | v full plan
+/ filter | ?/q help/quit

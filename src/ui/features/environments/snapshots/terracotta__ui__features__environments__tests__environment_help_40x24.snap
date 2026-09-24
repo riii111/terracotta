@@ -2,27 +2,27 @@
 source: src/ui/features/environments/tests.rs
 expression: text
 ---
-0 Overview   1 a-ready  2 b-error  ›
-R┌Help────────────────────────────────┐
-b│ Current: Overview                ▲ │
-d│ ↑ / ↓ / j / k                    ┃ │
-H│   scroll matrix or preview; move ┃ │
- │   through filter candidates      ┃ │
- │ ← / →                            ┃ │
- │   select env or scroll preview;  │ │
- │   move in filter search          │ │
- │ [ / ]                            │ │
- │   select previous or next        │ │
- │   environment                    │ │
- │ Enter                            │ │
- │   open plan preview; apply       │ │
- │   filter or accept search        │ │
- │ Esc                              │ │
- │   close preview; return from     │ │
- │   plan; cancel filter; restore   │ │
- │   search                         │ │
- │ 1–9                              │ │
- │   open the numbered              ▼ │
- │ ?/Esc close                        │
- └────────────────────────────────────┘
- v full plan  ? help  q quit
+terracotta ▸ a-ready           terraform
+a┌Help────────────────────────────────┐
+┌│ Current: Multi-environment       ▲ │┐
+││ ↑ / ↓ / j / k                    ┃ ││
+││   select environments in [1],    ┃ ││
+││   scroll [2], or move in the     ┃ ││
+││   preview                        ┃ ││
+││ Space                            │ ││
+││   include or exclude an          │ ││
+││   environment in [1]             │ ││
+││ Space                            │ ││
+││   expand or collapse groups in   │ ││
+││   [2]                            │ ││
+││ o / a                            │ ││
+││   compare only the selected      │ ││
+││   environment / all environments │ ││
+││   in [1]                         │ ││
+││ [ / ]                            │ ││
+││   select the previous or next    │ ││
+││   environment                    │ ││
+││ 1 / 2                            ▼ ││
+└│ ?/Esc close                        │┘
+[└────────────────────────────────────┘
+/ filter | ?/q help/quit

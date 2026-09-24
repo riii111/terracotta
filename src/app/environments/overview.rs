@@ -38,6 +38,12 @@ pub(crate) struct OverviewGroup {
     pub(crate) children: Vec<ComparisonRow>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum OverviewRowId {
+    Group(GroupId),
+    Individual(String),
+}
+
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct GroupId(GroupingKey);
 

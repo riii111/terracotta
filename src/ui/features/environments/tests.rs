@@ -7,8 +7,13 @@ use crate::{
         review::{PlanMetadata, PlanReview, test_support::plan_document},
         session::Effect,
     },
-    ui::test_support::{buffer_text, render_to_buffer},
+    ui::{
+        shell::environments,
+        test_support::{buffer_text, render_to_buffer},
+        theme,
+    },
 };
+use ratatui::style::{Color, Modifier};
 use std::path::PathBuf;
 
 fn partial_session() -> EnvironmentSession {
@@ -149,14 +154,19 @@ fn pending_running_ready_error_and_excluded_remain_distinct_at_supported_sizes()
             ..EnvironmentView::default()
         };
         let text = buffer_text(&render_to_buffer(size, |frame| view.render(frame, &state)));
-        for marker in [
-            "Ready: 1/5",
-            "Pending",
-            "Running",
-            "Error",
-            "Excluded: HCP execution",
-            "Missing required variable",
-        ] {
+        let markers = if size.0 >= 120 {
+            vec![
+                "Pending",
+                "Running",
+                "Ready",
+                "Error",
+                "Excluded",
+                "Missing required variable",
+            ]
+        } else {
+            vec!["b-error", "Error", "Missing required variable"]
+        };
+        for marker in markers {
             assert!(
                 text.split_whitespace()
                     .collect::<Vec<_>>()
@@ -188,11 +198,11 @@ fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
             assert!(text.contains("Comparison"), "{width}x{height}: {text}");
         }
         if (width, height) == (80, 24) {
-            assert!(text.contains("1–9"));
-            assert!(text.contains("open plan preview"));
+            assert!(text.contains("1 / 2"));
+            assert!(text.contains("include or exclude"));
             assert!(!text.contains("Tab"));
             assert!(text.contains("expand or collapse groups"));
-            assert!(text.contains("filter compared environments"));
+            assert!(!text.contains("environment filter"));
         }
         assert!(text.contains("Esc"), "{width}x{height}: {text}");
         if width == 80 {
@@ -210,10 +220,9 @@ fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
     let wide = buffer_text(&render_to_buffer((160, 60), |frame| {
         view.render(frame, &state);
     }));
-    assert!(wide.contains("numbered"), "{wide}");
     assert!(wide.contains("environment"), "{wide}");
     assert!(
-        wide.contains("clear filter search and select all"),
+        wide.contains("compare only the selected environment / all environments"),
         "{wide}"
     );
 
@@ -295,7 +304,8 @@ fn help_scroll_keys_do_not_reach_the_environment_overview() {
         size,
         &state,
     );
-    assert_eq!(view.selection.column, 1);
+    assert_eq!(view.selection.column, 0);
+    assert_eq!(view.focus, EnvironmentPane::Matrix);
 }
 
 #[test]
@@ -418,7 +428,7 @@ fn overview_round_trip_opens_the_full_plan_from_the_top() {
         let mut view = EnvironmentView::default();
         let terminal = Size::new(size.0, size.1);
         view.handle_key(
-            KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
             terminal,
             &state,
         );
@@ -437,7 +447,7 @@ fn overview_round_trip_opens_the_full_plan_from_the_top() {
             "{size:?}: {overview}"
         );
         view.handle_key(
-            KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
             terminal,
             &state,
         );
@@ -506,7 +516,7 @@ fn filtered_plan_position_tracks_the_visible_source_line_after_resize() {
 }
 
 #[test]
-fn raw_environment_help_explains_tab_navigation_at_supported_widths() {
+fn raw_environment_help_explains_bracket_navigation_at_supported_widths() {
     let state = partial_session();
     let mut view = EnvironmentView::default();
     let size = Size::new(80, 24);
@@ -532,8 +542,7 @@ fn raw_environment_help_explains_tab_navigation_at_supported_widths() {
             .filter(|character| !character.is_whitespace())
             .collect::<String>();
 
-        assert!(compact.contains("Tab"), "{width}x{height}: {text}");
-        assert!(compact.contains("Shift-Tab"), "{width}x{height}: {text}");
+        assert!(compact.contains("[/]"), "{width}x{height}: {text}");
         assert!(compact.contains("next"), "{width}x{height}: {text}");
         assert!(compact.contains("previous"), "{width}x{height}: {text}");
         assert!(compact.contains("environment"), "{width}x{height}: {text}");
@@ -598,69 +607,216 @@ fn small_terminals_keep_cancel_and_quit_operable() {
 }
 
 #[test]
-fn environment_filter_dialog_shows_names_and_acquisition_states_without_prod_tags() {
-    let state = partial_session();
-    let dialog = EnvironmentFilterDialog::new(state.plans(), None, 0, Size::new(120, 40));
-    let text = buffer_text(&render_to_buffer((120, 40), |frame| {
-        dialog.render(frame, frame.area(), state.plans());
-    }));
-
-    for marker in [
-        "a-ready",
-        "b-error",
-        "c-running",
-        "d-pending",
-        "e-hcp",
-        "Ready",
-        "Error",
-        "Running",
-        "Pending",
-        "Excluded",
-    ] {
-        assert!(text.contains(marker), "missing {marker:?}:\n{text}");
-    }
-    assert!(!text.contains("Excluded: HCP execution"), "{text}");
-    assert!(!text.contains("[PROD]"), "{text}");
-}
-
-#[test]
-fn active_environment_filter_keeps_global_failure_state_without_listing_environments() {
+fn environment_sidebar_filters_comparison_without_changing_the_selected_plan() {
     let state = partial_session();
     let mut view = EnvironmentView::default();
-    let size = Size::new(80, 24);
+    let size = Size::new(160, 60);
     view.handle_key(
-        KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
         size,
         &state,
     );
-    for _ in 0..4 {
-        view.handle_key(
-            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
-            size,
-            &state,
-        );
-        view.handle_key(
-            KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
-            size,
-            &state,
-        );
-    }
+    assert_eq!(view.selection.column, 1);
     view.handle_key(
-        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
         size,
         &state,
     );
+    assert_eq!(view.selection.column, 1);
+    assert_eq!(view.selected_environments, Some(vec![0, 2, 3, 4]));
+    view.sync(&state);
+    let filtered = buffer_text(&render_to_buffer((160, 60), |frame| {
+        view.render(frame, &state);
+    }));
+    let header = filtered
+        .lines()
+        .find(|line| line.contains("Address"))
+        .unwrap();
+    assert!(header.contains("a-ready"), "{header}");
+    assert!(!header.contains("b-error"), "{header}");
+
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    assert_eq!(view.selected_environments, Some(vec![1]));
+    view.sync(&state);
+    let filtered = buffer_text(&render_to_buffer((160, 60), |frame| {
+        view.render(frame, &state);
+    }));
+    let header = filtered
+        .lines()
+        .find(|line| line.contains("Address"))
+        .unwrap();
+    assert!(header.contains("b-error"), "{header}");
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    assert_eq!(view.selected_environments, Some(vec![1]));
+    assert!(
+        view.notice
+            .as_deref()
+            .is_some_and(|notice| notice.to_lowercase().contains("at least one"))
+    );
+
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    assert_eq!(view.selected_environments, None);
+
     let text = buffer_text(&render_to_buffer((80, 24), |frame| {
         view.render(frame, &state);
     }));
-    let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(text.contains("b-error"), "{text}");
+    assert!(text.contains("Error"), "{text}");
+}
 
-    for marker in ["Ready: 1/5", "Error present", "[Env filter ON]"] {
-        assert!(compact.contains(marker), "missing {marker:?}:\n{text}");
-    }
-    assert!(!compact.contains("Compared:"), "{text}");
-    for name in ["b-error", "c-running", "d-pending", "e-hcp"] {
-        assert!(!compact.contains(name), "{text}");
+#[test]
+fn sidebar_width_thresholds_restore_the_manual_setting() {
+    let state = partial_session();
+    let mut view = EnvironmentView::default();
+
+    let wide = buffer_text(&render_to_buffer((120, 40), |frame| {
+        view.render(frame, &state);
+    }));
+    assert_eq!(view.sidebar, SidebarSetting::Open);
+    assert_eq!(view.focus, EnvironmentPane::Environments);
+    assert!(wide.contains("[1] Envs"));
+
+    let mut narrow = EnvironmentView::default();
+    let text = buffer_text(&render_to_buffer((119, 40), |frame| {
+        narrow.render(frame, &state);
+    }));
+    assert_eq!(narrow.sidebar, SidebarSetting::Closed);
+    assert_eq!(narrow.focus, EnvironmentPane::Matrix);
+    assert!(!text.contains("[1] Envs"));
+    let summary = text.lines().nth(1).unwrap();
+    assert!(summary.contains("a-ready"), "{summary}");
+    assert!(!summary.contains("b-error"), "{summary}");
+
+    narrow.handle_key(
+        KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE),
+        Size::new(90, 40),
+        &state,
+    );
+    assert_eq!(narrow.sidebar, SidebarSetting::Open);
+    let hidden = buffer_text(&render_to_buffer((89, 40), |frame| {
+        narrow.render(frame, &state);
+    }));
+    assert!(!hidden.contains("[1] Envs"));
+    let restored = buffer_text(&render_to_buffer((90, 40), |frame| {
+        narrow.render(frame, &state);
+    }));
+    assert!(restored.contains("[1] Envs"));
+}
+
+#[test]
+fn short_terminal_keeps_the_matrix_frame_and_shows_resize_guidance() {
+    let state = partial_session();
+    let mut view = EnvironmentView::default();
+    let buffer = render_to_buffer((80, 5), |frame| view.render(frame, &state));
+    let text = buffer_text(&buffer);
+
+    assert!(text.contains("Resize to view the matrix"), "{text}");
+    assert_eq!(buffer.cell((0, 1)).unwrap().symbol(), "┌");
+    assert_eq!(buffer.cell((79, 3)).unwrap().symbol(), "┘");
+}
+
+#[test]
+fn sidebar_focus_and_maximize_shortcuts_preserve_each_other() {
+    let state = partial_session();
+    let size = ratatui::layout::Size::new(120, 40);
+    let mut view = EnvironmentView::default();
+    let press = |view: &mut EnvironmentView, code| {
+        view.handle_key(KeyEvent::new(code, KeyModifiers::NONE), size, &state);
+    };
+
+    let _ = render_to_buffer((120, 40), |frame| view.render(frame, &state));
+    press(&mut view, KeyCode::Char('f'));
+    assert_eq!(view.maximized, Some(EnvironmentPane::Environments));
+    press(&mut view, KeyCode::Char('b'));
+    assert_eq!(view.sidebar, SidebarSetting::Open);
+    assert_eq!(view.maximized, Some(EnvironmentPane::Environments));
+    press(&mut view, KeyCode::Char('f'));
+    assert_eq!(view.maximized, None);
+
+    press(&mut view, KeyCode::Char('2'));
+    press(&mut view, KeyCode::Char('f'));
+    assert_eq!(view.maximized, Some(EnvironmentPane::Matrix));
+    press(&mut view, KeyCode::Char('1'));
+    assert_eq!(view.maximized, None);
+    assert_eq!(view.focus, EnvironmentPane::Environments);
+    press(&mut view, KeyCode::Char('b'));
+    assert_eq!(view.sidebar, SidebarSetting::Closed);
+    assert_eq!(view.focus, EnvironmentPane::Matrix);
+}
+
+#[test]
+fn environment_layout_reserves_the_sidebar_and_four_six_right_panes() {
+    let layout = environments::overview_layout(
+        ratatui::layout::Rect::new(0, 0, 160, 53),
+        41,
+        true,
+        None,
+        false,
+        true,
+    );
+    assert_eq!(layout.environments.width, 41);
+    assert_eq!(layout.matrix.height, 20);
+    assert_eq!(layout.relations.height, 30);
+
+    assert_eq!(environments::sidebar_width(partial_session().plans()), 24);
+    let name = "x".repeat(60);
+    let state = EnvironmentSession::new(
+        vec![Environment {
+            tool: Tool::Terraform,
+            availability: EnvironmentAvailability::Available(EnvironmentIdentity {
+                directory: PathBuf::from(format!("/synthetic/{name}")),
+                workspace: "default".to_owned(),
+            }),
+        }],
+        false,
+    );
+    assert_eq!(environments::sidebar_width(state.plans()), 41);
+}
+
+#[test]
+fn sidebar_focus_and_selected_name_use_ansi_colors_and_terminal_defaults() {
+    let state = overview_plan_session();
+    let mut view = EnvironmentView::default();
+    let buffer = render_to_buffer((120, 40), |frame| view.render(frame, &state));
+    assert_eq!(view.sidebar_width, 24);
+    let focused_border = buffer.cell((0, 1)).unwrap();
+    assert_eq!(focused_border.fg, Color::Cyan);
+    assert_eq!(focused_border.bg, Color::Reset);
+
+    let matrix_border = buffer
+        .cell((view.sidebar_width, 1))
+        .expect("unfocused matrix border");
+    assert_eq!(matrix_border.fg, Color::DarkGray);
+    assert_eq!(matrix_border.bg, Color::Reset);
+
+    let selected_name = buffer.cell((7, 2)).expect("selected environment name");
+    assert!(selected_name.modifier.contains(Modifier::UNDERLINED));
+    assert_eq!(selected_name.bg, Color::Reset);
+
+    for (style, foreground) in [
+        (theme::overview_total_add_style(), Color::Green),
+        (theme::overview_total_update_style(), Color::Yellow),
+        (theme::overview_total_destroy_style(), Color::Red),
+        (theme::overview_total_replace_style(), Color::Magenta),
+        (
+            theme::overview_plan_line_style("  -/+ resource change"),
+            Color::Magenta,
+        ),
+    ] {
+        assert_eq!(style.fg, Some(foreground));
+        assert_eq!(style.bg, Some(Color::Reset));
     }
 }
 

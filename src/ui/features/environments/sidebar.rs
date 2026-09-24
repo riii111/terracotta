@@ -1,0 +1,327 @@
+use ratatui::{
+    Frame,
+    layout::Rect,
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Paragraph, Wrap},
+};
+
+use crate::{
+    app::{
+        environments::{EnvironmentPlan, EnvironmentState},
+        review::PlanMetadata,
+    },
+    ui::{shell::environments, theme},
+};
+
+const ROW_HEIGHT: u16 = 4;
+
+#[derive(Clone, Copy)]
+struct CountWidths {
+    additions: usize,
+    updates: usize,
+    deletions: usize,
+    replacements: usize,
+}
+
+pub(crate) fn render(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    plans: &[EnvironmentPlan],
+    selected: usize,
+    compared: &[usize],
+    focused: bool,
+) {
+    let focus_style = pane_border_style(focused);
+    let title = Line::from(vec![
+        Span::styled(
+            if focused { "* " } else { "  " },
+            if focused {
+                Style::default().fg(Color::Cyan).bg(Color::Reset)
+            } else {
+                theme::overview_muted_style()
+            },
+        ),
+        Span::styled("[1] Envs", theme::overview_header_accent_style()),
+    ]);
+    let block = Block::new()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(focus_style)
+        .style(theme::overview_background_style());
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.width == 0 || inner.height == 0 || plans.is_empty() {
+        return;
+    }
+
+    let visible_rows = usize::from(inner.height / ROW_HEIGHT).max(1);
+    let first = selected
+        .saturating_sub(visible_rows.saturating_sub(1) / 2)
+        .min(plans.len().saturating_sub(visible_rows));
+    let widths = count_widths(plans);
+    let wrap_counts = count_width(widths).saturating_add(4) > usize::from(inner.width);
+    let mut lines = Vec::new();
+    for (position, plan) in plans.iter().enumerate().skip(first).take(visible_rows) {
+        let is_selected = position == selected;
+        let is_compared = compared.contains(&position);
+        lines.push(environment_name_line(
+            plan,
+            inner.width,
+            is_selected,
+            is_compared,
+        ));
+        lines.push(status_line(plan, inner.width));
+        match plan.state() {
+            EnvironmentState::Ready { .. } => {
+                let metadata = plan
+                    .review()
+                    .expect("ready environment has a review")
+                    .review()
+                    .metadata();
+                let (first_counts, second_counts) = count_lines(metadata, widths, wrap_counts);
+                lines.push(first_counts);
+                lines.push(second_counts);
+            }
+            EnvironmentState::Error => {
+                lines.push(error_reason_line(plan, inner.width));
+                lines.push(retry_hint_line());
+            }
+            EnvironmentState::Pending
+            | EnvironmentState::Running
+            | EnvironmentState::ExcludedHcp => {
+                lines.push(Line::default());
+                lines.push(Line::default());
+            }
+        }
+    }
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .style(theme::overview_text_style()),
+        inner,
+    );
+}
+
+pub(crate) fn pane_border_style(focused: bool) -> Style {
+    Style::default()
+        .fg(if focused {
+            Color::Cyan
+        } else {
+            Color::DarkGray
+        })
+        .bg(Color::Reset)
+}
+
+fn environment_name_line(
+    plan: &EnvironmentPlan,
+    width: u16,
+    selected: bool,
+    compared: bool,
+) -> Line<'static> {
+    let marker = if selected { "> " } else { "  " };
+    let checkbox = if compared { "[x]" } else { "[ ]" };
+    let production = plan
+        .review()
+        .is_some_and(|review| review.review().context().is_production() == Some(true));
+    let suffix = if production { " [PROD]" } else { "" };
+    let reserved =
+        Line::from(marker).width() + Line::from(checkbox).width() + 1 + Line::from(suffix).width();
+    let name_width = usize::from(width).saturating_sub(reserved);
+    let name = fit_prefix(&environments::name(plan), name_width);
+    let selection_style = if selected {
+        theme::overview_header_selected_style()
+    } else if !compared {
+        theme::overview_header_muted_style()
+    } else {
+        theme::overview_text_style()
+    };
+    let checkbox_style = if compared {
+        theme::overview_text_style()
+    } else {
+        theme::overview_muted_style()
+    };
+    let mut spans = vec![
+        Span::styled(
+            marker,
+            if selected {
+                theme::overview_accent_style()
+            } else {
+                theme::overview_muted_style()
+            },
+        ),
+        Span::styled(checkbox, checkbox_style),
+        Span::styled(" ", theme::overview_muted_style()),
+        Span::styled(name, selection_style),
+    ];
+    if production {
+        spans.push(Span::styled(
+            suffix,
+            theme::overview_text_style().add_modifier(Modifier::BOLD),
+        ));
+    }
+    Line::from(spans)
+}
+
+fn status_line(plan: &EnvironmentPlan, width: u16) -> Line<'static> {
+    let style = match plan.state() {
+        EnvironmentState::Pending | EnvironmentState::Running => theme::overview_muted_style(),
+        EnvironmentState::Ready { .. } => theme::overview_text_style(),
+        EnvironmentState::Error => {
+            theme::overview_total_destroy_style().add_modifier(Modifier::BOLD)
+        }
+        EnvironmentState::ExcludedHcp => theme::overview_warning_style(),
+    };
+    let status = if matches!(plan.state(), EnvironmentState::ExcludedHcp) {
+        "Excluded"
+    } else {
+        environments::status(plan)
+    };
+    Line::from(vec![
+        Span::styled("    ", theme::overview_text_style()),
+        Span::styled(
+            fit_prefix(status, usize::from(width).saturating_sub(4)),
+            style,
+        ),
+    ])
+}
+
+fn error_reason_line(plan: &EnvironmentPlan, width: u16) -> Line<'static> {
+    let diagnostic = plan.diagnostic();
+    let reason = diagnostic
+        .text()
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("Terraform plan failed");
+    Line::from(vec![
+        Span::styled("    ", theme::overview_text_style()),
+        Span::styled(
+            fit_prefix(reason, usize::from(width).saturating_sub(4)),
+            theme::overview_muted_style(),
+        ),
+    ])
+}
+
+fn retry_hint_line() -> Line<'static> {
+    Line::from(vec![
+        Span::styled("    ", theme::overview_text_style()),
+        Span::styled("r", theme::overview_footer_key_style()),
+        Span::styled(" retry", theme::overview_footer_text_style()),
+    ])
+}
+
+fn count_widths(plans: &[EnvironmentPlan]) -> CountWidths {
+    let mut widths = CountWidths {
+        additions: 2,
+        updates: 2,
+        deletions: 2,
+        replacements: "0 replace".len(),
+    };
+    for plan in plans {
+        let Some(review) = plan.review() else {
+            continue;
+        };
+        let counts = review.review().metadata();
+        widths.additions = widths
+            .additions
+            .max(counts.additions().to_string().len() + 1);
+        widths.updates = widths.updates.max(counts.changes().to_string().len() + 1);
+        widths.deletions = widths
+            .deletions
+            .max(counts.deletions().to_string().len() + 1);
+        widths.replacements = widths
+            .replacements
+            .max(counts.replacements().to_string().len() + " replace".len());
+    }
+    widths
+}
+
+const fn count_width(widths: CountWidths) -> usize {
+    widths.additions + widths.updates + widths.deletions + widths.replacements + 6
+}
+
+fn count_lines(
+    counts: &PlanMetadata,
+    widths: CountWidths,
+    wrapped: bool,
+) -> (Line<'static>, Line<'static>) {
+    let add = count_span(
+        "+",
+        counts.additions(),
+        widths.additions,
+        theme::overview_total_add_style(),
+    );
+    let update = count_span(
+        "~",
+        counts.changes(),
+        widths.updates,
+        theme::overview_total_update_style(),
+    );
+    let delete = count_span(
+        "-",
+        counts.deletions(),
+        widths.deletions,
+        theme::overview_total_destroy_style(),
+    );
+    let replace = count_span(
+        "",
+        counts.replacements(),
+        widths.replacements,
+        theme::overview_total_replace_style(),
+    );
+    if wrapped {
+        (
+            Line::from(vec![
+                Span::styled("    ", theme::overview_text_style()),
+                add,
+                Span::styled("  ", theme::overview_text_style()),
+                update,
+            ]),
+            Line::from(vec![
+                Span::styled("    ", theme::overview_text_style()),
+                delete,
+                Span::styled("  ", theme::overview_text_style()),
+                replace,
+            ]),
+        )
+    } else {
+        (
+            Line::from(vec![
+                Span::styled("    ", theme::overview_text_style()),
+                add,
+                Span::styled("  ", theme::overview_text_style()),
+                update,
+                Span::styled("  ", theme::overview_text_style()),
+                delete,
+                Span::styled("  ", theme::overview_text_style()),
+                replace,
+            ]),
+            Line::default(),
+        )
+    }
+}
+
+fn count_span(prefix: &str, count: usize, width: usize, style: Style) -> Span<'static> {
+    let text = if count == 0 {
+        String::new()
+    } else if prefix.is_empty() {
+        format!("{count} replace")
+    } else {
+        format!("{prefix}{count}")
+    };
+    Span::styled(format!("{text:<width$}"), style)
+}
+
+fn fit_prefix(value: &str, width: usize) -> String {
+    let mut result = String::new();
+    let mut used = 0_usize;
+    for character in value.chars() {
+        let character_width = Line::from(character.to_string()).width();
+        if used.saturating_add(character_width) > width {
+            break;
+        }
+        used += character_width;
+        result.push(character);
+    }
+    result
+}

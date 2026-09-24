@@ -17,9 +17,7 @@ pub(crate) fn body_style() -> Style {
 }
 
 pub(crate) fn overview_background_style() -> Style {
-    Style::default()
-        .fg(Color::Rgb(0xde, 0xd8, 0xd1))
-        .bg(Color::Reset)
+    Style::default().fg(Color::Reset).bg(Color::Reset)
 }
 
 pub(crate) fn overview_text_style() -> Style {
@@ -27,83 +25,70 @@ pub(crate) fn overview_text_style() -> Style {
 }
 
 pub(crate) fn overview_muted_style() -> Style {
-    Style::default()
-        .fg(Color::Rgb(0xb8, 0xb5, 0xae))
-        .bg(Color::Reset)
+    Style::default().fg(Color::DarkGray).bg(Color::Reset)
 }
 
 pub(crate) fn overview_accent_style() -> Style {
-    Style::default()
-        .fg(Color::Rgb(0xef, 0xae, 0x6d))
-        .bg(Color::Reset)
+    Style::default().fg(Color::Green).bg(Color::Reset)
 }
 
 pub(crate) fn overview_header_style() -> Style {
-    Style::default()
-        .fg(Color::Rgb(0xde, 0xd8, 0xd1))
-        .bg(Color::Rgb(0x2c, 0x2d, 0x2b))
+    Style::default().fg(Color::Reset).bg(Color::Reset)
 }
 
 pub(crate) fn overview_header_muted_style() -> Style {
-    Style::default()
-        .fg(Color::Rgb(0xb8, 0xb5, 0xae))
-        .bg(Color::Rgb(0x2c, 0x2d, 0x2b))
+    overview_muted_style()
 }
 
 pub(crate) fn overview_header_accent_style() -> Style {
-    Style::default()
-        .fg(Color::Rgb(0xef, 0xae, 0x6d))
-        .bg(Color::Rgb(0x2c, 0x2d, 0x2b))
+    overview_accent_style()
 }
 
 pub(crate) fn overview_header_selected_style() -> Style {
     Style::default()
-        .fg(Color::Rgb(0xde, 0xd8, 0xd1))
-        .bg(Color::Rgb(0x50, 0x48, 0x3e))
-}
-
-pub(crate) fn overview_selected_column_style() -> Style {
-    Style::default()
-        .fg(Color::Rgb(0xde, 0xd8, 0xd1))
+        .fg(Color::Reset)
         .bg(Color::Reset)
-}
-
-pub(crate) fn overview_total_style() -> Style {
-    Style::default()
-        .fg(Color::Rgb(0xde, 0xd8, 0xd1))
-        .bg(Color::Rgb(0x30, 0x32, 0x2f))
-}
-
-pub(crate) fn overview_total_muted_style() -> Style {
-    Style::default()
-        .fg(Color::Rgb(0xb8, 0xb5, 0xae))
-        .bg(Color::Rgb(0x30, 0x32, 0x2f))
+        .add_modifier(Modifier::UNDERLINED)
 }
 
 pub(crate) fn overview_preview_title_style() -> Style {
-    Style::default()
-        .fg(Color::Rgb(0xde, 0xd8, 0xd1))
-        .bg(Color::Rgb(0x30, 0x32, 0x2f))
+    Style::default().fg(Color::Reset).bg(Color::Reset)
+}
+
+pub(crate) fn overview_total_add_style() -> Style {
+    Style::default().fg(Color::Green).bg(Color::Reset)
+}
+
+pub(crate) fn overview_total_update_style() -> Style {
+    Style::default().fg(Color::Yellow).bg(Color::Reset)
+}
+
+pub(crate) fn overview_total_destroy_style() -> Style {
+    Style::default().fg(Color::Red).bg(Color::Reset)
+}
+
+pub(crate) fn overview_total_replace_style() -> Style {
+    Style::default().fg(Color::Magenta).bg(Color::Reset)
 }
 
 pub(crate) fn overview_warning_style() -> Style {
-    warning_style().bg(Color::Reset)
-}
-
-pub(crate) fn overview_header_warning_style() -> Style {
-    warning_style().bg(Color::Rgb(0x2c, 0x2d, 0x2b))
+    Style::default().fg(Color::Yellow).bg(Color::Reset)
 }
 
 pub(crate) fn overview_plan_line_style(line: &str) -> Style {
-    if matches!(line.trim_start().chars().next(), Some('+' | '-' | '~')) {
-        plan_line_style(line).bg(Color::Reset)
-    } else {
-        overview_text_style()
+    let line = line.trim_start();
+    match line.chars().next() {
+        Some('+') if line.starts_with("+/-") => overview_total_replace_style(),
+        Some('-') if line.starts_with("-/+") => overview_total_replace_style(),
+        Some('+') => overview_total_add_style(),
+        Some('-') => overview_total_destroy_style(),
+        Some('~') => overview_total_update_style(),
+        _ => overview_text_style(),
     }
 }
 
 pub(crate) fn overview_footer_key_style() -> Style {
-    overview_text_style()
+    Style::default().fg(Color::Yellow).bg(Color::Reset)
 }
 
 pub(crate) fn overview_footer_text_style() -> Style {

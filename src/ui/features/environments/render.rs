@@ -1,21 +1,19 @@
-use super::{EnvironmentDialog, EnvironmentView, PlanPreview};
+use super::{EnvironmentDialog, EnvironmentView, PlanPreview, sidebar};
 use crate::{
     app::environments::{EnvironmentPlan, EnvironmentSession, EnvironmentState},
     ui::{
         features::{overview::matrix, plan_review},
-        primitives::{
-            atoms::{scrollbar, separator},
-            molecules::help_dialog,
-        },
-        shell::environments,
+        primitives::{atoms::scrollbar, molecules::help_dialog},
+        shell::{environments, footer},
         theme,
     },
 };
 use ratatui::{
     Frame,
-    layout::Rect,
+    layout::{Rect, Size},
+    style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Clear, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 use std::time::Instant;
 
@@ -25,7 +23,7 @@ const MIN_PREVIEW_HEIGHT: u16 = 4;
 impl EnvironmentView {
     pub(super) fn overview_page_sizes(
         &self,
-        size: ratatui::layout::Size,
+        size: Size,
         state: &EnvironmentSession,
         calculate_preview_page: bool,
     ) -> (usize, bool, usize) {
@@ -33,18 +31,17 @@ impl EnvironmentView {
             return (1, false, 0);
         }
         let area = Rect::new(0, 0, size.width, size.height);
-        let visible_environments = self.visible_environments(state.plans().len());
+        let sidebar_visible = self.sidebar_visible(size.width);
         let layout = environments::overview_layout(
             area,
-            state,
-            self.notice.as_deref(),
-            self.selected_environments.is_some(),
-            &self.selection,
-            &visible_environments,
+            self.sidebar_width,
+            sidebar_visible,
+            self.maximized,
+            !sidebar_visible && self.maximized.is_none(),
+            false,
         );
-        let content = self.overview_content_layout(layout.body, state);
+        let content = self.matrix_content_layout(pane_inner(layout.matrix), state);
         let matrix_page = usize::from(content.matrix.height.saturating_sub(2)).max(1);
-        let preview_visible = content.preview.is_some();
         let preview_page = if calculate_preview_page {
             content.preview.map_or(0, |area| {
                 preview_page_size(area, &self.selected_plan_preview(state))
@@ -52,146 +49,166 @@ impl EnvironmentView {
         } else {
             0
         };
-        (matrix_page, preview_visible, preview_page)
+        (matrix_page, content.preview.is_some(), preview_page)
     }
 
     pub(crate) fn render(&mut self, frame: &mut Frame<'_>, state: &EnvironmentSession) {
-        self.sync(state);
         let area = frame.area();
-        let visible_environments = self.visible_environments(state.plans().len());
-        let is_overview = self.selection.raw.is_none();
-        if is_overview {
-            frame.render_widget(Block::new().style(theme::overview_background_style()), area);
-        }
-        let layout = if is_overview {
+        self.initialize(Size::new(area.width, area.height), state);
+        self.sync(state);
+        frame.render_widget(Block::new().style(theme::overview_background_style()), area);
+        let layout = if self.selection.raw.is_some() {
+            environments::overview_layout(area, self.sidebar_width, false, None, false, false)
+        } else {
+            let sidebar_visible = self.sidebar_visible(area.width);
             environments::overview_layout(
                 area,
-                state,
-                self.notice.as_deref(),
-                self.selected_environments.is_some(),
-                &self.selection,
-                &visible_environments,
-            )
-        } else {
-            environments::layout(
-                area,
-                state,
-                self.notice.as_deref(),
-                self.selected_environments.is_some(),
+                self.sidebar_width,
+                sidebar_visible,
+                self.maximized,
+                !sidebar_visible && self.maximized.is_none(),
                 false,
             )
         };
-        if is_overview {
-            environments::render_overview_header(
-                frame,
-                &layout,
-                state,
-                &self.selection,
-                &visible_environments,
-                self.selected_environments.is_some(),
-            );
-            if let Some(notice) = &self.notice {
-                frame.render_widget(
-                    Paragraph::new(notice.as_str())
-                        .wrap(Wrap { trim: false })
-                        .style(theme::overview_header_warning_style()),
-                    layout.notice,
-                );
-            }
-        } else {
-            environments::render_tabs(
-                frame,
-                layout.tabs,
-                state,
-                &self.selection,
-                &visible_environments,
-            );
-            frame.render_widget(
-                Paragraph::new(environments::summary(
-                    state,
-                    self.selected_environments.is_some(),
-                ))
-                .wrap(Wrap { trim: false })
-                .style(theme::secondary_style()),
-                layout.summary,
-            );
-            if let Some(notice) = &self.notice {
-                frame.render_widget(
-                    Paragraph::new(notice.as_str())
-                        .wrap(Wrap { trim: false })
-                        .style(theme::warning_style()),
-                    layout.notice,
-                );
-            }
-            frame.render_widget(
-                separator::render(layout.header_separator.width),
-                layout.header_separator,
-            );
-        }
+        environments::render_header(frame, layout.header, state, &self.selection);
         if let Some(index) = self.selection.raw
             && let Some(review) = state.plans()[index].review()
         {
+            let body = Rect::new(
+                area.x,
+                layout.header.bottom(),
+                area.width,
+                area.bottom().saturating_sub(layout.header.bottom()),
+            );
             plan_review::render_environment(
                 frame,
-                layout.body,
+                body,
                 review,
                 &mut self.reviews[index],
                 Instant::now(),
             );
         } else {
-            self.render_overview(frame, layout.body, state);
+            self.render_overview(frame, &layout, state);
         }
         if self.confirming_quit {
             self.render_dialog(
                 frame,
+                area,
                 "Stop acquiring environment plans?\nEnter stop and quit   Esc continue",
             );
         } else if let Some(dialog) = &self.dialog {
             match dialog {
-                EnvironmentDialog::Help => {
-                    render_help_dialog(frame, frame.area(), self.dialog_scroll);
-                }
-                EnvironmentDialog::Message(text) => self.render_dialog(frame, text),
+                EnvironmentDialog::Help => render_help_dialog(frame, area, self.dialog_scroll),
+                EnvironmentDialog::Message(text) => self.render_dialog(frame, area, text),
             }
-        } else if let Some(dialog) = &self.filter_dialog {
-            dialog.render(frame, frame.area(), state.plans());
         }
     }
 
-    fn render_overview(&mut self, frame: &mut Frame<'_>, area: Rect, state: &EnvironmentSession) {
-        if state.plans().get(self.selection.column).is_none() {
+    fn render_overview(
+        &mut self,
+        frame: &mut Frame<'_>,
+        layout: &environments::EnvironmentLayout,
+        state: &EnvironmentSession,
+    ) {
+        if layout.environments.width > 0 && layout.environments.height > 0 {
+            sidebar::render(
+                frame,
+                layout.environments,
+                state.plans(),
+                self.selection.column,
+                &self.compared_environments(state.plans().len()),
+                self.active_pane(layout.body.width) == environments::EnvironmentPane::Environments,
+            );
+        }
+        if layout.summary.height > 0 {
+            render_environment_summary(frame, layout.summary, state, self.selection.column);
+        }
+        if layout.matrix.width > 0 && layout.matrix.height > 0 {
+            self.render_matrix_panel(
+                frame,
+                layout.matrix,
+                state,
+                self.active_pane(layout.body.width) == environments::EnvironmentPane::Matrix,
+            );
+        }
+        let preview_visible = self.preview_open
+            && self
+                .matrix_content_layout(pane_inner(layout.matrix), state)
+                .preview
+                .is_some();
+        let matrix_state = if self.matrix.searching() {
+            MatrixFooterState::Searching
+        } else if self.matrix.filter().is_empty() {
+            MatrixFooterState::Unfiltered
+        } else {
+            MatrixFooterState::Filtered
+        };
+        let preview_state = match (self.preview_open, preview_visible) {
+            (false, _) => PreviewFooterState::Closed,
+            (true, true) => PreviewFooterState::Visible,
+            (true, false) => PreviewFooterState::Hidden,
+        };
+        let footer_lines = overview_footer(OverviewFooterContext {
+            width: layout.footer.width,
+            focus: self.active_pane(layout.body.width),
+            matrix: matrix_state,
+            expanded: self.matrix.groups_expanded(),
+            selected: state.plans().get(self.selection.column),
+            maximized: self.maximized.is_some(),
+            sidebar_available: layout.body.width >= 90,
+            preview: preview_state,
+            resize_guidance: layout.body.height < 3 || layout.matrix.width < 3,
+        });
+        frame.render_widget(
+            Paragraph::new(footer_lines).style(theme::overview_text_style()),
+            layout.footer,
+        );
+    }
+
+    fn render_matrix_panel(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        state: &EnvironmentSession,
+        focused: bool,
+    ) {
+        let block = pane_block(
+            focused,
+            if area.height < 3 || area.width < 3 {
+                "Resize terminal"
+            } else {
+                "[2] Differs across envs"
+            },
+            overview_pane_border_style(focused),
+        );
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        if inner.width == 0 || inner.height == 0 {
             return;
         }
-        let layout = self.overview_content_layout(area, state);
-        frame.render_widget(
-            Paragraph::new(layout.context)
-                .wrap(Wrap { trim: false })
-                .style(theme::overview_muted_style()),
-            Rect::new(
-                layout.content_area.x,
-                layout.content_area.y,
-                layout.content_area.width,
-                layout.context_height,
-            ),
-        );
-        frame.render_widget(
-            Paragraph::new(layout.detail)
-                .wrap(Wrap { trim: false })
-                .style(theme::overview_warning_style()),
-            Rect::new(
-                layout.content_area.x,
-                layout.content_area.y.saturating_add(layout.context_height),
-                layout.content_area.width,
-                layout.detail_height,
-            ),
-        );
-        matrix::render(
-            frame,
-            layout.matrix,
-            state,
-            &mut self.matrix,
-            self.selection.column,
-        );
+        let layout = self.matrix_content_layout(inner, state);
+        if layout.context_height > 0 {
+            frame.render_widget(
+                Paragraph::new(layout.context)
+                    .wrap(Wrap { trim: false })
+                    .style(theme::overview_muted_style()),
+                Rect::new(inner.x, inner.y, inner.width, layout.context_height),
+            );
+        }
+        if layout.detail_height > 0 {
+            frame.render_widget(
+                Paragraph::new(layout.detail)
+                    .wrap(Wrap { trim: false })
+                    .style(theme::overview_warning_style()),
+                Rect::new(
+                    inner.x,
+                    inner.y.saturating_add(layout.context_height),
+                    inner.width,
+                    layout.detail_height,
+                ),
+            );
+        }
+        matrix::render(frame, layout.matrix, state, &mut self.matrix);
         if let Some(preview_area) = layout.preview {
             let preview = self.selected_plan_preview(state);
             render_plan_preview(
@@ -202,78 +219,39 @@ impl EnvironmentView {
                 &mut self.preview_horizontal,
             );
         }
-        render_footer(frame, layout.content_area, &layout.footer);
     }
 
-    fn overview_content_layout(
-        &self,
-        area: Rect,
-        state: &EnvironmentSession,
-    ) -> OverviewContentLayout {
-        let content_area = overview_content_area(area);
-        let context = overview_context(self);
+    fn matrix_content_layout(&self, area: Rect, state: &EnvironmentSession) -> MatrixContentLayout {
+        let context = overview_context(self, state);
         let detail = state
             .plans()
             .get(self.selection.column)
             .map(overview_detail)
             .unwrap_or_default();
-        let (context_height, detail_height) = section_heights(content_area, &context, &detail);
-        let regular_footer = overview_footer(
-            content_area.width,
-            self.preview_open,
-            self.matrix.searching(),
-            self.matrix.groups_expanded(),
-        );
-        let regular_footer_height = line_count(&regular_footer);
-        let panel_height = self
-            .preview_open
-            .then(|| {
-                let preview_space_height = area
-                    .height
-                    .saturating_sub(context_height + detail_height + regular_footer_height)
-                    .saturating_sub(content_area.y.saturating_sub(area.y));
-                available_preview_height(preview_space_height)
-            })
-            .flatten();
-        let footer = if self.preview_open && panel_height.is_none() {
-            preview_unavailable_footer(content_area.width, self.matrix.searching())
+        let (context_height, detail_height) = section_heights(area, &context, &detail);
+        let y = area.y.saturating_add(context_height + detail_height);
+        let remaining = area.bottom().saturating_sub(y);
+        let preview_height = if self.preview_open {
+            let minimum = MIN_MATRIX_HEIGHT.saturating_add(MIN_PREVIEW_HEIGHT);
+            (remaining >= minimum).then_some(remaining / 2)
         } else {
-            regular_footer
+            None
         };
-        let matrix_height = area.height.saturating_sub(
-            context_height
-                + detail_height
-                + line_count(&footer)
-                + content_area.y.saturating_sub(area.y)
-                + panel_height.unwrap_or(0),
-        );
-        let matrix_y = content_area
-            .y
-            .saturating_add(context_height + detail_height);
-        let matrix = Rect::new(content_area.x, matrix_y, content_area.width, matrix_height);
-        let preview = panel_height.map(|panel_height| {
-            Rect::new(
-                content_area.x,
-                matrix_y.saturating_add(matrix_height),
-                content_area.width,
-                panel_height,
-            )
-        });
-
-        OverviewContentLayout {
-            content_area,
+        let matrix_height = remaining.saturating_sub(preview_height.unwrap_or(0));
+        let matrix = Rect::new(area.x, y, area.width, matrix_height);
+        let preview =
+            preview_height.map(|height| Rect::new(area.x, matrix.bottom(), area.width, height));
+        MatrixContentLayout {
             context,
             context_height,
             detail,
             detail_height,
             matrix,
             preview,
-            footer,
         }
     }
 
-    fn render_dialog(&self, frame: &mut Frame<'_>, text: &str) {
-        let area = frame.area();
+    fn render_dialog(&self, frame: &mut Frame<'_>, area: Rect, text: &str) {
         let widget = Paragraph::new(text).wrap(Wrap { trim: false });
         let max = widget
             .line_count(area.width.max(1))
@@ -290,51 +268,157 @@ impl EnvironmentView {
     }
 }
 
-fn overview_content_area(area: Rect) -> Rect {
-    let margin = if area.width >= 50 {
-        2
-    } else {
-        u16::from(area.width >= 34)
-    };
-    let header_gap = u16::from(area.height > 18);
-    Rect::new(
-        area.x.saturating_add(margin),
-        area.y.saturating_add(header_gap),
-        area.width.saturating_sub(margin.saturating_mul(2)),
-        area.height.saturating_sub(header_gap),
-    )
+fn render_environment_summary(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &EnvironmentSession,
+    selected: usize,
+) {
+    let all = state
+        .plans()
+        .iter()
+        .map(environment_summary_line)
+        .collect::<Vec<_>>();
+    let mut line = Line::default();
+    for (index, part) in all.iter().enumerate() {
+        if index > 0 {
+            line.push_span(Span::styled("  │  ", theme::overview_muted_style()));
+        }
+        line.extend(part.spans.clone());
+    }
+    if line.width() > usize::from(area.width) {
+        line = state
+            .plans()
+            .get(selected)
+            .map_or_else(Line::default, environment_summary_line);
+    }
+    frame.render_widget(
+        Paragraph::new(line).style(theme::overview_text_style()),
+        area,
+    );
 }
 
-struct OverviewContentLayout {
-    content_area: Rect,
+fn environment_summary_line(plan: &EnvironmentPlan) -> Line<'static> {
+    let status_style = match plan.state() {
+        EnvironmentState::Pending | EnvironmentState::Running => theme::overview_muted_style(),
+        EnvironmentState::Ready { .. } => theme::overview_text_style(),
+        EnvironmentState::Error => theme::overview_total_destroy_style(),
+        EnvironmentState::ExcludedHcp => theme::overview_warning_style(),
+    };
+    let mut line = Line::from(vec![
+        Span::styled(environments::name(plan), theme::overview_text_style()),
+        Span::styled(" ", theme::overview_muted_style()),
+        Span::styled(environments::status(plan), status_style),
+    ]);
+    if let Some(review) = plan.review() {
+        let counts = review.review().metadata();
+        for (count, label, style) in [
+            (counts.additions(), "+", theme::overview_total_add_style()),
+            (counts.changes(), "~", theme::overview_total_update_style()),
+            (
+                counts.deletions(),
+                "-",
+                theme::overview_total_destroy_style(),
+            ),
+        ] {
+            if count > 0 {
+                line.push_span(Span::styled(format!(" {label}{count}"), style));
+            }
+        }
+        if counts.replacements() > 0 {
+            line.push_span(Span::styled(
+                format!(" {} replace", counts.replacements()),
+                theme::overview_total_replace_style(),
+            ));
+        }
+        if !counts.has_changes() && counts.nonstandard_changes() == 0 {
+            line.push_span(Span::styled(" No changes", theme::overview_muted_style()));
+        }
+    }
+    line
+}
+
+struct MatrixContentLayout {
     context: String,
     context_height: u16,
     detail: String,
     detail_height: u16,
     matrix: Rect,
     preview: Option<Rect>,
-    footer: Vec<Line<'static>>,
 }
 
-fn overview_context(view: &EnvironmentView) -> String {
-    if view.matrix.searching() || view.matrix.filtered() {
-        format!("Filter: /{}   (display only)", view.matrix.filter())
-    } else {
-        String::new()
+fn pane_block(focused: bool, title: &str, border_style: Style) -> Block<'static> {
+    let mark = if focused { "* " } else { "  " };
+    Block::new()
+        .borders(Borders::ALL)
+        .title(Line::from(vec![
+            Span::styled(
+                mark,
+                if focused {
+                    Style::default().fg(Color::Cyan).bg(Color::Reset)
+                } else {
+                    theme::overview_muted_style()
+                },
+            ),
+            Span::styled(title.to_owned(), theme::overview_header_accent_style()),
+        ]))
+        .border_style(border_style)
+        .style(theme::overview_background_style())
+}
+
+fn pane_inner(area: Rect) -> Rect {
+    pane_block(false, "", overview_pane_border_style(false)).inner(area)
+}
+
+fn overview_pane_border_style(focused: bool) -> Style {
+    Style::default()
+        .fg(if focused {
+            Color::Cyan
+        } else {
+            Color::DarkGray
+        })
+        .bg(Color::Reset)
+}
+
+fn overview_context(view: &EnvironmentView, state: &EnvironmentSession) -> String {
+    if let Some(notice) = &view.notice {
+        return notice.clone();
     }
+    if view.matrix.searching() || view.matrix.filtered() {
+        return format!("Filter: /{}   (display only)", view.matrix.filter());
+    }
+    if !view
+        .compared_environments(state.plans().len())
+        .contains(&view.selection.column)
+    {
+        return "Selected environment is excluded from the comparison.".to_owned();
+    }
+    String::new()
 }
 
 fn overview_detail(plan: &EnvironmentPlan) -> String {
     if matches!(plan.state(), EnvironmentState::Error) {
-        plan.diagnostic().text().to_owned()
-    } else if let Some(review) = plan
-        .review()
-        .filter(|review| review.review().metadata().nonstandard_changes() > 0)
-    {
-        format!(
-            "Other changes: {} output/import/move or unsupported change(s). v opens the full plan.",
-            review.review().metadata().nonstandard_changes()
-        )
+        plan.diagnostic()
+            .text()
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_owned()
+    } else if let Some(review) = plan.review().filter(|review| {
+        let metadata = review.review().metadata();
+        metadata.nonstandard_changes() > 0 || !metadata.output_names().is_empty()
+    }) {
+        let metadata = review.review().metadata();
+        let count = metadata.nonstandard_changes();
+        let outputs = !metadata.output_names().is_empty();
+        let detail = if count > 0 && outputs {
+            format!("{count} other change(s) and output changes")
+        } else if count > 0 {
+            format!("{count} other change(s)")
+        } else {
+            "output changes".to_owned()
+        };
+        format!("Other changes: {detail}. v opens the full plan.")
     } else {
         String::new()
     }
@@ -347,7 +431,7 @@ fn section_heights(area: Rect, context: &str, detail: &str) -> (u16, u16) {
             .line_count(area.width.max(1)),
     )
     .unwrap_or(u16::MAX)
-    .min(area.height.saturating_sub(6));
+    .min(area.height.saturating_sub(5));
     let detail_height = u16::try_from(
         Paragraph::new(detail)
             .wrap(Wrap { trim: false })
@@ -355,111 +439,228 @@ fn section_heights(area: Rect, context: &str, detail: &str) -> (u16, u16) {
     )
     .unwrap_or(u16::MAX)
     .min(3)
-    .min(area.height.saturating_sub(context_height + 6));
-
+    .min(area.height.saturating_sub(context_height + 5));
     (context_height, detail_height)
 }
 
 fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
-    help_dialog::render(
-        frame,
-        area,
-        "Help",
-        &[
-            help_dialog::HelpSection::new(
-                "Current: Overview",
-                vec![
-                    help_dialog::HelpAction::new(
-                        "↑ / ↓ / j / k",
-                        "scroll matrix or preview; move through filter candidates",
-                    ),
-                    help_dialog::HelpAction::new(
-                        "← / →",
-                        "select env or scroll preview; move in filter search",
-                    ),
-                    help_dialog::HelpAction::new("[ / ]", "select previous or next environment"),
-                    help_dialog::HelpAction::new(
-                        "Enter",
-                        "open plan preview; apply filter or accept search",
-                    ),
-                    help_dialog::HelpAction::new(
-                        "Esc",
-                        "close preview; return from plan; cancel filter; restore search",
-                    ),
-                    help_dialog::HelpAction::new(
-                        "1–9",
-                        "open the numbered environment's full plan",
-                    ),
-                    help_dialog::HelpAction::new(
-                        "Space",
-                        "expand or collapse groups; toggle a filter candidate",
-                    ),
-                    help_dialog::HelpAction::new(
-                        "/",
-                        "filter addresses; search environment names in filter",
-                    ),
-                    help_dialog::HelpAction::new("e", "filter compared environments"),
-                ],
-            ),
-            help_dialog::HelpSection::new(
-                "Other",
-                vec![
-                    help_dialog::HelpAction::new(
-                        "PgUp / PgDn",
-                        "move a page in the active view or candidate list",
-                    ),
-                    help_dialog::HelpAction::new(
-                        "Home / End",
-                        "go to an endpoint or the start/end of search text",
-                    ),
-                    help_dialog::HelpAction::new("a", "clear filter search and select all"),
-                    help_dialog::HelpAction::new("v", "show the full plan from the top"),
-                    help_dialog::HelpAction::new("y", "copy the selected environment's plan"),
-                    help_dialog::HelpAction::new("c", "show environment context"),
-                    help_dialog::HelpAction::new("r", "retry a selected Error environment"),
-                    help_dialog::HelpAction::new("q", "quit; confirms first while acquiring"),
-                ],
-            ),
-            help_dialog::HelpSection::new(
-                "Matrix legend",
-                vec![
-                    help_dialog::HelpAction::new("+ / ~ / -", "create / update / delete"),
-                    help_dialog::HelpAction::new(
-                        "+/- / -/+",
-                        "replace (create→delete / delete→create)",
-                    ),
-                    help_dialog::HelpAction::new("blank", "resource absent from this environment"),
-                    help_dialog::HelpAction::new(".", "resource present, with no change"),
-                    help_dialog::HelpAction::new("?", "plan unavailable; action unknown"),
-                    help_dialog::HelpAction::new("read / move / import", "action shown by name"),
-                    help_dialog::HelpAction::new(
-                        "why: missing",
-                        "resource present in only some Ready plans",
-                    ),
-                ],
-            ),
-            help_dialog::HelpSection::new(
-                "Comparison",
-                vec![
-                    help_dialog::HelpAction::new(
-                        "Same changes",
-                        "no differences found in Ready plans; unknown values may differ",
-                    ),
-                    help_dialog::HelpAction::new("Scope", "only Ready environments are compared"),
-                    help_dialog::HelpAction::new("Excluded", "environments are not retried"),
-                ],
-            ),
-        ],
-        scroll,
-    );
+    help_dialog::render(frame, area, "Help", &overview_help_sections(), scroll);
 }
 
-fn overview_footer_hint(
-    alternative_keys: &[&'static str],
-    description: &'static str,
-) -> Line<'static> {
+fn overview_help_sections() -> Vec<help_dialog::HelpSection> {
+    vec![
+        help_dialog::HelpSection::new(
+            "Current: Multi-environment Overview",
+            vec![
+                help_dialog::HelpAction::new(
+                    "↑ / ↓ / j / k",
+                    "select environments in [1], scroll [2], or move in the preview",
+                ),
+                help_dialog::HelpAction::new("Space", "include or exclude an environment in [1]"),
+                help_dialog::HelpAction::new("Space", "expand or collapse groups in [2]"),
+                help_dialog::HelpAction::new(
+                    "o / a",
+                    "compare only the selected environment / all environments in [1]",
+                ),
+                help_dialog::HelpAction::new("[ / ]", "select the previous or next environment"),
+                help_dialog::HelpAction::new("1 / 2", "focus Envs / Differs; 1 opens Envs"),
+                help_dialog::HelpAction::new("b", "toggle the Envs sidebar"),
+                help_dialog::HelpAction::new("f", "maximize or restore the focused pane"),
+                help_dialog::HelpAction::new("Enter", "open the selected environment's full plan"),
+                help_dialog::HelpAction::new("/", "filter matrix addresses; display only"),
+                help_dialog::HelpAction::new("r", "retry the selected Error environment"),
+            ],
+        ),
+        help_dialog::HelpSection::new(
+            "Other",
+            vec![
+                help_dialog::HelpAction::new("← / →", "select an environment while [2] is focused"),
+                help_dialog::HelpAction::new("v", "open the full plan from the top"),
+                help_dialog::HelpAction::new("y", "copy the selected environment's plan"),
+                help_dialog::HelpAction::new("c", "show environment context"),
+                help_dialog::HelpAction::new("?", "show or close this help"),
+                help_dialog::HelpAction::new("q", "quit; confirms first while acquiring"),
+            ],
+        ),
+        help_dialog::HelpSection::new(
+            "Matrix legend",
+            vec![
+                help_dialog::HelpAction::new("+ / ~ / -", "create / update / delete"),
+                help_dialog::HelpAction::new(
+                    "+/- / -/+",
+                    "replace (create→delete / delete→create)",
+                ),
+                help_dialog::HelpAction::new("blank", "resource absent from this environment"),
+                help_dialog::HelpAction::new(".", "resource present, with no change"),
+                help_dialog::HelpAction::new("?", "plan unavailable; action unknown"),
+            ],
+        ),
+        help_dialog::HelpSection::new(
+            "Comparison",
+            vec![
+                help_dialog::HelpAction::new(
+                    "Same changes",
+                    "no differences found in Ready plans; unknown values may differ",
+                ),
+                help_dialog::HelpAction::new(
+                    "Excluded",
+                    "environments remain selectable and are not retried",
+                ),
+                help_dialog::HelpAction::new("Scope", "only Ready plans are compared"),
+                help_dialog::HelpAction::new(
+                    "why: missing",
+                    "resource is present in only some Ready plans",
+                ),
+            ],
+        ),
+    ]
+}
+
+#[derive(Clone, Copy)]
+enum MatrixFooterState {
+    Searching,
+    Filtered,
+    Unfiltered,
+}
+
+#[derive(Clone, Copy)]
+enum PreviewFooterState {
+    Closed,
+    Visible,
+    Hidden,
+}
+
+#[derive(Clone, Copy)]
+struct OverviewFooterContext<'a> {
+    width: u16,
+    focus: environments::EnvironmentPane,
+    matrix: MatrixFooterState,
+    expanded: Option<bool>,
+    selected: Option<&'a EnvironmentPlan>,
+    maximized: bool,
+    sidebar_available: bool,
+    preview: PreviewFooterState,
+    resize_guidance: bool,
+}
+
+fn overview_footer(context: OverviewFooterContext<'_>) -> Vec<Line<'static>> {
+    let OverviewFooterContext {
+        width,
+        focus,
+        matrix,
+        expanded,
+        selected,
+        maximized,
+        sidebar_available,
+        preview,
+        resize_guidance,
+    } = context;
+    if resize_guidance {
+        return footer::layout(
+            vec![
+                Line::from("Resize terminal to view pane content"),
+                overview_footer_hint(&["q"], "quit"),
+            ],
+            width,
+        );
+    }
+    if matches!(matrix, MatrixFooterState::Searching) {
+        return footer::layout(
+            vec![
+                overview_footer_hint(&["Enter"], "confirm"),
+                overview_footer_hint(&["Esc"], "cancel"),
+            ],
+            width,
+        );
+    }
+    if width < 45 && matches!(preview, PreviewFooterState::Closed) {
+        return compact_overview_footer(width, matrix, expanded);
+    }
+    let mut items = vec![overview_footer_hint(&["[", "]"], "env")];
+    if !matches!(preview, PreviewFooterState::Closed) {
+        items.extend([overview_footer_hint(&["Esc"], "close")]);
+        items.push(overview_footer_hint(&["?"], "help"));
+        items.push(overview_footer_hint(&["q"], "quit"));
+        if matches!(preview, PreviewFooterState::Hidden) {
+            items.push(Line::from("Resize for preview"));
+        }
+        items.push(overview_footer_hint(&["v"], "full plan"));
+    } else if focus == environments::EnvironmentPane::Environments {
+        items.extend([
+            overview_footer_hint(&["Enter"], "open plan"),
+            overview_footer_hint(&["Space"], "include/exclude"),
+            overview_footer_hint(&["o"], "only"),
+            overview_footer_hint(&["a"], "all"),
+        ]);
+        if selected.is_some_and(|plan| matches!(plan.state(), EnvironmentState::Error)) {
+            items.push(overview_footer_hint(&["r"], "retry"));
+        }
+    } else {
+        items.push(overview_footer_hint(&["Enter"], "preview"));
+        items.push(overview_footer_hint(&["v"], "full plan"));
+        items.push(overview_footer_hint(&["/"], "filter"));
+        if matches!(matrix, MatrixFooterState::Unfiltered)
+            && let Some(expanded) = expanded
+        {
+            items.push(overview_footer_hint(
+                &["Space"],
+                if expanded {
+                    "collapse all"
+                } else if width < 45 {
+                    "expand"
+                } else {
+                    "expand all"
+                },
+            ));
+        }
+    }
+    if sidebar_available && !maximized {
+        items.push(overview_footer_hint(&["b"], "toggle envs"));
+    }
+    if width < 45 && matches!(preview, PreviewFooterState::Closed) {
+        items.push(overview_footer_hint(&["1", "2"], "focus"));
+        items.push(overview_footer_hint(&["?", "q"], "help/quit"));
+    } else {
+        if matches!(preview, PreviewFooterState::Closed) {
+            items.push(overview_footer_hint(&["?"], "help"));
+            items.push(overview_footer_hint(&["q"], "quit"));
+        }
+        items.push(overview_footer_hint(&["1", "2"], "focus"));
+    }
+    items.push(if maximized {
+        overview_footer_hint(&["f", "Esc"], "restore")
+    } else {
+        overview_footer_hint(&["f"], "maximize")
+    });
+    footer::layout(items, width)
+}
+
+fn compact_overview_footer(
+    width: u16,
+    matrix: MatrixFooterState,
+    expanded: Option<bool>,
+) -> Vec<Line<'static>> {
+    let mut items = vec![
+        overview_footer_hint(&["[", "]"], "env"),
+        overview_footer_hint(&["Enter"], "preview"),
+        overview_footer_hint(&["v"], "full plan"),
+        overview_footer_hint(&["/"], "filter"),
+    ];
+    if matches!(matrix, MatrixFooterState::Unfiltered)
+        && let Some(expanded) = expanded
+    {
+        items.push(overview_footer_hint(
+            &["Space"],
+            if expanded { "collapse all" } else { "expand" },
+        ));
+    }
+    items.push(overview_footer_hint(&["?", "q"], "help/quit"));
+    footer::layout(items, width)
+}
+
+fn overview_footer_hint(keys: &[&'static str], description: &'static str) -> Line<'static> {
     let mut spans = Vec::new();
-    for (index, key) in alternative_keys.iter().enumerate() {
+    for (index, key) in keys.iter().enumerate() {
         if index > 0 {
             spans.push(Span::styled("/", theme::overview_footer_separator_style()));
         }
@@ -470,244 +671,6 @@ fn overview_footer_hint(
         theme::overview_footer_text_style(),
     ));
     Line::from(spans)
-}
-
-fn overview_footer_layout(items: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
-    let width = usize::from(width);
-    let mut rows = vec![Line::default()];
-    let mut row_widths = vec![0usize];
-    for item in items {
-        let item_width = item.width();
-        if item_width == 0 || item_width > width {
-            continue;
-        }
-        let row_index = rows.len() - 1;
-        let row = &mut rows[row_index];
-        let separator_width = usize::from(!row.spans.is_empty()) * 3;
-        if row_widths[row_index] + separator_width + item_width <= width {
-            if !row.spans.is_empty() {
-                row.push_span(Span::styled(
-                    " | ",
-                    theme::overview_footer_separator_style(),
-                ));
-            }
-            row.extend(item.spans);
-            row_widths[row_index] += separator_width + item_width;
-            continue;
-        }
-        rows.push(item);
-        row_widths.push(item_width);
-    }
-    rows.into_iter()
-        .filter(|row| !row.spans.is_empty())
-        .collect()
-}
-
-fn available_preview_height(content_height: u16) -> Option<u16> {
-    let minimum_height = MIN_MATRIX_HEIGHT.saturating_add(MIN_PREVIEW_HEIGHT);
-    (content_height >= minimum_height).then_some(content_height / 2)
-}
-
-fn overview_footer(
-    width: u16,
-    preview_open: bool,
-    searching: bool,
-    expanded: Option<bool>,
-) -> Vec<Line<'static>> {
-    if searching {
-        return overview_footer_layout(
-            vec![
-                overview_footer_hint(&["Enter"], "confirm"),
-                overview_footer_hint(&["Esc"], "cancel"),
-            ],
-            width,
-        );
-    }
-    if width < 45 {
-        return compact_overview_footer(preview_open, expanded, width);
-    }
-    let mut items = if preview_open {
-        vec![
-            overview_footer_hint(&["[ ]"], "environment"),
-            overview_footer_hint(&["Esc"], "close"),
-            overview_footer_hint(&["v"], "full plan"),
-        ]
-    } else {
-        vec![
-            overview_footer_hint(&["[ ]"], "environment"),
-            overview_footer_hint(&["Enter"], "preview"),
-            overview_footer_hint(&["/"], "filter"),
-            overview_footer_hint(&["e"], "environments"),
-        ]
-    };
-    if !preview_open {
-        if let Some(expanded) = expanded {
-            items.push(overview_footer_hint(
-                &["Space"],
-                if expanded {
-                    "collapse all"
-                } else {
-                    "expand all"
-                },
-            ));
-        }
-        items.push(overview_footer_hint(&["v"], "full plan"));
-    }
-    items.extend([
-        overview_footer_hint(&["?"], "help"),
-        overview_footer_hint(&["q"], "quit"),
-    ]);
-    overview_footer_layout(items, width)
-}
-
-fn compact_overview_footer(
-    preview_open: bool,
-    expanded: Option<bool>,
-    width: u16,
-) -> Vec<Line<'static>> {
-    if width < 32 {
-        let mut items = vec![
-            overview_footer_hint(&["[ ]"], "env"),
-            overview_footer_hint(&["Enter"], "preview"),
-            overview_footer_hint(&["/"], "filter"),
-        ];
-        if preview_open {
-            items[1] = overview_footer_hint(&["Esc"], "close");
-        } else {
-            items.push(overview_footer_hint(&["e"], "env filter"));
-            if let Some(expanded) = expanded {
-                items.push(overview_footer_hint(
-                    &["Space"],
-                    if expanded {
-                        "collapse all"
-                    } else {
-                        "expand all"
-                    },
-                ));
-            }
-        }
-        items.extend([
-            overview_footer_hint(&["v"], "plan"),
-            overview_footer_hint(&["?"], "help"),
-            overview_footer_hint(&["q"], "quit"),
-        ]);
-        return overview_footer_layout(items, width);
-    }
-
-    let environment = if width < 40 { "env" } else { "environment" };
-    let plan = "full plan";
-    if preview_open {
-        return vec![
-            join_footer_items([
-                overview_footer_hint(&["[ ]"], environment),
-                overview_footer_hint(&["Esc"], "close"),
-            ]),
-            join_footer_items([
-                overview_footer_hint(&["v"], plan),
-                overview_footer_hint(&["?"], "help"),
-                overview_footer_hint(&["q"], "quit"),
-            ]),
-        ];
-    }
-
-    let items = vec![
-        overview_footer_hint(&["[ ]"], environment),
-        overview_footer_hint(&["Enter"], "preview"),
-        overview_footer_hint(&["/"], "filter"),
-    ];
-    let mut row_two = vec![overview_footer_hint(&["e"], "env filter")];
-    if let Some(expanded) = expanded {
-        row_two.push(overview_footer_hint(
-            &["Space"],
-            if expanded {
-                "collapse all"
-            } else {
-                "expand all"
-            },
-        ));
-    }
-    vec![
-        join_footer_items(items),
-        join_footer_items(row_two),
-        join_footer_items([
-            overview_footer_hint(&["v"], plan),
-            overview_footer_hint(&["?"], "help"),
-            overview_footer_hint(&["q"], "quit"),
-        ]),
-    ]
-}
-
-fn join_footer_items(items: impl IntoIterator<Item = Line<'static>>) -> Line<'static> {
-    let mut line = Line::default();
-    for item in items {
-        if !line.spans.is_empty() {
-            line.push_span(Span::styled("  ", theme::overview_footer_separator_style()));
-        }
-        line.extend(item.spans);
-    }
-    line
-}
-
-fn preview_unavailable_footer(width: u16, searching: bool) -> Vec<Line<'static>> {
-    if searching {
-        return overview_footer_layout(
-            vec![
-                overview_footer_hint(&["Enter"], "confirm"),
-                overview_footer_hint(&["Esc"], "cancel"),
-                Line::from("Resize for preview"),
-            ],
-            width,
-        );
-    }
-    if width < 45 {
-        return overview_footer_layout(
-            vec![
-                overview_footer_hint(&["[ ]"], "environment"),
-                overview_footer_hint(&["Esc"], "close"),
-                overview_footer_hint(&["/"], "filter"),
-                overview_footer_hint(&["e"], "environments"),
-                Line::from("Resize for preview"),
-                overview_footer_hint(&["v"], "full plan"),
-                overview_footer_hint(&["?"], "help"),
-                overview_footer_hint(&["q"], "quit"),
-            ],
-            width,
-        );
-    }
-    let preview_message = if width >= 56 {
-        "Preview needs more room"
-    } else {
-        "Resize for preview"
-    };
-    overview_footer_layout(
-        vec![
-            overview_footer_hint(&["[ ]"], "environment"),
-            overview_footer_hint(&["Esc"], "close"),
-            overview_footer_hint(&["/"], "filter"),
-            overview_footer_hint(&["e"], "environments"),
-            Line::from(preview_message),
-            overview_footer_hint(&["v"], "full plan"),
-            overview_footer_hint(&["?"], "help"),
-            overview_footer_hint(&["q"], "quit"),
-        ],
-        width,
-    )
-}
-
-fn line_count(lines: &[Line<'static>]) -> u16 {
-    u16::try_from(lines.len()).unwrap_or(u16::MAX)
-}
-
-fn render_footer(frame: &mut Frame<'_>, area: Rect, lines: &[Line<'static>]) {
-    frame.render_widget(
-        Paragraph::new(lines.to_owned()).style(theme::overview_footer_text_style()),
-        Rect::new(
-            area.x,
-            area.bottom().saturating_sub(line_count(lines)),
-            area.width,
-            line_count(lines),
-        ),
-    );
 }
 
 fn render_plan_preview(
@@ -725,7 +688,7 @@ fn render_plan_preview(
             preview.title.clone(),
             theme::overview_preview_title_style(),
         ))
-        .style(theme::overview_total_style()),
+        .style(theme::overview_text_style()),
         Rect::new(area.x, area.y, area.width, 1),
     );
     let body_area = Rect::new(

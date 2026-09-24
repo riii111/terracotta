@@ -4,7 +4,10 @@ use crate::app::environments::{
     EnvironmentSession,
     comparison::EnvironmentSelection,
     comparison::{CellState, ComparisonRow, DifferenceReason},
-    overview::{EnvironmentOverview, GroupId, OverviewRow, environment_overview_for_selection},
+    overview::{
+        EnvironmentOverview, GroupId, OverviewRow, OverviewRowId,
+        environment_overview_for_selection,
+    },
 };
 use crate::ui::features::overview::OverviewInput;
 use crate::ui::text_input;
@@ -18,6 +21,7 @@ pub(crate) struct MatrixCell {
 pub(super) struct Row {
     pub(super) address: String,
     pub(super) group: Option<GroupId>,
+    pub(super) id: OverviewRowId,
     pub(super) child: bool,
     pub(super) cells: Vec<MatrixCell>,
     pub(super) difference: Option<DifferenceReason>,
@@ -66,6 +70,14 @@ impl MatrixView {
         &self.filter
     }
 
+    #[cfg(test)]
+    pub(crate) fn row_identities(&self) -> Vec<(String, OverviewRowId, bool)> {
+        self.rows
+            .iter()
+            .map(|row| (row.address.clone(), row.id.clone(), row.child))
+            .collect()
+    }
+
     pub(crate) const fn filtered(&self) -> bool {
         !self.filter.is_empty()
     }
@@ -74,16 +86,13 @@ impl MatrixView {
         let groups: Vec<_> = self
             .rows
             .iter()
-            .filter_map(|row| row.group.as_ref())
+            .filter(|row| row.group.is_some())
+            .filter_map(|row| match &row.id {
+                OverviewRowId::Group(id) => Some(id),
+                OverviewRowId::Individual(_) => None,
+            })
             .collect();
         (!groups.is_empty()).then(|| groups.iter().all(|group| self.expanded.contains(group)))
-    }
-
-    pub(crate) fn selected_column(&self, environment: usize) -> usize {
-        self.environments
-            .iter()
-            .position(|index| *index == environment)
-            .unwrap_or(0)
     }
 
     pub(crate) fn apply(&mut self, input: OverviewInput, page_size: usize) {
@@ -106,7 +115,11 @@ impl MatrixView {
                 let groups: BTreeSet<_> = self
                     .rows
                     .iter()
-                    .filter_map(|row| row.group.clone())
+                    .filter(|row| row.group.is_some())
+                    .filter_map(|row| match &row.id {
+                        OverviewRowId::Group(id) => Some(id.clone()),
+                        OverviewRowId::Individual(_) => None,
+                    })
                     .collect();
                 if groups.iter().any(|group| !self.expanded.contains(group)) {
                     self.expanded.extend(groups);
@@ -185,7 +198,11 @@ fn rows(overview: &EnvironmentOverview, filter: &str, expanded: &BTreeSet<GroupI
     for row in &overview.rows {
         match row {
             OverviewRow::Individual(row) if row.address.contains(filter) => {
-                rows.push(individual(row, false));
+                rows.push(individual(
+                    row,
+                    false,
+                    OverviewRowId::Individual(row.address.clone()),
+                ));
             }
             OverviewRow::Group(group) => {
                 let children: Vec<_> = group
@@ -197,7 +214,11 @@ fn rows(overview: &EnvironmentOverview, filter: &str, expanded: &BTreeSet<GroupI
                     continue;
                 }
                 if children.len() == 1 {
-                    rows.push(individual(children[0], false));
+                    rows.push(individual(
+                        children[0],
+                        false,
+                        OverviewRowId::Individual(children[0].address.clone()),
+                    ));
                     continue;
                 }
                 let cells = group
@@ -220,12 +241,19 @@ fn rows(overview: &EnvironmentOverview, filter: &str, expanded: &BTreeSet<GroupI
                 rows.push(Row {
                     address: group.display_address.clone(),
                     group: Some(group.id.clone()),
+                    id: OverviewRowId::Group(group.id.clone()),
                     child: false,
                     cells,
                     difference: None,
                 });
                 if expanded.contains(&group.id) {
-                    rows.extend(children.into_iter().map(|child| individual(child, true)));
+                    rows.extend(children.into_iter().map(|child| {
+                        individual(
+                            child,
+                            true,
+                            OverviewRowId::Individual(child.address.clone()),
+                        )
+                    }));
                 }
             }
             OverviewRow::Individual(_) => {}
@@ -234,10 +262,11 @@ fn rows(overview: &EnvironmentOverview, filter: &str, expanded: &BTreeSet<GroupI
     rows
 }
 
-fn individual(row: &ComparisonRow, child: bool) -> Row {
+fn individual(row: &ComparisonRow, child: bool, id: OverviewRowId) -> Row {
     Row {
         address: row.address.clone(),
         group: None,
+        id,
         child,
         cells: row
             .cells

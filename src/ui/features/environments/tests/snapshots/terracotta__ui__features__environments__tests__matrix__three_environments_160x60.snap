@@ -2,63 +2,62 @@
 source: src/ui/features/environments/tests/matrix.rs
 expression: rendered
 ---
-0 Overview   1 dev  2 prod [PROD]  3 stg                                                                                                              Ready: 3/3
-
-
-
-  Address                      > dev         prod         stg        why
-
-  Differs across envs
-  terraform_data.api           ~           +/-          -            action
-
-  Same change across envs
-  [+] terraform_data.server[*] ~ 20        ~ 200        ~ 20
-
-  Total                        +0 ~21 -0   +0 ~200 -0   +0 ~20 -1
-                               0 replace   1 replace    0 replace
-  blank: absent   .: unchanged   ?: plan unavailable
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  [ ] environment | Enter preview | / filter | e environments | Space expand all | v full plan | ? help | q quit
+terracotta ▸ dev                                                                                                                                       terraform
+┌* [1] Envs────────────┐┌  [2] Differs across envs─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│> [x] dev             ││                                                                                                                                      │
+│    Ready             ││                                                                                                                                      │
+│        ~21           ││Address                      dev         prod        stg          why                                                                 │
+│                      ││                                                                                                                                      │
+│  [x] prod [PROD]     ││Differs across envs                                                                                                                   │
+│    Ready             ││terraform_data.api           ~           +/-         -            action                                                              │
+│        ~200          ││                                                                                                                                      │
+│        1 replace     ││Same change across envs                                                                                                               │
+│  [x] stg             ││[+] terraform_data.server[*] ~ 20        ~ 200       ~ 20                                                                             │
+│    Ready             ││                                                                                                                                      │
+│        ~20           ││blank: absent   .: unchanged   ?: plan unavailable                                                                                    │
+│    -1                ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+│                      ││                                                                                                                                      │
+└──────────────────────┘└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+[/] env | Enter open plan | Space include/exclude | o only | a all | b toggle envs | ? help | q quit | 1/2 focus | f maximize
