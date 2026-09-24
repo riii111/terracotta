@@ -533,10 +533,13 @@ fn columns_remain_selectable_without_rows_and_scroll_beyond_nine() {
             vec![change("terraform_data.api", ResourceChangeKind::Update)],
         );
     }
-    insta::assert_snapshot!(
-        "twelve_ready_selected_last",
-        text(&mut view, &state, (80, 24))
-    );
+    let rendered = text(&mut view, &state, (80, 24));
+    insta::assert_snapshot!("twelve_ready_selected_last", rendered.as_str());
+    let header = rendered
+        .lines()
+        .find(|line| line.contains("Address"))
+        .expect("matrix header");
+    assert!(header.contains("env-11"), "{header}");
     press(&mut view, &mut state, KeyCode::Char('v'));
     assert_eq!(view.selection.raw, Some(11));
     press(&mut view, &mut state, KeyCode::Char('['));

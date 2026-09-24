@@ -82,7 +82,13 @@ impl EnvironmentView {
             );
         } else if let Some(dialog) = &self.dialog {
             match dialog {
-                EnvironmentDialog::Help => render_help_dialog(frame, area, self.dialog_scroll),
+                EnvironmentDialog::Help => render_help_dialog(
+                    frame,
+                    area,
+                    self.dialog_scroll,
+                    self.sidebar_enabled,
+                    self.sidebar_enabled && area.width >= 90,
+                ),
                 EnvironmentDialog::Message(text) => self.render_dialog(frame, area, text),
             }
         }
@@ -130,7 +136,7 @@ impl EnvironmentView {
             expanded: self.matrix.groups_expanded(),
             selected: state.plans().get(self.selection.column),
             maximized: self.maximized.is_some(),
-            sidebar_available: layout.body.width >= 90,
+            sidebar_available: self.sidebar_enabled && layout.body.width >= 90,
             resize_guidance: layout.body.height < 3
                 || (focus == environments::EnvironmentPane::Matrix && layout.matrix.width < 3),
         });
@@ -183,7 +189,13 @@ impl EnvironmentView {
                 ),
             );
         }
-        matrix::render(frame, layout.matrix, state, &mut self.matrix);
+        matrix::render(
+            frame,
+            layout.matrix,
+            state,
+            &mut self.matrix,
+            self.selection.column,
+        );
     }
 
     fn matrix_content_layout(&self, area: Rect, state: &EnvironmentSession) -> MatrixContentLayout {
@@ -351,12 +363,7 @@ fn overview_context(view: &EnvironmentView, state: &EnvironmentSession) -> Strin
 
 fn overview_detail(plan: &EnvironmentPlan) -> String {
     if matches!(plan.state(), EnvironmentState::Error) {
-        plan.diagnostic()
-            .text()
-            .lines()
-            .next()
-            .unwrap_or_default()
-            .to_owned()
+        plan.diagnostic().text().to_owned()
     } else if let Some(review) = plan.review().filter(|review| {
         let metadata = review.review().metadata();
         metadata.nonstandard_changes() > 0 || !metadata.output_names().is_empty()
@@ -396,34 +403,72 @@ fn section_heights(area: Rect, context: &str, detail: &str) -> (u16, u16) {
     (context_height, detail_height)
 }
 
-fn render_help_dialog(frame: &mut Frame<'_>, area: Rect, scroll: u16) {
-    help_dialog::render(frame, area, "Help", &overview_help_sections(), scroll);
+fn render_help_dialog(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    scroll: u16,
+    sidebar_enabled: bool,
+    sidebar_available: bool,
+) {
+    help_dialog::render(
+        frame,
+        area,
+        "Help",
+        &overview_help_sections(sidebar_enabled, sidebar_available),
+        scroll,
+    );
 }
 
-fn overview_help_sections() -> Vec<help_dialog::HelpSection> {
+fn overview_help_sections(
+    sidebar_enabled: bool,
+    sidebar_available: bool,
+) -> Vec<help_dialog::HelpSection> {
+    let mut current_actions = vec![help_dialog::HelpAction::new(
+        "↑ / ↓ / j / k",
+        if sidebar_available {
+            "select environments in [1] or scroll [2]"
+        } else {
+            "scroll [2]"
+        },
+    )];
+    if sidebar_available {
+        current_actions.push(help_dialog::HelpAction::new(
+            "Space",
+            "include or exclude an environment in [1]",
+        ));
+    }
+    current_actions.push(help_dialog::HelpAction::new(
+        "Space",
+        "expand or collapse groups in [2]",
+    ));
+    if sidebar_available {
+        current_actions.push(help_dialog::HelpAction::new(
+            "o / a",
+            "compare only the selected environment / all environments in [1]",
+        ));
+    }
+    if sidebar_enabled {
+        current_actions.push(help_dialog::HelpAction::new(
+            "[ / ]",
+            "select the previous or next environment",
+        ));
+    }
+    current_actions.push(if sidebar_available {
+        help_dialog::HelpAction::new("1 / 2", "focus Envs / Differs; 1 opens Envs")
+    } else {
+        help_dialog::HelpAction::new("2", "focus Differs")
+    });
+    if sidebar_available {
+        current_actions.push(help_dialog::HelpAction::new("b", "toggle the Envs sidebar"));
+    }
+    current_actions.extend([
+        help_dialog::HelpAction::new("f", "maximize or restore the focused pane"),
+        help_dialog::HelpAction::new("Enter", "open the selected environment's full plan"),
+        help_dialog::HelpAction::new("/", "filter matrix addresses; display only"),
+        help_dialog::HelpAction::new("r", "retry the selected Error environment"),
+    ]);
     vec![
-        help_dialog::HelpSection::new(
-            "Current: Multi-environment Overview",
-            vec![
-                help_dialog::HelpAction::new(
-                    "↑ / ↓ / j / k",
-                    "select environments in [1] or scroll [2]",
-                ),
-                help_dialog::HelpAction::new("Space", "include or exclude an environment in [1]"),
-                help_dialog::HelpAction::new("Space", "expand or collapse groups in [2]"),
-                help_dialog::HelpAction::new(
-                    "o / a",
-                    "compare only the selected environment / all environments in [1]",
-                ),
-                help_dialog::HelpAction::new("[ / ]", "select the previous or next environment"),
-                help_dialog::HelpAction::new("1 / 2", "focus Envs / Differs; 1 opens Envs"),
-                help_dialog::HelpAction::new("b", "toggle the Envs sidebar"),
-                help_dialog::HelpAction::new("f", "maximize or restore the focused pane"),
-                help_dialog::HelpAction::new("Enter", "open the selected environment's full plan"),
-                help_dialog::HelpAction::new("/", "filter matrix addresses; display only"),
-                help_dialog::HelpAction::new("r", "retry the selected Error environment"),
-            ],
-        ),
+        help_dialog::HelpSection::new("Current: Multi-environment Overview", current_actions),
         help_dialog::HelpSection::new(
             "Other",
             vec![
@@ -559,7 +604,11 @@ fn overview_footer(context: OverviewFooterContext<'_>) -> Vec<Line<'static>> {
     } else {
         items.push(overview_footer_hint(&["?"], "help"));
         items.push(overview_footer_hint(&["q"], "quit"));
-        items.push(overview_footer_hint(&["1", "2"], "focus"));
+        items.push(if sidebar_available {
+            overview_footer_hint(&["1", "2"], "focus")
+        } else {
+            overview_footer_hint(&["2"], "focus")
+        });
     }
     items.push(if maximized {
         overview_footer_hint(&["f", "Esc"], "restore")

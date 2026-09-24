@@ -26,6 +26,7 @@ pub(crate) fn render(
     area: Rect,
     state: &EnvironmentSession,
     view: &mut MatrixView,
+    selected_environment: usize,
 ) {
     if area.width < 30 || area.height < 5 {
         frame.render_widget(
@@ -39,7 +40,8 @@ pub(crate) fn render(
     let column_widths = column_widths(state, view);
     let column_budget =
         usize::from(area.width).saturating_sub(address_width + WHY_WIDTH + COLUMN_GAP);
-    let columns = visible_columns(view, &column_widths, column_budget);
+    let selected_column = view.selected_column(selected_environment);
+    let columns = visible_columns(view, &column_widths, column_budget, selected_column);
 
     render_column_headers(frame, area, state, view, &columns, address_width);
 
@@ -204,12 +206,21 @@ fn column_widths(state: &EnvironmentSession, view: &MatrixView) -> Vec<usize> {
         .collect()
 }
 
-fn visible_columns(view: &mut MatrixView, widths: &[usize], budget: usize) -> Vec<(usize, usize)> {
+fn visible_columns(
+    view: &mut MatrixView,
+    widths: &[usize],
+    budget: usize,
+    selected_column: usize,
+) -> Vec<(usize, usize)> {
     if widths.is_empty() || budget == 0 {
         view.first_column = 0;
         return Vec::new();
     }
-    let first = view.first_column.min(widths.len() - 1);
+    let selected = selected_column.min(widths.len() - 1);
+    let mut first = view.first_column.min(widths.len() - 1);
+    if selected < first {
+        first = selected;
+    }
     let mut last = first;
     let mut used = 0;
     while last < widths.len() {
@@ -225,6 +236,19 @@ fn visible_columns(view: &mut MatrixView, widths: &[usize], budget: usize) -> Ve
         last += 1;
         if width < widths[last - 1] {
             break;
+        }
+    }
+    if selected >= last {
+        first = selected;
+        used = widths[selected].min(budget);
+        while first > 0 && widths[first - 1] <= budget.saturating_sub(used) {
+            first -= 1;
+            used += widths[first];
+        }
+        last = selected + 1;
+        while last < widths.len() && widths[last] <= budget.saturating_sub(used) {
+            used += widths[last];
+            last += 1;
         }
     }
     view.first_column = first;

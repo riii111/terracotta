@@ -1,13 +1,13 @@
 ---
 source: src/ui/features/environments/tests/matrix.rs
-expression: "text(&mut view, &state, (80, 24))"
+expression: rendered.as_str()
 ---
 terracotta ▸ env-11                                                    terraform
 env-11 Ready ~1
 ┌* [2] Differs across envs─────────────────────────────────────────────────────┐
 │                                                                              │
 │                                                                              │
-│Address            env-00      env-01      env-02      env-03       why       │
+│Address            env-08      env-09      env-10      env-11       why       │
 │                                                                              │
 │Same change across envs                                                       │
 │terraform_data.api ~           ~           ~           ~                      │
@@ -24,5 +24,5 @@ env-11 Ready ~1
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
-[/] env | Enter open plan | v full plan | / filter | ? help | q quit | 1/2 focus
+[/] env | Enter open plan | v full plan | / filter | ? help | q quit | 2 focus
 f maximize

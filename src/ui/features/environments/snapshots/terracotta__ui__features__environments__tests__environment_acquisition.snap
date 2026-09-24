@@ -7,6 +7,7 @@ b-error Error
 ┌* [2] Differs across envs─────────────────────────────────────────────────────┐
 │                                                                              │
 │Missing required variable                                                     │
+│Pass a variable before retrying.                                              │
 │Address     a-ready     b-error     c-running     d-pending      why          │
 │                                                                              │
 │No matching resource changes. v opens the full plan.                          │
@@ -22,7 +23,6 @@ b-error Error
 │                                                                              │
 │                                                                              │
 │                                                                              │
-│                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
-[/] env | Enter open plan | v full plan | / filter | ? help | q quit | 1/2 focus
+[/] env | Enter open plan | v full plan | / filter | ? help | q quit | 2 focus
 f maximize

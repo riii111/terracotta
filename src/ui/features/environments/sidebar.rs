@@ -1,5 +1,6 @@
 use ratatui::{
     Frame,
+    buffer::CellWidth,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -79,7 +80,8 @@ pub(crate) fn render(
                     .expect("ready environment has a review")
                     .review()
                     .metadata();
-                let (first_counts, second_counts) = count_lines(metadata, widths, wrap_counts);
+                let (first_counts, second_counts) =
+                    count_lines(metadata, widths, wrap_counts, inner.width.into());
                 lines.push(first_counts);
                 lines.push(second_counts);
             }
@@ -242,6 +244,7 @@ fn count_lines(
     counts: &PlanMetadata,
     widths: CountWidths,
     wrapped: bool,
+    max_width: usize,
 ) -> (Line<'static>, Line<'static>) {
     let add = count_span(
         "+",
@@ -268,17 +271,20 @@ fn count_lines(
         theme::overview_total_replace_style(),
     );
     if wrapped {
+        let (first_indent, first_gap) = count_spacing(widths.additions + widths.updates, max_width);
+        let (second_indent, second_gap) =
+            count_spacing(widths.deletions + widths.replacements, max_width);
         (
             Line::from(vec![
-                Span::styled("    ", theme::overview_text_style()),
+                Span::styled(" ".repeat(first_indent), theme::overview_text_style()),
                 add,
-                Span::styled("  ", theme::overview_text_style()),
+                Span::styled(" ".repeat(first_gap), theme::overview_text_style()),
                 update,
             ]),
             Line::from(vec![
-                Span::styled("    ", theme::overview_text_style()),
+                Span::styled(" ".repeat(second_indent), theme::overview_text_style()),
                 delete,
-                Span::styled("  ", theme::overview_text_style()),
+                Span::styled(" ".repeat(second_gap), theme::overview_text_style()),
                 replace,
             ]),
         )
@@ -299,6 +305,12 @@ fn count_lines(
     }
 }
 
+fn count_spacing(content_width: usize, max_width: usize) -> (usize, usize) {
+    let gap = 2.min(max_width.saturating_sub(content_width));
+    let indent = 4.min(max_width.saturating_sub(content_width.saturating_add(gap)));
+    (indent, gap)
+}
+
 fn count_span(prefix: &str, count: usize, width: usize, style: Style) -> Span<'static> {
     let text = if count == 0 {
         String::new()
@@ -313,13 +325,44 @@ fn count_span(prefix: &str, count: usize, width: usize, style: Style) -> Span<'s
 fn fit_prefix(value: &str, width: usize) -> String {
     let mut result = String::new();
     let mut used = 0_usize;
-    for character in value.chars() {
-        let character_width = Line::from(character.to_string()).width();
+    for grapheme in Line::from(value).styled_graphemes(Style::default()) {
+        let character_width = usize::from(grapheme.symbol.cell_width());
         if used.saturating_add(character_width) > width {
             break;
         }
         used += character_width;
-        result.push(character);
+        result.push_str(grapheme.symbol);
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CountWidths, count_lines, fit_prefix};
+    use crate::app::review::PlanMetadata;
+
+    #[test]
+    fn wrapped_count_lines_fit_the_sidebar_inner_width() {
+        let counts = PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 1000, false)
+            .with_resource_changes(Vec::new(), 1000);
+        let widths = CountWidths {
+            additions: 2,
+            updates: 2,
+            deletions: 5,
+            replacements: 12,
+        };
+
+        let (first, second) = count_lines(&counts, widths, true, 22);
+        assert!(first.width() <= 22, "{first}");
+        assert!(second.width() <= 22, "{second}");
+        assert!(second.to_string().contains("-1000"));
+        assert!(second.to_string().contains("1000 replace"));
+    }
+
+    #[test]
+    fn name_truncation_keeps_zwj_emoji_together() {
+        let name = format!("{}👩‍💻tail", "a".repeat(31));
+
+        assert_eq!(fit_prefix(&name, 33), format!("{}👩‍💻", "a".repeat(31)));
+    }
 }

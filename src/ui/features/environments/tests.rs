@@ -197,13 +197,29 @@ fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
             assert!(text.contains("Comparison"), "{width}x{height}: {text}");
         }
         if (width, height) == (80, 24) {
-            assert!(text.contains("1 / 2"));
-            assert!(text.contains("include or exclude"));
+            assert!(text.contains("focus Differs"));
+            assert!(!text.contains("1 / 2"));
+            assert!(!text.contains("include or exclude"));
+            assert!(!text.contains("toggle the Envs sidebar"));
             assert!(!text.contains("Tab"));
             assert!(text.contains("expand or collapse groups"));
             assert!(!text.contains("environment filter"));
         }
         assert!(text.contains("Esc"), "{width}x{height}: {text}");
+        if width == 80 {
+            assert!(!text.contains("1 opens Envs"), "{width}x{height}: {text}");
+            assert!(
+                !text.contains("toggle the Envs sidebar"),
+                "{width}x{height}: {text}"
+            );
+        }
+        if width >= 90 {
+            assert!(text.contains("1 / 2"), "{width}x{height}: {text}");
+            assert!(
+                text.contains("toggle the Envs sidebar"),
+                "{width}x{height}: {text}"
+            );
+        }
         if width == 80 {
             assert!(
                 buffer
@@ -673,6 +689,7 @@ fn environment_sidebar_filters_comparison_without_changing_the_selected_plan() {
     }));
     assert!(text.contains("b-error"), "{text}");
     assert!(text.contains("Error"), "{text}");
+    assert!(text.contains("Pass a variable before retrying."), "{text}");
 }
 
 #[test]
@@ -762,12 +779,94 @@ fn sidebar_focus_and_maximize_shortcuts_preserve_each_other() {
     press(&mut view, KeyCode::Char('2'));
     press(&mut view, KeyCode::Char('f'));
     assert_eq!(view.maximized, Some(EnvironmentPane::Matrix));
+    press(&mut view, KeyCode::Esc);
+    assert_eq!(view.maximized, None);
+    press(&mut view, KeyCode::Char('f'));
+    assert_eq!(view.maximized, Some(EnvironmentPane::Matrix));
     press(&mut view, KeyCode::Char('1'));
     assert_eq!(view.maximized, None);
     assert_eq!(view.focus, EnvironmentPane::Environments);
     press(&mut view, KeyCode::Char('b'));
     assert_eq!(view.sidebar, SidebarSetting::Closed);
     assert_eq!(view.focus, EnvironmentPane::Matrix);
+}
+
+#[test]
+fn single_environment_hides_sidebar_and_its_shortcuts() {
+    let state = EnvironmentSession::new(
+        vec![Environment {
+            tool: Tool::Terraform,
+            availability: EnvironmentAvailability::Available(EnvironmentIdentity {
+                directory: PathBuf::from("/synthetic/only-env"),
+                workspace: "default".to_owned(),
+            }),
+        }],
+        false,
+    );
+    let size = Size::new(120, 40);
+    let mut view = EnvironmentView::default();
+    let text = buffer_text(&render_to_buffer((120, 40), |frame| {
+        view.render(frame, &state);
+    }));
+    assert_eq!(view.sidebar, SidebarSetting::Closed);
+    assert!(!text.contains("[1] Envs"), "{text}");
+    assert!(text.contains("only-env Pending"), "{text}");
+    assert!(!text.contains("toggle envs"), "{text}");
+    assert!(!text.contains("1/2 focus"), "{text}");
+    assert!(text.contains("2 focus"), "{text}");
+
+    for key in [KeyCode::Char('1'), KeyCode::Char('b')] {
+        view.handle_key(KeyEvent::new(key, KeyModifiers::NONE), size, &state);
+        assert_eq!(view.sidebar, SidebarSetting::Closed);
+        assert_eq!(view.focus, EnvironmentPane::Matrix);
+    }
+
+    view.help();
+    let help = buffer_text(&render_to_buffer((120, 40), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(!help.contains("1 opens Envs"), "{help}");
+    assert!(!help.contains("toggle the Envs sidebar"), "{help}");
+}
+
+#[test]
+fn message_dialog_scrolls_through_long_error_details() {
+    let mut state = EnvironmentSession::new(
+        vec![Environment {
+            tool: Tool::Terraform,
+            availability: EnvironmentAvailability::Available(EnvironmentIdentity {
+                directory: PathBuf::from("/synthetic/error"),
+                workspace: "default".to_owned(),
+            }),
+        }],
+        false,
+    );
+    let index = state.start_next().unwrap();
+    let detail = (0..30)
+        .map(|line| format!("Diagnostic line {line:02}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    state.complete(index, PlanResult::Error(detail), Vec::new());
+
+    let mut view = EnvironmentView::default();
+    let _ = view.open(&state, index);
+    let size = Size::new(40, 16);
+    let top = buffer_text(&render_to_buffer((40, 16), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(top.contains("Diagnostic line 00"), "{top}");
+    assert!(top.contains("Diagnostic line 12"), "{top}");
+
+    view.handle_key(
+        KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    let scrolled = buffer_text(&render_to_buffer((40, 16), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(!scrolled.contains("Diagnostic line 00"), "{scrolled}");
+    assert!(scrolled.contains("Diagnostic line 04"), "{scrolled}");
 }
 
 #[test]
@@ -812,6 +911,27 @@ fn environment_layout_reserves_the_sidebar_and_four_six_right_panes() {
     );
     assert_eq!(environments::sidebar_width(production.plans()), 30);
 
+    let mixed = EnvironmentSession::new(
+        vec![
+            Environment {
+                tool: Tool::Terraform,
+                availability: EnvironmentAvailability::Available(EnvironmentIdentity {
+                    directory: PathBuf::from(format!("/synthetic/{ordinary_name}")),
+                    workspace: "default".to_owned(),
+                }),
+            },
+            Environment {
+                tool: Tool::Terraform,
+                availability: EnvironmentAvailability::Available(EnvironmentIdentity {
+                    directory: PathBuf::from("/synthetic/prod"),
+                    workspace: "default".to_owned(),
+                }),
+            },
+        ],
+        false,
+    );
+    assert_eq!(environments::sidebar_width(mixed.plans()), 24);
+
     let name = "x".repeat(60);
     let state = EnvironmentSession::new(
         vec![Environment {
@@ -829,13 +949,22 @@ fn environment_layout_reserves_the_sidebar_and_four_six_right_panes() {
 #[test]
 fn pending_production_environment_shows_its_badge_before_the_plan_finishes() {
     let state = EnvironmentSession::new(
-        vec![Environment {
-            tool: Tool::Terraform,
-            availability: EnvironmentAvailability::Available(EnvironmentIdentity {
-                directory: PathBuf::from("/synthetic/prod"),
-                workspace: "default".to_owned(),
-            }),
-        }],
+        vec![
+            Environment {
+                tool: Tool::Terraform,
+                availability: EnvironmentAvailability::Available(EnvironmentIdentity {
+                    directory: PathBuf::from("/synthetic/prod"),
+                    workspace: "default".to_owned(),
+                }),
+            },
+            Environment {
+                tool: Tool::Terraform,
+                availability: EnvironmentAvailability::Available(EnvironmentIdentity {
+                    directory: PathBuf::from("/synthetic/dev"),
+                    workspace: "default".to_owned(),
+                }),
+            },
+        ],
         false,
     );
     let mut view = EnvironmentView::default();

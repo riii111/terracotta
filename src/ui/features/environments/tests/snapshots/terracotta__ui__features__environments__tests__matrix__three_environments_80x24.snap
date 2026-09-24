@@ -25,4 +25,4 @@ dev Ready ~21  │  stg Ready ~200 1 replace  │  prod Ready ~20 -1
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 [/] env | Enter open plan | v full plan | / filter | Space expand all | ? help
-q quit | 1/2 focus | f maximize
+q quit | 2 focus | f maximize

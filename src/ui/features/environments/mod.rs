@@ -41,6 +41,7 @@ pub(crate) struct EnvironmentView {
     dialog_scroll: u16,
     focus: EnvironmentPane,
     last_right_focus: EnvironmentPane,
+    sidebar_enabled: bool,
     sidebar: SidebarSetting,
     sidebar_width: u16,
     maximized: Option<EnvironmentPane>,
@@ -71,6 +72,7 @@ impl Default for EnvironmentView {
             dialog_scroll: 0,
             focus: EnvironmentPane::Matrix,
             last_right_focus: EnvironmentPane::Matrix,
+            sidebar_enabled: false,
             sidebar: SidebarSetting::Uninitialized,
             sidebar_width: 24,
             maximized: None,
@@ -141,8 +143,9 @@ impl EnvironmentView {
         if self.sidebar != SidebarSetting::Uninitialized {
             return;
         }
+        self.sidebar_enabled = state.plans().len() > 1;
         self.sidebar_width = environments::sidebar_width(state.plans());
-        self.sidebar = if size.width >= 120 {
+        self.sidebar = if self.sidebar_enabled && size.width >= 120 {
             SidebarSetting::Open
         } else {
             SidebarSetting::Closed
@@ -181,7 +184,7 @@ impl EnvironmentView {
 
         match key.code {
             KeyCode::Char('1') => {
-                if size.width >= 90 {
+                if self.sidebar_enabled && size.width >= 90 {
                     self.sidebar = SidebarSetting::Open;
                     self.focus = EnvironmentPane::Environments;
                     self.maximized = None;
@@ -196,7 +199,7 @@ impl EnvironmentView {
             }
             KeyCode::Char('3') => return ControlFlow::Break(None),
             KeyCode::Char('b') if self.maximized.is_none() => {
-                if size.width >= 90 {
+                if self.sidebar_enabled && size.width >= 90 {
                     if self.sidebar == SidebarSetting::Open {
                         self.sidebar = SidebarSetting::Closed;
                         if self.focus == EnvironmentPane::Environments {
@@ -242,6 +245,10 @@ impl EnvironmentView {
             }
             KeyCode::Esc if self.matrix.filtered() => {
                 return ControlFlow::Continue(());
+            }
+            KeyCode::Esc if self.maximized.is_some() => {
+                self.maximized = None;
+                return ControlFlow::Break(None);
             }
             KeyCode::Left | KeyCode::Right
                 if self.active_pane(size.width) == EnvironmentPane::Matrix =>
@@ -452,7 +459,7 @@ impl EnvironmentView {
     }
 
     const fn sidebar_visible(&self, width: u16) -> bool {
-        matches!(self.sidebar, SidebarSetting::Open) && width >= 90
+        self.sidebar_enabled && matches!(self.sidebar, SidebarSetting::Open) && width >= 90
     }
 
     fn maximized_for_width(&self, width: u16) -> Option<EnvironmentPane> {
@@ -548,10 +555,12 @@ impl EnvironmentView {
             KeyCode::Down | KeyCode::Char('j') if is_help => {
                 self.dialog_scroll = self.dialog_scroll.saturating_add(1);
             }
-            KeyCode::PageUp if is_help => {
+            KeyCode::Up => self.dialog_scroll = self.dialog_scroll.saturating_sub(1),
+            KeyCode::Down => self.dialog_scroll = self.dialog_scroll.saturating_add(1),
+            KeyCode::PageUp => {
                 self.dialog_scroll = self.dialog_scroll.saturating_sub(4);
             }
-            KeyCode::PageDown if is_help => {
+            KeyCode::PageDown => {
                 self.dialog_scroll = self.dialog_scroll.saturating_add(4);
             }
             KeyCode::Char('q') => return self.quit(state),

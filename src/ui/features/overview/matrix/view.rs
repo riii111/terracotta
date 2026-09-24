@@ -66,6 +66,13 @@ impl MatrixView {
         self.search.is_some()
     }
 
+    pub(crate) fn selected_column(&self, environment: usize) -> usize {
+        self.environments
+            .iter()
+            .position(|index| *index == environment)
+            .unwrap_or(0)
+    }
+
     pub(crate) fn filter(&self) -> &str {
         &self.filter
     }

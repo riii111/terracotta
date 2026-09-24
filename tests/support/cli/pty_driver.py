@@ -378,6 +378,13 @@ try:
                 wait_file(os.environ["TERRACOTTA_FAKE_PID_PATH"], "active_process")
                 send_key(b"q")
                 wait_new("Stop acquiring", "cancel_confirmation")
+                send_key(b"\x1b")
+                wait_new("a-ready Ready", "acquisition_continues_after_cancel")
+                with open(os.environ["TERRACOTTA_FAKE_PID_PATH"]) as pid_file:
+                    active_pid = int(pid_file.read().strip())
+                os.kill(active_pid, 0)
+                send_key(b"q")
+                wait_new("Stop acquiring", "cancel_confirmation_reopened")
                 send_key(b"\r")
                 exit_code = wait_exit()
             else:
@@ -478,6 +485,7 @@ try:
             send_key(b"\r")
             wait_new("Missing required variable", "error_diagnostic")
             send_key(b"\x1b")
+            wait_new("a-ready", "error_dialog_closed")
             send_key(b"r")
             wait_environment("b-error", "Ready")
             send_key(b"q")
