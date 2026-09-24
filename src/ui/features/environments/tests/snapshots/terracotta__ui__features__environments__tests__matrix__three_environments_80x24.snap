@@ -6,23 +6,23 @@ terracotta ▸ dev                                                       terrafo
 dev Ready ~21  │  stg Ready ~200 1 replace  │  prod Ready ~20 -1
 ┌* [2] Differs across envs─────────────────────────────────────────────────────┐
 │                                                                              │
-│                                                                              │
 │Address             dev         stg         prod         why                  │
 │                                                                              │
 │Differs across envs                                                           │
 │> terraform_data.api~           +/-         -            action               │
-│                                                                              │
-│  Same change across envs: 1 changes ~1  Space expand                         │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
 │blank: absent   .: unchanged   ?: plan unavailable                            │
 └──────────────────────────────────────────────────────────────────────────────┘
+┌  [3] Relations · dev · whole env─────────────────────────────────────────────┐
+│Links unknown                                                                 │
+│> ~ terraform_data.api ! ?  configuration not collected, state not collected  │
+│  ~ terraform_data.server[*] ×20 ! ?  configuration not collected, state not c│
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│A ──> B  B uses A                                                             │
+│solid=instance endpoints; dotted=block candidate                              │
+│state evidence=(state)                                                        │
+└──────────────────────────────────────────────────────────────────────────────┘
 [/] env | Enter open selected row | v full plan | / filter | ? help | q quit
-2 focus | f maximize
+2/3 focus | f maximize

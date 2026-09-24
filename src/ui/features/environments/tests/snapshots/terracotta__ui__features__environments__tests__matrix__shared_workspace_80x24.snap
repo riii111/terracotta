@@ -6,22 +6,23 @@ terracotta ▸ prod                                                           to
 staging Error  │  staging Error
 ┌* [2] Differs across envs · Ready 0/2─────────────────────────────────────────┐
 │                                                                              │
-│Synthetic acquisition error                                                   │
 │Address     staging      why                                                  │
 │                                                                              │
 │Waiting for environment plans.                                                │
 │                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
 │blank: absent   .: unchanged   ?: plan unavailable                            │
 └──────────────────────────────────────────────────────────────────────────────┘
-[/] env | v full plan | / filter | ? help | q quit | 2 focus | f maximize
+┌  [3] Relations · staging · whole env─────────────────────────────────────────┐
+│Plan failed: Synthetic acquisition error                                      │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+[/] env | v full plan | / filter | r retry | ? help | q quit | 2/3 focus
+f maximize

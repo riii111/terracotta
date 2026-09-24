@@ -6,23 +6,23 @@ terracotta ▸ a-ready           terraform
 a┌Help────────────────────────────────┐
 ┌│ Current: Multi-environment       ▲ │┐
 ││ ↑ / ↓ / j / k                    ┃ ││
-││   select rows in [2]             ┃ ││
+││   select rows in [2] or scroll   ┃ ││
+││   [3]                            ┃ ││
 ││ Space                            ┃ ││
-││   expand or collapse the         ┃ ││
+││   expand or collapse the         │ ││
 ││   selected group or Same change  │ ││
-││   summary in [2]                 │ ││
-││ [ / ]                            │ ││
+└│   summary in [2]                 │ │┘
+┌│ [ / ]                            │ │┐
 ││   select the previous or next    │ ││
 ││   environment                    │ ││
-││ 2                                │ ││
-││   focus Differs                  │ ││
+││ 2 / 3                            │ ││
+││   focus Differs / Relations      │ ││
 ││ f                                │ ││
 ││   maximize or restore the        │ ││
 ││   focused pane                   │ ││
 ││ Enter                            │ ││
-││   open the selected row at its   │ ││
-││   source in [2]                  │ ││
-││ /                                ▼ ││
+││   [1] or [3] opens the plan from │ ││
+││   the top; [2] opens the         ▼ ││
 └│ ?/Esc close                        │┘
-[└────────────────────────────────────┘
-?/q help/quit
+?└────────────────────────────────────┘
+2/3 focus | f maximize

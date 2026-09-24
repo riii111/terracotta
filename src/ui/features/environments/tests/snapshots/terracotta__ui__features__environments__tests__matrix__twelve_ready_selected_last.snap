@@ -6,23 +6,23 @@ terracotta ▸ env-11                                                    terrafo
 env-11 Ready ~1
 ┌* [2] Differs across envs─────────────────────────────────────────────────────┐
 │                                                                              │
-│                                                                              │
 │Address     env-11       why                                                  │
 │                                                                              │
 │> Same change across envs: 1 changes ~1  Space expand                         │
 │                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
 │blank: absent   .: unchanged   ?: plan unavailable                            │
 └──────────────────────────────────────────────────────────────────────────────┘
+┌  [3] Relations · env-11 · whole env──────────────────────────────────────────┐
+│Links unknown                                                                 │
+│  ~ terraform_data.api ?  configuration not collected, state not collected    │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│A ──> B  B uses A                                                             │
+│solid=instance endpoints; dotted=block candidate                              │
+│state evidence=(state)                                                        │
+└──────────────────────────────────────────────────────────────────────────────┘
 [/] env | Enter toggle same changes | v full plan | / filter
-Space expand selected | ? help | q quit | 2 focus | f maximize
+Space expand selected | ? help | q quit | 2/3 focus | f maximize

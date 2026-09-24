@@ -134,13 +134,6 @@ pub(crate) fn environment_overview_for_selection(
     }
 }
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "GR06 consumes the environment graphs and row-to-node mappings"
-    )
-)]
 pub(crate) fn environment_overview_with_relations_for_selection(
     plans: &[EnvironmentPlan],
     selection: &EnvironmentSelection,

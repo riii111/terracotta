@@ -5,16 +5,16 @@ expression: output
 terracotta ▸ prod                   tofu
 staging Error  │  staging Error
 ┌* [2] Differs across envs · Ready 0/2─┐
+│Resize to view the matrix. ? help   q │
 │                                      │
-│Synthetic acquisition error           │
-│Address     staging      why          │
-│                                      │
-│Waiting for environment plans.        │
-│                                      │
-│                                      │
-│                                      │
-│blank: absent   .: unchanged          │
-│?: plan unavailable                   │
 └──────────────────────────────────────┘
-[/] env | v full plan | / filter
-?/q help/quit
+┌  [3] Relations · staging · whole env─┐
+│Plan failed: Synthetic acquisition    │
+│error                                 │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+└──────────────────────────────────────┘
+r retry | ?/q help/quit | v full plan
+[/] env | 2/3 focus | f maximize

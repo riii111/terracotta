@@ -2,13 +2,8 @@ use std::collections::BTreeSet;
 
 use crate::app::environments::{
     EnvironmentSession,
-    comparison::{
-        CellState, ComparisonRow, DifferenceReason, EnvironmentSelection, SourceReference,
-    },
-    overview::{
-        EnvironmentOverview, GroupId, OverviewRow, OverviewRowId,
-        environment_overview_for_selection,
-    },
+    comparison::{CellState, ComparisonRow, DifferenceReason, SourceReference},
+    overview::{EnvironmentOverview, GroupId, OverviewRow, OverviewRowId},
 };
 use crate::app::plan::ResourceChangeKind;
 use crate::ui::features::overview::OverviewInput;
@@ -96,17 +91,11 @@ impl MatrixView {
         state: &EnvironmentSession,
         environments: &[usize],
         selected_environment: usize,
+        overview: &EnvironmentOverview,
     ) {
         if self.revision != Some(state.revision()) || self.environments != environments {
             let environment_selection_changed = self.environments != environments;
-            self.overview = Some(if environments.len() == state.plans().len() {
-                state.overview().clone()
-            } else {
-                let selection =
-                    EnvironmentSelection::new(Some(environments.to_vec()), state.plans().len())
-                        .expect("visible environment indexes form a valid selection");
-                environment_overview_for_selection(state.plans(), &selection)
-            });
+            self.overview = Some(overview.clone());
             self.environments = environments.to_vec();
             if environment_selection_changed {
                 if self.selected_column(selected_environment).is_some() {

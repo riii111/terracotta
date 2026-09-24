@@ -6,22 +6,23 @@ terracotta ▸ b-error                                                   terrafo
 b-error Error
 ┌* [2] Differs across envs · Ready 1/5─────────────────────────────────────────┐
 │                                                                              │
-│Missing required variable                                                     │
-│Pass a variable before retrying.                                              │
 │Address     b-error     c-running     d-pending     e-hcp        why          │
 │                                                                              │
 │No matching resource changes. v opens the full plan.                          │
 │                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
 │blank: absent   .: unchanged   ?: plan unavailable                            │
 └──────────────────────────────────────────────────────────────────────────────┘
-[/] env | v full plan | / filter | ? help | q quit | 2 focus | f maximize
+┌  [3] Relations · b-error · whole env─────────────────────────────────────────┐
+│Plan failed: Missing required variable                                        │
+│Pass a variable before retrying.                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+[/] env | v full plan | / filter | r retry | ? help | q quit | 2/3 focus
+f maximize
