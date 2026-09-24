@@ -437,7 +437,7 @@ fn relations_pane_shows_the_selected_environment_at_supported_sizes(
 }
 
 #[test]
-fn multi_demo_compare_and_relations_have_cell_style_snapshots() {
+fn multi_demo_compare_expansion_keeps_columns_anchored() {
     let mut state = multi_demo_session();
     let wide = Size::new(165, 50);
     let mut compare = EnvironmentView::default();
@@ -502,7 +502,11 @@ fn multi_demo_compare_and_relations_have_cell_style_snapshots() {
         "multi_demo_compare_group_open_165x50",
         buffer_visual_snapshot(&expanded_group)
     );
+}
 
+#[test]
+fn multi_demo_compare_shows_unknown_summary_at_narrow_width() {
+    let mut state = multi_demo_session();
     let mut narrow_view = EnvironmentView::default();
     let narrow = Size::new(40, 16);
     press_at(&mut narrow_view, &mut state, KeyCode::Char('2'), narrow);
@@ -517,7 +521,12 @@ fn multi_demo_compare_and_relations_have_cell_style_snapshots() {
         "multi_demo_compare_narrow_40x16",
         buffer_visual_snapshot(&narrow_buffer)
     );
+}
 
+#[test]
+fn multi_demo_relations_show_environment_configuration_links() {
+    let mut state = multi_demo_session();
+    let wide = Size::new(165, 50);
     let mut relations = EnvironmentView::default();
     press_at(&mut relations, &mut state, KeyCode::Char('3'), wide);
     let dev = render_to_buffer((wide.width, wide.height), |frame| {
