@@ -825,6 +825,12 @@ Plan: 0 to add, 3 to change, 0 to destroy.
         assert_eq!(result.exit_code, 0);
         result.assert_restored();
         result.observed("overview_opened");
+        result.observed("overview_relations_focused");
+        result.observed("overview_relations_maximized");
+        result.observed("overview_split_restored");
+        result.observed("overview_relations_raw");
+        result.observed("overview_relations_restored");
+        result.observed("overview_changes_focused");
         result.observed("overview_expanded");
         result.observed("overview_raw_block");
         result.observed("overview_restored");

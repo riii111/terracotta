@@ -3,26 +3,26 @@ source: src/ui/features/overview/render.rs
 expression: text
 ---
 infra  ws:default  terraform loading...  /repo/infra
-Overview  +0 add  ~2 update  0 replace  -0 destroy  Repeated: 2
-───────┌Help───────────────────────────────────────────────────────────┐────────
-  Chang│ Navigation                                                    │
-Other c│ ↑ / ↓ / j / k select a row                                    │r the fu
-  ~ x2 │ PgUp / PgDn   move one page                                   │
-       │ Home / End    go to the first or last row                     │
-       │                                                               │
-       │ Review                                                        │
-       │ Enter         open the selected raw block                     │
-       │ /             filter full addresses                           │
-       │ Space         expand or collapse only on [+]/[-] group rows   │
-       │ v             show the full plan from the top                 │
-       │                                                               │
-       │ Actions                                                       │
-       │ y             copy the full plan                              │
-       │ c             show execution context                          │
-       │                                                               │
-       │ Exit                                                          │
-       │ q             quit                                            │
-       │ ?/Esc close                                                   │
-       └───────────────────────────────────────────────────────────────┘
-────────────────────────────────────────────────────────────────────────────────
-/ filter | Enter open raw | v full plan | ? help | q quit
+Ready  ┌Help───────────────────────────────────────────────────────────┐
+───────│ Navigation                                                  ▲ │────────
+┌* [2] │ 2 / 3         focus Changes / Relations                     ┃ │───────┐
+│  Chan│ ↑ / ↓ / j / k select a Changes row or scroll Relations      ┃ │       │
+│Other │ ← / →         scroll Changes or Relations horizontally      ┃ │or the │
+│  ~ x2│ PgUp / PgDn   move one page                                 ┃ │       │
+│      │ Home / End    go to the top or bottom                       ┃ │       │
+│      │ f             maximize or restore the focused pane          ┃ │       │
+└──────│                                                             ┃ │───────┘
+┌  [3] │ Review                                                      ┃ │───────┐
+│Links │ Enter         open the selected raw block                   ┃ │       │
+│  ~ te│ /             filter Changes full addresses                 ┃ │ot coll│
+│      │ Space         expand or collapse only on [+]/[-] group rows ┃ │       │
+│      │ v             show the full plan from the top               ┃ │       │
+│      │                                                             ┃ │       │
+│      │ Actions                                                     ┃ │       │
+│A ──> │ y             copy the full plan                            ┃ │       │
+│solid=│ c             show execution context                        ┃ │       │
+│state │                                                             │ │       │
+└──────│ Exit                                                        ▼ │───────┘
+───────│ ?/Esc close                                                   │────────
+/ filte└───────────────────────────────────────────────────────────────┘p
+q quit

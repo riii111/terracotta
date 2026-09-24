@@ -18,16 +18,21 @@ use crate::ui::{
     theme,
 };
 
-use super::{OverviewContent, OverviewOverlay, OverviewViewState};
+use super::{
+    OverviewContent, OverviewOverlay, OverviewPane, OverviewViewState,
+    relations::{self, RelationGraphView},
+};
 
-const MIN_WIDTH: u16 = 24;
-const MIN_HEIGHT: u16 = 6;
+const MIN_WIDTH: u16 = 40;
+const MIN_HEIGHT: u16 = 16;
 
 pub(crate) struct OverviewLayout {
     shell: shell_layout::ShellLayout,
     status: Rect,
     separator: Rect,
-    body: Rect,
+    changes: Rect,
+    relations: Rect,
+    changes_body: Rect,
     max_vertical: u16,
 }
 
@@ -45,8 +50,12 @@ impl OverviewLayout {
         self.separator
     }
 
-    pub(crate) const fn body(&self) -> Rect {
-        self.body
+    pub(crate) const fn changes_body(&self) -> Rect {
+        self.changes_body
+    }
+
+    pub(crate) const fn relations(&self) -> Rect {
+        self.relations
     }
 
     pub(crate) const fn max_vertical(&self) -> u16 {
@@ -58,27 +67,22 @@ pub(crate) fn layout(
     area: Rect,
     state: &OverviewSessionState,
     view: &OverviewViewState,
+    content: &OverviewContent,
 ) -> OverviewLayout {
-    prepare(area, state, view).layout
+    prepare(area, state, view, content).layout
 }
 
-fn prepare(area: Rect, state: &OverviewSessionState, view: &OverviewViewState) -> PreparedOverview {
-    let content = OverviewContent::from_review(state.review(), view.filter(), view.expanded());
+fn prepare(
+    area: Rect,
+    state: &OverviewSessionState,
+    view: &OverviewViewState,
+    content: &OverviewContent,
+) -> PreparedOverview {
     let footer_message = state.copy_feedback().notice().map(CopyNotice::message);
-    let full_footer = footer::layout_with_notice(
-        footer_items(
-            view.searching(),
-            !view.filter().is_empty(),
-            view.selected_group_expanded(&content),
-        ),
-        area.width,
-        footer_message,
-    );
-    let required_footer = footer::layout_with_notice(
-        required_footer_items(view.searching()),
-        area.width,
-        footer_message,
-    );
+    let full_footer =
+        footer::layout_with_notice(footer_items(view, content), area.width, footer_message);
+    let required_footer =
+        footer::layout_with_notice(required_footer_items(view), area.width, footer_message);
     let shell = shell_layout::full_width_layout(area, full_footer, required_footer);
     let inner = shell.content_inner();
     let status = Rect::new(inner.x, inner.y, inner.width, 1);
@@ -89,16 +93,20 @@ fn prepare(area: Rect, state: &OverviewSessionState, view: &OverviewViewState) -
         inner.width,
         inner.height.saturating_sub(2),
     );
-    let lines = overview_lines(&content, state.review(), view, body.width);
+    let (changes, relations) = pane_areas(body, view.maximized());
+    let changes_body = Block::bordered().inner(changes);
+    let lines = overview_lines(content, state.review(), view);
     let line_count = lines.len();
-    let max_vertical =
-        u16::try_from(line_count.saturating_sub(usize::from(body.height))).unwrap_or(u16::MAX);
+    let max_vertical = u16::try_from(line_count.saturating_sub(usize::from(changes_body.height)))
+        .unwrap_or(u16::MAX);
     PreparedOverview {
         layout: OverviewLayout {
             shell,
             status,
             separator,
-            body,
+            changes,
+            relations,
+            changes_body,
             max_vertical,
         },
         lines,
@@ -120,11 +128,14 @@ pub(crate) fn render(
         );
         return;
     }
+    let content = OverviewContent::from_review(state.review(), view.filter(), view.expanded());
     let PreparedOverview {
         layout,
         lines: prepared_lines,
-    } = prepare(area, state, view);
-    if layout.body().width == 0 || layout.body().height == 0 {
+    } = prepare(area, state, view, &content);
+    if (layout.changes.width == 0 || layout.changes.height == 0)
+        && (layout.relations.width == 0 || layout.relations.height == 0)
+    {
         terminal_notice::render_wrapped(
             frame,
             area,
@@ -134,11 +145,11 @@ pub(crate) fn render(
     }
     header::render_review(frame, layout.shell.header(), state.review());
     frame.render_widget(
-        Block::new().style(theme::body_style()),
+        Block::new().style(theme::overview_background_style()),
         layout.shell.content(),
     );
     frame.render_widget(
-        Paragraph::new(status_line(state.review(), view)).style(theme::body_style()),
+        Paragraph::new(status_line(state.review(), view)).style(theme::overview_text_style()),
         layout.status(),
     );
     frame.render_widget(
@@ -151,22 +162,26 @@ pub(crate) fn render(
     } else {
         prepared_lines
     };
-    let line_count = lines.len();
-    let vertical = view.scroll().min(layout.max_vertical());
-    frame.render_widget(
-        Paragraph::new(lines)
-            .style(theme::body_style())
-            .scroll((vertical, 0)),
-        layout.body(),
-    );
-    if line_count > usize::from(layout.body().height) {
-        scrollbar::render_vertical(
+    if layout.changes.width > 0 && layout.changes.height > 0 {
+        render_changes_panel(frame, layout.changes, &lines, view, layout.max_vertical());
+    }
+    if layout.relations.width > 0
+        && layout.relations.height > 0
+        && let Some(graph) = &content.relations
+    {
+        let scroll = relations::render(
             frame,
-            layout.body(),
-            line_count,
-            usize::from(layout.body().height),
-            usize::from(vertical),
+            layout.relations,
+            graph,
+            &RelationGraphView {
+                title: "whole env",
+                selected_node: view.selected_node_id(&content),
+                focused: view.focus() == OverviewPane::Relations,
+                maximized: view.maximized() == Some(OverviewPane::Relations),
+                scroll: view.relations_scroll(),
+            },
         );
+        view.set_relations_scroll(scroll);
     }
     let notice = state.copy_feedback().notice_at(now).map(|notice| {
         (
@@ -193,55 +208,151 @@ pub(crate) fn render(
 
 fn status_line(review: &PlanReview, view: &OverviewViewState) -> Line<'static> {
     let metadata = review.metadata();
-    let mut spans = vec![
-        Span::styled(
-            format!(
-                "Overview  +{} add  ~{} update  {} replace  -{} destroy",
-                metadata.additions(),
-                metadata.changes(),
-                metadata.replacements(),
-                metadata.deletions()
-            ),
-            theme::body_style(),
+    let mut spans = vec![Span::styled("Ready", theme::overview_text_style())];
+    append_count(
+        &mut spans,
+        metadata.additions(),
+        "+",
+        "add",
+        theme::overview_total_add_style(),
+    );
+    append_count(
+        &mut spans,
+        metadata.changes(),
+        "~",
+        "update",
+        theme::overview_total_update_style(),
+    );
+    append_count(
+        &mut spans,
+        metadata.replacements(),
+        "",
+        "replace",
+        theme::overview_total_replace_style(),
+    );
+    append_count(
+        &mut spans,
+        metadata.deletions(),
+        "-",
+        "destroy",
+        theme::overview_total_destroy_style(),
+    );
+    spans.push(Span::styled(
+        format!(
+            "  Repeated: {}",
+            review
+                .plan()
+                .grouped_changes(review.provider_schemas())
+                .repeated
         ),
-        Span::styled(
-            format!(
-                "  Repeated: {}",
-                review
-                    .plan()
-                    .grouped_changes(review.provider_schemas())
-                    .repeated
-            ),
-            theme::secondary_style(),
-        ),
-    ];
+        theme::overview_muted_style(),
+    ));
     if view.searching() {
         spans.extend([
-            Span::styled("  Filter: /", theme::secondary_style()),
+            Span::styled("  Filter: /", theme::overview_muted_style()),
             Span::styled(
                 view.search_query().unwrap_or_default().to_owned(),
-                theme::body_style(),
+                theme::overview_text_style(),
             ),
         ]);
     } else if !view.filter().is_empty() {
         spans.extend([
-            Span::styled("  Filter: ", theme::secondary_style()),
-            Span::styled(view.filter().to_owned(), theme::body_style()),
-            Span::styled(" (display only)", theme::secondary_style()),
+            Span::styled("  Filter: ", theme::overview_muted_style()),
+            Span::styled(view.filter().to_owned(), theme::overview_text_style()),
+            Span::styled(" (display only)", theme::overview_muted_style()),
         ]);
     }
     Line::from(spans)
+}
+
+fn append_count(
+    spans: &mut Vec<Span<'static>>,
+    count: usize,
+    symbol: &str,
+    label: &str,
+    style: Style,
+) {
+    if count > 0 {
+        spans.push(Span::styled(format!("  {symbol}{count} {label}"), style));
+    }
+}
+
+fn pane_areas(body: Rect, maximized: Option<OverviewPane>) -> (Rect, Rect) {
+    match maximized {
+        Some(OverviewPane::Changes) => (body, Rect::default()),
+        Some(OverviewPane::Relations) => (Rect::default(), body),
+        None => {
+            let changes_height = body.height.saturating_mul(4) / 10;
+            (
+                Rect::new(body.x, body.y, body.width, changes_height),
+                Rect::new(
+                    body.x,
+                    body.y.saturating_add(changes_height),
+                    body.width,
+                    body.height.saturating_sub(changes_height),
+                ),
+            )
+        }
+    }
+}
+
+fn render_changes_panel(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    lines: &[Line<'static>],
+    view: &OverviewViewState,
+    max_vertical: u16,
+) {
+    let focused = view.focus() == OverviewPane::Changes;
+    let title = Line::from(vec![
+        Span::styled(
+            if focused { "* " } else { "  " },
+            theme::relation_frame_style(focused),
+        ),
+        Span::styled("[2] Changes", theme::overview_text_style()),
+    ]);
+    let block = Block::bordered()
+        .title(title)
+        .border_style(theme::relation_frame_style(focused))
+        .style(theme::overview_text_style());
+    let body = block.inner(area);
+    frame.render_widget(block, area);
+    if body.width == 0 || body.height == 0 {
+        return;
+    }
+    let vertical = view.scroll().min(max_vertical);
+    let max_horizontal = lines
+        .iter()
+        .map(Line::width)
+        .max()
+        .unwrap_or_default()
+        .saturating_sub(usize::from(body.width));
+    view.set_max_changes_horizontal(u16::try_from(max_horizontal).unwrap_or(u16::MAX));
+    frame.render_widget(
+        Paragraph::new(lines.to_owned())
+            .style(theme::overview_text_style())
+            .scroll((vertical, view.changes_horizontal())),
+        body,
+    );
+    if lines.len() > usize::from(body.height) {
+        scrollbar::render_vertical(
+            frame,
+            body,
+            lines.len(),
+            usize::from(body.height),
+            usize::from(vertical),
+        );
+    }
 }
 
 fn overview_lines(
     content: &OverviewContent,
     review: &PlanReview,
     view: &OverviewViewState,
-    width: u16,
 ) -> Vec<Line<'static>> {
     let mut lines = vec![Line::from(vec![
-        Span::styled("  Change ", theme::secondary_style()),
-        Span::styled("Address", theme::secondary_style()),
+        Span::styled("  Change ", theme::overview_muted_style()),
+        Span::styled("Address", theme::overview_muted_style()),
     ])];
     if content.unsupported > 0 {
         lines.push(Line::from(Span::styled(
@@ -249,7 +360,7 @@ fn overview_lines(
                 "Other changes: {} output/import/move or unsupported change(s). Press v for the full plan.",
                 content.unsupported
             ),
-            theme::warning_style(),
+            theme::overview_warning_style(),
         )));
     }
     if content.rows.is_empty() {
@@ -259,7 +370,7 @@ fn overview_lines(
             } else {
                 "No resource changes to summarize. Press v for the full plan."
             },
-            theme::secondary_style(),
+            theme::overview_muted_style(),
         )));
         return lines;
     }
@@ -281,69 +392,34 @@ fn overview_lines(
         } else {
             row.action.clone()
         };
-        let prefix_width = marker.len() + 1 + indent.len() + expansion.len() + 1 + 6;
-        let address = truncate_address(
-            &format!("{indent}{expansion} {}", row.display_address),
-            width as usize,
-            prefix_width,
-        );
-        let base = if selected {
-            theme::search_match_style()
+        let label_prefix = format!("{indent}{expansion} ");
+        let address_style = if selected {
+            theme::overview_header_selected_style()
         } else {
-            theme::body_style()
+            theme::overview_text_style()
         };
         lines.push(Line::from(vec![
-            Span::styled(format!("{marker} "), base),
-            Span::styled(
-                format!("{action:<6} "),
-                if selected {
-                    base
-                } else {
-                    action_style(&row.action)
-                },
-            ),
-            Span::styled(address, base),
+            Span::styled(format!("{marker} "), theme::overview_text_style()),
+            Span::styled(format!("{action:<6} "), action_style(&row.action)),
+            Span::styled(label_prefix, theme::overview_text_style()),
+            Span::styled(row.display_address.clone(), address_style),
         ]));
     }
     lines
 }
 
 fn action_style(action: &str) -> Style {
-    if action.starts_with('+') {
-        theme::success_style()
+    if matches!(action, "+/-" | "-/+") {
+        theme::overview_total_replace_style()
+    } else if action.starts_with('+') {
+        theme::overview_total_add_style()
     } else if action.starts_with('-') {
-        theme::error_style()
+        theme::overview_total_destroy_style()
     } else if action.starts_with('~') {
-        theme::warning_style()
+        theme::overview_total_update_style()
     } else {
-        theme::secondary_style()
+        theme::overview_muted_style()
     }
-}
-
-fn truncate_address(value: &str, width: usize, reserved: usize) -> String {
-    let available = width.saturating_sub(reserved).max(1);
-    if value.chars().count() <= available {
-        return value.to_owned();
-    }
-    if available <= 3 {
-        return value
-            .chars()
-            .rev()
-            .take(available)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect();
-    }
-    let suffix = value
-        .chars()
-        .rev()
-        .take(available - 3)
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect::<String>();
-    format!("...{suffix}")
 }
 
 fn copy_flash_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
@@ -353,35 +429,23 @@ fn copy_flash_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
         .collect()
 }
 
-fn footer_items(searching: bool, filtered: bool, expanded: Option<bool>) -> Vec<Line<'static>> {
-    if searching {
+fn footer_items(view: &OverviewViewState, content: &OverviewContent) -> Vec<Line<'static>> {
+    if view.searching() {
         vec![
             footer::hint(&["Enter"], "confirm"),
             footer::hint(&["Esc"], "cancel"),
         ]
-    } else if filtered {
-        let mut items = vec![
-            footer::hint(&["Esc"], "clear / edit"),
-            footer::hint(&["Enter"], "open raw"),
-        ];
-        if let Some(expanded) = expanded {
-            items.push(footer::hint(
-                &["Space"],
-                if expanded { "collapse" } else { "expand" },
-            ));
-        }
-        items.extend([
-            footer::hint(&["v"], "full plan"),
-            footer::hint(&["?"], "help"),
-            footer::hint(&["q"], "quit"),
-        ]);
-        items
     } else {
-        let mut items = vec![
-            footer::hint(&["/"], "filter"),
-            footer::hint(&["Enter"], "open raw"),
-        ];
-        if let Some(expanded) = expanded {
+        let mut items = match view.focus() {
+            OverviewPane::Changes => vec![
+                footer::hint(&["/"], "filter"),
+                footer::hint(&["Enter"], "open raw"),
+            ],
+            OverviewPane::Relations => vec![footer::hint(&["Enter"], "open raw")],
+        };
+        if view.focus() == OverviewPane::Changes
+            && let Some(expanded) = view.selected_group_expanded(content)
+        {
             items.push(footer::hint(
                 &["Space"],
                 if expanded { "collapse" } else { "expand" },
@@ -389,15 +453,24 @@ fn footer_items(searching: bool, filtered: bool, expanded: Option<bool>) -> Vec<
         }
         items.extend([
             footer::hint(&["v"], "full plan"),
+            footer::hint(&["2", "3"], "focus"),
+            if view.maximized().is_some() {
+                footer::hint(&["f", "Esc"], "restore")
+            } else {
+                footer::hint(&["f"], "maximize")
+            },
             footer::hint(&["?"], "help"),
             footer::hint(&["q"], "quit"),
         ]);
+        if !view.filter().is_empty() && view.maximized().is_none() {
+            items.insert(0, footer::hint(&["Esc"], "clear filter"));
+        }
         items
     }
 }
 
-fn required_footer_items(searching: bool) -> Vec<Line<'static>> {
-    if searching {
+fn required_footer_items(view: &OverviewViewState) -> Vec<Line<'static>> {
+    if view.searching() {
         vec![
             footer::hint(&["Enter"], "confirm"),
             footer::hint(&["Esc"], "cancel"),
@@ -405,9 +478,13 @@ fn required_footer_items(searching: bool) -> Vec<Line<'static>> {
     } else {
         vec![
             footer::hint(&["Enter"], "open raw"),
-            footer::hint(&["v"], "full plan"),
-            footer::hint(&["?"], "help"),
-            footer::hint(&["q"], "quit"),
+            footer::hint(&["2", "3"], "focus"),
+            if view.maximized().is_some() {
+                footer::hint(&["f", "Esc"], "restore")
+            } else {
+                footer::hint(&["f"], "maximize")
+            },
+            footer::hint(&["?", "q"], "help/quit"),
         ]
     }
 }
@@ -430,16 +507,25 @@ fn render_overlay(
                 help_dialog::HelpSection::new(
                     "Navigation",
                     vec![
-                        help_dialog::HelpAction::new("↑ / ↓ / j / k", "select a row"),
+                        help_dialog::HelpAction::new("2 / 3", "focus Changes / Relations"),
+                        help_dialog::HelpAction::new(
+                            "↑ / ↓ / j / k",
+                            "select a Changes row or scroll Relations",
+                        ),
+                        help_dialog::HelpAction::new(
+                            "← / →",
+                            "scroll Changes or Relations horizontally",
+                        ),
                         help_dialog::HelpAction::new("PgUp / PgDn", "move one page"),
-                        help_dialog::HelpAction::new("Home / End", "go to the first or last row"),
+                        help_dialog::HelpAction::new("Home / End", "go to the top or bottom"),
+                        help_dialog::HelpAction::new("f", "maximize or restore the focused pane"),
                     ],
                 ),
                 help_dialog::HelpSection::new(
                     "Review",
                     vec![
                         help_dialog::HelpAction::new("Enter", "open the selected raw block"),
-                        help_dialog::HelpAction::new("/", "filter full addresses"),
+                        help_dialog::HelpAction::new("/", "filter Changes full addresses"),
                         help_dialog::HelpAction::new(
                             "Space",
                             "expand or collapse only on [+]/[-] group rows",
@@ -544,8 +630,9 @@ mod tests {
     use crate::{
         app::{
             plan::{
-                Plan, PlanAction, PlanSummary, PlanValue, ResourceChange, ResourceChangeKind,
-                ResourceMode,
+                ConfigurationRelationStatus, Plan, PlanAction, PlanRelations, PlanSummary,
+                PlanValue, RelationEndpoint, RelationEvidence, RelationSource, ResourceChange,
+                ResourceChangeKind, ResourceMode, StateRelationStatus,
             },
             review::{PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata},
         },
@@ -611,6 +698,61 @@ mod tests {
         })
     }
 
+    fn related_review() -> PlanReview {
+        let base = review();
+        let mut plan = base.plan().clone();
+        let mut network = plan.resource_changes[0].clone();
+        network.address = "terraform_data.network".to_owned();
+        network.resource_name = Some("network".to_owned());
+        plan.resource_changes.push(network);
+        plan.summary.updates += 1;
+        let relations = PlanRelations::from_saved_plan(
+            ConfigurationRelationStatus::Available,
+            vec![RelationEvidence::resolved(
+                RelationEndpoint::Instance("terraform_data.server[\"one\"]".to_owned()),
+                RelationEndpoint::Instance("terraform_data.network".to_owned()),
+                RelationSource::Configuration,
+            )],
+            true,
+        )
+        .with_state(StateRelationStatus::NoPriorState, Vec::new());
+
+        PlanReview::new(
+            base.root().to_path_buf(),
+            base.workspace().to_owned(),
+            base.document().clone(),
+            PlanMetadata::new(Vec::new(), vec!["endpoint".to_owned()], 0, 3, 0, true)
+                .with_nonstandard_changes(1),
+            Vec::new(),
+        )
+        .with_plan(plan)
+        .with_relations(relations)
+    }
+
+    fn scroll_filtered_row_into_view(
+        state: &OverviewSessionState,
+        view: &mut OverviewViewState,
+        content: &OverviewContent,
+    ) {
+        let layout = layout(Rect::new(0, 0, 40, 16), state, view, content);
+        view.apply(
+            OverviewInput::Down,
+            layout.changes_body(),
+            layout.relations(),
+            layout.max_vertical(),
+            content,
+        );
+        for _ in 0..5 {
+            view.apply(
+                OverviewInput::Right,
+                layout.changes_body(),
+                layout.relations(),
+                layout.max_vertical(),
+                content,
+            );
+        }
+    }
+
     #[test]
     fn renders_grouped_overview_with_fixed_counts_and_unsupported_notice() {
         let state = OverviewSessionState::new(review());
@@ -625,13 +767,206 @@ mod tests {
     }
 
     #[test]
+    fn selected_group_highlights_its_complete_relation_node() {
+        let state = OverviewSessionState::new(related_review());
+        let mut view = OverviewViewState::default();
+        let content = OverviewContent::from_review(state.review(), "", view.expanded());
+        view.apply(
+            OverviewInput::Down,
+            Rect::default(),
+            Rect::default(),
+            0,
+            &content,
+        );
+
+        assert_eq!(
+            content.rows[0]
+                .node_id
+                .as_ref()
+                .expect("mapped relation node")
+                .addresses()
+                .len(),
+            2
+        );
+        assert_eq!(
+            content
+                .relations
+                .as_ref()
+                .expect("relation graph")
+                .links
+                .len(),
+            1
+        );
+        let buffer = render_to_buffer((120, 40), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        let text = buffer_text(&buffer);
+        assert!(text.contains("terraform_data.network"));
+        assert!(text.contains("terraform_data.server[*]"));
+        assert!(text.contains("──>"));
+        assert!(text.contains("> ~ terraform_data.server[*]"));
+    }
+
+    #[test]
+    fn split_and_maximized_layouts_keep_both_panes_available_at_target_sizes() {
+        let state = OverviewSessionState::new(related_review());
+        let content = OverviewContent::from_review(state.review(), "", &BTreeSet::new());
+        let mut view = OverviewViewState::default();
+
+        for (width, height) in [(40, 16), (80, 24), (120, 40), (165, 50)] {
+            let buffer = render_to_buffer((width, height), |frame| {
+                render(frame, &state, &view, Instant::now());
+            });
+            let text = buffer_text(&buffer);
+            assert!(text.contains("[2] Changes"), "{width}x{height}: {text}");
+            assert!(text.contains("[3] Relations"), "{width}x{height}: {text}");
+            let split = layout(Rect::new(0, 0, width, height), &state, &view, &content);
+            let body_height = split.changes.height + split.relations.height;
+            assert_eq!(
+                split.changes.height,
+                body_height * 4 / 10,
+                "{width}x{height}"
+            );
+        }
+
+        let area = Rect::new(0, 0, 120, 40);
+        let split = layout(area, &state, &view, &content);
+        let body_height = split.changes.height + split.relations.height;
+        assert_eq!(split.changes.height, body_height * 4 / 10);
+
+        view.apply(
+            OverviewInput::FocusRelations,
+            Rect::default(),
+            Rect::default(),
+            0,
+            &content,
+        );
+        view.apply(
+            OverviewInput::ToggleMaximize,
+            Rect::default(),
+            Rect::default(),
+            0,
+            &content,
+        );
+        let maximized = layout(area, &state, &view, &content);
+        assert_eq!(maximized.changes, Rect::default());
+        assert_eq!(maximized.relations.width, area.width);
+        assert!(maximized.relations.height > split.relations.height);
+    }
+
+    #[test]
+    fn changes_pane_scrolls_full_addresses_horizontally() {
+        let address = format!("terraform_data.{}tail-marker", "long_segment_".repeat(7));
+        let state = OverviewSessionState::new(review());
+        let mut view = OverviewViewState::default();
+        let mut content = OverviewContent::from_review(state.review(), "", view.expanded());
+        content.rows[0].display_address = address.clone();
+        let lines = overview_lines(&content, state.review(), &view);
+        assert!(lines.iter().any(|line| line.to_string().contains(&address)));
+
+        let initial = render_to_buffer((32, 5), |frame| {
+            render_changes_panel(frame, frame.area(), &lines, &view, 0);
+        });
+        assert!(!buffer_text(&initial).contains("tail-marker"));
+
+        for _ in 0..100 {
+            view.apply(
+                OverviewInput::Right,
+                Rect::default(),
+                Rect::default(),
+                0,
+                &content,
+            );
+        }
+        let scrolled = render_to_buffer((32, 5), |frame| {
+            render_changes_panel(frame, frame.area(), &lines, &view, 0);
+        });
+        assert!(buffer_text(&scrolled).contains("tail-marker"));
+        let max_horizontal = view.changes_horizontal();
+        for _ in 0..100 {
+            view.apply(
+                OverviewInput::Right,
+                Rect::default(),
+                Rect::default(),
+                0,
+                &content,
+            );
+        }
+        assert_eq!(view.changes_horizontal(), max_horizontal);
+
+        let mut short_content = content;
+        short_content.rows.truncate(1);
+        short_content.rows[0].display_address = "terraform_data.short".to_owned();
+        short_content.unsupported = 0;
+        assert_eq!(short_content.rows.len(), 1);
+        let short_lines = overview_lines(&short_content, state.review(), &view);
+        for _ in 0..100 {
+            view.apply(
+                OverviewInput::Right,
+                Rect::default(),
+                Rect::default(),
+                0,
+                &short_content,
+            );
+        }
+        let short = render_to_buffer((40, 5), |frame| {
+            render_changes_panel(frame, frame.area(), &short_lines, &view, 0);
+        });
+        assert!(
+            buffer_text(&short).contains("terraform_data.short"),
+            "{}",
+            buffer_text(&short)
+        );
+        assert_eq!(view.changes_horizontal(), 0);
+        view.apply(
+            OverviewInput::Right,
+            Rect::default(),
+            Rect::default(),
+            0,
+            &short_content,
+        );
+        assert_eq!(view.changes_horizontal(), 0);
+    }
+
+    #[test]
+    fn relations_footer_omits_basic_arrow_navigation() {
+        let content = OverviewContent::from_review(&review(), "", &BTreeSet::new());
+        let mut view = OverviewViewState::default();
+        view.apply(
+            OverviewInput::FocusRelations,
+            Rect::default(),
+            Rect::default(),
+            0,
+            &content,
+        );
+
+        let footer_text = footer_items(&view, &content)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(footer_text.contains("Enter open raw"));
+        assert!(!footer_text.contains('↑'));
+        assert!(!footer_text.contains('↓'));
+        assert!(!footer_text.contains('←'));
+        assert!(!footer_text.contains('→'));
+    }
+
+    #[test]
     fn selected_group_footer_tracks_expansion_and_filtered_members() {
         let state = OverviewSessionState::new(review());
         let mut view = OverviewViewState::default();
-        let body = Rect::new(0, 0, 80, 12);
+        let changes_body = Rect::new(0, 0, 80, 4);
+        let relations_body = Rect::new(0, 0, 80, 8);
         let content = OverviewContent::from_review(state.review(), "", view.expanded());
 
-        view.apply(OverviewInput::Down, body, 0, &content);
+        view.apply(
+            OverviewInput::Down,
+            changes_body,
+            relations_body,
+            0,
+            &content,
+        );
         let collapsed = render_to_buffer((100, 24), |frame| {
             render(frame, &state, &view, Instant::now());
         });
@@ -643,7 +978,13 @@ mod tests {
         });
         assert!(buffer_text(&narrow_collapsed).contains("Space expand"));
 
-        view.apply(OverviewInput::ToggleExpand, body, 0, &content);
+        view.apply(
+            OverviewInput::ToggleExpand,
+            changes_body,
+            relations_body,
+            0,
+            &content,
+        );
         let expanded_content = OverviewContent::from_review(state.review(), "", view.expanded());
         let expanded = render_to_buffer((100, 24), |frame| {
             render(frame, &state, &view, Instant::now());
@@ -657,7 +998,13 @@ mod tests {
         });
         assert!(buffer_text(&narrow_expanded).contains("Space collapse"));
 
-        view.apply(OverviewInput::Down, body, 0, &expanded_content);
+        view.apply(
+            OverviewInput::Down,
+            changes_body,
+            relations_body,
+            0,
+            &expanded_content,
+        );
         assert_eq!(view.selected_group_expanded(&expanded_content), None);
         let child = render_to_buffer((100, 24), |frame| {
             render(frame, &state, &view, Instant::now());
@@ -666,28 +1013,48 @@ mod tests {
         assert!(!child_text.contains("Space expand"));
         assert!(!child_text.contains("Space collapse"));
         let expanded_groups = view.expanded().clone();
-        view.apply(OverviewInput::ToggleExpand, body, 0, &expanded_content);
+        view.apply(
+            OverviewInput::ToggleExpand,
+            changes_body,
+            relations_body,
+            0,
+            &expanded_content,
+        );
         assert_eq!(view.expanded(), &expanded_groups);
 
-        view.apply(OverviewInput::SearchStart, body, 0, &expanded_content);
+        view.apply(
+            OverviewInput::SearchStart,
+            changes_body,
+            relations_body,
+            0,
+            &expanded_content,
+        );
         for character in "one".chars() {
             view.apply(
                 OverviewInput::SearchChar(character),
-                body,
+                changes_body,
+                relations_body,
                 0,
                 &expanded_content,
             );
         }
-        view.apply(OverviewInput::SearchConfirm, body, 0, &expanded_content);
+        view.apply(
+            OverviewInput::SearchConfirm,
+            changes_body,
+            relations_body,
+            0,
+            &expanded_content,
+        );
         let filtered_content =
             OverviewContent::from_review(state.review(), view.filter(), view.expanded());
         assert_eq!(filtered_content.rows.len(), 1);
         assert_eq!(view.selected_group_expanded(&filtered_content), None);
-        let filtered = render_to_buffer((40, 16), |frame| {
+        scroll_filtered_row_into_view(&state, &mut view, &filtered_content);
+        let filtered = render_to_buffer((50, 16), |frame| {
             render(frame, &state, &view, Instant::now());
         });
         let filtered_text = buffer_text(&filtered);
-        assert!(filtered_text.contains("server[\"one\"]"));
+        assert!(filtered_text.contains("server[\"one\"]"), "{filtered_text}");
         assert!(!filtered_text.contains("terraform_data.server[*]"));
         assert!(!filtered_text.contains("Space expand"));
     }
@@ -700,24 +1067,25 @@ mod tests {
         view.apply(
             OverviewInput::OpenHelp,
             Rect::new(0, 0, 80, 24),
+            Rect::default(),
             0,
             &content,
         );
 
-        for (width, height) in [(40, 16), (40, 24), (80, 24), (120, 40), (160, 60)] {
+        for (width, height) in [(40, 16), (80, 24), (120, 40), (165, 50)] {
             let buffer = render_to_buffer((width, height), |frame| {
                 render(frame, &state, &view, Instant::now());
             });
             let text = buffer_text(&buffer);
             assert!(text.contains("Help"), "{width}x{height}: {text}");
             assert!(text.contains("Navigation"), "{width}x{height}: {text}");
-            if width >= 80 {
+            if width >= 120 {
                 assert!(
                     text.contains("open the selected raw block"),
                     "{width}x{height}: {text}"
                 );
                 assert!(
-                    text.contains("only on [+]/[-] group rows"),
+                    text.contains("expand or collapse only on [+]/[-] group rows"),
                     "{width}x{height}: {text}"
                 );
             }

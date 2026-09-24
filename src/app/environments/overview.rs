@@ -187,13 +187,6 @@ pub(crate) fn environment_overview_with_relations_for_selection(
     }
 }
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "GR07 consumes the grouped single-environment graph and row mapping"
-    )
-)]
 pub(crate) fn single_environment_relations(review: &PlanReview) -> EnvironmentRelationGraph {
     let (node_inputs, row_node_ids) = grouped_plan_node_inputs(review);
     EnvironmentRelationGraph {

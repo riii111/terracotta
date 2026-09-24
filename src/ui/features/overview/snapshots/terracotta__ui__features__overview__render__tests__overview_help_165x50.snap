@@ -1,0 +1,54 @@
+---
+source: src/ui/features/overview/render.rs
+expression: text
+---
+infra  ws:default  terraform loading...  /repo/infra
+Ready  ~2 update  Repeated: 2
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┌* [2] Changes──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Change Address                                                                                                                                                   │
+│Other changes: 1 output/import/move or unsupported change(s). Press v for the full plan.                                                                           │
+│  ~ x2   [+] terraform_data.server[*]                                                                                                                              │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                 ┌Help───────────────────────────────────────────────────────────┐                                                 │
+│                                                 │ Navigation                                                    │                                                 │
+│                                                 │ 2 / 3         focus Changes / Relations                       │                                                 │
+│                                                 │ ↑ / ↓ / j / k select a Changes row or scroll Relations        │                                                 │
+│                                                 │ ← / →         scroll Changes or Relations horizontally        │                                                 │
+│                                                 │ PgUp / PgDn   move one page                                   │                                                 │
+│                                                 │ Home / End    go to the top or bottom                         │                                                 │
+└─────────────────────────────────────────────────│ f             maximize or restore the focused pane            │─────────────────────────────────────────────────┘
+┌  [3] Relations · whole env──────────────────────│                                                               │─────────────────────────────────────────────────┐
+│Links unknown                                    │ Review                                                        │                                                 │
+│  ~ terraform_data.server[*] ×2 ?  configuration │ Enter         open the selected raw block                     │                                                 │
+│                                                 │ /             filter Changes full addresses                   │                                                 │
+│                                                 │ Space         expand or collapse only on [+]/[-] group rows   │                                                 │
+│                                                 │ v             show the full plan from the top                 │                                                 │
+│                                                 │                                                               │                                                 │
+│                                                 │ Actions                                                       │                                                 │
+│                                                 │ y             copy the full plan                              │                                                 │
+│                                                 │ c             show execution context                          │                                                 │
+│                                                 │                                                               │                                                 │
+│                                                 │ Exit                                                          │                                                 │
+│                                                 │ q             quit                                            │                                                 │
+│                                                 │ ?/Esc close                                                   │                                                 │
+│                                                 └───────────────────────────────────────────────────────────────┘                                                 │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│                                                                                                                                                                   │
+│A ──> B  B uses A                                                                                                                                                  │
+│solid=instance endpoints; dotted=block candidate                                                                                                                   │
+│state evidence=(state)                                                                                                                                             │
+└───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/ filter | Enter open raw | v full plan | 2/3 focus | f maximize | ? help | q quit

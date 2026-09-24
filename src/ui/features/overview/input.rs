@@ -25,6 +25,9 @@ pub(crate) enum OverviewInput {
     SearchEnd,
     SearchConfirm,
     SearchCancel,
+    FocusChanges,
+    FocusRelations,
+    ToggleMaximize,
     OpenHelp,
     OpenContext,
     Copy,
@@ -48,6 +51,9 @@ pub(crate) fn key_to_input(
             Some(OverviewInput::Quit)
         }
         (KeyCode::Char('/'), KeyModifiers::NONE) => Some(OverviewInput::SearchStart),
+        (KeyCode::Char('2'), KeyModifiers::NONE) => Some(OverviewInput::FocusChanges),
+        (KeyCode::Char('3'), KeyModifiers::NONE) => Some(OverviewInput::FocusRelations),
+        (KeyCode::Char('f'), KeyModifiers::NONE) => Some(OverviewInput::ToggleMaximize),
         (KeyCode::Esc, KeyModifiers::NONE) if filter_confirmed => Some(OverviewInput::SearchCancel),
         (KeyCode::Esc, KeyModifiers::NONE) => Some(OverviewInput::Back),
         (KeyCode::Char(' '), KeyModifiers::NONE) => Some(OverviewInput::ToggleExpand),
@@ -161,6 +167,48 @@ mod tests {
                 false
             ),
             Some(OverviewInput::Back)
+        );
+    }
+
+    #[test]
+    fn single_environment_pane_keys_are_available_only_outside_search() {
+        for (key, expected) in [
+            ('2', OverviewInput::FocusChanges),
+            ('3', OverviewInput::FocusRelations),
+            ('f', OverviewInput::ToggleMaximize),
+        ] {
+            assert_eq!(
+                key_to_input(
+                    KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE),
+                    false,
+                    false,
+                ),
+                Some(expected)
+            );
+            assert_eq!(
+                key_to_input(
+                    KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE),
+                    true,
+                    false,
+                ),
+                Some(OverviewInput::SearchChar(key))
+            );
+        }
+        assert_eq!(
+            key_to_input(
+                KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE),
+                false,
+                false,
+            ),
+            None
+        );
+        assert_eq!(
+            key_to_input(
+                KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE),
+                false,
+                false,
+            ),
+            None
         );
     }
 }

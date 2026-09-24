@@ -62,12 +62,17 @@ delegated unchanged. The no-argument entry prints help outside an interactive
 terminal and reports unsupported backends or options without running a plan.
 Single-environment commands do not run `init` implicitly.
 
-In the review screen, press `s` to open the single-environment change overview.
-Use `↑`/`↓` or `j`/`k` to select a row, `Space` to expand repeated changes,
-`Enter` to open the corresponding raw plan block, and `/` to filter full
-addresses. `Esc` returns to the same overview selection, while `v` opens the
-full plan from its first line. Overview filtering changes display only; apply
-and copy always use the complete reviewed plan.
+In the review screen, press `s` to open the single-environment Overview. It has
+`[2] Changes` and `[3] Relations` panes. Use `2`/`3` to focus a pane and `f` to
+maximize or restore it. In Changes, use `↑`/`↓` or `j`/`k` to select a row,
+`Space` to expand repeated changes, `/` to filter full addresses, and `Enter`
+to open the corresponding raw plan block. Use `←`/`→` to scroll long addresses
+horizontally. In Relations, use the arrow keys to scroll the graph; `Enter`
+opens the raw plan from its first line. `Esc` returns from a raw plan to the
+same Overview state. In Overview, `Esc` restores a maximized pane; if a
+confirmed filter is active, it clears the filter after the split is restored.
+`v` opens the full plan from its first line. Filtering changes display only;
+apply and copy always use the complete reviewed plan.
 
 When an interactive `plan` starts in a directory without configuration files,
 Terracotta inspects its immediate child directories for backend or cloud
@@ -75,18 +80,24 @@ configuration. HCP candidates are excluded and invalid configurations are
 reported. Local environments run one at a time in path order, using their current
 workspace. Each environment initializes noninteractively when needed; missing
 variables or initialization failures appear as `Error` while other plans continue.
-The initial Overview shows resource rows and environment columns. Use `↑`/`↓`
-to select a row, `←`/`→` to select an environment, and `Space` to expand a group.
-`Enter` opens that resource's original plan; `1`–`9` open it in the corresponding
-environment. Use `[`/`]` to reach any environment, including the tenth and later.
-`Esc`, `0`, or `s` returns to Overview with its selection and expansion preserved.
-`/` filters complete resource addresses; totals always cover the full plans.
+The initial Overview has `[1] Envs`, `[2] Differs across envs`, and
+`[3] Relations`. Use `1`/`2`/`3` to focus a pane and `f` to maximize or restore
+it. In Envs, `↑`/`↓` selects an environment, `Space` includes or excludes it
+from comparison, and `Enter` opens its original plan. Use `[`/`]` to switch the
+selected environment from any pane, including reaching the tenth and later.
+In Differs, `↑`/`↓` selects a row, `←`/`→` scrolls it horizontally, `Space`
+expands a group, `/` filters complete resource addresses, and `Enter` opens the
+selected resource's plan. In Relations, `↑`/`↓` scrolls vertically and
+`←`/`→` scrolls horizontally; `Enter` opens the selected environment's plan
+from its first line. From a raw plan, `Esc` returns to the comparison Overview
+with its selection and expansion preserved. Totals always cover the full plans.
 
 Cells show `+`, `~`, `-`, `-/+`, or `+/-`; `.` means unchanged, a blank means absent,
 and `?` means unavailable. Group counts describe a shared change pattern, not
-one-to-one instance correspondence or resolved unknown values. `Compared` names
-the Ready environments when acquisition is incomplete; excluded HCP environments
-remain visible with their reason. Columns scroll horizontally as you select them.
+one-to-one instance correspondence or resolved unknown values. The `[2]` title
+shows the compared environment count as `Filtered x/y` when some environments
+are excluded, and the Ready count as `Ready x/y` while acquisition is incomplete.
+Excluded HCP environments remain visible with their reason.
 
 Press `r` to retry only the selected `Error`, or `q` to stop acquisition and discard
 the temporary plans. Multiple-environment apply is not supported.
