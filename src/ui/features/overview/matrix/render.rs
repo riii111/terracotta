@@ -24,7 +24,6 @@ const MIN_CELL_WIDTH: usize = 9;
 const COLUMN_GAP: usize = 1;
 const MIN_ADDRESS_WIDTH: usize = 12;
 const MAX_ADDRESS_WIDTH: usize = 52;
-// Wide panes separate Address, the environment cells, and why with a divider and one space.
 const DIVIDER: &str = "│ ";
 const DIVIDER_WIDTH: usize = 2;
 const WIDE_WIDTH: u16 = 64;
@@ -166,7 +165,7 @@ fn content_lines(
                 show_same_change_toggle,
                 width,
             ));
-            lines.extend(summary_note_line(summary, width));
+            lines.extend(summary_note_lines(summary, width));
             if selected {
                 selected_lines = Some((summary_start, lines.len() - 1));
             }
@@ -545,7 +544,6 @@ fn row_line(
     Line::from(spans)
 }
 
-// The reason takes whatever width the cells leave, never less than the header's column.
 fn fitted_why(
     row: &Row,
     names: &[String],
@@ -573,7 +571,6 @@ fn why_text(row: &Row, names: &[String]) -> String {
     }
 }
 
-// Unavailable plans are neither present nor absent, so they never count toward the wording.
 fn missing_reason(row: &Row, names: &[String]) -> String {
     let mut present = Vec::new();
     let mut absent = Vec::new();
@@ -606,8 +603,7 @@ fn summary_line(
     show_toggle_hint: bool,
     width: u16,
 ) -> Line<'static> {
-    // Creates and updates are omitted: they read like resource totals, while [1] already shows those.
-    // Deletes, replacements, and unknown actions stay visible as warnings.
+    // Creates and updates are omitted because they read like resource totals, which [1] already shows.
     let mut counts = Vec::new();
     push_count(
         &mut counts,
@@ -628,7 +624,6 @@ fn summary_line(
         theme::overview_warning_style(),
     );
 
-    // The colon ties the warning counts to the pattern count instead of resources.
     let rows = if summary.rows == 1 {
         "pattern"
     } else {
@@ -668,10 +663,7 @@ fn summary_line(
     line
 }
 
-fn summary_note_line(
-    summary: &super::view::SameChangeSummary,
-    width: u16,
-) -> Option<Line<'static>> {
+fn summary_note_lines(summary: &super::view::SameChangeSummary, width: u16) -> Vec<Line<'static>> {
     let mut notes = Vec::new();
     if summary.has_unknown {
         notes.push("[unknown values]");
@@ -683,12 +675,23 @@ fn summary_note_line(
             "instance counts differ"
         });
     }
-    (!notes.is_empty()).then(|| {
+    let note_line = |text: String| {
         Line::from(vec![
             Span::raw("    "),
-            Span::styled(notes.join(" · "), theme::overview_text_style()),
+            Span::styled(text, theme::overview_text_style()),
         ])
-    })
+    };
+    let joined = notes.join(" · ");
+    if notes.is_empty() {
+        Vec::new()
+    } else if 4 + Line::from(joined.as_str()).width() <= usize::from(width) {
+        vec![note_line(joined)]
+    } else {
+        notes
+            .into_iter()
+            .map(|note| note_line(note.to_owned()))
+            .collect()
+    }
 }
 
 fn push_count(
@@ -880,11 +883,12 @@ mod tests {
             instance_counts_differ: false,
         };
 
-        let note = summary_note_line(&summary, 40)
-            .expect("unknown values need a note")
-            .to_string();
+        let notes = summary_note_lines(&summary, 40)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
 
-        assert_eq!(note, "    [unknown values]");
+        assert_eq!(notes, ["    [unknown values]"]);
     }
 
     #[test]
@@ -929,23 +933,22 @@ mod tests {
         };
 
         let wide = summary_line(&summary, false, false, false, 80).to_string();
-        let wide_note = summary_note_line(&summary, 80).map(|line| line.to_string());
+        let notes = |width| {
+            summary_note_lines(&summary, width)
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        };
         let narrow = summary_line(&summary, false, false, false, 40).to_string();
-        let narrow_note = summary_note_line(&summary, 40).map(|line| line.to_string());
 
         assert!(
             wide.ends_with("Same change across envs: 2 patterns"),
             "{wide}"
         );
-        assert_eq!(
-            wide_note.as_deref(),
-            Some("    [unknown values] · instance counts differ")
-        );
+        assert_eq!(notes(80), ["    [unknown values] · instance counts differ"]);
         assert!(narrow.ends_with("Same: 2 patterns"), "{narrow}");
-        assert_eq!(
-            narrow_note.as_deref(),
-            Some("    [unknown values] · counts differ")
-        );
+        assert_eq!(notes(40), ["    [unknown values] · counts differ"]);
+        assert_eq!(notes(30), ["    [unknown values]", "    counts differ"]);
     }
 
     #[test]

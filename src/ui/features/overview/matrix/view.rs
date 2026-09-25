@@ -398,8 +398,7 @@ pub(super) fn address_widths(rows: &[Row], under_summary: bool) -> (usize, usize
     )
 }
 
-// Rows listed under the Same change summary sit one level below it. Sections that can hold groups
-// keep an expansion column on every row so addresses line up whether or not a row expands.
+// Every row in a section that can hold groups keeps the expansion column so addresses line up.
 pub(super) fn row_lead(row: &Row, expanded: bool, under_summary: bool) -> String {
     // Group members stay under their group even when their own instance is missing elsewhere.
     let same_section = row.difference.is_none() || row.child;

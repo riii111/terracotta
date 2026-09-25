@@ -66,8 +66,7 @@ pub(crate) fn render(
         inner.height.saturating_sub(1),
     );
     let lines = graph_lines(graph, view.selected_node, view.maximized, inner.width);
-    // A short graph keeps its legend one blank row below it; a long one pins the legend to the
-    // bottom. Either way the position depends on the content, not on the scroll offset.
+    // The legend position depends only on the content, never on the scroll offset.
     let short_height = u16::try_from(lines.len())
         .unwrap_or(u16::MAX)
         .saturating_add(1);
@@ -495,7 +494,6 @@ fn merge_links<'a>(
     }
 }
 
-// Each link gets its own rail row so the eye follows lines instead of reading one long sentence.
 fn tree_lines(
     group: &RelationGraphGroup,
     links: &[&RelationGraphLink],
@@ -635,19 +633,38 @@ fn dependency_order<'a>(
     nodes: &'a [RelationNodeId],
     links: &[&RelationGraphLink],
 ) -> Vec<&'a RelationNodeId> {
-    let mut remaining = nodes.iter().collect::<Vec<_>>();
+    let index = nodes
+        .iter()
+        .enumerate()
+        .map(|(position, id)| (id, position))
+        .collect::<BTreeMap<_, _>>();
+    let mut dependents = vec![Vec::new(); nodes.len()];
+    let mut incoming = vec![0_usize; nodes.len()];
+    for link in links {
+        if let (Some(&from), Some(&to)) = (index.get(&link.from), index.get(&link.to))
+            && from != to
+        {
+            dependents[from].push(to);
+            incoming[to] += 1;
+        }
+    }
+
+    let mut remaining = (0..nodes.len()).collect::<BTreeSet<_>>();
+    let mut ready = (0..nodes.len())
+        .filter(|&position| incoming[position] == 0)
+        .collect::<BTreeSet<_>>();
     let mut ordered = Vec::with_capacity(nodes.len());
-    while !remaining.is_empty() {
-        let pending = remaining.iter().copied().collect::<BTreeSet<_>>();
-        let ready = remaining
-            .iter()
-            .position(|id| {
-                !links.iter().any(|link| {
-                    &link.to == *id && link.from != **id && pending.contains(&link.from)
-                })
-            })
-            .unwrap_or(0);
-        ordered.push(remaining.remove(ready));
+    while let Some(next) = ready.pop_first().or_else(|| remaining.first().copied()) {
+        remaining.remove(&next);
+        ordered.push(&nodes[next]);
+        for &dependent in &dependents[next] {
+            if remaining.contains(&dependent) {
+                incoming[dependent] -= 1;
+                if incoming[dependent] == 0 {
+                    ready.insert(dependent);
+                }
+            }
+        }
     }
     ordered
 }
@@ -893,7 +910,7 @@ mod tests {
 
     use super::{
         RelationGraphScroll, RelationGraphTitle, RelationGraphView, compact_legend_lines,
-        graph_lines, legend_lines, node_line, render, title_line,
+        dependency_order, graph_lines, legend_lines, node_line, render, title_line,
     };
 
     #[test]
@@ -928,6 +945,50 @@ mod tests {
             "* [3] Relations · whole env"
         );
         assert_eq!(single_environment.spans[2].style.fg, Some(Color::DarkGray));
+    }
+
+    #[test]
+    fn fallback_order_puts_used_nodes_first_and_keeps_group_order_on_cycles() {
+        let nodes = (0..1_000)
+            .map(|index| {
+                node(
+                    &format!("aws_service.n{index:04}"),
+                    ResourceChangeKind::Update,
+                )
+            })
+            .collect::<Vec<_>>();
+        let reversed_chain = nodes
+            .windows(2)
+            .map(|pair| {
+                link(
+                    &pair[1],
+                    &pair[0],
+                    RelationGraphLinkKind::Solid,
+                    &[RelationSource::Configuration],
+                )
+            })
+            .collect::<Vec<_>>();
+        let ids = nodes.iter().map(|node| node.id.clone()).collect::<Vec<_>>();
+        let cycle = [
+            link(
+                &nodes[0],
+                &nodes[1],
+                RelationGraphLinkKind::Solid,
+                &[RelationSource::Configuration],
+            ),
+            link(
+                &nodes[1],
+                &nodes[0],
+                RelationGraphLinkKind::Solid,
+                &[RelationSource::Configuration],
+            ),
+        ];
+
+        let chain = dependency_order(&ids, &reversed_chain.iter().collect::<Vec<_>>());
+        let cycle = dependency_order(&ids[..2], &cycle.iter().collect::<Vec<_>>());
+
+        assert!(chain.iter().copied().eq(ids.iter().rev()));
+        assert!(cycle.iter().copied().eq(ids[..2].iter()));
     }
 
     #[test]

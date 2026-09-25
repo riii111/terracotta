@@ -472,7 +472,6 @@ fn multi_demo_member_missing_from_the_shown_environment_is_not_highlighted_there
     );
 }
 
-// Visual regression baseline for the reviewed multi-environment Overview.
 #[rstest]
 #[case::terminal_150x48(Size::new(150, 48))]
 #[case::medium_100x30(Size::new(100, 30))]
