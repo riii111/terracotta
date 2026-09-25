@@ -891,9 +891,11 @@ try:
         exit_code = wait_exit()
     else:
         raise RuntimeError(f"unknown scenario: {scenario}")
+    restored = b"\x1b[?1049l" in output
+    cursor_restored = b"\x1b[?25h" in output
     print(f"exit={exit_code}")
-    print(f"restored={str(b'\x1b[?1049l' in output).lower()}")
-    print(f"cursor_restored={str(b'\x1b[?25h' in output).lower()}")
+    print(f"restored={str(restored).lower()}")
+    print(f"cursor_restored={str(cursor_restored).lower()}")
     print("observed=" + ",".join(observed))
 except BaseException as error:
     kill_child()
