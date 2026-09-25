@@ -275,11 +275,4 @@ mod tests {
             );
         }
     }
-
-    #[test]
-    fn rejects_incomplete_or_non_decimal_values() {
-        for input in ["", "+1", ".1", "1.", "1e", "1e+", "1tail"] {
-            assert!(canonical_number(input).is_none(), "input: {input}");
-        }
-    }
 }

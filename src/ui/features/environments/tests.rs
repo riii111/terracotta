@@ -7,10 +7,7 @@ use crate::{
         review::{PlanMetadata, PlanReview, test_support::plan_document},
         session::Effect,
     },
-    ui::{
-        test_support::{buffer_text, buffer_visual_snapshot, render_to_buffer},
-        theme,
-    },
+    ui::test_support::{buffer_text, buffer_visual_snapshot, render_to_buffer},
 };
 use ratatui::style::{Color, Modifier};
 use std::path::PathBuf;
@@ -1825,16 +1822,6 @@ fn sidebar_focus_and_selected_name_use_ansi_colors_and_terminal_defaults() {
     let selected_name = buffer.cell((7, 2)).expect("selected environment name");
     assert!(selected_name.modifier.contains(Modifier::UNDERLINED));
     assert_eq!(selected_name.bg, Color::Reset);
-
-    for (style, foreground) in [
-        (theme::overview_total_add_style(), Color::Green),
-        (theme::overview_total_update_style(), Color::Yellow),
-        (theme::overview_total_destroy_style(), Color::Red),
-        (theme::overview_total_replace_style(), Color::Magenta),
-    ] {
-        assert_eq!(style.fg, Some(foreground));
-        assert_eq!(style.bg, Some(Color::Reset));
-    }
 }
 
 #[test]

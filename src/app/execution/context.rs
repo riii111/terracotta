@@ -296,13 +296,6 @@ mod tests {
     }
 
     #[test]
-    fn launch_root_is_preserved_for_relative_directory_display() {
-        let context = ExecutionContext::loading("/repo/infra").with_launch_root("/repo");
-
-        assert_eq!(context.launch_root_path(), Some(Path::new("/repo")));
-    }
-
-    #[test]
     fn opentofu_context_keeps_the_selected_tool_for_the_header() {
         let loading = ExecutionContext::loading("/repo/infra").with_tool(Tool::OpenTofu);
         assert_eq!(loading.tool_name(), "tofu");

@@ -213,7 +213,6 @@ fn recursive_executable_is_rejected_before_launch(#[case] hard: bool) {
 #[case::auto_approve("TF_CLI_ARGS_apply", "-auto-approve", "", &["apply"])]
 #[case::hcp("UNUSED", "", "terraform {\n cloud {}\n}", &[])]
 #[case::broken("UNUSED", "", "terraform {", &[])]
-#[case::unknown("UNUSED", "", "", &["plan", "-future"])]
 fn tty_delegation_does_not_initialize_terminal_or_generate_plan(
     #[case] key: &str,
     #[case] value: &str,

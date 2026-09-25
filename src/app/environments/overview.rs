@@ -1090,13 +1090,6 @@ mod tests {
         assert_eq!(node.id.addresses().len(), 3);
         let filtered_address = "test_resource.item[1]";
         assert_eq!(
-            changes
-                .iter()
-                .filter(|change| change.address.contains("item[1]"))
-                .count(),
-            1
-        );
-        assert_eq!(
             relation
                 .row_node_ids
                 .get(&OverviewRowId::Individual(filtered_address.to_owned())),

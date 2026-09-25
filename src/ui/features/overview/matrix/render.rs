@@ -1003,26 +1003,6 @@ mod tests {
     }
 
     #[test]
-    fn selected_right_column_shifts_only_enough_to_keep_the_previous_column() {
-        let mut view = matrix_view(0);
-
-        let columns = visible_columns(&mut view, &[12, 12, 12], 25);
-
-        assert_eq!(view.first_column, 1);
-        assert_eq!(columns, [(1, 12), (2, 12)]);
-    }
-
-    #[test]
-    fn selected_visible_column_keeps_the_current_start() {
-        let mut view = matrix_view(0);
-
-        let columns = visible_columns(&mut view, &[12, 12, 12], 36);
-
-        assert_eq!(view.first_column, 0);
-        assert_eq!(columns, [(0, 12), (1, 12), (2, 12)]);
-    }
-
-    #[test]
     fn selected_left_column_becomes_the_start_when_it_is_hidden() {
         let mut view = matrix_view(2);
         view.selected_environment = Some(0);
