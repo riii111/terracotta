@@ -946,7 +946,9 @@ mod tests {
         review::{PlanMetadata, PlanReview, test_support::plan_document},
     };
     use crate::infra::history::HistoryStore;
-    use crate::runtime::{WorkerGuard, finalize_ui_result};
+    use crate::runtime::{
+        WorkerGuard, event_loop::test_support::terminal_text, finalize_ui_result,
+    };
 
     #[cfg(unix)]
     #[test]
@@ -1623,31 +1625,23 @@ mod tests {
         let now = Instant::now();
         let mut state = confirmation_state();
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
-        let mut execution_view = execution::ExecutionViewState::default();
-        let mut review_view = plan_review::PlanReviewViewState::default();
-        let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
+        let mut views = ScreenViews::default();
         let mut dirty = true;
 
-        let action = handle_key_event(
-            &terminal,
-            &state,
-            &mut execution_view,
-            &mut review_view,
-            &mut confirmation_view,
-            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
-        )
-        .expect("confirmation input should be handled");
+        let action = views
+            .handle_key(&terminal, &state, KeyCode::Char('y'), KeyModifiers::NONE)
+            .expect("confirmation input should be handled");
 
         assert_eq!(action, None);
-        assert_eq!(confirmation_view.input(), "y");
+        assert_eq!(views.confirmation.input(), "y");
 
         assert!(
             draw_if_needed(
                 &mut state,
                 &mut terminal,
-                execution_view,
-                &review_view,
-                &confirmation_view,
+                views.execution,
+                &views.review,
+                &views.confirmation,
                 &mut dirty,
                 now,
             )
@@ -1673,19 +1667,11 @@ mod tests {
             now,
         );
         let terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
-        let mut execution_view = execution::ExecutionViewState::default();
-        let mut review_view = plan_review::PlanReviewViewState::default();
-        let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
+        let mut views = ScreenViews::default();
 
-        let action = handle_key_event(
-            &terminal,
-            &state,
-            &mut execution_view,
-            &mut review_view,
-            &mut confirmation_view,
-            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
-        )
-        .expect("overview quit input should be handled");
+        let action = views
+            .handle_key(&terminal, &state, KeyCode::Char('q'), KeyModifiers::NONE)
+            .expect("overview quit input should be handled");
         assert_eq!(action, Some(Action::Quit));
 
         let mut quit_confirmation = false;
@@ -1703,9 +1689,9 @@ mod tests {
         draw_with_quit_confirmation(
             &state,
             &mut terminal,
-            execution_view,
-            &review_view,
-            &confirmation_view,
+            views.execution,
+            &views.review,
+            &views.confirmation,
             now,
             quit_confirmation,
         )
@@ -1781,12 +1767,10 @@ mod tests {
         );
         let mut state = SessionState::Review(Box::new(ReviewSessionState::new(plan)));
         let terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
-        let mut execution_view = execution::ExecutionViewState::default();
-        let mut review_view = plan_review::PlanReviewViewState::default();
-        let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
+        let mut views = ScreenViews::default();
         let review = state.review().expect("review state");
         let layout = plan_review::layout(Rect::new(0, 0, 80, 24), false, review);
-        review_view.apply_with_matches(
+        views.review.apply_with_matches(
             plan_review::PlanReviewInput::Down,
             layout.body(),
             layout.max_vertical(),
@@ -1794,34 +1778,22 @@ mod tests {
             review.review().search_query(),
             &[],
         );
-        let position = review_view.scroll();
+        let position = views.review.scroll();
 
-        let open = handle_key_event(
-            &terminal,
-            &state,
-            &mut execution_view,
-            &mut review_view,
-            &mut confirmation_view,
-            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
-        )
-        .expect("apply key should be handled")
-        .expect("apply key should open confirmation");
-        update_session(&mut state, open, &mut execution_view, now);
-        let cancel = handle_key_event(
-            &terminal,
-            &state,
-            &mut execution_view,
-            &mut review_view,
-            &mut confirmation_view,
-            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
-        )
-        .expect("escape confirmation should be handled")
-        .expect("escape should cancel");
-        update_session(&mut state, cancel, &mut execution_view, now);
+        let open = views
+            .handle_key(&terminal, &state, KeyCode::Char('a'), KeyModifiers::NONE)
+            .expect("apply key should be handled")
+            .expect("apply key should open confirmation");
+        update_session(&mut state, open, &mut views.execution, now);
+        let cancel = views
+            .handle_key(&terminal, &state, KeyCode::Esc, KeyModifiers::NONE)
+            .expect("escape confirmation should be handled")
+            .expect("escape should cancel");
+        update_session(&mut state, cancel, &mut views.execution, now);
 
         let review = state.review().expect("cancel should restore review");
         assert!(review.review().search_query().is_empty());
-        assert_eq!(review_view.scroll(), position);
+        assert_eq!(views.review.scroll(), position);
     }
 
     #[test]
@@ -1844,70 +1816,38 @@ mod tests {
         plan.set_search_query("worker".to_owned());
         let mut state = SessionState::Review(Box::new(ReviewSessionState::new(plan)));
         let terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
-        let mut execution_view = execution::ExecutionViewState::default();
-        let mut review_view = plan_review::PlanReviewViewState::default();
-        let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
+        let mut views = ScreenViews::default();
 
         assert!(matches!(
-            handle_key_event(
-                &terminal,
-                &state,
-                &mut execution_view,
-                &mut review_view,
-                &mut confirmation_view,
-                KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
-            )
-            .expect("apply key should be handled"),
+            views
+                .handle_key(&terminal, &state, KeyCode::Char('a'), KeyModifiers::NONE)
+                .expect("apply key should be handled"),
             Some(Action::OpenApplyConfirmation)
         ));
         assert!(matches!(
-            handle_key_event(
-                &terminal,
-                &state,
-                &mut execution_view,
-                &mut review_view,
-                &mut confirmation_view,
-                KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
-            )
-            .expect("copy key should be handled"),
+            views
+                .handle_key(&terminal, &state, KeyCode::Char('y'), KeyModifiers::NONE)
+                .expect("copy key should be handled"),
             Some(Action::Copy(CopyTarget::Plan))
         ));
         assert!(matches!(
-            handle_key_event(
-                &terminal,
-                &state,
-                &mut execution_view,
-                &mut review_view,
-                &mut confirmation_view,
-                KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
-            )
-            .expect("quit key should be handled"),
+            views
+                .handle_key(&terminal, &state, KeyCode::Char('q'), KeyModifiers::NONE)
+                .expect("quit key should be handled"),
             Some(Action::Quit)
         ));
         assert_eq!(
-            handle_key_event(
-                &terminal,
-                &state,
-                &mut execution_view,
-                &mut review_view,
-                &mut confirmation_view,
-                KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
-            )
-            .expect("control-c should be handled"),
+            views
+                .handle_key(&terminal, &state, KeyCode::Char('c'), KeyModifiers::CONTROL)
+                .expect("control-c should be handled"),
             Some(Action::Quit)
         );
 
-        let clear = handle_key_event(
-            &terminal,
-            &state,
-            &mut execution_view,
-            &mut review_view,
-            &mut confirmation_view,
-            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
-        )
-        .expect("clear filter key should be handled")
-        .expect("clear filter should update the review");
-        update_session(&mut state, clear, &mut execution_view, now);
+        let clear = views
+            .handle_key(&terminal, &state, KeyCode::Esc, KeyModifiers::NONE)
+            .expect("clear filter key should be handled")
+            .expect("clear filter should update the review");
+        update_session(&mut state, clear, &mut views.execution, now);
         assert_eq!(
             state
                 .review()
@@ -1918,15 +1858,9 @@ mod tests {
         );
 
         assert!(matches!(
-            handle_key_event(
-                &terminal,
-                &state,
-                &mut execution_view,
-                &mut review_view,
-                &mut confirmation_view,
-                KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
-            )
-            .expect("copy key should be handled"),
+            views
+                .handle_key(&terminal, &state, KeyCode::Char('y'), KeyModifiers::NONE)
+                .expect("copy key should be handled"),
             Some(Action::Copy(CopyTarget::Plan))
         ));
     }
@@ -2096,19 +2030,10 @@ mod tests {
         let started_at = Instant::now();
         let mut state = long_apply_state(started_at, Some(status));
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
-        let mut execution_view = execution::ExecutionViewState::default();
-        let review_view = plan_review::PlanReviewViewState::default();
-        let confirmation_view = plan_review::ApplyConfirmationViewState::default();
-        let key = KeyEvent::new(code, modifiers);
-        let action = handle_key_event(
-            &terminal,
-            &state,
-            &mut execution_view,
-            &mut plan_review::PlanReviewViewState::default(),
-            &mut plan_review::ApplyConfirmationViewState::default(),
-            key,
-        )
-        .expect("end key should be handled");
+        let mut views = ScreenViews::default();
+        let action = views
+            .handle_key(&terminal, &state, code, modifiers)
+            .expect("end key should be handled");
 
         assert_eq!(action, None);
         let mut dirty = true;
@@ -2116,9 +2041,9 @@ mod tests {
             draw_if_needed(
                 &mut state,
                 &mut terminal,
-                execution_view,
-                &review_view,
-                &confirmation_view,
+                views.execution,
+                &views.review,
+                &views.confirmation,
                 &mut dirty,
                 started_at,
             )
@@ -2132,37 +2057,22 @@ mod tests {
         let started_at = Instant::now();
         let mut state = long_apply_state(started_at, None);
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
-        let mut execution_view = execution::ExecutionViewState::default();
-        let mut review_view = plan_review::PlanReviewViewState::default();
-        let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
+        let mut views = ScreenViews::default();
         assert_eq!(
-            handle_key_event(
-                &terminal,
-                &state,
-                &mut execution_view,
-                &mut review_view,
-                &mut confirmation_view,
-                KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
-            )
-            .expect("log viewer key should be handled"),
+            views
+                .handle_key(&terminal, &state, KeyCode::Char('v'), KeyModifiers::NONE)
+                .expect("log viewer key should be handled"),
             None
         );
-        assert!(execution_view.logs_open());
-        let down = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
+        assert!(views.execution.logs_open());
 
         assert_eq!(
-            handle_key_event(
-                &terminal,
-                &state,
-                &mut execution_view,
-                &mut review_view,
-                &mut confirmation_view,
-                down,
-            )
-            .expect("scroll key should be handled"),
+            views
+                .handle_key(&terminal, &state, KeyCode::Down, KeyModifiers::NONE)
+                .expect("scroll key should be handled"),
             None
         );
-        assert!(!execution_view.follows_latest());
+        assert!(!views.execution.follows_latest());
 
         let new_log = ExecutionEvent {
             received_at: started_at + Duration::from_secs(1),
@@ -2174,33 +2084,26 @@ mod tests {
         let _ = update_session(
             &mut state,
             Action::ApplyWorkerEvent(new_log),
-            &mut execution_view,
+            &mut views.execution,
             started_at + Duration::from_secs(1),
         );
-        assert!(!execution_view.follows_latest());
+        assert!(!views.execution.follows_latest());
 
-        let end = KeyEvent::new(KeyCode::End, KeyModifiers::NONE);
         assert_eq!(
-            handle_key_event(
-                &terminal,
-                &state,
-                &mut execution_view,
-                &mut review_view,
-                &mut confirmation_view,
-                end,
-            )
-            .expect("end key should be handled"),
+            views
+                .handle_key(&terminal, &state, KeyCode::End, KeyModifiers::NONE)
+                .expect("end key should be handled"),
             None
         );
-        assert!(execution_view.follows_latest());
+        assert!(views.execution.follows_latest());
 
         let mut dirty = true;
         draw_if_needed(
             &mut state,
             &mut terminal,
-            execution_view,
-            &review_view,
-            &confirmation_view,
+            views.execution,
+            &views.review,
+            &views.confirmation,
             &mut dirty,
             started_at + Duration::from_secs(1),
         )
@@ -2210,9 +2113,7 @@ mod tests {
         assert_apply_log_view_can_close_and_reopen(
             &mut state,
             &mut terminal,
-            &mut execution_view,
-            &mut review_view,
-            &mut confirmation_view,
+            &mut views,
             started_at + Duration::from_secs(1),
         );
     }
@@ -2220,56 +2121,28 @@ mod tests {
     fn assert_apply_log_view_can_close_and_reopen(
         state: &mut SessionState,
         terminal: &mut Terminal<TestBackend>,
-        execution_view: &mut execution::ExecutionViewState,
-        review_view: &mut plan_review::PlanReviewViewState,
-        confirmation_view: &mut plan_review::ApplyConfirmationViewState,
+        views: &mut ScreenViews,
         now: Instant,
     ) {
         assert_eq!(
-            handle_key_event(
-                terminal,
-                state,
-                execution_view,
-                review_view,
-                confirmation_view,
-                KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
-            )
-            .expect("escape should close the log viewer"),
+            views
+                .handle_key(terminal, state, KeyCode::Esc, KeyModifiers::NONE)
+                .expect("escape should close the log viewer"),
             None
         );
-        assert!(!execution_view.logs_open());
-        let compact_text = render_apply_to_text(
-            state,
-            terminal,
-            *execution_view,
-            review_view,
-            confirmation_view,
-            now,
-        );
+        assert!(!views.execution.logs_open());
+        let compact_text = render_apply_to_text(state, terminal, views, now);
         assert!(compact_text.contains("new tail marker"));
 
         assert_eq!(
-            handle_key_event(
-                terminal,
-                state,
-                execution_view,
-                review_view,
-                confirmation_view,
-                KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
-            )
-            .expect("v should reopen the log viewer"),
+            views
+                .handle_key(terminal, state, KeyCode::Char('v'), KeyModifiers::NONE)
+                .expect("v should reopen the log viewer"),
             None
         );
-        assert!(execution_view.logs_open());
-        assert!(execution_view.follows_latest());
-        let reopened_text = render_apply_to_text(
-            state,
-            terminal,
-            *execution_view,
-            review_view,
-            confirmation_view,
-            now,
-        );
+        assert!(views.execution.logs_open());
+        assert!(views.execution.follows_latest());
+        let reopened_text = render_apply_to_text(state, terminal, views, now);
         assert!(reopened_text.contains("new tail marker"));
     }
 
@@ -2278,95 +2151,68 @@ mod tests {
         let now = Instant::now();
         let mut state = applyable_review_state();
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
-        let mut view = execution::ExecutionViewState::default();
-        let mut review_view = plan_review::PlanReviewViewState::default();
-        let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
-        view.apply_scroll(execution::ExecutionScroll::Down, 10, 20, 10);
-        view.apply_horizontal_scroll(execution::ExecutionScroll::Right, 2, 5, 10);
+        let mut views = ScreenViews::default();
+        views
+            .execution
+            .apply_scroll(execution::ExecutionScroll::Down, 10, 20, 10);
+        views
+            .execution
+            .apply_horizontal_scroll(execution::ExecutionScroll::Right, 2, 5, 10);
 
-        let apply_action = handle_key_event(
-            &terminal,
-            &state,
-            &mut view,
-            &mut review_view,
-            &mut confirmation_view,
-            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
-        )
-        .expect("apply key should be handled");
+        let apply_action = views
+            .handle_key(&terminal, &state, KeyCode::Char('a'), KeyModifiers::NONE)
+            .expect("apply key should be handled");
         assert!(
             update_session(
                 &mut state,
                 apply_action.expect("apply key should produce an action"),
-                &mut view,
+                &mut views.execution,
                 now,
             )
             .is_none()
         );
-        assert_eq!(view.horizontal(), 3);
-        assert!(!view.follows_latest());
+        assert_eq!(views.execution.horizontal(), 3);
+        assert!(!views.execution.follows_latest());
 
         for character in "yes".chars() {
             assert!(
-                handle_key_event(
-                    &terminal,
-                    &state,
-                    &mut view,
-                    &mut review_view,
-                    &mut confirmation_view,
-                    KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
-                )
-                .expect("confirmation key should be handled")
-                .is_none()
+                views
+                    .handle_key(
+                        &terminal,
+                        &state,
+                        KeyCode::Char(character),
+                        KeyModifiers::NONE
+                    )
+                    .expect("confirmation key should be handled")
+                    .is_none()
             );
         }
-        let confirm_action = handle_key_event(
-            &terminal,
-            &state,
-            &mut view,
-            &mut review_view,
-            &mut confirmation_view,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        )
-        .expect("confirmation should be handled");
+        let confirm_action = views
+            .handle_key(&terminal, &state, KeyCode::Enter, KeyModifiers::NONE)
+            .expect("confirmation should be handled");
         assert!(matches!(
             update_session(
                 &mut state,
                 confirm_action.expect("yes should produce an action"),
-                &mut view,
+                &mut views.execution,
                 now,
             ),
             Some(Effect::StartApply)
         ));
-        assert_eq!(view.horizontal(), 0);
-        assert_eq!(view.vertical_offset(2, 90), 2);
+        assert_eq!(views.execution.horizontal(), 0);
+        assert_eq!(views.execution.vertical_offset(2, 90), 2);
 
-        assert_apply_start_path(
-            &mut state,
-            &mut terminal,
-            &mut view,
-            &mut review_view,
-            &mut confirmation_view,
-            now,
-        );
-        assert_apply_completion_and_copy_path(
-            &mut state,
-            &mut terminal,
-            &mut view,
-            &mut review_view,
-            &mut confirmation_view,
-            now,
-        );
+        assert_apply_start_path(&mut state, &mut terminal, &mut views, now);
+        assert_apply_completion_and_copy_path(&mut state, &mut terminal, &mut views, now);
     }
 
     fn assert_apply_start_path(
         state: &mut SessionState,
         terminal: &mut Terminal<TestBackend>,
-        view: &mut execution::ExecutionViewState,
-        review_view: &mut plan_review::PlanReviewViewState,
-        confirmation_view: &mut plan_review::ApplyConfirmationViewState,
+        views: &mut ScreenViews,
         now: Instant,
     ) {
-        view.open_logs();
+        views.execution.open_logs();
         for index in 0..40 {
             let text = if index == 0 {
                 "apply log line 0 with enough width to exercise the production horizontal scrollbar after the result is complete".to_owned()
@@ -2384,35 +2230,30 @@ mod tests {
                         text,
                     }),
                 }),
-                view,
+                &mut views.execution,
                 now,
             );
         }
-        let text =
-            render_apply_to_text(state, terminal, *view, review_view, confirmation_view, now);
-        assert_eq!(view.horizontal(), 0);
+        let text = render_apply_to_text(state, terminal, views, now);
+        assert_eq!(views.execution.horizontal(), 0);
         assert!(text.contains("tail apply marker"));
 
-        for key in [
-            KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
-            KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
-        ] {
+        for code in [KeyCode::Up, KeyCode::Right] {
             assert!(
-                handle_key_event(terminal, state, view, review_view, confirmation_view, key,)
+                views
+                    .handle_key(terminal, state, code, KeyModifiers::NONE)
                     .expect("manual execution key should be handled")
                     .is_none()
             );
         }
-        assert!(execution_scroll_position(state, *view) > 0);
-        assert!(view.horizontal() > 0);
+        assert!(execution_scroll_position(state, views.execution) > 0);
+        assert!(views.execution.horizontal() > 0);
     }
 
     fn assert_apply_completion_and_copy_path(
         state: &mut SessionState,
         terminal: &mut Terminal<TestBackend>,
-        view: &mut execution::ExecutionViewState,
-        review_view: &mut plan_review::PlanReviewViewState,
-        confirmation_view: &mut plan_review::ApplyConfirmationViewState,
+        views: &mut ScreenViews,
         now: Instant,
     ) {
         let _ = update_session(
@@ -2421,40 +2262,31 @@ mod tests {
                 status: ApplyStatus::Succeeded,
                 summary_line: None,
             },
-            view,
+            &mut views.execution,
             now,
         );
-        assert!(!view.logs_open());
-        assert_eq!(view.horizontal(), 0);
-        assert_eq!(view.vertical_offset(2, 90), 2);
-        let text =
-            render_apply_to_text(state, terminal, *view, review_view, confirmation_view, now);
+        assert!(!views.execution.logs_open());
+        assert_eq!(views.execution.horizontal(), 0);
+        assert_eq!(views.execution.vertical_offset(2, 90), 2);
+        let text = render_apply_to_text(state, terminal, views, now);
         assert!(text.contains("tail apply marker"));
 
         assert_eq!(
-            handle_key_event(
-                terminal,
-                state,
-                view,
-                review_view,
-                confirmation_view,
-                KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
-            )
-            .expect("tab should focus logs after result"),
+            views
+                .handle_key(terminal, state, KeyCode::Tab, KeyModifiers::NONE)
+                .expect("tab should focus logs after result"),
             None
         );
-        for key in [
-            KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
-            KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
-        ] {
+        for code in [KeyCode::Up, KeyCode::Right] {
             assert!(
-                handle_key_event(terminal, state, view, review_view, confirmation_view, key,)
+                views
+                    .handle_key(terminal, state, code, KeyModifiers::NONE)
                     .expect("post-result execution key should be handled")
                     .is_none()
             );
         }
-        let copied_vertical = execution_scroll_position(state, *view);
-        let copied_horizontal = view.horizontal();
+        let copied_vertical = execution_scroll_position(state, views.execution);
+        let copied_horizontal = views.execution.horizontal();
         assert!(copied_vertical > 0);
         assert!(copied_horizontal > 0);
 
@@ -2482,7 +2314,7 @@ mod tests {
             dispatch(
                 state,
                 Action::Copy(CopyTarget::Execution),
-                view,
+                &mut views.execution,
                 &mut effects,
             )
             .is_none()
@@ -2494,17 +2326,44 @@ mod tests {
                 .notice()
                 .is_some()
         );
-        let _ = render_apply_to_text(state, terminal, *view, review_view, confirmation_view, now);
-        assert_eq!(execution_scroll_position(state, *view), copied_vertical);
-        assert_eq!(view.horizontal(), copied_horizontal);
+        let _ = render_apply_to_text(state, terminal, views, now);
+        assert_eq!(
+            execution_scroll_position(state, views.execution),
+            copied_vertical
+        );
+        assert_eq!(views.execution.horizontal(), copied_horizontal);
+    }
+
+    #[derive(Default)]
+    struct ScreenViews {
+        execution: execution::ExecutionViewState,
+        review: plan_review::PlanReviewViewState,
+        confirmation: plan_review::ApplyConfirmationViewState,
+    }
+
+    impl ScreenViews {
+        fn handle_key(
+            &mut self,
+            terminal: &Terminal<TestBackend>,
+            state: &SessionState,
+            code: KeyCode,
+            modifiers: KeyModifiers,
+        ) -> Result<Option<Action>, <TestBackend as Backend>::Error> {
+            handle_key_event(
+                terminal,
+                state,
+                &mut self.execution,
+                &mut self.review,
+                &mut self.confirmation,
+                KeyEvent::new(code, modifiers),
+            )
+        }
     }
 
     fn render_apply_to_text(
         state: &mut SessionState,
         terminal: &mut Terminal<TestBackend>,
-        view: execution::ExecutionViewState,
-        review_view: &plan_review::PlanReviewViewState,
-        confirmation_view: &plan_review::ApplyConfirmationViewState,
+        views: &ScreenViews,
         now: Instant,
     ) -> String {
         let mut dirty = true;
@@ -2512,9 +2371,9 @@ mod tests {
             draw_if_needed(
                 state,
                 terminal,
-                view,
-                review_view,
-                confirmation_view,
+                views.execution,
+                &views.review,
+                &views.confirmation,
                 &mut dirty,
                 now,
             )
@@ -2535,19 +2394,6 @@ mod tests {
             ),
         )
         .0
-    }
-
-    fn terminal_text(terminal: &Terminal<TestBackend>) -> String {
-        let buffer = terminal.backend().buffer();
-        let area = buffer.area();
-        let mut text = String::new();
-        for y in area.y..area.bottom() {
-            for x in area.x..area.right() {
-                text.push_str(buffer.cell((x, y)).expect("test cell").symbol());
-            }
-            text.push('\n');
-        }
-        text
     }
 
     fn copy_target_cells(target: CopyFlashTarget, terminal: &Terminal<TestBackend>) -> Vec<Cell> {
@@ -2779,5 +2625,23 @@ mod tests {
                 Self::Apply => CopyTarget::Execution,
             }
         }
+    }
+}
+
+#[cfg(test)]
+pub(super) mod test_support {
+    use ratatui::{Terminal, backend::TestBackend};
+
+    pub(crate) fn terminal_text(terminal: &Terminal<TestBackend>) -> String {
+        let buffer = terminal.backend().buffer();
+        let area = buffer.area();
+        let mut text = String::new();
+        for y in area.y..area.bottom() {
+            for x in area.x..area.right() {
+                text.push_str(buffer.cell((x, y)).expect("test cell").symbol());
+            }
+            text.push('\n');
+        }
+        text
     }
 }
