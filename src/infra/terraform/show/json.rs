@@ -10,7 +10,7 @@ use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::app::plan::{
-    OutputChange, Plan, PlanAction, PlanSummary, PlanValue, ReplacePathSegment, ResourceChange,
+    OutputChange, Plan, PlanAction, PlanValue, ReplacePathSegment, ResourceChange,
     ResourceChangeKind, ResourceMode, UnsupportedChange, UnsupportedChangeKind,
     UnsupportedChangeScope,
 };
@@ -43,7 +43,7 @@ pub(super) fn parse_plan_json_with_metadata(
         .as_object()
         .ok_or(PlanParseError::RootMustBeObject)?;
     let plan = parse_plan_document(&document)?;
-    let metadata = super::metadata::metadata_from_document(root, &plan, detailed_exit_has_changes);
+    let metadata = super::metadata::metadata_from_document(root, detailed_exit_has_changes);
     let planned_addresses = parse_value_addresses(root, false)?;
     let deleted_addresses = plan
         .resource_changes
@@ -92,12 +92,9 @@ pub(super) fn parse_plan_document(document: &Value) -> Result<Plan, PlanParseErr
         parse_deferred_action_invocations(deferred_action_invocations, &mut unsupported_changes)?;
     }
 
-    let summary = summarize(&resource_changes);
-
     Ok(Plan {
         resource_changes,
         value_addresses: parse_value_addresses(root, true)?,
-        summary,
         unsupported_changes,
         output_changes,
     })
@@ -574,32 +571,6 @@ fn parse_replace_paths(
         .map(Some)
 }
 
-fn summarize(changes: &[ResourceChange]) -> PlanSummary {
-    let mut summary = PlanSummary {
-        creates: 0,
-        updates: 0,
-        replaces: 0,
-        deletes: 0,
-    };
-
-    for change in changes {
-        match change.kind {
-            ResourceChangeKind::Create => summary.creates += 1,
-            ResourceChangeKind::Update => summary.updates += 1,
-            ResourceChangeKind::Replace => summary.replaces += 1,
-            ResourceChangeKind::Delete => summary.deletes += 1,
-            ResourceChangeKind::NoOp
-            | ResourceChangeKind::Read
-            | ResourceChangeKind::Move
-            | ResourceChangeKind::Import
-            | ResourceChangeKind::Unknown
-            | ResourceChangeKind::Unsupported => {}
-        }
-    }
-
-    summary
-}
-
 fn optional_array<'a>(
     object: &'a Map<String, Value>,
     field: &'static str,
@@ -681,6 +652,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::app::plan::PlanSummary;
 
     impl PlanSummary {
         pub(crate) fn total(self) -> usize {
@@ -764,11 +736,11 @@ mod tests {
             plan.resource_changes[4].actions,
             vec![PlanAction::Delete, PlanAction::Create]
         );
-        assert_eq!(plan.summary.creates, 1);
-        assert_eq!(plan.summary.updates, 1);
-        assert_eq!(plan.summary.replaces, 2);
-        assert_eq!(plan.summary.deletes, 1);
-        assert_eq!(plan.summary.total(), 5);
+        assert_eq!(plan.summary().creates, 1);
+        assert_eq!(plan.summary().updates, 1);
+        assert_eq!(plan.summary().replaces, 2);
+        assert_eq!(plan.summary().deletes, 1);
+        assert_eq!(plan.summary().total(), 5);
     }
 
     #[test]
@@ -1173,7 +1145,7 @@ mod tests {
         let empty =
             parse_plan_json(&plan_with_resources(json!([]))).expect("empty plan should parse");
         assert!(!empty.has_changes());
-        assert_eq!(empty.summary.total(), 0);
+        assert_eq!(empty.summary().total(), 0);
 
         let noops = parse_plan_json(&plan_with_resources(json!([resource(
             "aws_instance.noop",
@@ -1182,7 +1154,7 @@ mod tests {
         )])))
         .expect("no-op plan should parse");
         assert!(!noops.has_changes());
-        assert_eq!(noops.summary.total(), 0);
+        assert_eq!(noops.summary().total(), 0);
         assert!(
             noops
                 .resource_changes

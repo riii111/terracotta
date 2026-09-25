@@ -1,6 +1,9 @@
 use super::{EnvironmentDialog, EnvironmentView, overview::matrix::MatrixSelectedItem, sidebar};
 use crate::{
-    app::environments::{EnvironmentPlan, EnvironmentSession, EnvironmentState},
+    app::{
+        environments::{EnvironmentPlan, EnvironmentSession, EnvironmentState},
+        session::ReviewSessionState,
+    },
     ui::{
         features::{
             overview::{
@@ -394,27 +397,24 @@ fn environment_summary_line(plan: &EnvironmentPlan) -> Line<'static> {
         ),
     ]);
     if let Some(review) = plan.review() {
-        let counts = review.review().metadata();
+        let review = review.review();
+        let counts = review.summary();
         for (count, label, style) in [
-            (counts.additions(), "+", theme::overview_total_add_style()),
-            (counts.changes(), "~", theme::overview_total_update_style()),
-            (
-                counts.deletions(),
-                "-",
-                theme::overview_total_destroy_style(),
-            ),
+            (counts.creates, "+", theme::overview_total_add_style()),
+            (counts.updates, "~", theme::overview_total_update_style()),
+            (counts.deletes, "-", theme::overview_total_destroy_style()),
         ] {
             if count > 0 {
                 line.push_span(Span::styled(format!(" {label}{count}"), style));
             }
         }
-        if counts.replacements() > 0 {
+        if counts.replaces > 0 {
             line.push_span(Span::styled(
-                format!(" {} replace", counts.replacements()),
+                format!(" {} replace", counts.replaces),
                 theme::overview_total_replace_style(),
             ));
         }
-        if !counts.has_changes() && counts.nonstandard_changes() == 0 {
+        if !review.has_changes() && review.nonstandard_changes() == 0 {
             line.push_span(Span::styled(" No changes", theme::overview_muted_style()));
         }
     }
@@ -576,13 +576,15 @@ fn matrix_pane_name(view: &EnvironmentView, state: &EnvironmentSession) -> Strin
 fn overview_detail(plan: &EnvironmentPlan) -> String {
     if matches!(plan.state(), EnvironmentState::Error) {
         plan.diagnostic().text().to_owned()
-    } else if let Some(review) = plan.review().filter(|review| {
-        let metadata = review.review().metadata();
-        metadata.nonstandard_changes() > 0 || !metadata.output_names().is_empty()
-    }) {
-        let metadata = review.review().metadata();
-        let count = metadata.nonstandard_changes();
-        let outputs = !metadata.output_names().is_empty();
+    } else if let Some(review) = plan
+        .review()
+        .map(ReviewSessionState::review)
+        .filter(|review| {
+            review.nonstandard_changes() > 0 || !review.metadata().output_names().is_empty()
+        })
+    {
+        let count = review.nonstandard_changes();
+        let outputs = !review.metadata().output_names().is_empty();
         let detail = if count > 0 && outputs {
             format!("{count} other change(s) and output changes")
         } else if count > 0 {

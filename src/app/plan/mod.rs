@@ -60,20 +60,6 @@ pub(crate) enum PlanAction {
     Unknown(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PlanResource {
-    pub(crate) address: String,
-    pub(crate) actions: Vec<PlanAction>,
-    pub(crate) kind: ResourceChangeKind,
-}
-
-impl PlanResource {
-    #[must_use]
-    pub(crate) fn is_replacement(&self) -> bool {
-        self.kind == ResourceChangeKind::Replace
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ResourceChangeKind {
     Create,
@@ -231,7 +217,6 @@ impl std::fmt::Debug for OutputChange {
 pub(crate) struct Plan {
     pub(crate) resource_changes: Vec<ResourceChange>,
     pub(crate) value_addresses: BTreeSet<String>,
-    pub(crate) summary: PlanSummary,
     pub(crate) unsupported_changes: Vec<UnsupportedChange>,
     pub(crate) output_changes: Vec<OutputChange>,
 }
@@ -242,7 +227,6 @@ impl std::fmt::Debug for Plan {
             .debug_struct("Plan")
             .field("resource_changes", &self.resource_changes)
             .field("value_addresses", &self.value_addresses)
-            .field("summary", &self.summary)
             .field("unsupported_changes", &self.unsupported_changes)
             .field("output_changes", &self.output_changes)
             .finish()
@@ -255,15 +239,29 @@ impl Plan {
         Self {
             resource_changes: Vec::new(),
             value_addresses: BTreeSet::new(),
-            summary: PlanSummary {
-                creates: 0,
-                updates: 0,
-                replaces: 0,
-                deletes: 0,
-            },
             unsupported_changes: Vec::new(),
             output_changes: Vec::new(),
         }
+    }
+
+    #[must_use]
+    pub(crate) fn summary(&self) -> PlanSummary {
+        let mut summary = PlanSummary::default();
+        for change in &self.resource_changes {
+            match change.kind {
+                ResourceChangeKind::Create => summary.creates += 1,
+                ResourceChangeKind::Update => summary.updates += 1,
+                ResourceChangeKind::Replace => summary.replaces += 1,
+                ResourceChangeKind::Delete => summary.deletes += 1,
+                ResourceChangeKind::NoOp
+                | ResourceChangeKind::Read
+                | ResourceChangeKind::Move
+                | ResourceChangeKind::Import
+                | ResourceChangeKind::Unknown
+                | ResourceChangeKind::Unsupported => {}
+            }
+        }
+        summary
     }
 
     #[must_use]
@@ -311,4 +309,43 @@ pub(crate) struct ProviderSchema {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProviderSchemas {
     pub(crate) providers: BTreeMap<String, ProviderSchema>,
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::{PlanAction, ResourceChange, ResourceChangeKind, ResourceMode};
+
+    /// A resource change whose actions match `kind`, without values or move/import markers.
+    pub(crate) fn resource_change(address: &str, kind: ResourceChangeKind) -> ResourceChange {
+        let actions = match kind {
+            ResourceChangeKind::Create => vec![PlanAction::Create],
+            ResourceChangeKind::Update => vec![PlanAction::Update],
+            ResourceChangeKind::Replace => vec![PlanAction::Delete, PlanAction::Create],
+            ResourceChangeKind::Delete => vec![PlanAction::Delete],
+            ResourceChangeKind::Read => vec![PlanAction::Read],
+            ResourceChangeKind::NoOp
+            | ResourceChangeKind::Move
+            | ResourceChangeKind::Import
+            | ResourceChangeKind::Unknown
+            | ResourceChangeKind::Unsupported => vec![PlanAction::NoOp],
+        };
+        ResourceChange {
+            address: address.to_owned(),
+            provider: None,
+            resource_type: None,
+            resource_name: None,
+            mode: ResourceMode::Managed,
+            actions,
+            kind,
+            before: None,
+            after: None,
+            before_sensitive: None,
+            after_sensitive: None,
+            after_unknown: None,
+            replace_paths: None,
+            action_reason: None,
+            previous_address: None,
+            importing: None,
+        }
+    }
 }

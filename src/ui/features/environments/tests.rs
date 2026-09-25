@@ -4,6 +4,7 @@ use crate::{
         copy::CopyResult,
         environments::{Environment, EnvironmentAvailability, EnvironmentIdentity, PlanResult},
         execution::Tool,
+        plan::Plan,
         review::{PlanMetadata, PlanReview, test_support::plan_document},
         session::Effect,
     },
@@ -35,7 +36,8 @@ fn partial_session() -> EnvironmentSession {
         PathBuf::from("/synthetic/a-ready"),
         "default".to_owned(),
         plan_document("Synthetic plan text\n".to_owned()),
-        PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
+        Plan::empty(),
+        PlanMetadata::new(Vec::new(), false),
         Vec::new(),
     )
     .with_apply_allowed(false)
@@ -78,7 +80,7 @@ fn complete_acquisition_with_errors(state: &mut EnvironmentSession) {
 
 fn overview_plan_session(names: &[&str]) -> EnvironmentSession {
     use crate::app::{
-        plan::{Plan, PlanAction, ResourceChange, ResourceChangeKind, ResourceMode},
+        plan::{PlanAction, ResourceChange, ResourceChangeKind, ResourceMode},
         review::{PlanBlock, PlanBlockKind, PlanDocument, PlanLineKind},
     };
 
@@ -137,10 +139,10 @@ fn overview_plan_session(names: &[&str]) -> EnvironmentSession {
             PathBuf::from(format!("/synthetic/{name}")),
             "default".to_owned(),
             document,
-            PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
+            plan,
+            PlanMetadata::new(Vec::new(), false),
             Vec::new(),
         )
-        .with_plan(plan)
         .with_apply_allowed(false)
         .with_apply_entry(false);
         state.complete(
@@ -1923,6 +1925,8 @@ fn ready_review_keeps_position_filter_counts_and_copy_notices() {
 mod matrix;
 
 fn applyable_session(names: &[&str], ready: usize) -> EnvironmentSession {
+    use crate::app::plan::{ResourceChangeKind, test_support::resource_change};
+
     let environments = names
         .iter()
         .map(|name| Environment {
@@ -1940,7 +1944,14 @@ fn applyable_session(names: &[&str], ready: usize) -> EnvironmentSession {
             PathBuf::from(format!("/synthetic/{name}")),
             "default".to_owned(),
             plan_document(format!("{name} plan\n")),
-            PlanMetadata::new(Vec::new(), Vec::new(), 1, 0, 0, true),
+            Plan {
+                resource_changes: vec![resource_change(
+                    "terraform_data.api",
+                    ResourceChangeKind::Create,
+                )],
+                ..Plan::empty()
+            },
+            PlanMetadata::new(Vec::new(), true),
             Vec::new(),
         );
         state.complete(

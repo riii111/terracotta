@@ -11,7 +11,7 @@ use super::{
         ApplyStatus, Diagnostic, ExecutionContext, ExecutionContextValue, ExecutionEvent,
         ExecutionTargetSpec, SensitiveValue,
     },
-    plan::{Plan, PlanRelations, PlanResource, ProviderSchemas, ResourceChangeKind},
+    plan::{Plan, PlanRelations, PlanSummary, ProviderSchemas, ResourceChangeKind},
 };
 
 #[cfg(test)]
@@ -204,18 +204,11 @@ impl Debug for PlanDocument {
     }
 }
 
+/// Plan facts that the resource changes cannot reproduce.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct PlanMetadata {
-    resource_addresses: Vec<String>,
-    resource_changes: Vec<PlanResource>,
     output_names: Vec<String>,
-    additions: usize,
-    changes: usize,
-    replacements: usize,
-    deletions: usize,
-    nonstandard_changes: usize,
     applyable: bool,
-    apply_targets: Vec<ExecutionTargetSpec>,
     sensitive_values: Vec<SensitiveValue>,
 }
 
@@ -223,16 +216,8 @@ impl Debug for PlanMetadata {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("PlanMetadata")
-            .field("resource_addresses", &self.resource_addresses)
-            .field("resource_changes", &self.resource_changes)
             .field("output_names", &self.output_names)
-            .field("additions", &self.additions)
-            .field("changes", &self.changes)
-            .field("replacements", &self.replacements)
-            .field("deletions", &self.deletions)
-            .field("nonstandard_changes", &self.nonstandard_changes)
             .field("applyable", &self.applyable)
-            .field("apply_targets", &self.apply_targets)
             .field("sensitive_values", &"<redacted>")
             .finish()
     }
@@ -240,44 +225,12 @@ impl Debug for PlanMetadata {
 
 impl PlanMetadata {
     #[must_use]
-    pub(crate) const fn new(
-        resource_addresses: Vec<String>,
-        output_names: Vec<String>,
-        additions: usize,
-        changes: usize,
-        deletions: usize,
-        applyable: bool,
-    ) -> Self {
+    pub(crate) const fn new(output_names: Vec<String>, applyable: bool) -> Self {
         Self {
-            resource_addresses,
-            resource_changes: Vec::new(),
             output_names,
-            additions,
-            changes,
-            replacements: 0,
-            deletions,
-            nonstandard_changes: 0,
             applyable,
-            apply_targets: Vec::new(),
             sensitive_values: Vec::new(),
         }
-    }
-
-    #[must_use]
-    pub(crate) fn with_resource_changes(
-        mut self,
-        resource_changes: Vec<PlanResource>,
-        replacements: usize,
-    ) -> Self {
-        self.resource_changes = resource_changes;
-        self.replacements = replacements;
-        self
-    }
-
-    #[must_use]
-    pub(crate) fn with_apply_targets(mut self, apply_targets: Vec<ExecutionTargetSpec>) -> Self {
-        self.apply_targets = apply_targets;
-        self
     }
 
     #[must_use]
@@ -287,54 +240,8 @@ impl PlanMetadata {
     }
 
     #[must_use]
-    pub(crate) const fn with_nonstandard_changes(mut self, count: usize) -> Self {
-        self.nonstandard_changes = count;
-        self
-    }
-
-    #[must_use]
-    pub(crate) fn resource_addresses(&self) -> &[String] {
-        &self.resource_addresses
-    }
-
-    #[must_use]
     pub(crate) fn output_names(&self) -> &[String] {
         &self.output_names
-    }
-
-    #[must_use]
-    pub(crate) const fn additions(&self) -> usize {
-        self.additions
-    }
-
-    #[must_use]
-    pub(crate) const fn changes(&self) -> usize {
-        self.changes
-    }
-
-    #[must_use]
-    pub(crate) const fn replacements(&self) -> usize {
-        self.replacements
-    }
-
-    #[must_use]
-    pub(crate) const fn deletions(&self) -> usize {
-        self.deletions
-    }
-
-    #[must_use]
-    pub(crate) const fn nonstandard_changes(&self) -> usize {
-        self.nonstandard_changes
-    }
-
-    #[must_use]
-    pub(crate) const fn has_changes(&self) -> bool {
-        self.additions > 0
-            || self.changes > 0
-            || self.replacements > 0
-            || self.deletions > 0
-            || self.nonstandard_changes > 0
-            || !self.output_names.is_empty()
     }
 
     #[must_use]
@@ -343,35 +250,8 @@ impl PlanMetadata {
     }
 
     #[must_use]
-    pub(crate) fn apply_targets(&self) -> &[ExecutionTargetSpec] {
-        &self.apply_targets
-    }
-
-    #[must_use]
     pub(crate) fn sensitive_values(&self) -> &[SensitiveValue] {
         &self.sensitive_values
-    }
-
-    pub(crate) fn destructive_addresses(&self) -> impl Iterator<Item = &str> {
-        self.resource_changes
-            .iter()
-            .filter(|resource| resource.kind == ResourceChangeKind::Delete)
-            .map(|resource| resource.address.as_str())
-    }
-
-    pub(crate) fn replacement_addresses(&self) -> impl Iterator<Item = &str> {
-        self.resource_changes
-            .iter()
-            .filter(|resource| resource.is_replacement())
-            .map(|resource| resource.address.as_str())
-    }
-
-    #[must_use]
-    pub(crate) fn has_destructive_changes(&self) -> bool {
-        self.deletions > 0
-            || self.replacements > 0
-            || self.destructive_addresses().next().is_some()
-            || self.replacement_addresses().next().is_some()
     }
 }
 
@@ -398,6 +278,7 @@ impl PlanReview {
         root: PathBuf,
         workspace: String,
         document: PlanDocument,
+        plan: Plan,
         metadata: PlanMetadata,
         diagnostics: Vec<Diagnostic>,
     ) -> Self {
@@ -408,7 +289,7 @@ impl PlanReview {
             context,
             document,
             metadata,
-            plan: Plan::empty(),
+            plan,
             relations: PlanRelations::not_collected(),
             provider_schemas: None,
             diagnostics,
@@ -477,12 +358,6 @@ impl PlanReview {
     }
 
     #[must_use]
-    pub(crate) fn with_plan(mut self, plan: Plan) -> Self {
-        self.plan = plan;
-        self
-    }
-
-    #[must_use]
     pub(crate) fn with_relations(mut self, relations: PlanRelations) -> Self {
         self.relations = relations;
         self
@@ -496,8 +371,7 @@ impl PlanReview {
 
     #[must_use]
     pub(crate) fn confirmation_input(&self) -> String {
-        let named =
-            self.metadata.has_destructive_changes() || self.context.is_production() == Some(true);
+        let named = self.has_destructive_changes() || self.context.is_production() == Some(true);
         if named {
             match self.context.display_name() {
                 ExecutionContextValue::Known(name) => name.clone(),
@@ -521,6 +395,65 @@ impl PlanReview {
     #[must_use]
     pub(crate) const fn plan(&self) -> &Plan {
         &self.plan
+    }
+
+    #[must_use]
+    pub(crate) fn summary(&self) -> PlanSummary {
+        self.plan.summary()
+    }
+
+    #[must_use]
+    pub(crate) const fn nonstandard_changes(&self) -> usize {
+        self.plan.unsupported_changes.len()
+    }
+
+    #[must_use]
+    pub(crate) fn has_changes(&self) -> bool {
+        self.plan
+            .resource_changes
+            .iter()
+            .any(|change| change.kind.is_standard_change())
+            || self.nonstandard_changes() > 0
+            || !self.metadata.output_names().is_empty()
+    }
+
+    /// Previous durations are looked up and paired with targets by this order.
+    #[must_use]
+    pub(crate) fn apply_targets(&self) -> Vec<ExecutionTargetSpec> {
+        self.plan
+            .resource_changes
+            .iter()
+            .filter(|change| {
+                change.kind.is_standard_change()
+                    && change.previous_address.is_none()
+                    && change.importing.is_none()
+            })
+            .map(|change| ExecutionTargetSpec {
+                address: change.address.clone(),
+                actions: change.actions.clone(),
+            })
+            .collect()
+    }
+
+    pub(crate) fn destructive_addresses(&self) -> impl Iterator<Item = &str> {
+        self.addresses_of(ResourceChangeKind::Delete)
+    }
+
+    pub(crate) fn replacement_addresses(&self) -> impl Iterator<Item = &str> {
+        self.addresses_of(ResourceChangeKind::Replace)
+    }
+
+    fn addresses_of(&self, kind: ResourceChangeKind) -> impl Iterator<Item = &str> {
+        self.plan
+            .resource_changes
+            .iter()
+            .filter(move |change| change.kind == kind)
+            .map(|change| change.address.as_str())
+    }
+
+    fn has_destructive_changes(&self) -> bool {
+        self.destructive_addresses().next().is_some()
+            || self.replacement_addresses().next().is_some()
     }
 
     #[must_use]
@@ -705,5 +638,241 @@ mod tests {
             filtered.matching_resources() + filtered.matching_outputs(),
             0
         );
+    }
+
+    mod projection {
+        use super::*;
+        use crate::app::plan::{
+            PlanAction, PlanValue, ResourceChange, UnsupportedChange, UnsupportedChangeKind,
+            UnsupportedChangeScope, test_support::resource_change,
+        };
+
+        fn review(plan: Plan, metadata: PlanMetadata) -> PlanReview {
+            PlanReview::new(
+                PathBuf::from("/project"),
+                "default".to_owned(),
+                plan_document(String::new()),
+                plan,
+                metadata,
+                Vec::new(),
+            )
+        }
+
+        fn unsupported_resource(address: &str, kind: UnsupportedChangeKind) -> UnsupportedChange {
+            UnsupportedChange {
+                scope: UnsupportedChangeScope::Resource,
+                address: address.to_owned(),
+                actions: vec![PlanAction::NoOp],
+                kind,
+                reason: None,
+                action_type: None,
+            }
+        }
+
+        #[test]
+        fn summary_counts_each_standard_kind_from_the_plan() {
+            let review = review(
+                Plan {
+                    resource_changes: vec![
+                        resource_change("terraform_data.create", ResourceChangeKind::Create),
+                        resource_change("terraform_data.update", ResourceChangeKind::Update),
+                        resource_change("terraform_data.replace", ResourceChangeKind::Replace),
+                        resource_change("terraform_data.delete", ResourceChangeKind::Delete),
+                        resource_change("terraform_data.unchanged", ResourceChangeKind::NoOp),
+                        resource_change("terraform_data.read", ResourceChangeKind::Read),
+                    ],
+                    ..Plan::empty()
+                },
+                PlanMetadata::new(Vec::new(), true),
+            );
+
+            assert_eq!(
+                review.summary(),
+                PlanSummary {
+                    creates: 1,
+                    updates: 1,
+                    replaces: 1,
+                    deletes: 1,
+                }
+            );
+            assert!(review.has_changes());
+        }
+
+        #[test]
+        fn has_changes_counts_nonstandard_and_output_changes_but_not_no_op_resources() {
+            struct ChangesCase {
+                name: &'static str,
+                plan: Plan,
+                output_names: Vec<String>,
+                expected: bool,
+            }
+
+            for case in [
+                ChangesCase {
+                    name: "no_op_resource",
+                    plan: Plan {
+                        resource_changes: vec![resource_change(
+                            "terraform_data.unchanged",
+                            ResourceChangeKind::NoOp,
+                        )],
+                        ..Plan::empty()
+                    },
+                    output_names: Vec::new(),
+                    expected: false,
+                },
+                ChangesCase {
+                    name: "moved_resource",
+                    plan: Plan {
+                        resource_changes: vec![ResourceChange {
+                            previous_address: Some("terraform_data.previous".to_owned()),
+                            ..resource_change("terraform_data.moved", ResourceChangeKind::Move)
+                        }],
+                        unsupported_changes: vec![unsupported_resource(
+                            "terraform_data.moved",
+                            UnsupportedChangeKind::Move,
+                        )],
+                        ..Plan::empty()
+                    },
+                    output_names: Vec::new(),
+                    expected: true,
+                },
+                ChangesCase {
+                    name: "imported_resource",
+                    plan: Plan {
+                        resource_changes: vec![ResourceChange {
+                            importing: Some(PlanValue::Object(BTreeMap::new())),
+                            ..resource_change("terraform_data.imported", ResourceChangeKind::Import)
+                        }],
+                        unsupported_changes: vec![unsupported_resource(
+                            "terraform_data.imported",
+                            UnsupportedChangeKind::Import,
+                        )],
+                        ..Plan::empty()
+                    },
+                    output_names: Vec::new(),
+                    expected: true,
+                },
+                ChangesCase {
+                    name: "read_resource",
+                    plan: Plan {
+                        resource_changes: vec![resource_change(
+                            "data.terraform_data.read",
+                            ResourceChangeKind::Read,
+                        )],
+                        unsupported_changes: vec![unsupported_resource(
+                            "data.terraform_data.read",
+                            UnsupportedChangeKind::Read,
+                        )],
+                        ..Plan::empty()
+                    },
+                    output_names: Vec::new(),
+                    expected: true,
+                },
+                ChangesCase {
+                    name: "output_only",
+                    plan: Plan::empty(),
+                    output_names: vec!["endpoint".to_owned()],
+                    expected: true,
+                },
+            ] {
+                let review = review(case.plan, PlanMetadata::new(case.output_names, true));
+
+                assert_eq!(review.has_changes(), case.expected, "case: {}", case.name);
+                assert_eq!(
+                    review.summary(),
+                    PlanSummary::default(),
+                    "case: {}",
+                    case.name
+                );
+            }
+        }
+
+        #[test]
+        fn apply_targets_keep_plan_order_and_skip_moved_imported_and_nonstandard_resources() {
+            let review = review(
+                Plan {
+                    resource_changes: vec![
+                        resource_change("terraform_data.update", ResourceChangeKind::Update),
+                        ResourceChange {
+                            previous_address: Some("terraform_data.previous".to_owned()),
+                            ..resource_change("terraform_data.moved", ResourceChangeKind::Create)
+                        },
+                        ResourceChange {
+                            importing: Some(PlanValue::Null),
+                            ..resource_change("terraform_data.imported", ResourceChangeKind::Create)
+                        },
+                        resource_change("terraform_data.unchanged", ResourceChangeKind::NoOp),
+                        resource_change("data.terraform_data.read", ResourceChangeKind::Read),
+                        resource_change("terraform_data.replace", ResourceChangeKind::Replace),
+                        resource_change("terraform_data.create", ResourceChangeKind::Create),
+                    ],
+                    ..Plan::empty()
+                },
+                PlanMetadata::new(Vec::new(), true),
+            );
+
+            assert_eq!(
+                review.apply_targets(),
+                [
+                    ExecutionTargetSpec {
+                        address: "terraform_data.update".to_owned(),
+                        actions: vec![PlanAction::Update],
+                    },
+                    ExecutionTargetSpec {
+                        address: "terraform_data.replace".to_owned(),
+                        actions: vec![PlanAction::Delete, PlanAction::Create],
+                    },
+                    ExecutionTargetSpec {
+                        address: "terraform_data.create".to_owned(),
+                        actions: vec![PlanAction::Create],
+                    },
+                ]
+            );
+        }
+
+        #[test]
+        fn destructive_lists_separate_deletes_from_replacements_and_name_the_target() {
+            let review = review(
+                Plan {
+                    resource_changes: vec![
+                        resource_change("terraform_data.replace", ResourceChangeKind::Replace),
+                        resource_change("terraform_data.update", ResourceChangeKind::Update),
+                        resource_change("terraform_data.destroy", ResourceChangeKind::Delete),
+                        ResourceChange {
+                            previous_address: Some("terraform_data.previous".to_owned()),
+                            ..resource_change("terraform_data.moved", ResourceChangeKind::Move)
+                        },
+                    ],
+                    ..Plan::empty()
+                },
+                PlanMetadata::new(Vec::new(), true),
+            );
+
+            assert_eq!(
+                review.destructive_addresses().collect::<Vec<_>>(),
+                ["terraform_data.destroy"]
+            );
+            assert_eq!(
+                review.replacement_addresses().collect::<Vec<_>>(),
+                ["terraform_data.replace"]
+            );
+            assert_eq!(review.confirmation_input(), "project");
+        }
+
+        #[test]
+        fn non_destructive_plan_confirms_with_yes() {
+            let review = review(
+                Plan {
+                    resource_changes: vec![
+                        resource_change("terraform_data.create", ResourceChangeKind::Create),
+                        resource_change("terraform_data.update", ResourceChangeKind::Update),
+                    ],
+                    ..Plan::empty()
+                },
+                PlanMetadata::new(Vec::new(), true),
+            );
+
+            assert_eq!(review.confirmation_input(), "yes");
+        }
     }
 }

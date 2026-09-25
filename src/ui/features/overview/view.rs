@@ -113,7 +113,7 @@ impl OverviewContent {
         Self {
             rows,
             repeated: grouping.repeated,
-            unsupported: review.metadata().nonstandard_changes(),
+            unsupported: review.nonstandard_changes(),
             relations: relation.graph,
         }
     }
@@ -629,7 +629,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::app::plan::{Plan, PlanSummary, PlanValue, ResourceMode};
+    use crate::app::plan::{Plan, PlanValue, ResourceMode};
     use crate::app::review::{PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata};
     use crate::ui::features::overview::key_to_input;
 
@@ -638,17 +638,6 @@ mod tests {
     }
 
     fn review() -> PlanReview {
-        let mut review = PlanReview::new(
-            PathBuf::from("/project"),
-            "default".to_owned(),
-            PlanDocument::with_blocks_and_line_kinds(
-                "plan\n".to_owned(),
-                vec![PlanBlock::new(0..1, PlanBlockKind::Common)],
-                vec![],
-            ),
-            PlanMetadata::new(Vec::new(), Vec::new(), 1, 0, 0, true),
-            Vec::new(),
-        );
         let change = |address: &str| ResourceChange {
             address: address.to_owned(),
             provider: None,
@@ -691,23 +680,25 @@ mod tests {
             previous_address: None,
             importing: None,
         };
-        review = review.with_plan(Plan {
-            value_addresses: BTreeSet::new(),
-            resource_changes: vec![
-                change("aws_instance.web[0]"),
-                change("aws_instance.web[1]"),
-                no_op,
-            ],
-            summary: PlanSummary {
-                creates: 0,
-                updates: 2,
-                replaces: 0,
-                deletes: 0,
+        PlanReview::new(
+            PathBuf::from("/project"),
+            "default".to_owned(),
+            PlanDocument::with_blocks_and_line_kinds(
+                "plan\n".to_owned(),
+                vec![PlanBlock::new(0..1, PlanBlockKind::Common)],
+                vec![],
+            ),
+            Plan {
+                resource_changes: vec![
+                    change("aws_instance.web[0]"),
+                    change("aws_instance.web[1]"),
+                    no_op,
+                ],
+                ..Plan::empty()
             },
-            unsupported_changes: Vec::new(),
-            output_changes: Vec::new(),
-        });
-        review
+            PlanMetadata::new(Vec::new(), true),
+            Vec::new(),
+        )
     }
 
     #[test]

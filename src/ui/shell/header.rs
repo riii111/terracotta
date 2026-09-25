@@ -7,6 +7,7 @@ use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::app::{
     execution::{ExecutionContext, ExecutionContextValue},
+    plan::PlanSummary,
     review::PlanReview,
 };
 use crate::ui::theme;
@@ -148,44 +149,34 @@ fn plan_review_header_line(review: &PlanReview, width: u16) -> Line<'static> {
 }
 
 fn plan_review_changes_line(review: &PlanReview) -> Line<'static> {
-    let counts = review.metadata();
+    let counts = review.summary();
     let mut line = Line::from(Span::styled("Changes", theme::secondary_style()));
     let mut append = |text: String, style| {
         line.push_span(Span::styled("  ", theme::secondary_style()));
         line.push_span(Span::styled(text, style));
     };
-    if counts.additions() > 0 {
-        append(
-            format!("+{} add", counts.additions()),
-            theme::success_style(),
-        );
+    if counts.creates > 0 {
+        append(format!("+{} add", counts.creates), theme::success_style());
     }
-    if counts.changes() > 0 {
+    if counts.updates > 0 {
         append(
-            format!("~{} update", counts.changes()),
+            format!("~{} update", counts.updates),
             theme::warning_style(),
         );
     }
-    if counts.replacements() > 0 {
+    if counts.replaces > 0 {
         append(
-            format!("{} replace", counts.replacements()),
+            format!("{} replace", counts.replaces),
             theme::overview_total_replace_style(),
         );
     }
-    if counts.deletions() > 0 {
-        append(
-            format!("-{} destroy", counts.deletions()),
-            theme::error_style(),
-        );
+    if counts.deletes > 0 {
+        append(format!("-{} destroy", counts.deletes), theme::error_style());
     }
-    if counts.additions() == 0
-        && counts.changes() == 0
-        && counts.replacements() == 0
-        && counts.deletions() == 0
-    {
-        let text = if counts.nonstandard_changes() > 0 {
+    if counts == PlanSummary::default() {
+        let text = if review.nonstandard_changes() > 0 {
             "  Other changes"
-        } else if counts.has_changes() {
+        } else if review.has_changes() {
             "  Outputs changed"
         } else {
             "  No changes"
@@ -468,30 +459,49 @@ fn header_line(path: &Path, workspace: Option<&str>, width: u16) -> Line<'static
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::plan::{
+        Plan, PlanAction, ResourceChangeKind, UnsupportedChange, UnsupportedChangeKind,
+        UnsupportedChangeScope, test_support::resource_change,
+    };
     use crate::app::review::{PlanDocument, PlanMetadata};
 
     #[test]
     fn zero_resource_counts_preserve_output_and_nonstandard_change_status() {
-        for (outputs, other, expected) in [
-            (Vec::new(), 0, "No changes"),
-            (vec!["endpoint".to_owned()], 0, "Outputs changed"),
-            (Vec::new(), 1, "Other changes"),
+        let read = Plan {
+            resource_changes: vec![resource_change(
+                "data.terraform_data.read",
+                ResourceChangeKind::Read,
+            )],
+            unsupported_changes: vec![UnsupportedChange {
+                scope: UnsupportedChangeScope::Resource,
+                address: "data.terraform_data.read".to_owned(),
+                actions: vec![PlanAction::Read],
+                kind: UnsupportedChangeKind::Read,
+                reason: None,
+                action_type: None,
+            }],
+            ..Plan::empty()
+        };
+        for (plan, outputs, expected) in [
+            (Plan::empty(), Vec::new(), "No changes"),
+            (
+                Plan::empty(),
+                vec!["endpoint".to_owned()],
+                "Outputs changed",
+            ),
+            (read, Vec::new(), "Other changes"),
         ] {
-            let metadata = PlanMetadata::new(Vec::new(), outputs, 0, 0, 0, false)
-                .with_nonstandard_changes(other);
             let review = PlanReview::new(
                 "/dev".into(),
                 "default".to_owned(),
                 PlanDocument::with_blocks_and_line_kinds(String::new(), Vec::new(), Vec::new()),
-                metadata,
+                plan,
+                PlanMetadata::new(outputs, false),
                 Vec::new(),
             );
 
-            assert!(
-                plan_review_changes_line(&review)
-                    .to_string()
-                    .contains(expected)
-            );
+            let line = plan_review_changes_line(&review).to_string();
+            assert!(line.contains(expected), "{expected}: {line}");
         }
     }
 
@@ -501,8 +511,23 @@ mod tests {
             "/dev".into(),
             "default".to_owned(),
             PlanDocument::with_blocks_and_line_kinds(String::new(), Vec::new(), Vec::new()),
-            PlanMetadata::new(Vec::new(), Vec::new(), 111, 222, 333, false)
-                .with_resource_changes(Vec::new(), 444),
+            Plan {
+                resource_changes: [
+                    (ResourceChangeKind::Create, 111),
+                    (ResourceChangeKind::Update, 222),
+                    (ResourceChangeKind::Delete, 333),
+                    (ResourceChangeKind::Replace, 444),
+                ]
+                .into_iter()
+                .flat_map(|(kind, count)| {
+                    (0..count).map(move |index| {
+                        resource_change(&format!("terraform_data.{kind:?}_{index}"), kind)
+                    })
+                })
+                .collect(),
+                ..Plan::empty()
+            },
+            PlanMetadata::new(Vec::new(), false),
             Vec::new(),
         );
         assert_eq!(plan_review_height(&review, 240), 1);

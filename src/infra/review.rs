@@ -702,7 +702,7 @@ mod tests {
 
         let review = run_fake_review(&root, None, plan_output(None), None);
 
-        assert_eq!(review.plan().summary.total(), 0);
+        assert_eq!(review.plan().summary().total(), 0);
         assert!(!review.comparison().status().is_complete());
         assert!(
             review

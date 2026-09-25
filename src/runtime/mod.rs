@@ -20,7 +20,8 @@ use crate::{
             ApplyStatus, ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionPhase,
             ExecutionStage, ExecutionState, HistoryKey, Tool, VariableSources,
         },
-        review::{PlanMetadata, PlanReview, PlanReviewMessage},
+        plan::PlanSummary,
+        review::{PlanReview, PlanReviewMessage},
         session::SessionOutcome,
     },
     infra::{CancellationToken, ClipboardExecutor, history::HistoryStore, terraform},
@@ -252,8 +253,8 @@ fn run_saved_plan_review(
     let cleanup_result =
         take_saved_plan(&saved_plan_slot).map_or(Ok(()), terraform::SavedPlan::cleanup);
     let primary_exit = match ui_result {
-        Ok(SessionOutcome::Reviewed(metadata)) => {
-            report_reviewed(&metadata);
+        Ok(SessionOutcome::Reviewed { changes }) => {
+            report_reviewed(changes);
             if !apply_entry && detailed_exitcode && changed {
                 ExitCode::from(2)
             } else {
@@ -329,15 +330,15 @@ fn run_interactive(
     })
 }
 
-fn report_reviewed(metadata: &PlanMetadata) {
-    if metadata.has_changes() {
+fn report_reviewed(changes: Option<PlanSummary>) {
+    if let Some(summary) = changes {
         let _ = writeln!(
             io::stdout(),
             "Plan: {} to add, {} to change, {} to replace, {} to destroy.\nApply was not run.",
-            metadata.additions(),
-            metadata.changes(),
-            metadata.replacements(),
-            metadata.deletions()
+            summary.creates,
+            summary.updates,
+            summary.replaces,
+            summary.deletes
         );
     } else {
         let _ = writeln!(io::stdout(), "No changes.");
@@ -518,7 +519,6 @@ fn with_previous_durations(review: PlanReview, history: Option<&HistoryStore>) -
         return review;
     };
     let keys: Vec<_> = review
-        .metadata()
         .apply_targets()
         .iter()
         .map(|target| HistoryKey::for_target(review.context(), target))

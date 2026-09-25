@@ -11,7 +11,7 @@ use ratatui::{
 use crate::app::{
     copy::CopyNotice,
     execution::{DiagnosticSeverity, ExecutionContext, ExecutionContextValue},
-    review::{FilteredPlan, PlanLineKind, PlanMetadata, PlanReview},
+    review::{FilteredPlan, PlanLineKind, PlanReview},
     session::ReviewSessionState,
 };
 use crate::ui::primitives::{
@@ -702,8 +702,9 @@ const fn padded_confirmation_inner(inner: Rect) -> Rect {
 }
 
 fn confirmation_lines(state: &ReviewSessionState) -> Vec<Line<'static>> {
-    let metadata = state.review().metadata();
-    let context = state.review().context();
+    let review = state.review();
+    let counts = review.summary();
+    let context = review.context();
     let target = match context.display_name() {
         ExecutionContextValue::Known(name) => {
             let suffix = context.is_production().is_some_and(|production| production);
@@ -739,14 +740,11 @@ fn confirmation_lines(state: &ReviewSessionState) -> Vec<Line<'static>> {
         ]),
         Line::from(format!(
             "Plan: +{} add  ~{} update  {} replace  -{} destroy",
-            metadata.additions(),
-            metadata.changes(),
-            metadata.replacements(),
-            metadata.deletions(),
+            counts.creates, counts.updates, counts.replaces, counts.deletes,
         )),
     ];
     append_variable_sources(&mut lines, context);
-    append_destructive_resources(&mut lines, metadata);
+    append_destructive_resources(&mut lines, review);
     if !state.review().search_query().is_empty() {
         lines.push(Line::from(Span::styled(
             "Filter changes display only. Apply uses all changes.",
@@ -792,9 +790,9 @@ fn append_variable_sources(lines: &mut Vec<Line<'static>>, context: &ExecutionCo
     }
 }
 
-fn append_destructive_resources(lines: &mut Vec<Line<'static>>, metadata: &PlanMetadata) {
-    let destroy = metadata.destructive_addresses().collect::<Vec<_>>();
-    let replace = metadata.replacement_addresses().collect::<Vec<_>>();
+fn append_destructive_resources(lines: &mut Vec<Line<'static>>, review: &PlanReview) {
+    let destroy = review.destructive_addresses().collect::<Vec<_>>();
+    let replace = review.replacement_addresses().collect::<Vec<_>>();
     if destroy.is_empty() && replace.is_empty() {
         return;
     }
@@ -1813,6 +1811,7 @@ mod tests {
         execution::{
             Diagnostic, DiagnosticSource, ExecutionContext, ExecutionState, Tool, VariableSources,
         },
+        plan::{Plan, ResourceChangeKind, test_support::resource_change},
         review::{
             PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata,
             test_support::{plan_document, plan_document_with_blocks},
@@ -1959,19 +1958,16 @@ End of synthetic plan body."#;
                     PlanLineKind::Body,
                 ],
             ),
-            PlanMetadata::new(
-                vec![
-                    "terraform_data.api".to_owned(),
-                    "terraform_data.worker".to_owned(),
-                    "terraform_data.old".to_owned(),
-                    "terraform_data.new".to_owned(),
+            Plan {
+                resource_changes: vec![
+                    resource_change("terraform_data.api", ResourceChangeKind::Update),
+                    resource_change("terraform_data.worker", ResourceChangeKind::Replace),
+                    resource_change("terraform_data.old", ResourceChangeKind::Delete),
+                    resource_change("terraform_data.new", ResourceChangeKind::Create),
                 ],
-                vec!["endpoint".to_owned(), "summary".to_owned()],
-                2,
-                2,
-                1,
-                applyable,
-            ),
+                ..Plan::empty()
+            },
+            PlanMetadata::new(vec!["endpoint".to_owned(), "summary".to_owned()], applyable),
             Vec::new(),
         )
         .with_apply_allowed(apply_allowed)
@@ -2133,7 +2129,8 @@ End of synthetic plan body."#;
             PathBuf::from("/repo/environments/staging/empty"),
             "default".to_owned(),
             plan_document_with_blocks(String::new(), Vec::new()),
-            PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
+            Plan::empty(),
+            PlanMetadata::new(Vec::new(), false),
             Vec::new(),
         );
         let state = review_state(plan);
@@ -2634,7 +2631,8 @@ End of synthetic plan body."#;
                     PlanBlockKind::Common,
                 )],
             ),
-            PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, true),
+            Plan::empty(),
+            PlanMetadata::new(Vec::new(), true),
             Vec::new(),
         )
     }
@@ -2684,14 +2682,14 @@ End of synthetic plan body."#;
                         PlanBlock::new(4..5, PlanBlockKind::Common),
                     ],
                 ),
-                PlanMetadata::new(
-                    vec!["api".to_owned(), "worker".to_owned()],
-                    Vec::new(),
-                    0,
-                    2,
-                    0,
-                    true,
-                ),
+                Plan {
+                    resource_changes: vec![
+                        resource_change("api", ResourceChangeKind::Update),
+                        resource_change("worker", ResourceChangeKind::Update),
+                    ],
+                    ..Plan::empty()
+                },
+                PlanMetadata::new(Vec::new(), true),
                 Vec::new(),
             )
         }
@@ -2704,7 +2702,8 @@ End of synthetic plan body."#;
                     "common line 1\ncommon line 2\n".to_owned(),
                     vec![PlanBlock::new(0..2, PlanBlockKind::Common)],
                 ),
-                PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, true),
+                Plan::empty(),
+                PlanMetadata::new(Vec::new(), true),
                 Vec::new(),
             )
         }
@@ -2999,7 +2998,14 @@ End of synthetic plan body."#;
                         PlanLineKind::Body,
                     ],
                 ),
-                PlanMetadata::new(Vec::new(), Vec::new(), 1, 0, 0, true),
+                Plan {
+                    resource_changes: vec![resource_change(
+                        "terraform_data.api",
+                        ResourceChangeKind::Create,
+                    )],
+                    ..Plan::empty()
+                },
+                PlanMetadata::new(Vec::new(), true),
                 Vec::new(),
             );
             let filtered = review.document().filter(review.search_query());
@@ -3017,7 +3023,8 @@ End of synthetic plan body."#;
                 PathBuf::from("/project"),
                 "default".to_owned(),
                 plan_document("Plan: application text\nfollowing body text\n".to_owned()),
-                PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
+                Plan::empty(),
+                PlanMetadata::new(Vec::new(), false),
                 Vec::new(),
             );
             let filtered = review.document().filter(review.search_query());
@@ -3056,14 +3063,14 @@ End of synthetic plan body."#;
                         PlanLineKind::Body,
                     ],
                 ),
-                PlanMetadata::new(
-                    vec!["terraform_data.api".to_owned()],
-                    vec!["endpoint".to_owned()],
-                    1,
-                    0,
-                    0,
-                    true,
-                ),
+Plan {
+                    resource_changes: vec![resource_change(
+                        "terraform_data.api",
+                        ResourceChangeKind::Create,
+                    )],
+                    ..Plan::empty()
+                },
+                PlanMetadata::new(vec!["endpoint".to_owned()], true),
                 vec![Diagnostic {
                     severity: DiagnosticSeverity::Warning,
                     summary: "Synthetic diagnostic".to_owned(),
@@ -3864,7 +3871,14 @@ End of synthetic plan body."#;
                     vec![PlanBlock::new(0..2, PlanBlockKind::Common)],
                     vec![PlanLineKind::Summary, PlanLineKind::Body],
                 ),
-                PlanMetadata::new(Vec::new(), Vec::new(), 1, 0, 0, true),
+                Plan {
+                    resource_changes: vec![resource_change(
+                        "terraform_data.api",
+                        ResourceChangeKind::Create,
+                    )],
+                    ..Plan::empty()
+                },
+                PlanMetadata::new(Vec::new(), true),
                 Vec::new(),
             );
             review.set_search_query("api".to_owned());
@@ -3903,18 +3917,19 @@ End of synthetic plan body."#;
             );
         }
 
-        fn confirmation_review(
-            root: &str,
-            workspace: &str,
-            additions: usize,
-            changes: usize,
-            deletions: usize,
-        ) -> PlanReview {
+        fn update_review(root: &str, workspace: &str) -> PlanReview {
             PlanReview::new(
                 PathBuf::from(root),
                 workspace.to_owned(),
                 plan_document("Plan: 0 to add, 0 to change, 0 to destroy.\n".to_owned()),
-                PlanMetadata::new(Vec::new(), Vec::new(), additions, changes, deletions, true),
+                Plan {
+                    resource_changes: vec![resource_change(
+                        "terraform_data.api",
+                        ResourceChangeKind::Update,
+                    )],
+                    ..Plan::empty()
+                },
+                PlanMetadata::new(Vec::new(), true),
                 Vec::new(),
             )
         }
@@ -3974,12 +3989,9 @@ End of synthetic plan body."#;
 
         #[test]
         fn production_confirmation_wraps_target_and_preserves_scope_and_workspace() {
-            let plan = confirmation_review(
+            let plan = update_review(
                 "/repo/environments/production/東京/with-a-very-long-target-name-that-must-wrap",
                 "staging",
-                0,
-                1,
-                0,
             );
             let state = confirmation_state(plan);
             let area = Rect::new(0, 0, 48, 30);
@@ -4116,14 +4128,14 @@ End of synthetic plan body."#;
                     vec![PlanBlock::new(0..2, PlanBlockKind::Common)],
                     vec![PlanLineKind::Summary, PlanLineKind::Body],
                 ),
-                PlanMetadata::new(
-                    vec!["terraform_data.api".to_owned()],
-                    Vec::new(),
-                    1,
-                    0,
-                    0,
-                    true,
-                ),
+                Plan {
+                    resource_changes: vec![resource_change(
+                        "terraform_data.api",
+                        ResourceChangeKind::Create,
+                    )],
+                    ..Plan::empty()
+                },
+                PlanMetadata::new(Vec::new(), true),
                 vec![
                     Diagnostic {
                         severity: DiagnosticSeverity::Error,
