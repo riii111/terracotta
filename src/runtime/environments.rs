@@ -105,9 +105,15 @@ pub(super) fn run(invocation: &Invocation, environments: Vec<Environment>) -> io
             }
             if let Some(index) = state.start_next() {
                 dirty = true;
-                if let Err(error) =
-                    start_worker(invocation, &state, index, &mut plans, &mut worker, &sender)
-                {
+                if let Err(error) = start_worker(
+                    invocation,
+                    &state,
+                    index,
+                    &mut plans,
+                    &mut worker,
+                    &sender,
+                    apply_runtime.history.as_ref(),
+                ) {
                     state.complete(index, PlanResult::Error(error.to_string()), Vec::new());
                 }
             }
@@ -162,6 +168,9 @@ pub(super) fn run(invocation: &Invocation, environments: Vec<Environment>) -> io
         Ok(())
     });
     cancellation.cancel();
+    if result.is_err() {
+        apply_runtime.cancellation.cancel();
+    }
     let joined = worker.join();
     let apply_joined = apply_runtime.worker.join();
     let cleanup = cleanup_plans(plans);
@@ -496,6 +505,7 @@ fn start_worker(
     plans: &mut [Option<terraform::SavedPlan>],
     worker: &mut WorkerGuard,
     sender: &mpsc::Sender<Completion>,
+    history: Option<&HistoryStore>,
 ) -> io::Result<()> {
     if let Some(old_plan) = plans[index].take() {
         old_plan.cleanup()?;
@@ -510,6 +520,7 @@ fn start_worker(
     let cancellation = worker.cancellation.clone();
     let sender = sender.clone();
     let launch_root = invocation.directory().to_owned();
+    let history = history.cloned();
     worker.set_handle(
         thread::Builder::new()
             .name("terracotta-environment".to_owned())
@@ -524,7 +535,13 @@ fn start_worker(
                     &cancellation,
                     &mut diagnostics,
                 )
-                .unwrap_or_else(PlanResult::Error);
+                .map_or_else(PlanResult::Error, |result| match result {
+                    PlanResult::Ready { review, changed } => PlanResult::Ready {
+                        review: Box::new(super::with_previous_durations(*review, history.as_ref())),
+                        changed,
+                    },
+                    result => result,
+                });
                 let _ = sender.send(Completion {
                     index,
                     result,

@@ -21,7 +21,7 @@ use crate::{
             ApplyStatus, ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionPhase,
             ExecutionStage, ExecutionState, HistoryKey, Tool, VariableSources,
         },
-        review::{PlanMetadata, PlanReviewMessage},
+        review::{PlanMetadata, PlanReview, PlanReviewMessage},
         session::SessionOutcome,
     },
     infra::{CancellationToken, ClipboardExecutor, history::HistoryStore, terraform},
@@ -515,18 +515,7 @@ fn spawn_review_worker(
                 &mut phase_sink,
             ) {
                 Ok(review) => {
-                    let review = if let Some(history) = worker_history.as_ref() {
-                        let keys: Vec<_> = review
-                            .metadata()
-                            .apply_targets()
-                            .iter()
-                            .map(|target| HistoryKey::for_target(review.context(), target))
-                            .collect();
-                        let previous_durations = history.load_many(&keys);
-                        review.with_previous_durations(previous_durations)
-                    } else {
-                        review
-                    };
+                    let review = with_previous_durations(review, worker_history.as_ref());
                     if !worker_cancellation.is_cancelled() {
                         let _ = sender.send(PlanReviewMessage::Completed(review));
                     }
@@ -595,6 +584,20 @@ pub(super) fn spawn_apply_worker(
 
 fn report_error(message: &str) {
     let _ = writeln!(io::stderr(), "{message}");
+}
+
+fn with_previous_durations(review: PlanReview, history: Option<&HistoryStore>) -> PlanReview {
+    let Some(history) = history else {
+        return review;
+    };
+    let keys: Vec<_> = review
+        .metadata()
+        .apply_targets()
+        .iter()
+        .map(|target| HistoryKey::for_target(review.context(), target))
+        .collect();
+    let previous_durations = history.load_many(&keys);
+    review.with_previous_durations(previous_durations)
 }
 
 pub(super) struct WorkerGuard {
