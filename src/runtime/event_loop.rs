@@ -2348,7 +2348,7 @@ mod tests {
             state: &SessionState,
             code: KeyCode,
             modifiers: KeyModifiers,
-        ) -> Result<Option<Action>, std::convert::Infallible> {
+        ) -> Result<Option<Action>, <TestBackend as Backend>::Error> {
             handle_key_event(
                 terminal,
                 state,
