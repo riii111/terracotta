@@ -46,7 +46,7 @@ impl HistoryKey {
     #[must_use]
     pub(crate) fn file_stem(&self) -> String {
         let mut hasher = Sha256::new();
-        append_text(&mut hasher, &self.directory.display().to_string());
+        append_bytes(&mut hasher, self.directory.as_os_str().as_encoded_bytes());
         append_text(&mut hasher, &self.workspace);
         append_text(&mut hasher, &self.address);
         hasher.update((self.actions.len() as u64).to_le_bytes());
@@ -64,8 +64,12 @@ impl HistoryKey {
 }
 
 fn append_text(hasher: &mut Sha256, text: &str) {
-    hasher.update((text.len() as u64).to_le_bytes());
-    hasher.update(text.as_bytes());
+    append_bytes(hasher, text.as_bytes());
+}
+
+fn append_bytes(hasher: &mut Sha256, bytes: &[u8]) {
+    hasher.update((bytes.len() as u64).to_le_bytes());
+    hasher.update(bytes);
 }
 
 fn append_action(hasher: &mut Sha256, action: &PlanAction) {
@@ -185,6 +189,21 @@ mod tests {
     }
 
     #[test]
+    fn utf8_directory_keeps_the_existing_file_stem() {
+        let key = key(
+            "/repo/infra",
+            "default",
+            "aws_vpc.main",
+            vec![PlanAction::Update],
+        );
+
+        assert_eq!(
+            key.file_stem(),
+            "711cb7d1909624a2d85171d5733035684ecfb0c53772f822987b8a9cfa669aa9"
+        );
+    }
+
+    #[test]
     fn target_key_uses_the_canonical_context_and_full_action_sequence() {
         let context = ExecutionContext::loading("/repo/infra/../infra")
             .with_workspace("default")
@@ -201,5 +220,30 @@ mod tests {
         assert_eq!(key.address, target.address);
         assert_eq!(key.actions, target.actions);
         assert_eq!(key.tool, Tool::OpenTofu);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_directories_keep_distinct_digests() {
+        use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+        let target = ExecutionTargetSpec {
+            address: "aws_vpc.main".to_owned(),
+            actions: vec![PlanAction::Update],
+        };
+        let key_for = |directory: &[u8]| {
+            let context =
+                ExecutionContext::loading(PathBuf::from(OsString::from_vec(directory.to_vec())))
+                    .with_workspace("default");
+            HistoryKey::for_target(&context, &target).expect("workspace is known")
+        };
+
+        let first = key_for(b"/repo/infra-\xfe");
+        let second = key_for(b"/repo/infra-\xff");
+
+        assert_eq!(
+            first.directory,
+            PathBuf::from(OsString::from_vec(b"/repo/infra-\xfe".to_vec()))
+        );
+        assert_ne!(first.file_stem(), second.file_stem());
     }
 }

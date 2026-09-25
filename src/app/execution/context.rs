@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+};
 
 use crate::app::environments::is_production_token;
 
@@ -93,11 +96,10 @@ pub(crate) struct ExecutionContext {
 }
 
 impl ExecutionContext {
-    pub(crate) fn loading(cwd: impl Into<String>) -> Self {
-        let cwd = PathBuf::from(cwd.into());
+    pub(crate) fn loading(cwd: impl Into<PathBuf>) -> Self {
         Self {
             launch_root: None,
-            cwd,
+            cwd: cwd.into(),
             workspace: ExecutionContextValue::Loading,
             display_name: ExecutionContextValue::Loading,
             production: None,
@@ -195,10 +197,9 @@ fn display_name(cwd: &Path, workspace: &str) -> String {
 
 fn is_production(cwd: &Path, workspace: &str) -> bool {
     cwd.components()
-        .filter_map(|component| component.as_os_str().to_str())
-        .chain(std::iter::once(workspace))
-        .flat_map(|component| component.split(['-', '_', '/']))
-        .any(is_production_token)
+        .map(|component| component.as_os_str().to_string_lossy())
+        .chain(std::iter::once(Cow::Borrowed(workspace)))
+        .any(|component| component.split(['-', '_', '/']).any(is_production_token))
 }
 
 #[cfg(test)]
@@ -271,6 +272,17 @@ mod tests {
                 case.name
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn production_detection_reads_tokens_in_non_utf8_components() {
+        use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+        let cwd = PathBuf::from(OsString::from_vec(b"/repo/prod-\xff".to_vec()));
+
+        let context = ExecutionContext::loading(cwd).with_workspace("default");
+
+        assert_eq!(context.is_production(), Some(true));
     }
 
     #[test]

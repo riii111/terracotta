@@ -401,8 +401,7 @@ impl PlanReview {
         metadata: PlanMetadata,
         diagnostics: Vec<Diagnostic>,
     ) -> Self {
-        let context =
-            ExecutionContext::loading(root.display().to_string()).with_workspace(workspace.clone());
+        let context = ExecutionContext::loading(&root).with_workspace(workspace.clone());
         Self {
             root,
             workspace,

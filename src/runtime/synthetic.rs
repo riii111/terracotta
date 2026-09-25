@@ -819,7 +819,7 @@ fn synthetic_environment_review(directory: &Path, count: usize) -> PlanReview {
     .with_apply_allowed(false)
     .with_apply_entry(false)
     .with_context(
-        ExecutionContext::loading(directory.display().to_string())
+        ExecutionContext::loading(directory)
             .with_workspace("default")
             .with_tool_version(Tool::Terraform, "1.9.0"),
     )

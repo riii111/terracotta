@@ -41,8 +41,10 @@ fn no_arguments_without_a_terminal_prints_help_without_terraform() {
 mod pty_tests {
     use rstest::rstest;
     use std::{
-        env, fs,
-        os::unix::fs::PermissionsExt,
+        env,
+        ffi::OsStr,
+        fs,
+        os::unix::{ffi::OsStrExt, fs::PermissionsExt},
         path::{Path, PathBuf},
         process::{Command, Stdio},
         sync::atomic::{AtomicU64, Ordering},
@@ -227,6 +229,49 @@ mod pty_tests {
                 paths.lines().all(|path| !Path::new(path).exists()),
                 "{paths}"
             );
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        fn non_utf8_environment_applies_its_reviewed_saved_plan() {
+            let fixture = fixture(&["a-dev"]);
+            let name = OsStr::from_bytes(b"b-stg-\xff");
+            let directory = fixture.root.join(name);
+            fs::create_dir(&directory).unwrap();
+            fs::write(
+                directory.join("main.tf"),
+                "terraform {\n backend \"local\" {}\n}",
+            )
+            .unwrap();
+
+            let result = fixture.run("env_apply", 120, 40);
+
+            assert_eq!(result.exit_code, 0);
+            result.assert_restored();
+            result.observed("env_apply_success");
+            let invocations = fs::read(&fixture.invocations).unwrap();
+            let calls: Vec<_> = invocations
+                .split(|byte| *byte == b'\n')
+                .filter_map(|line| {
+                    let separator = line.iter().position(|byte| *byte == b'|')?;
+                    let directory = Path::new(OsStr::from_bytes(&line[..separator]));
+                    let arguments = String::from_utf8(line[separator + 1..].to_vec()).unwrap();
+                    Some((directory.file_name().unwrap(), arguments))
+                })
+                .collect();
+            let applies: Vec<_> = calls
+                .iter()
+                .filter(|(_, arguments)| arguments.starts_with("apply "))
+                .collect();
+            assert_eq!(applies.len(), 1, "{calls:?}");
+            assert_eq!(applies[0].0, name);
+            let reviewed = calls
+                .iter()
+                .find(|(directory, arguments)| *directory == name && arguments.starts_with("plan "))
+                .and_then(|(_, arguments)| arguments.split("-out=").nth(1))
+                .map(|path| path.split_whitespace().next().unwrap())
+                .unwrap();
+            assert!(applies[0].1.ends_with(reviewed), "{calls:?}");
         }
 
         #[test]
@@ -471,10 +516,14 @@ Plan: 0 to add, 3 to change, 0 to destroy.
 
     impl Fixture {
         fn new() -> Self {
+            Self::with_root_name(OsStr::new("plain directory with spaces"))
+        }
+
+        fn with_root_name(root_name: &OsStr) -> Self {
             let id = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
             let directory =
                 env::temp_dir().join(format!("terracotta-cli-pty-{}-{id}", std::process::id()));
-            let root = directory.join("plain directory with spaces");
+            let root = directory.join(root_name);
             let bin = directory.join("fake-bin");
             fs::create_dir_all(&root).expect("fixture root should be created");
             fs::write(root.join("main.tf"), "").expect("single environment configuration");
@@ -619,15 +668,17 @@ Plan: 0 to add, 3 to change, 0 to destroy.
         }
 
         fn invocation_arguments(&self) -> Vec<String> {
-            fs::read_to_string(&self.invocations)
+            fs::read(&self.invocations)
                 .expect("invocations should be readable")
-                .lines()
+                .split(|byte| *byte == b'\n')
+                .filter(|line| !line.is_empty())
                 .map(|line| {
-                    let (directory, arguments) = line
-                        .split_once('|')
+                    let separator = line
+                        .iter()
+                        .position(|byte| *byte == b'|')
                         .expect("invocation should contain directory and arguments");
-                    assert_eq!(Path::new(directory), self.root);
-                    arguments.to_owned()
+                    assert_eq!(Path::new(OsStr::from_bytes(&line[..separator])), self.root);
+                    String::from_utf8_lossy(&line[separator + 1..]).into_owned()
                 })
                 .collect()
         }
@@ -954,6 +1005,53 @@ Plan: 0 to add, 3 to change, 0 to destroy.
         result.observed("apply_success");
         assert_single_apply_of_reviewed_plan(&fixture);
         fixture.assert_saved_plan_removed();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[rstest]
+    #[case::plan("plan_apply", "plan")]
+    #[case::default_entry("default_apply", "")]
+    #[case::apply_entry("apply_success", "apply")]
+    fn pty_non_utf8_directory_applies_the_reviewed_saved_plan(
+        #[case] scenario: &str,
+        #[case] command: &str,
+    ) {
+        let fixture = Fixture::with_root_name(OsStr::from_bytes(b"infra-\xff"));
+        let result = fixture.run_with_command(scenario, 100, 24, command);
+
+        assert_eq!(result.exit_code, 0);
+        result.assert_restored();
+        result.observed("apply_success");
+        assert_single_apply_of_reviewed_plan(&fixture);
+        fixture.assert_saved_plan_removed();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn pty_non_utf8_directory_applies_the_reviewed_inline_output_plan() {
+        let fixture = Fixture::with_root_name(OsStr::from_bytes(b"infra-\xff"));
+        let result =
+            fixture.run_with_arguments("plan_apply", 100, 24, "plan", &["-out=review.tfplan"]);
+
+        assert_eq!(result.exit_code, 0);
+        result.assert_restored();
+        result.observed("apply_success");
+        let output = fixture.root.join("review.tfplan");
+        assert!(output.exists());
+        let arguments = fixture.invocation_arguments();
+        let plans = arguments
+            .iter()
+            .filter(|arguments| arguments.starts_with("plan "))
+            .count();
+        let applies = arguments
+            .iter()
+            .filter(|arguments| arguments.starts_with("apply "))
+            .collect::<Vec<_>>();
+        assert_eq!(plans, 1, "{arguments:?}");
+        assert_eq!(
+            applies,
+            [&format!("apply -json -input=false {}", output.display())]
+        );
     }
 
     #[test]

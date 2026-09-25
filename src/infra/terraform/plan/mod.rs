@@ -171,7 +171,7 @@ pub(crate) fn saved_plan_for_plan(
             .unwrap_or_default();
         if let Some(value) = option.strip_prefix("out=") {
             let path = resolve_output_path(execution_root, value);
-            arguments[index] = OsString::from(format!("-out={}", path.display()));
+            arguments[index] = inline_output_argument(&path);
             output_path = Some(path);
             index += 1;
             continue;
@@ -195,11 +195,14 @@ pub(crate) fn saved_plan_for_plan(
     }
 
     let saved_plan = SavedPlan::create()?;
-    arguments.push(OsString::from(format!(
-        "-out={}",
-        saved_plan.path().display()
-    )));
+    arguments.push(inline_output_argument(saved_plan.path()));
     Ok((saved_plan, arguments))
+}
+
+fn inline_output_argument(path: &Path) -> OsString {
+    let mut argument = OsString::from("-out=");
+    argument.push(path);
+    argument
 }
 
 fn resolve_output_path(root: &Path, value: &str) -> PathBuf {
@@ -838,6 +841,23 @@ mod tests {
         assert!(expected.exists());
         fs::remove_file(expected).expect("user-owned plan should be removed by the test");
         fs::remove_dir(root).expect("output root should be removed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inline_output_path_keeps_non_utf8_execution_root() {
+        use std::os::unix::ffi::OsStringExt;
+        let root = PathBuf::from(OsString::from_vec(b"/repo/infra-\xff".to_vec()));
+        let expected = root.join("review.tfplan");
+
+        let (saved_plan, arguments) =
+            saved_plan_for_plan(&root, &[OsString::from("-out=review.tfplan")])
+                .expect("user output path should be accepted");
+
+        assert_eq!(saved_plan.path(), expected);
+        let mut expected_argument = OsString::from("-out=");
+        expected_argument.push(&expected);
+        assert_eq!(arguments, [expected_argument]);
     }
 
     #[test]

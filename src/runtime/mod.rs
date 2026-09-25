@@ -197,6 +197,10 @@ fn run_saved_plan_review(
         ));
         return ExitCode::from(EXECUTION_FAILURE);
     };
+    let context = ExecutionContext::loading(review_root)
+        .with_tool(tool)
+        .with_launch_root(launch_root)
+        .with_variable_sources(variable_sources);
     let worker = match spawn_review_worker(
         tool,
         display_root,
@@ -205,10 +209,7 @@ fn run_saved_plan_review(
         &plan_path,
         changed,
         apply_entry,
-        ExecutionContext::loading(review_root.display().to_string())
-            .with_tool(tool)
-            .with_launch_root(launch_root)
-            .with_variable_sources(variable_sources.clone()),
+        context.clone(),
         &cancellation,
         history.as_ref(),
         sender.clone(),
@@ -229,10 +230,6 @@ fn run_saved_plan_review(
         handle: None,
     };
     let mut clipboard = ClipboardExecutor::new();
-    let context = ExecutionContext::loading(review_root.display().to_string())
-        .with_tool(tool)
-        .with_launch_root(launch_root)
-        .with_variable_sources(variable_sources);
     let effects = event_loop::RuntimeEffects {
         tool,
         root: launch_root,

@@ -344,7 +344,7 @@ impl EnvironmentPlan {
         self.review()
             .and_then(|review| review.review().context().is_production())
             .unwrap_or_else(|| {
-                ExecutionContext::loading(self.directory.display().to_string())
+                ExecutionContext::loading(&self.directory)
                     .with_workspace(self.workspace().unwrap_or("default"))
                     .is_production()
                     == Some(true)
@@ -678,6 +678,17 @@ mod tests {
                 plan.directory().display()
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_production_environment_is_detected_before_plan_completion() {
+        use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+        let directory = PathBuf::from(OsString::from_vec(b"/repo/prod-\xff".to_vec()));
+
+        let state = EnvironmentSession::new(vec![available_named("default", directory)], false);
+
+        assert!(state.plans()[0].is_production());
     }
 
     #[test]

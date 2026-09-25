@@ -579,7 +579,7 @@ fn acquire(
     .map_err(|error| environment_failure(&error, cancellation))?;
     let variables =
         super::invocation::variable_sources(root, arguments).map_err(|error| error.to_string())?;
-    let context = ExecutionContext::loading(root.display().to_string())
+    let context = ExecutionContext::loading(root)
         .with_tool(tool)
         .with_launch_root(launch_root)
         .with_variable_sources(variables);
