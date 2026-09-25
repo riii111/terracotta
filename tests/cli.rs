@@ -995,6 +995,26 @@ Plan: 0 to add, 3 to change, 0 to destroy.
     }
 
     #[test]
+    fn pty_ctrl_c_in_empty_filter_requires_enter_to_quit_without_apply() {
+        let fixture = Fixture::new();
+        let result = fixture.run("empty_filter_quit", 100, 24);
+
+        assert_eq!(result.exit_code, 0);
+        result.assert_restored();
+        result.observed("empty_filter_confirmed");
+        result.observed("empty_filter_ctrl_c");
+        result.observed("empty_filter_ctrl_c_cancelled");
+        result.observed("empty_filter_ctrl_c_again");
+        assert!(
+            fixture
+                .invocation_arguments()
+                .iter()
+                .all(|arguments| !arguments.starts_with("apply "))
+        );
+        fixture.assert_saved_plan_removed();
+    }
+
+    #[test]
     fn pty_apply_success_uses_the_saved_plan_once_and_cleans_it_after_quit() {
         let fixture = Fixture::new();
         let result = fixture.run_with_command("apply_success", 100, 24, "apply");
