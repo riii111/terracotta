@@ -75,6 +75,16 @@ pub(crate) fn layout(
     prepare(area, state, view, content, false).layout
 }
 
+pub(crate) fn reconcile_view(
+    area: Rect,
+    state: &OverviewSessionState,
+    view: &mut OverviewViewState,
+) {
+    let content = OverviewContent::from_review(state.review(), view.filter(), view.expanded());
+    let max_vertical = layout(area, state, view, &content).max_vertical();
+    view.reconcile(max_vertical, content.rows.len());
+}
+
 fn prepare(
     area: Rect,
     state: &OverviewSessionState,
