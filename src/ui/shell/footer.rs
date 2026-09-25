@@ -257,7 +257,7 @@ pub(crate) fn render(
 
 #[cfg(test)]
 mod tests {
-    use ratatui::buffer::Buffer;
+    use ratatui::buffer::{Buffer, Cell};
     use ratatui::style::Color;
     use rstest::rstest;
 
@@ -405,6 +405,14 @@ mod tests {
         background: Color,
         modifier: Modifier,
     ) {
+        for cell in buffer_text_cells(buffer, text, occurrence) {
+            assert_eq!(cell.fg, foreground);
+            assert_eq!(cell.bg, background);
+            assert_eq!(cell.modifier, modifier);
+        }
+    }
+
+    fn buffer_text_cells<'a>(buffer: &'a Buffer, text: &str, occurrence: usize) -> Vec<&'a Cell> {
         let mut matches = 0;
         let area = buffer.area();
         for y in area.y..area.bottom() {
@@ -421,15 +429,13 @@ mod tests {
                     continue;
                 }
                 if matches == occurrence {
-                    for offset in 0..text.chars().count() {
-                        let cell = buffer
-                            .cell((area.x + u16::try_from(start + offset).unwrap(), y))
-                            .expect("footer cell");
-                        assert_eq!(cell.fg, foreground);
-                        assert_eq!(cell.bg, background);
-                        assert_eq!(cell.modifier, modifier);
-                    }
-                    return;
+                    return (0..text.chars().count())
+                        .map(|offset| {
+                            buffer
+                                .cell((area.x + u16::try_from(start + offset).unwrap(), y))
+                                .expect("footer cell")
+                        })
+                        .collect();
                 }
                 matches += 1;
             }
@@ -449,46 +455,65 @@ mod tests {
         }
     }
 
-    #[rstest]
-    #[case::full(80, None, "Quit Terracotta?   [Enter] Quit   [Esc] Cancel")]
-    #[case::compact(32, None, "Quit? [Enter] quit [Esc] cancel")]
-    #[case::minimal_with_notice(32, Some("Copied."), "Quit? [Enter]/[Esc]")]
-    fn quit_confirmation_fits_the_prompt_and_emphasizes_the_question_and_both_keys(
-        #[case] width: u16,
-        #[case] notice: Option<&str>,
-        #[case] expected: &str,
-    ) {
-        let lines = quit_confirmation_lines(width, notice);
-        let backend = ratatui::backend::TestBackend::new(width, 2);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &lines, None);
-            })
-            .unwrap();
+    #[test]
+    fn quit_confirmation_fits_the_prompt_and_emphasizes_the_question_and_both_keys() {
+        struct QuitPromptCase {
+            name: &'static str,
+            width: u16,
+            notice: Option<&'static str>,
+            expected: &'static str,
+        }
 
-        assert_eq!(
-            lines.iter().map(Line::to_string).collect::<Vec<_>>(),
-            vec![expected.to_owned()]
-        );
-        let buffer = terminal.backend().buffer();
-        assert_buffer_text_style(
-            buffer,
-            "Quit",
-            0,
-            Color::Rgb(0xf4, 0x9e, 0x4c),
-            Color::Reset,
-            Modifier::BOLD,
-        );
-        for key in ["[Enter]", "[Esc]"] {
-            assert_buffer_text_style(
-                buffer,
-                key,
-                0,
-                Color::Rgb(0xe9, 0xdb, 0xdb),
-                Color::Reset,
-                Modifier::BOLD,
+        for case in [
+            QuitPromptCase {
+                name: "full",
+                width: 80,
+                notice: None,
+                expected: "Quit Terracotta?   [Enter] Quit   [Esc] Cancel",
+            },
+            QuitPromptCase {
+                name: "compact",
+                width: 32,
+                notice: None,
+                expected: "Quit? [Enter] quit [Esc] cancel",
+            },
+            QuitPromptCase {
+                name: "minimal_with_notice",
+                width: 32,
+                notice: Some("Copied."),
+                expected: "Quit? [Enter]/[Esc]",
+            },
+        ] {
+            let lines = quit_confirmation_lines(case.width, case.notice);
+            let backend = ratatui::backend::TestBackend::new(case.width, 2);
+            let mut terminal = ratatui::Terminal::new(backend).unwrap();
+            terminal
+                .draw(|frame| {
+                    render(frame, frame.area(), &lines, None);
+                })
+                .unwrap();
+
+            assert_eq!(
+                lines.iter().map(Line::to_string).collect::<Vec<_>>(),
+                vec![case.expected.to_owned()],
+                "case: {}",
+                case.name
             );
+            let buffer = terminal.backend().buffer();
+            for (text, foreground) in [
+                ("Quit", Color::Rgb(0xf4, 0x9e, 0x4c)),
+                ("[Enter]", Color::Rgb(0xe9, 0xdb, 0xdb)),
+                ("[Esc]", Color::Rgb(0xe9, 0xdb, 0xdb)),
+            ] {
+                for cell in buffer_text_cells(buffer, text, 0) {
+                    assert_eq!(
+                        (cell.fg, cell.bg, cell.modifier),
+                        (foreground, Color::Reset, Modifier::BOLD),
+                        "case: {}, text: {text}",
+                        case.name
+                    );
+                }
+            }
         }
     }
 
