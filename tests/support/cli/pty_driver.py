@@ -580,7 +580,12 @@ try:
         send_key(b"a")
         wait_new("Apply this reviewed plan?", "filter_apply_confirmation")
         send_key(b"\x1b")
-        wait_new("y copy all", "filter_apply_cancelled")
+        wait_screen(
+            lambda current: "Apply this reviewed plan?" not in current
+            and "y copy all" in current,
+            "filter_apply_cancelled",
+            "filtered review after closing apply confirmation",
+        )
         send_key(b"q")
         wait_new("Quit Terracotta?", "filter_quit_confirmation")
         send_key(b"\x1b")
