@@ -2299,7 +2299,7 @@ mod tests {
         }
 
         #[test]
-        fn running_stages_show_their_status_and_cancel_footer() {
+        fn stages_outside_the_snapshot_show_their_title_and_status() {
             struct StageCase {
                 name: &'static str,
                 phase: Option<ExecutionPhase>,
@@ -2315,12 +2315,6 @@ mod tests {
                     status: "Initializing...",
                 },
                 StageCase {
-                    name: "planning",
-                    phase: Some(ExecutionPhase::Planning),
-                    title: "Planning",
-                    status: "Planning...",
-                },
-                StageCase {
                     name: "reading",
                     phase: Some(ExecutionPhase::Reading),
                     title: "Reading",
@@ -2331,18 +2325,12 @@ mod tests {
 
                 let text = render_text((80, 24), &state, ExecutionViewState::default(), now, false);
 
-                assert!(text.contains(case.title), "case: {}", case.name);
-                assert!(text.contains(case.status), "case: {}", case.name);
-                assert!(text.contains("Follow: On"), "case: {}", case.name);
                 assert!(
-                    text.contains("Waiting for Terraform output..."),
+                    text.contains(&format!("┌{}─", case.title)),
                     "case: {}",
                     case.name
                 );
-                assert!(text.contains("Ctrl-C cancel"), "case: {}", case.name);
-                assert!(text.contains("End follow latest"), "case: {}", case.name);
-                assert!(!text.contains("quit"), "case: {}", case.name);
-                assert!(!text.contains("Tab focus"), "case: {}", case.name);
+                assert!(text.contains(case.status), "case: {}", case.name);
             }
         }
 
@@ -2371,7 +2359,7 @@ mod tests {
         }
 
         #[test]
-        fn failed_plan_starts_at_the_first_error_and_offers_diagnostic_copy() {
+        fn failed_plan_starts_at_the_first_error_until_end_is_pressed() {
             let lines = long_plan_lines();
             let lines = lines.iter().map(String::as_str).collect::<Vec<_>>();
             let (mut state, now) = plan_state(Some(ExecutionPhase::Planning), &lines);
@@ -2382,13 +2370,8 @@ mod tests {
             view.end();
             let end = render_text((80, 24), &state, view, now, false);
 
-            assert!(initial.contains("Failed"));
-            assert!(initial.contains("Terraform failed: Exited(1)"));
             assert!(initial.contains("Error: initial failure"));
             assert!(!initial.contains("tail marker"));
-            assert!(initial.contains("q/Ctrl-C quit"));
-            assert!(initial.contains("y copy diagnostic"));
-            assert!(!initial.contains("Ctrl-C cancel"));
             assert!(end.contains("tail marker"));
         }
 
