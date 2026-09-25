@@ -10,7 +10,7 @@ use ratatui::{
 
 use crate::app::{
     copy::CopyNotice, execution::ExecutionContextValue, review::PlanReview,
-    session::OverviewSessionState,
+    session::ReviewSessionState,
 };
 use crate::ui::{
     primitives::{
@@ -68,18 +68,14 @@ impl OverviewLayout {
 
 pub(crate) fn layout(
     area: Rect,
-    state: &OverviewSessionState,
+    state: &ReviewSessionState,
     view: &OverviewViewState,
     content: &OverviewContent,
 ) -> OverviewLayout {
     prepare(area, state, view, content, false).layout
 }
 
-pub(crate) fn reconcile_view(
-    area: Rect,
-    state: &OverviewSessionState,
-    view: &mut OverviewViewState,
-) {
+pub(crate) fn reconcile_view(area: Rect, state: &ReviewSessionState, view: &mut OverviewViewState) {
     let content = OverviewContent::from_review(state.review(), view.filter(), view.expanded());
     let max_vertical = layout(area, state, view, &content).max_vertical();
     view.reconcile(max_vertical, content.rows.len());
@@ -87,7 +83,7 @@ pub(crate) fn reconcile_view(
 
 fn prepare(
     area: Rect,
-    state: &OverviewSessionState,
+    state: &ReviewSessionState,
     view: &OverviewViewState,
     content: &OverviewContent,
     quit_confirmation: bool,
@@ -139,7 +135,7 @@ fn prepare(
 
 pub(crate) fn render(
     frame: &mut Frame<'_>,
-    state: &OverviewSessionState,
+    state: &ReviewSessionState,
     view: &OverviewViewState,
     now: Instant,
 ) {
@@ -148,7 +144,7 @@ pub(crate) fn render(
 
 pub(crate) fn render_with_quit_confirmation(
     frame: &mut Frame<'_>,
-    state: &OverviewSessionState,
+    state: &ReviewSessionState,
     view: &OverviewViewState,
     now: Instant,
     quit_confirmation: bool,
@@ -741,6 +737,7 @@ mod tests {
                 ResourceSchema, StateRelationStatus,
             },
             review::{PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata},
+            session::test_support::overview_session,
         },
         ui::test_support::{buffer_text, render_to_buffer},
     };
@@ -877,7 +874,7 @@ mod tests {
 
     #[test]
     fn overview_ready_marker_and_tool_metadata_use_their_own_styles() {
-        let state = OverviewSessionState::new(review());
+        let state = overview_session(review());
         let view = OverviewViewState::default();
         let buffer = render_to_buffer((120, 40), |frame| {
             render(frame, &state, &view, Instant::now());
@@ -978,7 +975,7 @@ mod tests {
     }
 
     fn scroll_filtered_row_into_view(
-        state: &OverviewSessionState,
+        state: &ReviewSessionState,
         view: &mut OverviewViewState,
         content: &OverviewContent,
     ) {
@@ -1003,7 +1000,7 @@ mod tests {
 
     #[test]
     fn quit_confirmation_replaces_overview_actions_at_supported_sizes() {
-        let state = OverviewSessionState::new(review());
+        let state = overview_session(review());
         let view = OverviewViewState::default();
         let content = OverviewContent::from_review(state.review(), view.filter(), view.expanded());
 
@@ -1034,7 +1031,7 @@ mod tests {
 
     #[test]
     fn narrow_mixed_relations_keep_legend_entries_complete() {
-        let state = OverviewSessionState::new(related_review());
+        let state = overview_session(related_review());
         let view = OverviewViewState::default();
         let mut content =
             OverviewContent::from_review(state.review(), view.filter(), view.expanded());
@@ -1072,7 +1069,7 @@ mod tests {
 
     #[test]
     fn renders_grouped_overview_with_fixed_counts_and_unsupported_notice() {
-        let state = OverviewSessionState::new(review());
+        let state = overview_session(review());
         let view = OverviewViewState::default();
         let buffer = render_to_buffer((100, 24), |frame| {
             render(frame, &state, &view, Instant::now());
@@ -1085,7 +1082,7 @@ mod tests {
 
     #[test]
     fn unknown_group_note_reaches_changes_and_relation_nodes() {
-        let state = OverviewSessionState::new(unknown_review());
+        let state = overview_session(unknown_review());
         let view = OverviewViewState::default();
         let buffer = render_to_buffer((120, 40), |frame| {
             render(frame, &state, &view, Instant::now());
@@ -1098,7 +1095,7 @@ mod tests {
 
     #[test]
     fn selected_group_highlights_its_complete_relation_node() {
-        let state = OverviewSessionState::new(related_review());
+        let state = overview_session(related_review());
         let mut view = OverviewViewState::default();
         let content = OverviewContent::from_review(state.review(), "", view.expanded());
         view.apply(
@@ -1139,7 +1136,7 @@ mod tests {
 
     #[test]
     fn split_and_maximized_layouts_keep_both_panes_available_at_target_sizes() {
-        let state = OverviewSessionState::new(related_review());
+        let state = overview_session(related_review());
         let content = OverviewContent::from_review(state.review(), "", &BTreeSet::new());
         let mut view = OverviewViewState::default();
 
@@ -1185,7 +1182,7 @@ mod tests {
     #[test]
     fn changes_pane_scrolls_full_addresses_horizontally() {
         let address = format!("terraform_data.{}tail-marker", "long_segment_".repeat(7));
-        let state = OverviewSessionState::new(review());
+        let state = overview_session(review());
         let mut view = OverviewViewState::default();
         let mut content = OverviewContent::from_review(state.review(), "", view.expanded());
         content.rows[0].display_address = address.clone();
@@ -1282,7 +1279,7 @@ mod tests {
 
     #[test]
     fn selected_group_footer_tracks_expansion_and_filtered_members() {
-        let state = OverviewSessionState::new(review());
+        let state = overview_session(review());
         let mut view = OverviewViewState::default();
         let changes_body = Rect::new(0, 0, 80, 4);
         let relations_body = Rect::new(0, 0, 80, 8);
@@ -1390,7 +1387,7 @@ mod tests {
 
     #[test]
     fn renders_help_as_a_grouped_modal_that_scrolls_on_small_terminals() {
-        let state = OverviewSessionState::new(review());
+        let state = overview_session(review());
         let mut view = OverviewViewState::default();
         let content = OverviewContent::from_review(state.review(), "", view.expanded());
         view.apply(
@@ -1442,8 +1439,8 @@ mod tests {
         insta::assert_snapshot!("overview_help_40x16_bottom", bottom_text);
     }
 
-    fn long_context_state() -> OverviewSessionState {
-        OverviewSessionState::new(review().with_context(
+    fn long_context_state() -> ReviewSessionState {
+        overview_session(review().with_context(
             ExecutionContext::loading("/repo/environments/production").with_variable_sources(
                 VariableSources::new(
                     Vec::new(),
@@ -1455,7 +1452,7 @@ mod tests {
         ))
     }
 
-    fn context_view(state: &OverviewSessionState) -> OverviewViewState {
+    fn context_view(state: &ReviewSessionState) -> OverviewViewState {
         let mut view = OverviewViewState::default();
         let content = OverviewContent::from_review(state.review(), "", view.expanded());
         view.apply(
@@ -1469,7 +1466,7 @@ mod tests {
     }
 
     fn last_context_body_line(
-        state: &OverviewSessionState,
+        state: &ReviewSessionState,
         view: &OverviewViewState,
         (width, height): (u16, u16),
     ) -> (String, String) {
@@ -1487,7 +1484,7 @@ mod tests {
     #[test]
     fn context_dialog_keeps_the_last_line_visible_after_end_paging_and_resize() {
         let long = long_context_state();
-        let short = OverviewSessionState::new(review());
+        let short = overview_session(review());
         let mut view = context_view(&long);
 
         let (_, top) = last_context_body_line(&long, &view, (80, 24));

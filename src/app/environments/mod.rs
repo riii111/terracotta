@@ -779,10 +779,10 @@ mod tests {
     }
 
     fn is_confirming(state: &EnvironmentSession, index: usize) -> bool {
-        matches!(
-            state.plans()[index].session(),
-            Some(SessionState::ApplyConfirmation(_))
-        )
+        state.plans()[index]
+            .session()
+            .and_then(SessionState::apply_confirmation)
+            .is_some()
     }
 
     #[test]
