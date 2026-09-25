@@ -2033,7 +2033,7 @@ mod tests {
                 KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
             )
             .expect("control-c should be handled"),
-            None
+            Some(Action::Quit)
         );
 
         let clear = handle_key_event(
