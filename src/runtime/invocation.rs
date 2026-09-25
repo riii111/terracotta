@@ -598,6 +598,7 @@ fn split_arguments(value: &str) -> Option<Vec<String>> {
 mod tests {
     use super::*;
     use rstest::rstest;
+    use tempfile::TempDir;
 
     fn parse(
         arguments: &[OsString],
@@ -841,11 +842,8 @@ mod tests {
 
     #[test]
     fn variable_sources_keep_only_file_names_and_argument_presence() {
-        let directory = env::temp_dir().join(format!(
-            "terracotta-variable-sources-{}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&directory).expect("variable source fixture should be created");
+        let fixture = TempDir::new().expect("variable source fixture should be created");
+        let directory = fixture.path();
         fs::write(
             directory.join("terraform.tfvars"),
             "secret = \"must not be shown\"",
@@ -858,7 +856,7 @@ mod tests {
         .expect("ignored variable file should be created");
 
         let sources = variable_sources(
-            &directory,
+            directory,
             &[
                 OsString::from("-var-file=explicit.tfvars"),
                 OsString::from("-var-file"),
@@ -884,8 +882,6 @@ mod tests {
         let debug = format!("{sources:?}");
         assert!(!debug.contains("must not be shown"));
         assert!(!debug.contains("name=secret"));
-
-        fs::remove_dir_all(directory).expect("variable source fixture should be removed");
     }
 
     #[rstest]

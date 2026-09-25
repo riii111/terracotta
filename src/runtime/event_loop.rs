@@ -925,16 +925,15 @@ pub(super) struct RuntimeEffects<'a, C: ClipboardWriter = ClipboardExecutor> {
 #[cfg(test)]
 mod tests {
     use std::{
-        env,
         path::PathBuf,
         sync::mpsc::{self, Sender},
         thread::{self, JoinHandle},
-        time::{SystemTime, UNIX_EPOCH},
     };
 
     use crossterm::event::{KeyCode, KeyModifiers};
     use ratatui::{backend::TestBackend, buffer::Cell};
     use rstest::rstest;
+    use tempfile::TempDir;
 
     use super::*;
     use crate::app::{
@@ -956,18 +955,11 @@ mod tests {
     fn apply_directory_recheck_rejects_a_retargeted_symlink() {
         use std::os::unix::fs::symlink;
 
-        let root = env::temp_dir().join(format!(
-            "terracotta-apply-directory-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        ));
-        let first = root.join("first");
-        let second = root.join("second");
-        let link = root.join("current");
-        fs::create_dir_all(&first).expect("first directory should be created");
+        let root = TempDir::new().expect("test directory should be created");
+        let first = root.path().join("first");
+        let second = root.path().join("second");
+        let link = root.path().join("current");
+        fs::create_dir(&first).expect("first directory should be created");
         fs::create_dir(&second).expect("second directory should be created");
         symlink(&first, &link).expect("initial directory link should be created");
         let expected = fs::canonicalize(&link).expect("initial link should resolve");
@@ -977,7 +969,6 @@ mod tests {
         let error = verify_apply_directory(&expected, &link, Tool::Terraform)
             .expect_err("apply should reject a changed symlink target");
         assert!(error.contains("execution directory changed"));
-        fs::remove_dir_all(root).expect("test directories should be removed");
     }
 
     struct DrawCase {
@@ -1447,16 +1438,10 @@ mod tests {
 
     #[test]
     fn history_write_failure_does_not_produce_a_session_outcome() {
-        let root = env::temp_dir().join(format!(
-            "terracotta-runtime-history-failure-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("test clock should be after the epoch")
-                .as_nanos()
-        ));
+        let fixture = TempDir::new().expect("test directory should be created");
+        let root = fixture.path().join("history");
         fs::write(&root, b"not a directory").expect("blocking file should be written");
-        let history = HistoryStore::new(root.clone());
+        let history = HistoryStore::new(root);
         let context = ExecutionContext::loading("/project").with_workspace("default");
         let target = ExecutionTargetSpec {
             address: "terraform_data.api".to_owned(),
@@ -1483,7 +1468,6 @@ mod tests {
         );
 
         assert!(outcome.is_none());
-        fs::remove_file(root).expect("blocking file should be removed");
     }
 
     #[test]
