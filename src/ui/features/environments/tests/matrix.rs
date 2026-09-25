@@ -1167,6 +1167,26 @@ fn same_change_row_shows_space_only_while_the_matrix_can_expand_it() {
         "{environments}"
     );
     assert!(!environments.contains("Space expand"), "{environments}");
+    assert!(
+        environments.contains("Space include/exclude"),
+        "{environments}"
+    );
+
+    press_at(&mut view, &mut state, KeyCode::Char('?'), wide);
+    let environment_help = text(&mut view, &state, (165, 50));
+    assert!(
+        !environment_help.contains("Space include/exclude"),
+        "{environment_help}"
+    );
+    press_at(&mut view, &mut state, KeyCode::Esc, wide);
+
+    press_at(&mut view, &mut state, KeyCode::Char('c'), wide);
+    let environment_context = text(&mut view, &state, (165, 50));
+    assert!(
+        !environment_context.contains("Space include/exclude"),
+        "{environment_context}"
+    );
+    press_at(&mut view, &mut state, KeyCode::Esc, wide);
 
     press_at(&mut view, &mut state, KeyCode::Char('2'), wide);
     press_at(&mut view, &mut state, KeyCode::Char('b'), wide);

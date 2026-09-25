@@ -180,6 +180,7 @@ impl EnvironmentView {
                     .is_none()
                     .then(|| self.matrix.selected_expanded())
                     .flatten(),
+                comparison_toggle_available: self.dialog.is_none(),
                 enter_action,
                 selected: state.plans().get(self.selection.column),
                 maximized: self.maximized.is_some(),
@@ -836,6 +837,7 @@ struct OverviewFooterContext<'a> {
     focus: environments::EnvironmentPane,
     matrix: MatrixFooterState,
     expanded: Option<bool>,
+    comparison_toggle_available: bool,
     enter_action: Option<MatrixEnterAction>,
     selected: Option<&'a EnvironmentPlan>,
     maximized: bool,
@@ -849,6 +851,7 @@ fn overview_footer(context: OverviewFooterContext<'_>) -> Vec<Line<'static>> {
         focus,
         matrix,
         expanded,
+        comparison_toggle_available,
         enter_action,
         selected,
         maximized,
@@ -885,6 +888,7 @@ fn overview_footer(context: OverviewFooterContext<'_>) -> Vec<Line<'static>> {
             width,
             focus,
             expanded,
+            comparison_toggle_available,
             enter_action,
             selected,
             maximized,
@@ -894,7 +898,9 @@ fn overview_footer(context: OverviewFooterContext<'_>) -> Vec<Line<'static>> {
     let mut items = Vec::new();
     if focus == environments::EnvironmentPane::Environments {
         items.push((100, overview_footer_hint(&["Enter"], "open plan")));
-        items.push((90, overview_footer_hint(&["Space"], "include/exclude")));
+        if comparison_toggle_available {
+            items.push((90, overview_footer_hint(&["Space"], "include/exclude")));
+        }
         items.push((55, overview_footer_hint(&["o"], "only")));
         items.push((55, overview_footer_hint(&["a"], "all")));
     } else if focus == environments::EnvironmentPane::Matrix {
@@ -971,6 +977,7 @@ fn compact_overview_footer(
     width: u16,
     focus: environments::EnvironmentPane,
     expanded: Option<bool>,
+    comparison_toggle_available: bool,
     enter_action: Option<MatrixEnterAction>,
     selected: Option<&EnvironmentPlan>,
     maximized: bool,
@@ -979,7 +986,9 @@ fn compact_overview_footer(
     let mut items = Vec::new();
     if focus == environments::EnvironmentPane::Environments {
         items.push((100, overview_footer_hint(&["Enter"], "open plan")));
-        items.push((90, overview_footer_hint(&["Space"], "include/exclude")));
+        if comparison_toggle_available {
+            items.push((90, overview_footer_hint(&["Space"], "include/exclude")));
+        }
     } else if focus == environments::EnvironmentPane::Matrix {
         if let Some(action) = enter_action {
             items.push((100, overview_footer_hint(&["Enter"], action.label(true))));
