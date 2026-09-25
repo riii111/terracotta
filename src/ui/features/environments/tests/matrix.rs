@@ -437,6 +437,84 @@ fn relations_pane_shows_the_selected_environment_at_supported_sizes(
 }
 
 #[test]
+fn multi_demo_member_missing_from_the_shown_environment_is_not_highlighted_there() {
+    let mut state = multi_demo_session();
+    let wide = Size::new(165, 50);
+    let mut view = EnvironmentView::default();
+    press_at(&mut view, &mut state, KeyCode::Char('2'), wide);
+    press_at(&mut view, &mut state, KeyCode::End, wide);
+    press_at(&mut view, &mut state, KeyCode::Char(' '), wide);
+    press_at(&mut view, &mut state, KeyCode::Down, wide);
+    press_at(&mut view, &mut state, KeyCode::Down, wide);
+    press_at(&mut view, &mut state, KeyCode::Char(' '), wide);
+
+    let group = buffer_text(&render_to_buffer((wide.width, wide.height), |frame| {
+        view.render(frame, &state);
+    }));
+    press_at(&mut view, &mut state, KeyCode::End, wide);
+    let missing_member = buffer_text(&render_to_buffer((wide.width, wide.height), |frame| {
+        view.render(frame, &state);
+    }));
+
+    assert!(group.contains("> ~ terraform_data.server[*] ×2"), "{group}");
+    assert!(!group.contains("selected row not in dev"), "{group}");
+    assert!(
+        missing_member.contains(">       terraform_data.server[3]"),
+        "{missing_member}"
+    );
+    assert!(
+        missing_member.contains("dev · whole env · selected row not in dev"),
+        "{missing_member}"
+    );
+    assert!(
+        !missing_member.contains("> ~ terraform_data.server[*]"),
+        "{missing_member}"
+    );
+}
+
+// Visual regression baseline for the reviewed multi-environment Overview.
+#[rstest]
+#[case::terminal_150x48(Size::new(150, 48))]
+#[case::medium_100x30(Size::new(100, 30))]
+fn multi_demo_overview_visual_baseline(#[case] size: Size) {
+    let mut state = multi_demo_session();
+    let suffix = format!("{}x{}", size.width, size.height);
+    let mut view = EnvironmentView::default();
+    let snapshot = |view: &mut EnvironmentView, state: &EnvironmentSession| {
+        buffer_visual_snapshot(&render_to_buffer((size.width, size.height), |frame| {
+            view.render(frame, state);
+        }))
+    };
+
+    insta::assert_snapshot!(format!("vrt_initial_{suffix}"), snapshot(&mut view, &state));
+
+    press_at(&mut view, &mut state, KeyCode::Char('2'), size);
+    press_at(&mut view, &mut state, KeyCode::End, size);
+    press_at(&mut view, &mut state, KeyCode::Char(' '), size);
+    press_at(&mut view, &mut state, KeyCode::Down, size);
+    press_at(&mut view, &mut state, KeyCode::Down, size);
+    press_at(&mut view, &mut state, KeyCode::Char(' '), size);
+    insta::assert_snapshot!(
+        format!("vrt_compare_group_open_{suffix}"),
+        snapshot(&mut view, &state)
+    );
+
+    press_at(&mut view, &mut state, KeyCode::End, size);
+    insta::assert_snapshot!(
+        format!("vrt_compare_member_missing_in_dev_{suffix}"),
+        snapshot(&mut view, &state)
+    );
+
+    press_at(&mut view, &mut state, KeyCode::Char(']'), size);
+    press_at(&mut view, &mut state, KeyCode::Char(']'), size);
+    press_at(&mut view, &mut state, KeyCode::Char('3'), size);
+    insta::assert_snapshot!(
+        format!("vrt_relations_prod_{suffix}"),
+        snapshot(&mut view, &state)
+    );
+}
+
+#[test]
 fn multi_demo_compare_expansion_keeps_columns_anchored() {
     let mut state = multi_demo_session();
     let wide = Size::new(165, 50);
@@ -498,6 +576,29 @@ fn multi_demo_compare_expansion_keeps_columns_anchored() {
         matrix_header(&expanded_group_text),
         "expanding a resource group must keep environment columns anchored"
     );
+    assert_eq!(
+        expanded_group_text.matches("Differs across envs").count(),
+        1,
+        "members missing from some environments stay under their group\n{expanded_group_text}"
+    );
+    let group_line = expanded_group_text
+        .lines()
+        .position(|line| line.contains("▾ terraform_data.server[*]"))
+        .expect("the expanded group is visible");
+    let member_rows = expanded_group_text.lines().skip(group_line + 1).take(4);
+    assert!(
+        member_rows
+            .clone()
+            .all(|line| line.contains("        terraform_data.server[")),
+        "{expanded_group_text}"
+    );
+    assert!(
+        member_rows
+            .filter(|line| line.contains("only in prod"))
+            .count()
+            == 2,
+        "{expanded_group_text}"
+    );
     insta::assert_snapshot!(
         "multi_demo_compare_group_open_165x50",
         buffer_visual_snapshot(&expanded_group)
@@ -535,8 +636,12 @@ fn multi_demo_relations_show_environment_configuration_links() {
     let dev_text = buffer_text(&dev);
     assert!(dev_text.contains("terraform_data.server[*]"), "{dev_text}");
     assert!(dev_text.contains("terraform_data.dev_only"), "{dev_text}");
-    assert!(dev_text.contains("─(config)─>"), "{dev_text}");
-    assert!(dev_text.contains("┄(config)┄>"), "{dev_text}");
+    assert!(dev_text.contains("└──> ~ terraform_data.api"), "{dev_text}");
+    assert!(
+        dev_text.contains("└┄┄> + terraform_data.dev_only !"),
+        "{dev_text}"
+    );
+    assert!(!dev_text.contains("(config)"), "{dev_text}");
     insta::assert_snapshot!(
         "multi_demo_relations_dev_165x50",
         buffer_visual_snapshot(&dev)
@@ -551,8 +656,8 @@ fn multi_demo_relations_show_environment_configuration_links() {
     });
     let stg_text = buffer_text(&stg);
     assert!(stg_text.contains("stg · whole env"));
-    assert!(stg_text.contains("─(config)─>"), "{stg_text}");
-    assert!(!stg_text.contains("┄(config)┄>"), "{stg_text}");
+    assert!(stg_text.contains("└──> ~ terraform_data.api"), "{stg_text}");
+    assert!(!stg_text.contains("┄┄>"), "{stg_text}");
     insta::assert_snapshot!(
         "multi_demo_relations_stg_165x50",
         buffer_visual_snapshot(&stg)
@@ -1091,7 +1196,7 @@ fn same_change_summary_and_group_rows_expand_independently() {
     press(&mut view, &mut state, KeyCode::Char('f'));
     press(&mut view, &mut state, KeyCode::End);
     let collapsed = text(&mut view, &state, (80, 24));
-    assert!(collapsed.contains("Same change across envs: 1 changes ~1"));
+    assert!(collapsed.contains("Same change across envs: 1 pattern"));
     assert!(!collapsed.contains("terraform_data.server[*]"));
     assert!(collapsed.contains("Space expand selected"));
     press(&mut view, &mut state, KeyCode::Char('f'));
@@ -1100,20 +1205,26 @@ fn same_change_summary_and_group_rows_expand_independently() {
     press(&mut view, &mut state, KeyCode::Char('f'));
     press(&mut view, &mut state, KeyCode::Char(' '));
     let expanded_same = text(&mut view, &state, (80, 24));
-    assert!(expanded_same.contains("Same change across envs: 1 changes ~1"));
-    assert!(expanded_same.contains("[+] terraform_data.server[*]"));
+    assert!(expanded_same.contains("Same change across envs: 1 pattern"));
+    assert!(expanded_same.contains("▸ terraform_data.server[*]"));
     assert!(expanded_same.contains("Space collapse selected"));
 
     press(&mut view, &mut state, KeyCode::Down);
     press(&mut view, &mut state, KeyCode::Char(' '));
     let expanded_group = text(&mut view, &state, (80, 24));
-    assert!(expanded_group.contains("[-] terraform_data.server[*]"));
+    assert!(expanded_group.contains("▾ terraform_data.server[*]"));
     assert!(expanded_group.contains("terraform_data.server[0]"));
     assert!(expanded_group.contains("Space collapse selected"));
     assert!(expanded_group.contains("q quit"));
 
     press(&mut view, &mut state, KeyCode::Home);
     press(&mut view, &mut state, KeyCode::Enter);
+    let enter_on_summary = text(&mut view, &state, (80, 24));
+    assert!(
+        enter_on_summary.contains("terraform_data.server[*]"),
+        "{enter_on_summary}"
+    );
+    press(&mut view, &mut state, KeyCode::Char(' '));
     let collapsed_same = text(&mut view, &state, (80, 24));
     assert!(!collapsed_same.contains("terraform_data.server[*]"));
 
@@ -1289,7 +1400,11 @@ fn unknown_same_change_summary_and_group_row_keep_the_annotation_visible() {
     press(&mut view, &mut state, KeyCode::End);
     let collapsed = text(&mut view, &state, (165, 50));
     assert!(
-        collapsed.contains("Same change across envs: 21 changes [unknown values]"),
+        collapsed.contains("Same change across envs: 21 patterns"),
+        "{collapsed}"
+    );
+    assert!(
+        collapsed.contains("    [unknown values] · instance counts differ"),
         "{collapsed}"
     );
 
@@ -1309,9 +1424,9 @@ fn unknown_same_change_summary_and_group_row_keep_the_annotation_visible() {
     }
     let narrow = text(&mut view, &state, (40, 16));
     let narrow_lines = narrow.lines().collect::<Vec<_>>();
-    let selected_group = narrow_lines
-        .iter()
-        .position(|line| line.contains("> [+]") && line.contains("server[*]"));
+    let selected_group = narrow_lines.iter().position(|line| {
+        line.starts_with("│>") && line.contains("▸ ") && line.contains("server[*]")
+    });
     assert!(selected_group.is_some(), "{narrow}");
     assert!(
         narrow_lines
@@ -1331,13 +1446,9 @@ fn assert_matrix_footer_actions(view: &mut EnvironmentView, state: &EnvironmentS
             } else {
                 "Space expand selected"
             },
-            if width == 40 {
-                "Enter toggle"
-            } else {
-                "Enter toggle same changes"
-            },
             "? help",
         ];
+        assert!(!rendered.contains("Enter"), "{width}x{height}\n{rendered}");
         for hint in hints {
             assert!(
                 rendered.contains(hint),
@@ -1536,17 +1647,17 @@ fn space_toggles_only_the_selected_group_in_a_single_environment_matrix() {
 
     let collapsed = text(&mut view, &state, (120, 40));
     assert!(
-        collapsed.contains("[+] terraform_data.server_0[*]"),
+        collapsed.contains("▸ terraform_data.server_0[*]"),
         "{collapsed}"
     );
     assert!(
-        collapsed.contains("[+] terraform_data.server_1[*]"),
+        collapsed.contains("▸ terraform_data.server_1[*]"),
         "{collapsed}"
     );
     press(&mut view, &mut state, KeyCode::Char(' '));
     let first_expanded = text(&mut view, &state, (120, 40));
-    assert!(first_expanded.contains("[-] terraform_data.server_0[*]"));
-    assert!(first_expanded.contains("[+] terraform_data.server_1[*]"));
+    assert!(first_expanded.contains("▾ terraform_data.server_0[*]"));
+    assert!(first_expanded.contains("▸ terraform_data.server_1[*]"));
     assert!(first_expanded.contains("server_0[0]"));
     assert!(!first_expanded.contains("server_1[0]"));
 
@@ -1555,18 +1666,18 @@ fn space_toggles_only_the_selected_group_in_a_single_environment_matrix() {
     }
     press(&mut view, &mut state, KeyCode::Char(' '));
     let both_expanded = text(&mut view, &state, (120, 40));
-    assert!(both_expanded.contains("[-] terraform_data.server_0[*]"));
-    assert!(both_expanded.contains("[-] terraform_data.server_1[*]"));
+    assert!(both_expanded.contains("▾ terraform_data.server_0[*]"));
+    assert!(both_expanded.contains("▾ terraform_data.server_1[*]"));
     assert!(both_expanded.contains("server_1[1]"));
 
     press(&mut view, &mut state, KeyCode::Home);
     press(&mut view, &mut state, KeyCode::Char(' '));
     let collapsed = text(&mut view, &state, (120, 40));
     assert!(
-        collapsed.contains("[+] terraform_data.server_0[*]"),
+        collapsed.contains("▸ terraform_data.server_0[*]"),
         "{collapsed}"
     );
-    assert!(collapsed.contains("[-] terraform_data.server_1[*]"));
+    assert!(collapsed.contains("▾ terraform_data.server_1[*]"));
 }
 
 #[test]
@@ -1689,7 +1800,7 @@ fn grouped_matrix_enter_opens_the_first_matching_resource_and_reports_the_count(
     }
     let mut view = EnvironmentView::default();
     let _ = text(&mut view, &state, (80, 24));
-    press(&mut view, &mut state, KeyCode::Enter);
+    press(&mut view, &mut state, KeyCode::Char(' '));
     press(&mut view, &mut state, KeyCode::Down);
     assert!(matches!(
         view.matrix.relation_selection(),
@@ -1758,7 +1869,7 @@ fn grouped_matrix_enter_finds_a_later_member_when_the_first_has_no_source_block(
 
     let mut view = EnvironmentView::default();
     let _ = text(&mut view, &state, (80, 24));
-    press(&mut view, &mut state, KeyCode::Enter);
+    press(&mut view, &mut state, KeyCode::Char(' '));
     press(&mut view, &mut state, KeyCode::Down);
     let Some(MatrixSelectedItem::Resource {
         cell: Some(cell), ..
@@ -1815,7 +1926,7 @@ fn grouped_matrix_reports_one_match_for_an_asymmetric_group() {
 
     let mut view = EnvironmentView::default();
     let _ = text(&mut view, &state, (80, 24));
-    press(&mut view, &mut state, KeyCode::Enter);
+    press(&mut view, &mut state, KeyCode::Char(' '));
     press(&mut view, &mut state, KeyCode::Down);
     assert!(matches!(
         view.matrix.relation_selection(),
@@ -1852,8 +1963,8 @@ fn same_change_summary_counts_matrix_rows_and_replacements_once() {
     press(&mut view, &mut state, KeyCode::Char('2'));
     let rendered = text(&mut view, &state, (80, 24));
 
-    assert!(rendered.contains("Same change across envs: 2 changes ~1 1 replace"));
-    assert!(!rendered.contains("changes ~3"));
+    assert!(rendered.contains("Same change across envs: 2 patterns: 1 replace"));
+    assert!(!rendered.contains("patterns: ~3"));
     assert!(!rendered.contains("3 replace"));
 
     press(&mut view, &mut state, KeyCode::Char('f'));
@@ -1863,7 +1974,7 @@ fn same_change_summary_counts_matrix_rows_and_replacements_once() {
     press(&mut view, &mut state, KeyCode::Char(' '));
     let expanded = text(&mut view, &state, (80, 24));
     assert!(
-        expanded.contains("Same change across envs: 2 changes ~1 1 replace"),
+        expanded.contains("Same change across envs: 2 patterns: 1 replace"),
         "{expanded}"
     );
     assert!(expanded.contains("terraform_data.server[0]"), "{expanded}");

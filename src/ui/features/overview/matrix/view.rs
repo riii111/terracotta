@@ -37,17 +37,13 @@ pub(super) struct SameChangeSummary {
     pub(super) rows: usize,
     pub(super) actions: ChangeCounts,
     pub(super) has_unknown: bool,
+    pub(super) instance_counts_differ: bool,
 }
 
 #[derive(Default)]
 pub(super) struct ChangeCounts {
-    pub(super) creates: usize,
-    pub(super) updates: usize,
     pub(super) deletes: usize,
     pub(super) replacements: usize,
-    pub(super) reads: usize,
-    pub(super) moves: usize,
-    pub(super) imports: usize,
     pub(super) unknown: usize,
 }
 
@@ -300,7 +296,8 @@ impl MatrixView {
             })
             .collect();
         let layout_rows = rows(overview, &self.filter, &all_groups);
-        (self.address_content_width, self.unknown_address_width) = address_widths(&layout_rows);
+        (self.address_content_width, self.unknown_address_width) =
+            address_widths(&layout_rows, self.environments.len() > 1);
 
         let collapsed_rows = rows(overview, &self.filter, &BTreeSet::new());
         let summary_start = collapsed_rows
@@ -381,25 +378,44 @@ impl MatrixView {
     }
 }
 
-pub(super) fn address_widths(rows: &[Row]) -> (usize, usize) {
+pub(super) fn address_widths(rows: &[Row], under_summary: bool) -> (usize, usize) {
     rows.iter().filter(|row| row.summary.is_none()).fold(
         (Line::from("Address").width(), 0),
         |(content, unknown), row| {
-            let expansion = row
-                .group
-                .as_ref()
-                .map_or(if row.child { 2 } else { 0 }, |_| 4);
-            let row_width = 2 + expansion + Line::from(row.address.as_str()).width();
+            let lead = row_lead(row, false, under_summary);
+            let row_width =
+                2 + Line::from(lead.as_str()).width() + Line::from(row.address.as_str()).width();
             (
-                content.max(row_width),
+                // The widest address keeps one blank column before the first cell.
+                content.max(row_width + 1),
                 if row.has_unknown {
-                    unknown.max(row_width + Line::from(" [unknown values]").width())
+                    unknown.max(row_width + Line::from(" [unknown values] ").width())
                 } else {
                     unknown
                 },
             )
         },
     )
+}
+
+// Rows listed under the Same change summary sit one level below it. Sections that can hold groups
+// keep an expansion column on every row so addresses line up whether or not a row expands.
+pub(super) fn row_lead(row: &Row, expanded: bool, under_summary: bool) -> String {
+    // Group members stay under their group even when their own instance is missing elsewhere.
+    let same_section = row.difference.is_none() || row.child;
+    let section = if under_summary && same_section {
+        "  "
+    } else {
+        ""
+    };
+    let expansion = match (&row.group, same_section) {
+        (Some(_), _) if expanded => "▾ ",
+        (Some(_), _) => "▸ ",
+        (None, true) => "  ",
+        (None, false) => "",
+    };
+    let child = if row.child { "  " } else { "" };
+    format!("{section}{expansion}{child}")
 }
 
 impl Row {
@@ -541,22 +557,37 @@ fn same_change_summary(rows: &[Row]) -> SameChangeSummary {
             continue;
         };
         match kind {
-            ResourceChangeKind::Create => actions.creates += 1,
-            ResourceChangeKind::Update => actions.updates += 1,
             ResourceChangeKind::Delete => actions.deletes += 1,
             ResourceChangeKind::Replace => actions.replacements += 1,
-            ResourceChangeKind::Read => actions.reads += 1,
-            ResourceChangeKind::Move => actions.moves += 1,
-            ResourceChangeKind::Import => actions.imports += 1,
             ResourceChangeKind::Unknown | ResourceChangeKind::Unsupported => actions.unknown += 1,
-            ResourceChangeKind::NoOp => {}
+            ResourceChangeKind::Create
+            | ResourceChangeKind::Update
+            | ResourceChangeKind::Read
+            | ResourceChangeKind::Move
+            | ResourceChangeKind::Import
+            | ResourceChangeKind::NoOp => {}
         }
     }
     SameChangeSummary {
         rows: rows.len(),
         actions,
         has_unknown: rows.iter().any(|row| row.has_unknown),
+        instance_counts_differ: rows.iter().any(group_instance_counts_differ),
     }
+}
+
+fn group_instance_counts_differ(row: &Row) -> bool {
+    if row.group.is_none() {
+        return false;
+    }
+    let mut counts = row
+        .cells
+        .iter()
+        .filter(|cell| matches!(cell.state, CellState::Change { .. }))
+        .map(|cell| cell.members.len());
+    counts
+        .next()
+        .is_some_and(|first| counts.any(|count| count != first))
 }
 
 #[cfg(test)]

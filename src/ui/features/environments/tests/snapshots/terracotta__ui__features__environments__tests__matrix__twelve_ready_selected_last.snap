@@ -6,9 +6,9 @@ terracotta ▸ env-11                                                    terrafo
 env-11 ✓ Ready ~1
 ┌* [2] Compare─────────────────────────────────────────────────────────────────┐
 │                                                                              │
-│Address             env-08      env-09      env-10      env-11       why      │
-│                                                                              │
-│> ▸ Same change across envs: 1 changes ~1  Space expand                       │
+│Address                  │ env-09      env-10      env-11      │ why          │
+│─────────────────────────┼─────────────────────────────────────┼──────────────│
+│> ▸ Same change across envs: 1 pattern  Space expand                          │
 │                                                                              │
 │blank: absent   .: unchanged   ?: plan unavailable                            │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -16,13 +16,13 @@ env-11 ✓ Ready ~1
 │Links unknown                                                                 │
 │  ~ terraform_data.api ?  configuration not collected, state not collected    │
 │                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
 │? unresolved means a relationship could not be determined                     │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
-Enter toggle same changes | v full plan | / filter | Space expand selected
-[/] env | 2/3 focus | f maximize | ? help | q quit
+v full plan | / filter | Space expand selected | [/] env | 2/3 focus
+f maximize | ? help | q quit

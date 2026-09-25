@@ -4,7 +4,7 @@ expression: bottom_text
 ---
 terracotta ▸ a-ready           terraform
 a┌Help────────────────────────────────┐
-┌│   start                          ▲ │┐
+┌│   Differs across envs in [2]     ▲ │┐
 ││ ? unresolved                     │ ││
 ││   a relationship could not be    │ ││
 └│   determined                     │ │┘

@@ -94,7 +94,9 @@ with its selection and expansion preserved. Totals always cover the full plans.
 
 Cells show `+`, `~`, `-`, `-/+`, or `+/-`; `.` means unchanged, a blank means absent,
 and `?` means unavailable. Group counts describe a shared change pattern, not
-one-to-one instance correspondence or resolved unknown values. The `[2]` title
+one-to-one instance correspondence or resolved unknown values. The Same change
+summary counts collapsed `[2]` rows as patterns, not resources, and notes `instance counts differ` when
+a group's size varies by environment. The `[2]` title
 shows the compared environment count as `Filtered x/y` when some environments
 are excluded, and the Ready count as `Ready x/y` while acquisition is incomplete.
 Excluded HCP environments remain visible with their reason.

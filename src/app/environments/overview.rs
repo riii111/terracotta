@@ -245,20 +245,17 @@ fn comparison_node_inputs(
             }
             OverviewRow::Group(group) => {
                 let cell = &group.cells[column];
-                let differs = group
-                    .children
-                    .iter()
-                    .any(|child| child.difference.is_some());
                 let has_unknown = cell
                     .members
                     .iter()
                     .filter_map(|address| changes.get(address.as_str()))
                     .any(|change| resource_has_unknown(change));
+                // Compare lists every group under Same change; instance count gaps are not differences there.
                 let input = relation_node_input(
                     &changes,
                     &cell.members,
                     &group.display_address,
-                    differs,
+                    false,
                     has_unknown,
                 );
                 record_node(
@@ -974,7 +971,7 @@ mod tests {
             let node = &graph.nodes[0];
             assert_eq!(node.change_count, expected_count);
             assert_eq!(node.id.addresses().len(), expected_count);
-            assert!(node.differs);
+            assert!(!node.differs);
             assert_eq!(
                 relation.row_node_ids.get(&group_id),
                 Some(&Some(node.id.clone()))

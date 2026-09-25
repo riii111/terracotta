@@ -8,7 +8,7 @@ use ratatui::{
 
 use super::{
     MatrixCell, MatrixView,
-    view::{Row, address_widths},
+    view::{Row, address_widths, row_lead},
 };
 use crate::app::{
     environments::{
@@ -17,13 +17,17 @@ use crate::app::{
     },
     plan::{PlanAction, ResourceChangeKind},
 };
-use crate::ui::{shell::environments::name, theme};
+use crate::ui::{primitives::atoms::scrollbar, shell::environments::name, theme};
 
 const WHY_WIDTH: usize = 7;
 const MIN_CELL_WIDTH: usize = 9;
 const COLUMN_GAP: usize = 1;
 const MIN_ADDRESS_WIDTH: usize = 12;
 const MAX_ADDRESS_WIDTH: usize = 52;
+// Wide panes separate Address, the environment cells, and why with a divider and one space.
+const DIVIDER: &str = "│ ";
+const DIVIDER_WIDTH: usize = 2;
+const WIDE_WIDTH: u16 = 64;
 
 pub(crate) fn render(
     frame: &mut Frame<'_>,
@@ -40,13 +44,18 @@ pub(crate) fn render(
         );
         return;
     }
+    let wide = area.width >= WIDE_WIDTH;
     let address_width = address_width(area, view);
     let column_widths = column_widths(state, view);
-    let column_budget =
-        usize::from(area.width).saturating_sub(address_width + WHY_WIDTH + COLUMN_GAP);
+    let column_budget = usize::from(area.width)
+        .saturating_sub(address_width + WHY_WIDTH + divider_width(wide))
+        .saturating_sub(if wide { DIVIDER_WIDTH } else { 0 });
     let columns = visible_columns(view, &column_widths, column_budget);
 
     render_column_headers(frame, area, state, view, &columns, address_width);
+    if wide {
+        render_header_rule(frame, area, &columns, address_width);
+    }
     render_content(
         frame,
         area,
@@ -67,16 +76,8 @@ fn render_content(
     address_width: usize,
     show_same_change_toggle: bool,
 ) {
-    let (lines, selected_lines) = content_lines(
-        view,
-        state,
-        area.width,
-        columns,
-        address_width,
-        show_same_change_toggle,
-    );
     let legend = symbol_legend(area.width);
-    let body = Rect::new(
+    let mut body = Rect::new(
         area.x,
         area.y.saturating_add(2),
         area.width,
@@ -85,16 +86,42 @@ fn render_content(
             .saturating_sub(u16::try_from(legend.len()).unwrap_or(u16::MAX)),
     );
     let body_height = usize::from(body.height);
+    let wide = area.width >= WIDE_WIDTH;
+    let content = |width| {
+        content_lines(
+            view,
+            state,
+            width,
+            wide,
+            columns,
+            address_width,
+            show_same_change_toggle,
+        )
+    };
+    let (mut lines, mut selected_lines) = content(body.width);
+    // An overflowing list gives its last column to the scrollbar so no text sits under it.
+    if lines.len() > body_height {
+        body.width = body.width.saturating_sub(1);
+        (lines, selected_lines) = content(body.width);
+    }
     let max_vertical = lines.len().saturating_sub(body_height);
     view.vertical = view.vertical.min(max_vertical);
     if let Some(selected_lines) = selected_lines.filter(|_| body_height > 0) {
         scroll_selected_range_into_view(view, selected_lines, body_height);
     }
+    let content_length = lines.len();
     frame.render_widget(
         Paragraph::new(lines)
             .style(theme::overview_text_style())
             .scroll((u16::try_from(view.vertical).unwrap_or(u16::MAX), 0)),
         body,
+    );
+    scrollbar::render_vertical(
+        frame,
+        Rect::new(area.x, body.y, area.width, body.height),
+        content_length,
+        body_height,
+        view.vertical,
     );
     for (index, line) in legend.into_iter().enumerate() {
         let y = area
@@ -109,15 +136,16 @@ fn content_lines(
     view: &MatrixView,
     state: &EnvironmentSession,
     width: u16,
+    wide: bool,
     columns: &[(usize, usize)],
     address_width: usize,
     show_same_change_toggle: bool,
 ) -> (Vec<Line<'static>>, Option<(usize, usize)>) {
-    let filtered = view.environments.len() != state.plans().len();
-    let partial = view
-        .overview
-        .as_ref()
-        .is_none_or(|overview| !matches!(overview.scope, ComparisonScope::All { .. }));
+    let names = view
+        .environments
+        .iter()
+        .map(|environment| name(&state.plans()[*environment]))
+        .collect::<Vec<_>>();
     let mut lines = Vec::new();
     let mut selected_lines = None;
     let mut section = None;
@@ -130,10 +158,7 @@ fn content_lines(
             }
             section = Some(false);
             summary_seen = true;
-            if selected {
-                let selected_line = lines.len();
-                selected_lines = Some((selected_line, selected_line));
-            }
+            let summary_start = lines.len();
             lines.push(summary_line(
                 summary,
                 selected,
@@ -141,9 +166,13 @@ fn content_lines(
                 show_same_change_toggle,
                 width,
             ));
+            lines.extend(summary_note_line(summary, width));
+            if selected {
+                selected_lines = Some((summary_start, lines.len() - 1));
+            }
             continue;
         }
-        if row.difference.is_some() && section != Some(true) {
+        if row.difference.is_some() && !row.child && section != Some(true) {
             if section.is_some() {
                 lines.push(Line::default());
             }
@@ -156,23 +185,16 @@ fn content_lines(
                 },
                 theme::overview_section_heading_style(),
             ));
-        } else if row.difference.is_none() && !summary_seen && section != Some(false) {
+        } else if row.difference.is_none() && !row.child && !summary_seen && section != Some(false)
+        {
             if section.is_some() {
                 lines.push(Line::default());
             }
             section = Some(false);
-            let title = if view.environments.len() == 1 {
-                "Changes"
-            } else if filtered && partial {
-                "Same change across selected envs (Ready only)"
-            } else if filtered {
-                "Same change across selected envs"
-            } else if partial {
-                "Same change across envs (Ready only)"
-            } else {
-                "Same change across envs"
-            };
-            lines.push(Line::styled(title, theme::overview_section_heading_style()));
+            lines.push(Line::styled(
+                same_section_title(view, state),
+                theme::overview_section_heading_style(),
+            ));
         }
         let row_line_index = lines.len();
         if selected {
@@ -184,11 +206,12 @@ fn content_lines(
             selected,
             columns,
             address_width,
-            width >= 64,
+            wide,
+            &fitted_why(row, &names, width, wide, columns, address_width),
         ));
-        if width < 64 && row.has_unknown {
+        if !wide && row.has_unknown {
             let note_line = lines.len();
-            lines.push(unknown_note_line(row));
+            lines.push(unknown_note_line(row, view.environments.len() > 1));
             if selected {
                 selected_lines = Some((row_line_index, note_line));
             }
@@ -235,6 +258,25 @@ const fn scroll_selected_range_into_view(
     }
 }
 
+fn same_section_title(view: &MatrixView, state: &EnvironmentSession) -> &'static str {
+    let filtered = view.environments.len() != state.plans().len();
+    let partial = view
+        .overview
+        .as_ref()
+        .is_none_or(|overview| !matches!(overview.scope, ComparisonScope::All { .. }));
+    if view.environments.len() == 1 {
+        "Changes"
+    } else if filtered && partial {
+        "Same change across selected envs (Ready only)"
+    } else if filtered {
+        "Same change across selected envs"
+    } else if partial {
+        "Same change across envs (Ready only)"
+    } else {
+        "Same change across envs"
+    }
+}
+
 fn render_column_headers(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -248,6 +290,10 @@ fn render_column_headers(
         " ".repeat(address_width.saturating_sub(7)),
         theme::overview_text_style(),
     ));
+    let wide = area.width >= WIDE_WIDTH;
+    if wide {
+        header.push(Span::styled(DIVIDER, theme::overview_muted_style()));
+    }
     for &(column, column_width) in columns {
         let environment = view.environments[column];
         let label = name(&state.plans()[environment]);
@@ -257,7 +303,7 @@ fn render_column_headers(
             theme::overview_text_style(),
         ));
     }
-    header.push(Span::styled(" ", theme::overview_text_style()));
+    header.push(why_separator(wide));
     header.push(Span::styled("why", theme::overview_text_style()));
     header.push(Span::styled(
         " ".repeat(WHY_WIDTH.saturating_sub(3)),
@@ -269,10 +315,44 @@ fn render_column_headers(
     );
 }
 
+fn render_header_rule(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    columns: &[(usize, usize)],
+    address_width: usize,
+) {
+    let cells_width: usize = columns.iter().map(|(_, width)| width).sum();
+    let rest =
+        usize::from(area.width).saturating_sub(address_width + cells_width + DIVIDER_WIDTH * 2);
+    let rule = format!(
+        "{}┼─{}┼─{}",
+        "─".repeat(address_width),
+        "─".repeat(cells_width),
+        "─".repeat(rest),
+    );
+    frame.render_widget(
+        Paragraph::new(Line::styled(rule, theme::overview_muted_style())),
+        Rect::new(area.x, area.y.saturating_add(1), area.width, 1),
+    );
+}
+
+const fn divider_width(wide: bool) -> usize {
+    if wide { DIVIDER_WIDTH } else { COLUMN_GAP }
+}
+
+fn why_separator(wide: bool) -> Span<'static> {
+    if wide {
+        Span::styled(DIVIDER, theme::overview_muted_style())
+    } else {
+        Span::styled(" ", theme::overview_text_style())
+    }
+}
+
 fn address_width(area: Rect, view: &MatrixView) -> usize {
-    let (visible_content_width, visible_unknown_width) = address_widths(&view.rows);
+    let (visible_content_width, visible_unknown_width) =
+        address_widths(&view.rows, view.environments.len() > 1);
     let content_width = view.address_content_width.max(visible_content_width);
-    let unknown_label_width = if usize::from(area.width) >= 64 {
+    let unknown_label_width = if area.width >= WIDE_WIDTH {
         view.unknown_address_width.max(visible_unknown_width)
     } else {
         0
@@ -409,21 +489,17 @@ fn row_line(
     selected: bool,
     columns: &[(usize, usize)],
     address_width: usize,
-    include_unknown_label: bool,
+    wide: bool,
+    why: &str,
 ) -> Line<'static> {
-    let expansion = row
+    let expanded = row
         .group
         .as_ref()
-        .map_or(if row.child { "  " } else { "" }, |id| {
-            if view.expanded.contains(id) {
-                "[-] "
-            } else {
-                "[+] "
-            }
-        });
-    let address_budget = address_width.saturating_sub(2 + expansion.len());
-    let unknown_label = (row.has_unknown && include_unknown_label).then_some("[unknown values]");
-    let label_width = unknown_label.map_or(0, |label| Line::from(Span::raw(label)).width() + 1);
+        .is_some_and(|id| view.expanded.contains(id));
+    let lead = row_lead(row, expanded, view.environments.len() > 1);
+    let address_budget = address_width.saturating_sub(2 + Line::from(lead.as_str()).width());
+    let unknown_label = (row.has_unknown && wide).then_some("[unknown values]");
+    let label_width = unknown_label.map_or(0, |label| Line::from(Span::raw(label)).width() + 2);
     let address_text_budget = address_budget.saturating_sub(label_width);
     let (address, address_padding) = fit_parts(&row.address, address_text_budget, true);
     let mut spans = vec![
@@ -432,7 +508,7 @@ fn row_line(
             theme::overview_text_style(),
         ),
         Span::raw(" "),
-        Span::styled(expansion.to_owned(), theme::overview_text_style()),
+        Span::styled(lead, theme::overview_text_style()),
         Span::styled(
             address,
             if selected {
@@ -445,9 +521,12 @@ fn row_line(
     ];
     if let Some(label) = unknown_label {
         spans.push(Span::styled(
-            format!(" {label}"),
-            theme::overview_muted_style(),
+            format!(" {label} "),
+            theme::overview_text_style(),
         ));
+    }
+    if wide {
+        spans.push(Span::styled(DIVIDER, theme::overview_muted_style()));
     }
     for &(index, column_width) in columns {
         let cell = &row.cells[index];
@@ -461,30 +540,62 @@ fn row_line(
             cell_style(cell),
         ));
     }
-    let reason = match row.difference {
-        Some(DifferenceReason::Action) => "action",
-        Some(DifferenceReason::Attrs) => "attrs",
-        Some(DifferenceReason::Missing) => "missing",
-        Some(DifferenceReason::Unknown) => "unknown",
-        Some(DifferenceReason::Value) => "value",
-        None => "",
-    };
-    spans.push(Span::styled(" ", theme::overview_text_style()));
-    spans.push(Span::styled(
-        fit(reason, WHY_WIDTH, false),
-        theme::overview_text_style(),
-    ));
+    spans.push(why_separator(wide));
+    spans.push(Span::styled(why.to_owned(), theme::overview_text_style()));
     Line::from(spans)
 }
 
-fn unknown_note_line(row: &Row) -> Line<'static> {
-    let expansion = row
-        .group
-        .as_ref()
-        .map_or(if row.child { 2 } else { 0 }, |_| 4);
+// The reason takes whatever width the cells leave, never less than the header's column.
+fn fitted_why(
+    row: &Row,
+    names: &[String],
+    width: u16,
+    wide: bool,
+    columns: &[(usize, usize)],
+    address_width: usize,
+) -> String {
+    let leading_divider = if wide { DIVIDER_WIDTH } else { 0 };
+    let available = usize::from(width)
+        .saturating_sub(address_width + leading_divider + divider_width(wide))
+        .saturating_sub(columns.iter().map(|(_, column_width)| column_width).sum())
+        .max(WHY_WIDTH);
+    fit(&why_text(row, names), available, false)
+}
+
+fn why_text(row: &Row, names: &[String]) -> String {
+    match row.difference {
+        Some(DifferenceReason::Action) => "action".to_owned(),
+        Some(DifferenceReason::Attrs) => "attrs".to_owned(),
+        Some(DifferenceReason::Missing) => missing_reason(row, names),
+        Some(DifferenceReason::Unknown) => "unknown".to_owned(),
+        Some(DifferenceReason::Value) => "value".to_owned(),
+        None => String::new(),
+    }
+}
+
+// Unavailable plans are neither present nor absent, so they never count toward the wording.
+fn missing_reason(row: &Row, names: &[String]) -> String {
+    let mut present = Vec::new();
+    let mut absent = Vec::new();
+    for (cell, name) in row.cells.iter().zip(names) {
+        match cell.state {
+            CellState::Change { .. } | CellState::NoOp => present.push(name.as_str()),
+            CellState::Missing => absent.push(name.as_str()),
+            CellState::Unavailable => {}
+        }
+    }
+    match (present.as_slice(), absent.as_slice()) {
+        ([only], _) => format!("only in {only}"),
+        (_, [gap]) => format!("not in {gap}"),
+        _ => format!("in {}/{} envs", present.len(), present.len() + absent.len()),
+    }
+}
+
+fn unknown_note_line(row: &Row, under_summary: bool) -> Line<'static> {
+    let lead = Line::from(row_lead(row, false, under_summary)).width();
     Line::from(vec![
-        Span::raw(" ".repeat(2 + expansion)),
-        Span::styled("[unknown values]", theme::overview_muted_style()),
+        Span::raw(" ".repeat(2 + lead)),
+        Span::styled("[unknown values]", theme::overview_text_style()),
     ])
 }
 
@@ -495,10 +606,39 @@ fn summary_line(
     show_toggle_hint: bool,
     width: u16,
 ) -> Line<'static> {
-    let label = if width < 64 {
-        format!("Same: {} changes", summary.rows)
+    // Creates and updates are omitted: they read like resource totals, while [1] already shows those.
+    // Deletes, replacements, and unknown actions stay visible as warnings.
+    let mut counts = Vec::new();
+    push_count(
+        &mut counts,
+        summary.actions.deletes,
+        "-",
+        theme::overview_total_destroy_style(),
+    );
+    if summary.actions.replacements > 0 {
+        counts.push(Span::styled(
+            format!(" {} replace", summary.actions.replacements),
+            theme::overview_total_replace_style(),
+        ));
+    }
+    push_count(
+        &mut counts,
+        summary.actions.unknown,
+        "?",
+        theme::overview_warning_style(),
+    );
+
+    // The colon ties the warning counts to the pattern count instead of resources.
+    let rows = if summary.rows == 1 {
+        "pattern"
     } else {
-        format!("Same change across envs: {} changes", summary.rows)
+        "patterns"
+    };
+    let colon = if counts.is_empty() { "" } else { ":" };
+    let label = if width < 64 {
+        format!("Same: {} {rows}{colon}", summary.rows)
+    } else {
+        format!("Same change across envs: {} {rows}{colon}", summary.rows)
     };
     let mut spans = vec![
         Span::styled(
@@ -513,60 +653,7 @@ fn summary_line(
         Span::raw(" "),
         Span::styled(label, theme::overview_section_heading_style()),
     ];
-    if summary.has_unknown {
-        spans.push(Span::styled(
-            " [unknown values]",
-            theme::overview_muted_style(),
-        ));
-    }
-    push_count(
-        &mut spans,
-        summary.actions.creates,
-        "+",
-        theme::overview_total_add_style(),
-    );
-    push_count(
-        &mut spans,
-        summary.actions.updates,
-        "~",
-        theme::overview_total_update_style(),
-    );
-    push_count(
-        &mut spans,
-        summary.actions.deletes,
-        "-",
-        theme::overview_total_destroy_style(),
-    );
-    if summary.actions.replacements > 0 {
-        spans.push(Span::styled(
-            format!(" {} replace", summary.actions.replacements),
-            theme::overview_total_replace_style(),
-        ));
-    }
-    push_count(
-        &mut spans,
-        summary.actions.reads,
-        "read",
-        theme::overview_muted_style(),
-    );
-    push_count(
-        &mut spans,
-        summary.actions.moves,
-        "move",
-        theme::overview_muted_style(),
-    );
-    push_count(
-        &mut spans,
-        summary.actions.imports,
-        "import",
-        theme::overview_muted_style(),
-    );
-    push_count(
-        &mut spans,
-        summary.actions.unknown,
-        "?",
-        theme::overview_warning_style(),
-    );
+    spans.extend(counts);
     let mut line = Line::from(spans);
     let hint = if expanded {
         "  Space collapse"
@@ -579,6 +666,29 @@ fn summary_line(
         line.push_span(Span::styled(hint, theme::overview_text_style()));
     }
     line
+}
+
+fn summary_note_line(
+    summary: &super::view::SameChangeSummary,
+    width: u16,
+) -> Option<Line<'static>> {
+    let mut notes = Vec::new();
+    if summary.has_unknown {
+        notes.push("[unknown values]");
+    }
+    if summary.instance_counts_differ {
+        notes.push(if width < 64 {
+            "counts differ"
+        } else {
+            "instance counts differ"
+        });
+    }
+    (!notes.is_empty()).then(|| {
+        Line::from(vec![
+            Span::raw("    "),
+            Span::styled(notes.join(" · "), theme::overview_text_style()),
+        ])
+    })
 }
 
 fn push_count(
@@ -705,10 +815,10 @@ mod tests {
         let address_width = address_width(Rect::new(0, 0, 40, 16), &view);
 
         assert!(address_width >= 19);
-        let line = row_line(&view.rows[0], &view, false, &[], address_width, false).to_string();
+        let line = row_line(&view.rows[0], &view, false, &[], address_width, false, "").to_string();
 
         assert!(line.contains("server[*]"), "{line}");
-        let note = unknown_note_line(&view.rows[0]).to_string();
+        let note = unknown_note_line(&view.rows[0], false).to_string();
         assert!(note.contains("[unknown values]"), "{note}");
     }
 
@@ -765,27 +875,86 @@ mod tests {
     fn collapsed_same_change_summary_keeps_unknown_group_note() {
         let summary = super::super::view::SameChangeSummary {
             rows: 1,
-            actions: super::super::view::ChangeCounts {
-                updates: 1,
-                ..Default::default()
-            },
+            actions: super::super::view::ChangeCounts::default(),
             has_unknown: true,
+            instance_counts_differ: false,
         };
 
-        let line = summary_line(&summary, false, false, false, 40).to_string();
+        let note = summary_note_line(&summary, 40)
+            .expect("unknown values need a note")
+            .to_string();
 
-        assert!(line.contains("[unknown values]"), "{line}");
+        assert_eq!(note, "    [unknown values]");
+    }
+
+    #[test]
+    fn same_change_summary_counts_patterns_and_keeps_only_warning_actions() {
+        let routine = super::super::view::SameChangeSummary {
+            rows: 2,
+            actions: super::super::view::ChangeCounts::default(),
+            has_unknown: false,
+            instance_counts_differ: false,
+        };
+        let destructive = super::super::view::SameChangeSummary {
+            rows: 3,
+            actions: super::super::view::ChangeCounts {
+                deletes: 1,
+                replacements: 1,
+                unknown: 0,
+            },
+            has_unknown: false,
+            instance_counts_differ: false,
+        };
+
+        let routine = summary_line(&routine, false, false, false, 80).to_string();
+        let destructive = summary_line(&destructive, false, false, false, 80).to_string();
+
+        assert!(
+            routine.ends_with("Same change across envs: 2 patterns"),
+            "{routine}"
+        );
+        assert!(
+            destructive.ends_with("Same change across envs: 3 patterns: -1 1 replace"),
+            "{destructive}"
+        );
+    }
+
+    #[test]
+    fn same_change_summary_notes_unknown_values_and_instance_count_gaps() {
+        let summary = super::super::view::SameChangeSummary {
+            rows: 2,
+            actions: super::super::view::ChangeCounts::default(),
+            has_unknown: true,
+            instance_counts_differ: true,
+        };
+
+        let wide = summary_line(&summary, false, false, false, 80).to_string();
+        let wide_note = summary_note_line(&summary, 80).map(|line| line.to_string());
+        let narrow = summary_line(&summary, false, false, false, 40).to_string();
+        let narrow_note = summary_note_line(&summary, 40).map(|line| line.to_string());
+
+        assert!(
+            wide.ends_with("Same change across envs: 2 patterns"),
+            "{wide}"
+        );
+        assert_eq!(
+            wide_note.as_deref(),
+            Some("    [unknown values] · instance counts differ")
+        );
+        assert!(narrow.ends_with("Same: 2 patterns"), "{narrow}");
+        assert_eq!(
+            narrow_note.as_deref(),
+            Some("    [unknown values] · counts differ")
+        );
     }
 
     #[test]
     fn same_change_summary_shows_its_expansion_state_without_selection() {
         let summary = super::super::view::SameChangeSummary {
             rows: 1,
-            actions: super::super::view::ChangeCounts {
-                updates: 1,
-                ..Default::default()
-            },
+            actions: super::super::view::ChangeCounts::default(),
             has_unknown: false,
+            instance_counts_differ: false,
         };
 
         let collapsed = summary_line(&summary, false, false, false, 80);
@@ -817,15 +986,13 @@ mod tests {
     fn same_change_summary_only_adds_a_complete_hint_when_it_fits() {
         let summary = super::super::view::SameChangeSummary {
             rows: 1,
-            actions: super::super::view::ChangeCounts {
-                updates: 1,
-                ..Default::default()
-            },
+            actions: super::super::view::ChangeCounts::default(),
             has_unknown: false,
+            instance_counts_differ: false,
         };
 
         let fits = summary_line(&summary, true, false, true, 80);
-        let too_narrow = summary_line(&summary, true, false, true, 32);
+        let too_narrow = summary_line(&summary, true, false, true, 28);
 
         assert!(fits.to_string().ends_with("Space expand"));
         assert_eq!(fits.spans.last().unwrap().style.fg, Some(Color::Reset));

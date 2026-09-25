@@ -438,12 +438,12 @@ fn overview_lines(
         let indent = if row.child { "  " } else { "" };
         let expansion = if row.member_index.is_none() && row.count > 1 {
             if view.expanded().contains(&row.group_index) {
-                "[-]"
+                "▾"
             } else {
-                "[+]"
+                "▸"
             }
         } else {
-            "   "
+            " "
         };
         let action = if row.count > 1 && row.member_index.is_none() {
             format!("{} x{}", row.action, row.count)
@@ -465,7 +465,7 @@ fn overview_lines(
         if row.has_unknown {
             spans.push(Span::styled(
                 " [unknown values]",
-                theme::overview_muted_style(),
+                theme::overview_text_style(),
             ));
         }
         lines.push(Line::from(spans));
@@ -613,7 +613,7 @@ fn render_overlay(
                         help_dialog::HelpAction::new("/", "filter Changes full addresses"),
                         help_dialog::HelpAction::new(
                             "Space",
-                            "expand or collapse only on [+]/[-] group rows",
+                            "expand or collapse only on ▸/▾ group rows",
                         ),
                         help_dialog::HelpAction::new(
                             "[unknown values]",
@@ -1288,7 +1288,7 @@ mod tests {
             render(frame, &state, &view, Instant::now());
         });
         let collapsed_text = buffer_text(&collapsed);
-        assert!(collapsed_text.contains("[+] terraform_data.server[*]"));
+        assert!(collapsed_text.contains("▸ terraform_data.server[*]"));
         assert!(collapsed_text.contains("Space expand"));
         let narrow_collapsed = render_to_buffer((40, 16), |frame| {
             render(frame, &state, &view, Instant::now());
@@ -1307,7 +1307,7 @@ mod tests {
             render(frame, &state, &view, Instant::now());
         });
         let expanded_text = buffer_text(&expanded);
-        assert!(expanded_text.contains("[-] terraform_data.server[*]"));
+        assert!(expanded_text.contains("▾ terraform_data.server[*]"));
         assert!(expanded_text.contains("terraform_data.server[\"one\"]"));
         assert!(expanded_text.contains("Space collapse"));
         let narrow_expanded = render_to_buffer((40, 16), |frame| {
@@ -1403,7 +1403,7 @@ mod tests {
                     "{width}x{height}: {text}"
                 );
                 assert!(
-                    text.contains("expand or collapse only on [+]/[-] group rows"),
+                    text.contains("expand or collapse only on ▸/▾ group rows"),
                     "{width}x{height}: {text}"
                 );
             }
