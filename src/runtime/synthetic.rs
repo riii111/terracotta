@@ -26,7 +26,7 @@ use crate::{
             ResourceMode,
         },
         review::{PlanBlock, PlanBlockKind, PlanDocument, PlanLineKind, PlanMetadata, PlanReview},
-        session::{Action, ApplyConfirmationState, Effect, ReviewSessionState, SessionState},
+        session::{Action, Effect, ReviewScreen, ReviewSessionState, SessionState},
     },
     ui::{
         QuitConfirmationInput,
@@ -127,7 +127,7 @@ fn handle_synthetic_event(
 ) -> io::Result<Option<Action>> {
     let Event::Key(key) = event else {
         if let Event::Resize(width, height) = event
-            && let SessionState::Review(review) = state
+            && let Some(review) = state.review()
         {
             let layout = plan_review::layout_with_quit_confirmation(
                 ratatui::layout::Rect::new(0, 0, *width, *height),
@@ -203,32 +203,30 @@ fn handle_synthetic_key(
     key: KeyEvent,
 ) -> io::Result<Option<Action>> {
     match state {
-        SessionState::Review(review) => synthetic_review_key(terminal, view, review, key),
-        SessionState::ApplyConfirmation(confirmation) => {
-            if confirmation_view.overlay().is_some() {
-                match key.code {
-                    KeyCode::Esc | KeyCode::Char('?') => confirmation_view.close_overlay(),
-                    KeyCode::Up | KeyCode::Char('k') => confirmation_view.scroll_overlay(-1),
-                    KeyCode::Down | KeyCode::Char('j') => confirmation_view.scroll_overlay(1),
-                    KeyCode::PageUp => confirmation_view.scroll_overlay(-8),
-                    KeyCode::PageDown => confirmation_view.scroll_overlay(8),
-                    KeyCode::Home => confirmation_view.overlay_top(),
-                    KeyCode::End => confirmation_view.overlay_bottom(),
-                    _ => {}
+        SessionState::Review(review) => match review.screen() {
+            ReviewScreen::Raw(_) => synthetic_review_key(terminal, view, review, key),
+            ReviewScreen::Overview => synthetic_overview_key(terminal, review, view, key),
+            ReviewScreen::ApplyConfirmation { .. } => {
+                if confirmation_view.overlay().is_some() {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('?') => confirmation_view.close_overlay(),
+                        KeyCode::Up | KeyCode::Char('k') => confirmation_view.scroll_overlay(-1),
+                        KeyCode::Down | KeyCode::Char('j') => confirmation_view.scroll_overlay(1),
+                        KeyCode::PageUp => confirmation_view.scroll_overlay(-8),
+                        KeyCode::PageDown => confirmation_view.scroll_overlay(8),
+                        KeyCode::Home => confirmation_view.overlay_top(),
+                        KeyCode::End => confirmation_view.overlay_bottom(),
+                        _ => {}
+                    }
+                    Ok(None)
+                } else {
+                    Ok(synthetic_confirmation_key(confirmation_view, review, key))
                 }
-                Ok(None)
-            } else {
-                Ok(synthetic_confirmation_key(
-                    confirmation_view,
-                    confirmation,
-                    key,
-                ))
             }
-        }
+        },
         SessionState::Apply(execution) => {
             synthetic_execution_key(terminal, execution, execution_view, key)
         }
-        SessionState::Overview(_) => synthetic_overview_key(terminal, state, view, key),
         SessionState::Execution(_) => Ok(None),
     }
 }
@@ -385,19 +383,21 @@ fn render_synthetic(
     quit_confirmation: bool,
 ) {
     match state {
-        SessionState::Review(review) => plan_review::render_with_quit_confirmation(
-            frame,
-            review,
-            view,
-            Instant::now(),
-            quit_confirmation,
-        ),
-        SessionState::ApplyConfirmation(confirmation) => {
-            plan_review::render_apply_confirmation(frame, confirmation, confirmation_view);
-        }
-        SessionState::Overview(overview_state) => {
-            overview::render(frame, overview_state, view.overview(), Instant::now());
-        }
+        SessionState::Review(review) => match review.screen() {
+            ReviewScreen::Raw(_) => plan_review::render_with_quit_confirmation(
+                frame,
+                review,
+                view,
+                Instant::now(),
+                quit_confirmation,
+            ),
+            ReviewScreen::Overview => {
+                overview::render(frame, review, view.overview(), Instant::now());
+            }
+            ReviewScreen::ApplyConfirmation { .. } => {
+                plan_review::render_apply_confirmation(frame, review, confirmation_view);
+            }
+        },
         SessionState::Apply(execution) | SessionState::Execution(execution) => {
             execution::render_execution_with_quit_confirmation(
                 frame,
@@ -475,13 +475,10 @@ fn synthetic_review_key(
 
 fn synthetic_overview_key(
     terminal: &DefaultTerminal,
-    state: &SessionState,
+    overview_state: &ReviewSessionState,
     view: &mut plan_review::PlanReviewViewState,
     key: KeyEvent,
 ) -> io::Result<Option<Action>> {
-    let SessionState::Overview(overview_state) = state else {
-        return Ok(None);
-    };
     if view.overview().overlay().is_some() {
         match key.code {
             KeyCode::Esc | KeyCode::Char('?') => view.overview_mut().close_overlay(),
@@ -535,13 +532,9 @@ fn synthetic_overview_key(
                         .block_for_address(address)
                 })
                 .map_or(0, |block| block.lines().start);
-            let mut review = overview_state.review().clone();
-            review.set_search_query(String::new());
-            let temporary = ReviewSessionState::new_from_overview(review);
-            let raw_layout = plan_review::layout(
+            let raw_layout = plan_review::overview_detail_layout(
                 ratatui::layout::Rect::new(0, 0, size.width, size.height),
-                false,
-                &temporary,
+                overview_state.review(),
             );
             view.jump_to_line(line, raw_layout.max_vertical());
             Ok(Some(Action::OpenReviewFromOverview { address }))
@@ -642,7 +635,7 @@ fn synthetic_execution_key(
 
 fn synthetic_confirmation_key(
     view: &mut plan_review::ApplyConfirmationViewState,
-    state: &ApplyConfirmationState,
+    state: &ReviewSessionState,
     key: KeyEvent,
 ) -> Option<Action> {
     let expected = state.review().confirmation_input();

@@ -12,7 +12,7 @@ use crate::app::{
     copy::CopyNotice,
     execution::{DiagnosticSeverity, ExecutionContext, ExecutionContextValue},
     review::{FilteredPlan, PlanLineKind, PlanMetadata, PlanReview},
-    session::{ApplyConfirmationState, ReviewSessionState},
+    session::ReviewSessionState,
 };
 use crate::ui::primitives::{
     atoms::{scrollbar, separator},
@@ -32,6 +32,7 @@ const CONFIRMATION_MAX_WIDTH: u16 = 80;
 const CONFIRMATION_HEADER_HEIGHT: u16 = 2;
 const CONFIRMATION_NOTICE: &str = "Terminal too small. Resize or press Esc to go back.";
 struct PreparedContent<'a> {
+    filter_query: &'a str,
     lines: Vec<Line<'a>>,
     metrics: ContentMetrics,
     sources: Vec<Option<PlanSource<'a>>>,
@@ -246,11 +247,26 @@ fn layout_for_navigation(
     layout_with_content(
         area,
         searching,
-        state,
+        state.review(),
         &content,
         state.copy_feedback().notice(),
         footer_mode,
         navigation,
+    )
+}
+
+/// Layout of the raw plan opened from the overview, which starts unfiltered and without a copy
+/// notice.
+pub(crate) fn overview_detail_layout(area: Rect, review: &PlanReview) -> PlanReviewLayout {
+    let content = prepare_content(review, false, "");
+    layout_with_content(
+        area,
+        false,
+        review,
+        &content,
+        None,
+        FooterMode::Actions,
+        ReviewNavigation::Standalone,
     )
 }
 
@@ -261,7 +277,7 @@ fn layout_for_navigation(
 fn layout_with_content(
     area: Rect,
     searching: bool,
-    state: &ReviewSessionState,
+    review: &PlanReview,
     content: &PreparedContent<'_>,
     copy_notice: Option<CopyNotice>,
     footer_mode: FooterMode,
@@ -269,13 +285,9 @@ fn layout_with_content(
 ) -> PlanReviewLayout {
     let panel_width = area.width;
     let content_metrics = content.metrics();
-    let applyable = state.review().apply_allowed() && state.review().metadata().applyable();
-    let filter_visible = filter_active(searching, state);
-    let showing = filter_footer_status(
-        state.review().search_query(),
-        content.matches.len(),
-        panel_width,
-    );
+    let applyable = review.apply_allowed() && review.metadata().applyable();
+    let filter_visible = searching || !content.filter_query.is_empty();
+    let showing = filter_footer_status(content.filter_query, content.matches.len(), panel_width);
     let footer_status = match footer_mode {
         FooterMode::QuitConfirmation => None,
         FooterMode::Suppressed => copy_notice.map(|notice| {
@@ -308,7 +320,7 @@ fn layout_with_content(
                                 &position_status_for_content(
                                     content,
                                     0,
-                                    state.review().document().text().split('\n').count(),
+                                    review.document().text().split('\n').count(),
                                     panel_width,
                                 ),
                             ),
@@ -320,7 +332,7 @@ fn layout_with_content(
                         position_status_for_content(
                             content,
                             0,
-                            state.review().document().text().split('\n').count(),
+                            review.document().text().split('\n').count(),
                             panel_width,
                         ),
                         theme::secondary_style(),
@@ -376,7 +388,7 @@ fn layout_with_content(
         area,
         footer_lines,
         required,
-        header::plan_review_height(state.review(), area.width),
+        header::plan_review_height(review, area.width),
     );
     let inner = shell.content_inner();
     let status_height = u16::from(inner.height > 3);
@@ -476,14 +488,13 @@ fn common_footer_height(
 
 pub(crate) fn render_apply_confirmation(
     frame: &mut Frame<'_>,
-    state: &ApplyConfirmationState,
+    state: &ReviewSessionState,
     view: &ApplyConfirmationViewState,
 ) {
     let area = frame.area();
-    let background = ReviewSessionState::new(state.review().clone());
     render_with_quit_confirmation(
         frame,
-        &background,
+        state,
         &PlanReviewViewState::default(),
         Instant::now(),
         false,
@@ -567,7 +578,7 @@ pub(crate) fn render_apply_confirmation(
 )]
 pub(crate) fn apply_confirmation_layout(
     area: Rect,
-    state: &ApplyConfirmationState,
+    state: &ReviewSessionState,
 ) -> ApplyConfirmationLayout {
     let panel = shell_layout::max_centered_area(area);
     let header_height = panel.height.min(CONFIRMATION_HEADER_HEIGHT);
@@ -690,7 +701,7 @@ const fn padded_confirmation_inner(inner: Rect) -> Rect {
     )
 }
 
-fn confirmation_lines(state: &ApplyConfirmationState) -> Vec<Line<'static>> {
+fn confirmation_lines(state: &ReviewSessionState) -> Vec<Line<'static>> {
     let metadata = state.review().metadata();
     let context = state.review().context();
     let target = match context.display_name() {
@@ -1167,7 +1178,7 @@ fn render_for_navigation(
     let layout = layout_with_content(
         area,
         view.searching(),
-        state,
+        state.review(),
         &content,
         state.copy_feedback().notice_at(now),
         footer_mode,
@@ -1269,11 +1280,10 @@ fn render_for_navigation(
 }
 
 fn prepare_content<'a>(
-    state: &'a ReviewSessionState,
+    review: &'a PlanReview,
     filtered_view: bool,
-    filter_query: &str,
+    filter_query: &'a str,
 ) -> PreparedContent<'a> {
-    let review = state.review();
     let filtered = review.document().filter(filter_query);
     let (lines, sources, matches) = review_lines(review, &filtered, filtered_view, filter_query);
     let metrics = ContentMetrics {
@@ -1281,6 +1291,7 @@ fn prepare_content<'a>(
         max_width: max_line_width(&lines),
     };
     PreparedContent {
+        filter_query,
         lines,
         metrics,
         sources,
@@ -1289,7 +1300,8 @@ fn prepare_content<'a>(
 }
 
 fn prepare_view_content(state: &ReviewSessionState, filtered_view: bool) -> PreparedContent<'_> {
-    prepare_content(state, filtered_view, state.review().search_query())
+    let review = state.review();
+    prepare_content(review, filtered_view, review.search_query())
 }
 
 fn render_status(
@@ -1978,7 +1990,7 @@ End of synthetic plan body."#;
             .clone()
     }
 
-    fn confirmation_state(plan: PlanReview) -> ApplyConfirmationState {
+    fn confirmation_state(plan: PlanReview) -> ReviewSessionState {
         let now = Instant::now();
         let mut session = SessionState::new(ExecutionState::with_context(
             now,
@@ -2326,6 +2338,90 @@ End of synthetic plan body."#;
 
         assert!(text.contains("next or previous match"));
         assert!(text.contains("press Esc again to clear filter"));
+    }
+
+    #[test]
+    fn confirmation_opened_from_the_overview_detail_draws_the_same_background() {
+        let now = Instant::now();
+        let mut session = SessionState::new(ExecutionState::with_context(
+            now,
+            ExecutionContext::loading("/repo"),
+        ));
+        session::update(&mut session, Action::ReviewCompleted(review()), now);
+        session::update(&mut session, Action::OpenOverview, now);
+        session::update(
+            &mut session,
+            Action::CopyCompleted {
+                target: CopyTarget::Plan,
+                result: CopyResult::Written,
+            },
+            now,
+        );
+        session::update(
+            &mut session,
+            Action::OpenReviewFromOverview { address: None },
+            now,
+        );
+        session::update(
+            &mut session,
+            Action::ReviewSearchChanged("worker".to_owned()),
+            now,
+        );
+        session::update(&mut session, Action::OpenApplyConfirmation, now);
+        let from_overview = session
+            .apply_confirmation()
+            .expect("confirmation should open from the overview detail");
+
+        let mut filtered = review();
+        filtered.set_search_query("worker".to_owned());
+        let direct = confirmation_state(filtered);
+        for size in SIZES {
+            let view = ApplyConfirmationViewState::default();
+            assert_eq!(
+                render_to_buffer(size, |frame| {
+                    render_apply_confirmation(frame, from_overview, &view);
+                }),
+                render_to_buffer(size, |frame| {
+                    render_apply_confirmation(frame, &direct, &view);
+                }),
+                "{size:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn overview_detail_layout_matches_the_raw_review_opened_from_the_overview() {
+        let now = Instant::now();
+        let mut plan = review_with_content(80, 120);
+        plan.set_search_query("line".to_owned());
+        let mut session =
+            SessionState::Review(Box::new(session::test_support::overview_session(plan)));
+        session::update(
+            &mut session,
+            Action::CopyCompleted {
+                target: CopyTarget::Plan,
+                result: CopyResult::Written,
+            },
+            now,
+        );
+        let overview = session.overview().expect("overview should be visible");
+        let area = Rect::new(0, 0, 80, 24);
+        let predicted = overview_detail_layout(area, overview.review());
+
+        session::update(
+            &mut session,
+            Action::OpenReviewFromOverview { address: None },
+            now,
+        );
+        let raw = layout(
+            area,
+            false,
+            session.review().expect("raw review should be visible"),
+        );
+        assert_eq!(predicted.body(), raw.body());
+        assert_eq!(predicted.max_vertical(), raw.max_vertical());
+        assert_eq!(predicted.max_horizontal(), raw.max_horizontal());
+        assert_eq!(predicted.matches(), raw.matches());
     }
 
     #[test]

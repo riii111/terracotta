@@ -16,7 +16,9 @@ use crate::{
             ExecutionContextValue, ExecutionStage, ExecutionState, ExecutionTargetState, Tool,
         },
         review::PlanReviewMessage,
-        session::{self, Action, Effect, ReviewSessionState, SessionOutcome, SessionState},
+        session::{
+            self, Action, Effect, ReviewScreen, ReviewSessionState, SessionOutcome, SessionState,
+        },
     },
     infra::{CancellationToken, ClipboardExecutor, terraform, terraform::SavedPlan},
     ui::{
@@ -430,7 +432,7 @@ pub(super) fn handle_key_event<B: Backend>(
 
 fn handle_overview_key_event<B: Backend>(
     terminal: &Terminal<B>,
-    overview_state: &session::OverviewSessionState,
+    overview_state: &ReviewSessionState,
     review_view: &mut plan_review::PlanReviewViewState,
     key: KeyEvent,
 ) -> Result<Option<Action>, B::Error> {
@@ -491,17 +493,17 @@ fn handle_overview_key_event<B: Backend>(
 fn jump_to_overview_address<B: Backend>(
     terminal: &Terminal<B>,
     review_view: &mut plan_review::PlanReviewViewState,
-    overview: &session::OverviewSessionState,
+    overview: &ReviewSessionState,
     address: Option<&str>,
 ) -> Result<(), B::Error> {
     let line = address
         .and_then(|address| overview.review().document().block_for_address(address))
         .map_or(0, |block| block.lines().start);
-    let mut review = overview.review().clone();
-    review.set_search_query(String::new());
-    let temporary = ReviewSessionState::new_from_overview(review);
     let size = terminal.size()?;
-    let layout = plan_review::layout(Rect::new(0, 0, size.width, size.height), false, &temporary);
+    let layout = plan_review::overview_detail_layout(
+        Rect::new(0, 0, size.width, size.height),
+        overview.review(),
+    );
     review_view.jump_to_line(line, layout.max_vertical());
     Ok(())
 }
@@ -632,33 +634,35 @@ fn draw_with_quit_confirmation<B: Backend>(
                 );
             })?;
         }
-        SessionState::Review(review) => {
-            terminal.draw(|frame| {
-                plan_review::render_with_quit_confirmation(
-                    frame,
-                    review,
-                    review_view,
-                    now,
-                    quit_confirmation,
-                );
-            })?;
-        }
-        SessionState::Overview(overview_state) => {
-            terminal.draw(|frame| {
-                overview::render_with_quit_confirmation(
-                    frame,
-                    overview_state,
-                    review_view.overview(),
-                    now,
-                    quit_confirmation,
-                );
-            })?;
-        }
-        SessionState::ApplyConfirmation(confirmation) => {
-            terminal.draw(|frame| {
-                plan_review::render_apply_confirmation(frame, confirmation, confirmation_view);
-            })?;
-        }
+        SessionState::Review(review) => match review.screen() {
+            ReviewScreen::Raw(_) => {
+                terminal.draw(|frame| {
+                    plan_review::render_with_quit_confirmation(
+                        frame,
+                        review,
+                        review_view,
+                        now,
+                        quit_confirmation,
+                    );
+                })?;
+            }
+            ReviewScreen::Overview => {
+                terminal.draw(|frame| {
+                    overview::render_with_quit_confirmation(
+                        frame,
+                        review,
+                        review_view.overview(),
+                        now,
+                        quit_confirmation,
+                    );
+                })?;
+            }
+            ReviewScreen::ApplyConfirmation { .. } => {
+                terminal.draw(|frame| {
+                    plan_review::render_apply_confirmation(frame, review, confirmation_view);
+                })?;
+            }
+        },
         SessionState::Apply(execution) => {
             terminal.draw(|frame| {
                 execution::render_execution_with_quit_confirmation(
@@ -973,7 +977,6 @@ mod tests {
         },
         plan::PlanAction,
         review::{PlanMetadata, PlanReview, test_support::plan_document},
-        session::ApplyConfirmationState,
     };
     use crate::infra::history::HistoryStore;
     use crate::runtime::{WorkerGuard, finalize_ui_result};
@@ -1874,7 +1877,7 @@ mod tests {
         assert!(!text.contains("q quit"), "{text}");
 
         quit_confirmation = false;
-        assert!(matches!(&state, SessionState::Overview(_)));
+        assert!(state.overview().is_some());
 
         assert!(matches!(
             action_after_quit_confirmation(Action::Quit, true, &mut quit_confirmation),
@@ -2728,31 +2731,29 @@ mod tests {
         panic!("{text} should be visible\n{}", terminal_text(terminal));
     }
 
-    fn review_state() -> SessionState {
-        SessionState::Review(Box::new(ReviewSessionState::new(PlanReview::new(
+    fn review_plan() -> PlanReview {
+        PlanReview::new(
             PathBuf::from("/project"),
             "default".to_owned(),
             plan_document("No changes.\n".to_owned()),
             PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
             Vec::new(),
-        ))))
+        )
+    }
+
+    fn review_state() -> SessionState {
+        SessionState::Review(Box::new(ReviewSessionState::new(review_plan())))
     }
 
     fn overview_state() -> SessionState {
-        let SessionState::Review(review) = review_state() else {
-            unreachable!();
-        };
-        SessionState::Overview(Box::new(session::OverviewSessionState::new(
-            review.review().clone(),
+        SessionState::Review(Box::new(session::test_support::overview_session(
+            review_plan(),
         )))
     }
 
     fn confirmation_state() -> SessionState {
-        let SessionState::Review(review) = review_state() else {
-            unreachable!();
-        };
-        SessionState::ApplyConfirmation(Box::new(ApplyConfirmationState::new(
-            review.review().clone(),
+        SessionState::Review(Box::new(session::test_support::apply_confirmation_session(
+            review_plan(),
         )))
     }
 

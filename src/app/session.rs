@@ -27,17 +27,28 @@ pub(crate) enum SessionOutcome {
 pub(crate) enum SessionState {
     Execution(Box<ExecutionState>),
     Review(Box<ReviewSessionState>),
-    Overview(Box<OverviewSessionState>),
-    ApplyConfirmation(Box<ApplyConfirmationState>),
     Apply(Box<ExecutionState>),
 }
 
+/// The reviewed plan, owned once while the user moves between its screens.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ReviewSessionState {
     review: PlanReview,
+    screen: ReviewScreen,
+    copy_feedback: CopyFeedback,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ReviewScreen {
+    Raw(RawReviewScreen),
+    Overview,
+    ApplyConfirmation { return_to: RawReviewScreen },
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct RawReviewScreen {
     from_overview: bool,
     restored_search_query: Option<String>,
-    copy_feedback: CopyFeedback,
 }
 
 impl ReviewSessionState {
@@ -45,31 +56,7 @@ impl ReviewSessionState {
     pub(crate) fn new(review: PlanReview) -> Self {
         Self {
             review,
-            from_overview: false,
-            restored_search_query: None,
-            copy_feedback: CopyFeedback::default(),
-        }
-    }
-
-    #[must_use]
-    pub(crate) fn new_from_overview(review: PlanReview) -> Self {
-        Self {
-            review,
-            from_overview: true,
-            restored_search_query: None,
-            copy_feedback: CopyFeedback::default(),
-        }
-    }
-
-    #[must_use]
-    pub(crate) fn new_from_overview_with_search(
-        review: PlanReview,
-        restored_search_query: String,
-    ) -> Self {
-        Self {
-            review,
-            from_overview: true,
-            restored_search_query: Some(restored_search_query),
+            screen: ReviewScreen::Raw(RawReviewScreen::default()),
             copy_feedback: CopyFeedback::default(),
         }
     }
@@ -77,82 +64,76 @@ impl ReviewSessionState {
     #[must_use]
     pub(crate) const fn review(&self) -> &PlanReview {
         &self.review
+    }
+
+    #[must_use]
+    pub(crate) const fn screen(&self) -> &ReviewScreen {
+        &self.screen
     }
 
     #[must_use]
     pub(crate) const fn is_from_overview(&self) -> bool {
-        self.from_overview
+        matches!(
+            &self.screen,
+            ReviewScreen::Raw(RawReviewScreen {
+                from_overview: true,
+                ..
+            })
+        )
     }
 
     #[must_use]
     pub(crate) const fn copy_feedback(&self) -> &CopyFeedback {
         &self.copy_feedback
     }
-}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct OverviewSessionState {
-    review: PlanReview,
-    copy_feedback: CopyFeedback,
-}
-
-impl OverviewSessionState {
-    #[must_use]
-    pub(crate) fn new(review: PlanReview) -> Self {
-        Self {
-            review,
-            copy_feedback: CopyFeedback::default(),
+    const fn copy_feedback_mut(&mut self) -> Option<&mut CopyFeedback> {
+        match self.screen {
+            ReviewScreen::Raw(_) | ReviewScreen::Overview => Some(&mut self.copy_feedback),
+            ReviewScreen::ApplyConfirmation { .. } => None,
         }
     }
 
-    #[must_use]
-    pub(crate) const fn review(&self) -> &PlanReview {
-        &self.review
+    // Each screen starts without the previous screen's copy notice.
+    fn show(&mut self, screen: ReviewScreen) {
+        self.screen = screen;
+        self.copy_feedback = CopyFeedback::default();
     }
 
-    #[must_use]
-    pub(crate) const fn copy_feedback(&self) -> &CopyFeedback {
-        &self.copy_feedback
+    fn open_overview(&mut self) {
+        let ReviewScreen::Raw(raw) = &mut self.screen else {
+            return;
+        };
+        if let Some(query) = raw.restored_search_query.take() {
+            self.review.set_search_query(query);
+        }
+        self.show(ReviewScreen::Overview);
     }
-}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ApplyConfirmationState {
-    review: PlanReview,
-    from_overview: bool,
-    restored_search_query: Option<String>,
-}
+    fn open_raw_from_overview(&mut self) {
+        if self.screen != ReviewScreen::Overview {
+            return;
+        }
+        let restored_search_query = self.review.search_query().to_owned();
+        self.review.set_search_query(String::new());
+        self.show(ReviewScreen::Raw(RawReviewScreen {
+            from_overview: true,
+            restored_search_query: Some(restored_search_query),
+        }));
+    }
 
-impl ApplyConfirmationState {
-    #[must_use]
-    pub(crate) const fn new(review: PlanReview) -> Self {
-        Self {
-            review,
-            from_overview: false,
-            restored_search_query: None,
+    fn open_apply_confirmation(&mut self) {
+        if let ReviewScreen::Raw(raw) = &mut self.screen {
+            let return_to = std::mem::take(raw);
+            self.show(ReviewScreen::ApplyConfirmation { return_to });
         }
     }
 
-    fn from_review(review: &ReviewSessionState) -> Self {
-        Self {
-            from_overview: review.from_overview,
-            restored_search_query: review.restored_search_query.clone(),
-            ..Self::new(review.review.clone())
+    fn cancel_apply_confirmation(&mut self) {
+        if let ReviewScreen::ApplyConfirmation { return_to } = &mut self.screen {
+            let raw = std::mem::take(return_to);
+            self.show(ReviewScreen::Raw(raw));
         }
-    }
-
-    fn into_review(self) -> ReviewSessionState {
-        ReviewSessionState {
-            review: self.review,
-            from_overview: self.from_overview,
-            restored_search_query: self.restored_search_query,
-            copy_feedback: CopyFeedback::default(),
-        }
-    }
-
-    #[must_use]
-    pub(crate) const fn review(&self) -> &PlanReview {
-        &self.review
     }
 }
 
@@ -229,18 +210,17 @@ impl SessionState {
     pub(crate) const fn copy_feedback(&self) -> Option<&CopyFeedback> {
         match self {
             Self::Execution(state) | Self::Apply(state) => Some(state.copy_feedback()),
-            Self::Review(state) => Some(state.copy_feedback()),
-            Self::Overview(state) => Some(state.copy_feedback()),
-            Self::ApplyConfirmation(_) => None,
+            Self::Review(state) => match state.screen {
+                ReviewScreen::Raw(_) | ReviewScreen::Overview => Some(state.copy_feedback()),
+                ReviewScreen::ApplyConfirmation { .. } => None,
+            },
         }
     }
 
     pub(crate) fn copy_feedback_mut(&mut self) -> Option<&mut CopyFeedback> {
         match self {
             Self::Execution(state) | Self::Apply(state) => Some(state.copy_feedback_mut()),
-            Self::Review(state) => Some(&mut state.copy_feedback),
-            Self::Overview(state) => Some(&mut state.copy_feedback),
-            Self::ApplyConfirmation(_) => None,
+            Self::Review(state) => state.copy_feedback_mut(),
         }
     }
 
@@ -248,38 +228,38 @@ impl SessionState {
     pub(crate) const fn execution(&self) -> Option<&ExecutionState> {
         match self {
             Self::Execution(state) => Some(state),
-            Self::Review(_) | Self::Overview(_) | Self::ApplyConfirmation(_) | Self::Apply(_) => {
-                None
-            }
+            Self::Review(_) | Self::Apply(_) => None,
         }
     }
 
+    /// The review session while it shows the raw plan.
     #[must_use]
     pub(crate) const fn review(&self) -> Option<&ReviewSessionState> {
         match self {
-            Self::Execution(_)
-            | Self::Overview(_)
-            | Self::ApplyConfirmation(_)
-            | Self::Apply(_) => None,
-            Self::Review(state) => Some(state),
+            Self::Review(state) if matches!(state.screen, ReviewScreen::Raw(_)) => Some(state),
+            Self::Execution(_) | Self::Review(_) | Self::Apply(_) => None,
         }
     }
 
+    /// The review session while it shows the overview.
     #[must_use]
-    pub(crate) const fn overview(&self) -> Option<&OverviewSessionState> {
+    pub(crate) const fn overview(&self) -> Option<&ReviewSessionState> {
         match self {
-            Self::Overview(state) => Some(state),
-            Self::Execution(_) | Self::Review(_) | Self::ApplyConfirmation(_) | Self::Apply(_) => {
-                None
+            Self::Review(state) if matches!(state.screen, ReviewScreen::Overview) => Some(state),
+            Self::Execution(_) | Self::Review(_) | Self::Apply(_) => None,
+        }
+    }
+
+    /// The review session while it asks for apply confirmation.
+    #[must_use]
+    pub(crate) const fn apply_confirmation(&self) -> Option<&ReviewSessionState> {
+        match self {
+            Self::Review(state)
+                if matches!(state.screen, ReviewScreen::ApplyConfirmation { .. }) =>
+            {
+                Some(state)
             }
-        }
-    }
-
-    #[must_use]
-    pub(crate) const fn apply_confirmation(&self) -> Option<&ApplyConfirmationState> {
-        match self {
-            Self::ApplyConfirmation(state) => Some(state),
-            Self::Execution(_) | Self::Review(_) | Self::Overview(_) | Self::Apply(_) => None,
+            Self::Execution(_) | Self::Review(_) | Self::Apply(_) => None,
         }
     }
 
@@ -287,10 +267,7 @@ impl SessionState {
     pub(crate) const fn apply(&self) -> Option<&ExecutionState> {
         match self {
             Self::Apply(state) => Some(state),
-            Self::Execution(_)
-            | Self::Review(_)
-            | Self::Overview(_)
-            | Self::ApplyConfirmation(_) => None,
+            Self::Execution(_) | Self::Review(_) => None,
         }
     }
 
@@ -326,11 +303,9 @@ impl SessionState {
 pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> Option<Effect> {
     match action {
         Action::Execution(ExecutionAction::RequestCancellation) => {
-            let execution = match state {
-                SessionState::Execution(execution) | SessionState::Apply(execution) => execution,
-                SessionState::Review(_)
-                | SessionState::Overview(_)
-                | SessionState::ApplyConfirmation(_) => return None,
+            let (SessionState::Execution(execution) | SessionState::Apply(execution)) = state
+            else {
+                return None;
             };
             if execution.cancellation_requested() {
                 return None;
@@ -381,64 +356,49 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
             None
         }
         Action::ReviewSearchChanged(query) => {
-            if let SessionState::Review(review) = state {
+            if let SessionState::Review(review) = state
+                && matches!(review.screen, ReviewScreen::Raw(_))
+            {
                 review.review.set_search_query(query);
             }
             None
         }
         Action::OpenOverview => {
-            let SessionState::Review(review) = state else {
-                return None;
-            };
-            let mut overview = review.review.clone();
-            if let Some(query) = &review.restored_search_query {
-                overview.set_search_query(query.clone());
+            if let SessionState::Review(review) = state {
+                review.open_overview();
             }
-            *state = SessionState::Overview(Box::new(OverviewSessionState::new(overview)));
             None
         }
         Action::OpenReviewFromOverview { address: _ } => {
-            let SessionState::Overview(overview) = state else {
-                return None;
-            };
-            let restored_search_query = overview.review.search_query().to_owned();
-            let mut review = overview.review.clone();
-            review.set_search_query(String::new());
-            *state = SessionState::Review(Box::new(
-                ReviewSessionState::new_from_overview_with_search(review, restored_search_query),
-            ));
+            if let SessionState::Review(review) = state {
+                review.open_raw_from_overview();
+            }
             None
         }
         Action::ReturnToOverview => {
-            let SessionState::Review(review) = state else {
-                return None;
-            };
-            if !review.is_from_overview() {
-                return None;
+            if let SessionState::Review(review) = state
+                && review.is_from_overview()
+            {
+                review.open_overview();
             }
-            let mut restored = review.review.clone();
-            if let Some(query) = &review.restored_search_query {
-                restored.set_search_query(query.clone());
-            }
-            *state = SessionState::Overview(Box::new(OverviewSessionState::new(restored)));
             None
         }
         Action::OpenApplyConfirmation => {
-            let SessionState::Review(review) = state else {
-                return None;
-            };
-            if review.review.apply_allowed() && review.review.metadata().applyable() {
-                *state = SessionState::ApplyConfirmation(Box::new(
-                    ApplyConfirmationState::from_review(review),
-                ));
+            if let SessionState::Review(review) = state
+                && review.review.apply_allowed()
+                && review.review.metadata().applyable()
+            {
+                review.open_apply_confirmation();
             }
             None
         }
         Action::ConfirmApply(input) => {
-            let SessionState::ApplyConfirmation(confirmation) = state else {
+            let SessionState::Review(confirmation) = state else {
                 return None;
             };
-            if input != confirmation.review.confirmation_input() {
+            if !matches!(confirmation.screen, ReviewScreen::ApplyConfirmation { .. })
+                || input != confirmation.review.confirmation_input()
+            {
                 return None;
             }
             *state = SessionState::Apply(Box::new(ExecutionState::applying_with_previous(
@@ -451,11 +411,9 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
             Some(Effect::StartApply)
         }
         Action::CancelApply => {
-            let SessionState::ApplyConfirmation(confirmation) = state else {
-                return None;
-            };
-            let review = confirmation.as_ref().clone().into_review();
-            *state = SessionState::Review(Box::new(review));
+            if let SessionState::Review(review) = state {
+                review.cancel_apply_confirmation();
+            }
             None
         }
         Action::ApplyCompleted {
@@ -494,24 +452,19 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
                 );
                 Some(Effect::PersistHistory(execution.successful_history()))
             }
-            SessionState::Review(_)
-            | SessionState::Overview(_)
-            | SessionState::ApplyConfirmation(_)
-            | SessionState::Apply(_) => None,
+            SessionState::Review(_) | SessionState::Apply(_) => None,
         },
         Action::Copy(target) => match state {
             SessionState::Execution(execution) | SessionState::Apply(execution) => {
                 execution.copy_effect(target)
             }
-            SessionState::Review(review) if target == CopyTarget::Plan => {
+            SessionState::Review(review)
+                if target == CopyTarget::Plan
+                    && !matches!(review.screen, ReviewScreen::ApplyConfirmation { .. }) =>
+            {
                 Some(copy::plan_effect(&review.review))
             }
-            SessionState::Overview(overview) if target == CopyTarget::Plan => {
-                Some(copy::plan_effect(&overview.review))
-            }
-            SessionState::Review(_)
-            | SessionState::Overview(_)
-            | SessionState::ApplyConfirmation(_) => None,
+            SessionState::Review(_) => None,
         }
         .map(Effect::WriteClipboard),
         Action::CopyCompleted { target, result } => {
@@ -519,8 +472,7 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
                 SessionState::Execution(_) | SessionState::Apply(_) => {
                     target == CopyTarget::Execution
                 }
-                SessionState::Review(_) | SessionState::Overview(_) => target == CopyTarget::Plan,
-                SessionState::ApplyConfirmation(_) => false,
+                SessionState::Review(_) => target == CopyTarget::Plan,
             };
             if let Some(feedback) = state.copy_feedback_mut() {
                 feedback.record(target, result, now, flash);
@@ -536,25 +488,13 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
                     ),
                 )))
             }
+            SessionState::Execution(_) => None,
             SessionState::Review(review) if review.review.apply_entry() => {
                 Some(Effect::Finish(SessionOutcome::ApplyCanceled))
             }
             SessionState::Review(review) => Some(Effect::Finish(SessionOutcome::Reviewed(
                 review.review.metadata().clone(),
             ))),
-            SessionState::Execution(_) => None,
-            SessionState::Overview(overview) if overview.review.apply_entry() => {
-                Some(Effect::Finish(SessionOutcome::ApplyCanceled))
-            }
-            SessionState::Overview(overview) => Some(Effect::Finish(SessionOutcome::Reviewed(
-                overview.review.metadata().clone(),
-            ))),
-            SessionState::ApplyConfirmation(confirmation) if confirmation.review.apply_entry() => {
-                Some(Effect::Finish(SessionOutcome::ApplyCanceled))
-            }
-            SessionState::ApplyConfirmation(confirmation) => Some(Effect::Finish(
-                SessionOutcome::Reviewed(confirmation.review.metadata().clone()),
-            )),
             SessionState::Apply(execution) => execution.result().map(|result| {
                 Effect::Finish(SessionOutcome::Applied {
                     status: match execution.stage() {
@@ -566,6 +506,27 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
                 })
             }),
         },
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::{PlanReview, RawReviewScreen, ReviewScreen, ReviewSessionState};
+
+    pub(crate) fn overview_session(review: PlanReview) -> ReviewSessionState {
+        ReviewSessionState {
+            screen: ReviewScreen::Overview,
+            ..ReviewSessionState::new(review)
+        }
+    }
+
+    pub(crate) fn apply_confirmation_session(review: PlanReview) -> ReviewSessionState {
+        ReviewSessionState {
+            screen: ReviewScreen::ApplyConfirmation {
+                return_to: RawReviewScreen::default(),
+            },
+            ..ReviewSessionState::new(review)
+        }
     }
 }
 
@@ -615,7 +576,7 @@ mod tests {
         update(&mut state, Action::ReviewCompleted(review), now);
 
         assert!(update(&mut state, Action::OpenOverview, now).is_none());
-        let SessionState::Overview(overview) = &state else {
+        let Some(overview) = state.overview() else {
             panic!("overview should be visible");
         };
         assert_eq!(overview.review().search_query(), "api");
@@ -661,6 +622,77 @@ mod tests {
             state
                 .overview()
                 .expect("overview should be restored")
+                .review()
+                .search_query(),
+            "api"
+        );
+    }
+
+    #[test]
+    fn cancelled_confirmation_restores_the_overview_detail_before_returning_to_the_overview() {
+        let now = Instant::now();
+        let mut review = applyable_review();
+        review.set_search_query("api".to_owned());
+        let mut state = SessionState::new(ExecutionState::with_context(
+            now,
+            ExecutionContext::loading("/project"),
+        ));
+        update(&mut state, Action::ReviewCompleted(review), now);
+        update(&mut state, Action::OpenOverview, now);
+        update(
+            &mut state,
+            Action::CopyCompleted {
+                target: CopyTarget::Plan,
+                result: CopyResult::Written,
+            },
+            now,
+        );
+        assert!(
+            state
+                .copy_feedback()
+                .is_some_and(|feedback| feedback.notice().is_some())
+        );
+
+        update(
+            &mut state,
+            Action::OpenReviewFromOverview { address: None },
+            now,
+        );
+        assert!(
+            state
+                .copy_feedback()
+                .is_some_and(|feedback| feedback.notice().is_none())
+        );
+        update(
+            &mut state,
+            Action::ReviewSearchChanged("worker".to_owned()),
+            now,
+        );
+        update(&mut state, Action::OpenApplyConfirmation, now);
+        let confirmation = state
+            .apply_confirmation()
+            .expect("confirmation should open from the overview detail");
+        assert_eq!(confirmation.review().search_query(), "worker");
+        assert!(state.copy_feedback().is_none());
+        assert!(update(&mut state, Action::Copy(CopyTarget::Plan), now).is_none());
+        update(
+            &mut state,
+            Action::ReviewSearchChanged("ignored".to_owned()),
+            now,
+        );
+
+        update(&mut state, Action::CancelApply, now);
+        let raw = state
+            .review()
+            .expect("cancel should restore the raw review, not the overview");
+        assert!(raw.is_from_overview());
+        assert_eq!(raw.review().search_query(), "worker");
+
+        update(&mut state, Action::ReturnToOverview, now);
+        assert_eq!(
+            state
+                .overview()
+                .expect("Esc should return to the overview")
                 .review()
                 .search_query(),
             "api"

@@ -155,10 +155,11 @@ pub(super) fn run(invocation: &Invocation, environments: Vec<Environment>) -> io
                                 std::time::Instant::now(),
                             );
                         }
-                        if matches!(
-                            state.plans()[index].session(),
-                            Some(SessionState::ApplyConfirmation(_))
-                        ) {
+                        if state.plans()[index]
+                            .session()
+                            .and_then(SessionState::apply_confirmation)
+                            .is_some()
+                        {
                             apply = Some(EnvironmentApply::new(index));
                         }
                     }
@@ -257,28 +258,23 @@ fn draw_apply<B: Backend<Error = io::Error>>(
     state: &EnvironmentSession,
     apply: &EnvironmentApply,
 ) -> io::Result<()> {
-    match state.plans()[apply.index].session() {
-        Some(SessionState::ApplyConfirmation(confirmation)) => {
-            terminal.draw(|frame| {
-                plan_review::render_apply_confirmation(
-                    frame,
-                    confirmation,
-                    &apply.confirmation_view,
-                );
-            })?;
-        }
-        Some(SessionState::Apply(execution)) => {
-            terminal.draw(|frame| {
-                execution::render_execution_with_quit_confirmation(
-                    frame,
-                    execution,
-                    apply.execution_view,
-                    Instant::now(),
-                    apply.quit_confirmation,
-                );
-            })?;
-        }
-        _ => {}
+    let Some(session) = state.plans()[apply.index].session() else {
+        return Ok(());
+    };
+    if let Some(confirmation) = session.apply_confirmation() {
+        terminal.draw(|frame| {
+            plan_review::render_apply_confirmation(frame, confirmation, &apply.confirmation_view);
+        })?;
+    } else if let Some(execution) = session.apply() {
+        terminal.draw(|frame| {
+            execution::render_execution_with_quit_confirmation(
+                frame,
+                execution,
+                apply.execution_view,
+                Instant::now(),
+                apply.quit_confirmation,
+            );
+        })?;
     }
     Ok(())
 }
