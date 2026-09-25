@@ -179,7 +179,7 @@ pub(crate) fn environment_overview_with_relations_for_selection(
         .enumerate()
         .map(|(environment, plan)| {
             let mut row_node_ids = empty_row_node_ids(&overview);
-            let Some(review) = plan.review().map(ReviewSessionState::review) else {
+            let Some(state) = plan.review() else {
                 return (
                     environment,
                     EnvironmentRelationGraph {
@@ -189,17 +189,19 @@ pub(crate) fn environment_overview_with_relations_for_selection(
                 );
             };
 
-            let node_inputs = selected_columns.get(&environment).map_or_else(
-                || {
-                    let grouping = review.plan().grouped_changes(review.provider_schemas());
-                    grouped_plan_node_inputs(review, &grouping).0
+            let graph = selected_columns.get(&environment).map_or_else(
+                || state.prepared_overview().relations().clone(),
+                |column| {
+                    let review = state.review();
+                    let node_inputs =
+                        comparison_node_inputs(&overview, *column, review, &mut row_node_ids);
+                    build_relation_graph(review.relations(), &node_inputs)
                 },
-                |column| comparison_node_inputs(&overview, *column, review, &mut row_node_ids),
             );
             (
                 environment,
                 EnvironmentRelationGraph {
-                    graph: Some(build_relation_graph(review.relations(), &node_inputs)),
+                    graph: Some(graph),
                     row_node_ids,
                 },
             )

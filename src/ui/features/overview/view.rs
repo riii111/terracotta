@@ -697,21 +697,41 @@ mod tests {
     }
 
     #[test]
-    fn filtered_repeated_member_keeps_the_group_total_and_complete_node_identity() {
+    fn expanded_and_filtered_members_keep_the_complete_group_node() {
         let state = ReviewSessionState::new(review());
-        let all = OverviewContent::project(&state, "", &BTreeSet::new());
+
+        let collapsed = OverviewContent::project(&state, "", &BTreeSet::new());
+        let expanded = OverviewContent::project(&state, "", &BTreeSet::from([0]));
         let filtered = OverviewContent::project(&state, "[1]", &BTreeSet::new());
 
         let expected_node_id = RelationNodeId::from_addresses([
             "aws_instance.web[0]".to_owned(),
             "aws_instance.web[1]".to_owned(),
         ]);
-        assert_eq!(all.rows[0].node_id, expected_node_id);
-        assert_eq!(state.prepared_overview().repeated(), 2);
+        assert_eq!(collapsed.rows.len(), 1);
+        assert_eq!(collapsed.rows[0].node_id, expected_node_id);
+        assert_eq!(
+            expanded
+                .rows
+                .iter()
+                .map(|row| (row.address.as_str(), row.child))
+                .collect::<Vec<_>>(),
+            [
+                ("aws_instance.web[0]", false),
+                ("aws_instance.web[0]", true),
+                ("aws_instance.web[1]", true),
+            ]
+        );
+        assert!(
+            expanded
+                .rows
+                .iter()
+                .all(|row| row.node_id == expected_node_id)
+        );
         assert_eq!(filtered.rows.len(), 1);
         assert_eq!(filtered.rows[0].count, 1);
         assert_eq!(filtered.rows[0].address, "aws_instance.web[1]");
-        assert_eq!(filtered.rows[0].node_id, all.rows[0].node_id);
+        assert_eq!(filtered.rows[0].node_id, expected_node_id);
     }
 
     #[test]
