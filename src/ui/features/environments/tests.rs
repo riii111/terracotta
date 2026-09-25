@@ -182,6 +182,19 @@ fn text_position(buffer: &ratatui::buffer::Buffer, needle: &str) -> Option<(u16,
     None
 }
 
+fn handle_key_code(
+    view: &mut EnvironmentView,
+    code: KeyCode,
+    size: Size,
+    state: &EnvironmentSession,
+) -> Option<EnvironmentInput> {
+    view.handle_key(KeyEvent::new(code, KeyModifiers::NONE), size, state)
+}
+
+fn render_text(view: &mut EnvironmentView, state: &EnvironmentSession, size: (u16, u16)) -> String {
+    buffer_text(&render_to_buffer(size, |frame| view.render(frame, state)))
+}
+
 #[test]
 fn pending_running_ready_error_and_excluded_remain_distinct_at_supported_sizes() {
     let state = partial_session();
@@ -193,7 +206,7 @@ fn pending_running_ready_error_and_excluded_remain_distinct_at_supported_sizes()
             },
             ..EnvironmentView::default()
         };
-        let text = buffer_text(&render_to_buffer(size, |frame| view.render(frame, &state)));
+        let text = render_text(&mut view, &state, size);
         let markers = if size.0 >= 120 {
             vec![
                 "Pending",
@@ -258,9 +271,7 @@ fn relations_explain_pending_running_error_and_excluded_environments() {
         ..EnvironmentView::default()
     };
 
-    let error = buffer_text(&render_to_buffer((size.width, size.height), |frame| {
-        view.render(frame, &state);
-    }));
+    let error = render_text(&mut view, &state, (size.width, size.height));
     assert!(error.contains("b-error · whole env"), "{error}");
     assert!(error.contains("Plan failed"), "{error}");
 
@@ -270,9 +281,7 @@ fn relations_explain_pending_running_error_and_excluded_environments() {
         (4, "e-hcp", "Plan excluded"),
     ] {
         view.select_environment(next);
-        let rendered = buffer_text(&render_to_buffer((size.width, size.height), |frame| {
-            view.render(frame, &state);
-        }));
+        let rendered = render_text(&mut view, &state, (size.width, size.height));
         assert!(
             rendered.contains(&format!("{status} · whole env")),
             "{rendered}"
@@ -334,9 +343,7 @@ fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
         insta::assert_snapshot!(format!("environment_help_{width}x{height}"), text);
     }
 
-    let wide = buffer_text(&render_to_buffer((160, 60), |frame| {
-        view.render(frame, &state);
-    }));
+    let wide = render_text(&mut view, &state, (160, 60));
     assert!(wide.contains("environment"), "{wide}");
     assert!(
         wide.contains("compare only the selected environment / all environments"),
@@ -365,9 +372,7 @@ fn single_comparison_help_uses_the_changes_pane_name() {
     let mut view = EnvironmentView::default();
     view.help();
 
-    let text = buffer_text(&render_to_buffer((120, 40), |frame| {
-        view.render(frame, &state);
-    }));
+    let text = render_text(&mut view, &state, (120, 40));
 
     assert!(text.contains("focus Changes · prod / Relations"), "{text}");
     assert!(
@@ -385,10 +390,8 @@ fn environment_breadcrumb_uses_the_exploration_root_across_selection_and_single_
     let _ = render_to_buffer((120, 40), |frame| view.render(frame, &state));
 
     for key in [KeyCode::Char(']'), KeyCode::Char('[')] {
-        view.handle_key(KeyEvent::new(key, KeyModifiers::NONE), size, &state);
-        let text = buffer_text(&render_to_buffer((120, 40), |frame| {
-            view.render(frame, &state);
-        }));
+        handle_key_code(&mut view, key, size, &state);
+        let text = render_text(&mut view, &state, (120, 40));
         assert!(
             text.lines()
                 .next()
@@ -400,9 +403,7 @@ fn environment_breadcrumb_uses_the_exploration_root_across_selection_and_single_
 
     let one_result = overview_plan_session(&["prod"]).with_exploration_root("/workspace");
     let mut single_view = EnvironmentView::default();
-    let text = buffer_text(&render_to_buffer((120, 40), |frame| {
-        single_view.render(frame, &one_result);
-    }));
+    let text = render_text(&mut single_view, &one_result, (120, 40));
     assert!(
         text.lines()
             .next()
@@ -421,29 +422,17 @@ fn variable_environment_rows_keep_the_selected_plan_visible() {
     let state = partial_session();
     let mut view = EnvironmentView::default();
     let size = Size::new(90, 12);
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE),
-        size,
-        &state,
-    );
-    view.handle_key(
-        KeyEvent::new(KeyCode::End, KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Char('1'), size, &state);
+    handle_key_code(&mut view, KeyCode::End, size, &state);
 
-    let text = buffer_text(&render_to_buffer((90, 12), |frame| {
-        view.render(frame, &state);
-    }));
+    let text = render_text(&mut view, &state, (90, 12));
 
     assert!(text.contains("> [x] e-hcp"), "{text}");
     assert!(!text.contains("Error"), "{text}");
     assert!(!text.contains("Pending +0"), "{text}");
     assert!(!text.contains("Running +0"), "{text}");
 
-    let text = buffer_text(&render_to_buffer((120, 30), |frame| {
-        view.render(frame, &state);
-    }));
+    let text = render_text(&mut view, &state, (120, 30));
     assert!(text.contains("Error"), "{text}");
     assert!(text.contains("r retry"), "{text}");
 }
@@ -454,79 +443,35 @@ fn help_scroll_keys_do_not_reach_the_environment_overview() {
     let mut view = EnvironmentView::default();
     let size = Size::new(80, 24);
 
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Char('?'), size, &state);
     for character in ['h', 'l', 'g', 'G'] {
-        view.handle_key(
-            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
-            size,
-            &state,
-        );
+        handle_key_code(&mut view, KeyCode::Char(character), size, &state);
     }
     assert!(view.dialog.is_some());
     assert_eq!(view.dialog_scroll, 0);
     assert_eq!(view.focus, EnvironmentPane::Matrix);
-    view.handle_key(
-        KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Down, size, &state);
     assert_eq!(view.dialog_scroll, 1);
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Char('j'), size, &state);
     assert_eq!(view.dialog_scroll, 2);
-    view.handle_key(
-        KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::PageDown, size, &state);
     assert_eq!(view.dialog_scroll, 6);
-    view.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), size, &state);
+    handle_key_code(&mut view, KeyCode::Up, size, &state);
     assert_eq!(view.dialog_scroll, 5);
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Char('k'), size, &state);
     assert_eq!(view.dialog_scroll, 4);
-    view.handle_key(
-        KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::PageUp, size, &state);
     assert_eq!(view.dialog_scroll, 0);
 
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE),
-        size,
-        &state,
-    );
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Char('2'), size, &state);
+    handle_key_code(&mut view, KeyCode::Char('/'), size, &state);
     assert_eq!(view.selection.column, 0);
     assert_eq!(view.matrix.filter(), "");
     assert!(!view.matrix.searching());
 
-    view.handle_key(
-        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Esc, size, &state);
     assert!(view.dialog.is_none());
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Char('2'), size, &state);
     assert_eq!(view.selection.column, 0);
     assert_eq!(view.focus, EnvironmentPane::Matrix);
 }
@@ -538,9 +483,7 @@ fn help_explains_matrix_symbols_and_missing_rows() {
     view.help();
     view.dialog_scroll = u16::MAX;
 
-    let text = buffer_text(&render_to_buffer((120, 60), |frame| {
-        view.render(frame, &state);
-    }));
+    let text = render_text(&mut view, &state, (120, 60));
     let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
 
     for marker in [
@@ -572,43 +515,20 @@ fn ready_review_remains_available_and_quit_requires_confirmation_while_acquiring
     let mut view = EnvironmentView::default();
     let size = Size::new(80, 24);
     render_to_buffer((80, 24), |frame| view.render(frame, &state));
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
-        size,
-        &state,
-    );
-    let raw = buffer_text(&render_to_buffer((80, 24), |frame| {
-        view.render(frame, &state);
-    }));
+    handle_key_code(&mut view, KeyCode::Char('v'), size, &state);
+    let raw = render_text(&mut view, &state, (80, 24));
     assert!(raw.contains("Synthetic plan text"));
     assert!(!raw.contains("a apply"));
-    assert!(
-        view.handle_key(
-            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
-            size,
-            &state
-        )
-        .is_none()
-    );
+    assert!(handle_key_code(&mut view, KeyCode::Char('q'), size, &state).is_none());
     assert!(view.confirming_quit);
     for character in ['h', 'l', 'g', 'G'] {
-        view.handle_key(
-            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
-            size,
-            &state,
-        );
+        handle_key_code(&mut view, KeyCode::Char(character), size, &state);
     }
     assert!(view.confirming_quit);
-    let confirmation = buffer_text(&render_to_buffer((80, 24), |frame| {
-        view.render(frame, &state);
-    }));
+    let confirmation = render_text(&mut view, &state, (80, 24));
     assert!(confirmation.contains("Stop acquiring"));
     assert!(matches!(
-        view.handle_key(
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-            size,
-            &state
-        ),
+        handle_key_code(&mut view, KeyCode::Enter, size, &state),
         Some(EnvironmentInput::Interrupt)
     ));
 }
@@ -619,59 +539,29 @@ fn quit_confirmation_uses_the_execution_state_when_enter_is_pressed() {
     let state = partial_session();
     let mut view = EnvironmentView::default();
 
-    assert!(
-        view.handle_key(
-            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
-            size,
-            &state,
-        )
-        .is_none()
-    );
+    assert!(handle_key_code(&mut view, KeyCode::Char('q'), size, &state).is_none());
     assert!(view.confirming_quit);
-    assert!(
-        view.handle_key(
-            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
-            size,
-            &state,
-        )
-        .is_none()
-    );
+    assert!(handle_key_code(&mut view, KeyCode::Char('q'), size, &state).is_none());
 
-    let acquiring = buffer_text(&render_to_buffer((80, 24), |frame| {
-        view.render(frame, &state);
-    }));
+    let acquiring = render_text(&mut view, &state, (80, 24));
     assert!(acquiring.contains("Stop acquiring environment plans?"));
     assert!(!acquiring.contains("q quit"), "{acquiring}");
     assert!(matches!(
-        view.handle_key(
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-            size,
-            &state,
-        ),
+        handle_key_code(&mut view, KeyCode::Enter, size, &state),
         Some(EnvironmentInput::Interrupt)
     ));
 
     let mut state = partial_session();
     let mut view = EnvironmentView::default();
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Char('q'), size, &state);
     complete_acquisition_with_errors(&mut state);
     assert!(!state.acquiring());
 
-    let completed = buffer_text(&render_to_buffer((80, 24), |frame| {
-        view.render(frame, &state);
-    }));
+    let completed = render_text(&mut view, &state, (80, 24));
     assert!(completed.contains("Quit"), "{completed}");
     assert!(!completed.contains("Stop acquiring"), "{completed}");
     assert!(matches!(
-        view.handle_key(
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-            size,
-            &state,
-        ),
+        handle_key_code(&mut view, KeyCode::Enter, size, &state),
         Some(EnvironmentInput::Quit)
     ));
 }
@@ -684,36 +574,18 @@ fn completed_quit_confirmation_is_visible_at_supported_sizes() {
         for size in [(40, 16), (80, 24), (120, 40)] {
             let terminal_size = Size::new(size.0, size.1);
             let mut view = EnvironmentView::default();
-            let normal = buffer_text(&render_to_buffer(size, |frame| {
-                view.render(frame, &state);
-            }));
+            let normal = render_text(&mut view, &state, size);
             assert!(
-                view.handle_key(
-                    KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
-                    terminal_size,
-                    &state,
-                )
-                .is_none()
+                handle_key_code(&mut view, KeyCode::Char('q'), terminal_size, &state).is_none()
             );
 
-            let confirmation = buffer_text(&render_to_buffer(size, |frame| {
-                view.render(frame, &state);
-            }));
+            let confirmation = render_text(&mut view, &state, size);
             assert!(confirmation.contains("[Enter]"), "{size:?}: {confirmation}");
             assert!(confirmation.contains("[Esc]"), "{size:?}: {confirmation}");
             assert!(confirmation.contains("Quit"), "{size:?}: {confirmation}");
             assert!(!confirmation.contains("q quit"), "{size:?}: {confirmation}");
-            assert!(
-                view.handle_key(
-                    KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
-                    terminal_size,
-                    &state,
-                )
-                .is_none()
-            );
-            let cancelled = buffer_text(&render_to_buffer(size, |frame| {
-                view.render(frame, &state);
-            }));
+            assert!(handle_key_code(&mut view, KeyCode::Esc, terminal_size, &state).is_none());
+            let cancelled = render_text(&mut view, &state, size);
             assert_eq!(cancelled, normal, "{size:?}");
         }
     }
@@ -725,31 +597,15 @@ fn acquiring_quit_confirmation_is_visible_without_footer_actions_at_supported_si
         let state = partial_session();
         let terminal_size = Size::new(size.0, size.1);
         let mut view = EnvironmentView::default();
-        assert!(
-            view.handle_key(
-                KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
-                terminal_size,
-                &state,
-            )
-            .is_none()
-        );
+        assert!(handle_key_code(&mut view, KeyCode::Char('q'), terminal_size, &state).is_none());
 
-        let confirmation = buffer_text(&render_to_buffer(size, |frame| {
-            view.render(frame, &state);
-        }));
+        let confirmation = render_text(&mut view, &state, size);
         assert!(
             confirmation.contains("Stop acquiring"),
             "{size:?}: {confirmation}"
         );
         assert!(!confirmation.contains("q quit"), "{size:?}: {confirmation}");
-        assert!(
-            view.handle_key(
-                KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
-                terminal_size,
-                &state,
-            )
-            .is_none()
-        );
+        assert!(handle_key_code(&mut view, KeyCode::Esc, terminal_size, &state).is_none());
         assert!(!view.confirming_quit);
     }
 }
@@ -767,48 +623,24 @@ fn completed_quit_confirmation_cancel_preserves_overview_state() {
     for character in "api".chars() {
         view.matrix.apply(OverviewInput::SearchChar(character), 3);
     }
-    view.handle_key(
-        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Enter, size, &state);
     for _ in 0..4 {
         view.matrix.apply(OverviewInput::Down, 3);
     }
-    let overview_before = buffer_text(&render_to_buffer((80, 24), |frame| {
-        view.render(frame, &state);
-    }));
+    let overview_before = render_text(&mut view, &state, (80, 24));
 
-    assert!(
-        view.handle_key(
-            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
-            size,
-            &state,
-        )
-        .is_none()
-    );
-    let confirmation = buffer_text(&render_to_buffer((80, 24), |frame| {
-        view.render(frame, &state);
-    }));
+    assert!(handle_key_code(&mut view, KeyCode::Char('q'), size, &state).is_none());
+    let confirmation = render_text(&mut view, &state, (80, 24));
     assert!(confirmation.contains("Quit"), "{confirmation}");
     assert!(!confirmation.contains("q quit"), "{confirmation}");
-    assert!(
-        view.handle_key(
-            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
-            size,
-            &state,
-        )
-        .is_none()
-    );
+    assert!(handle_key_code(&mut view, KeyCode::Esc, size, &state).is_none());
 
     assert!(!view.confirming_quit);
     assert_eq!(view.selection.column, 1);
     assert_eq!(view.focus, EnvironmentPane::Relations);
     assert_eq!(view.maximized, Some(EnvironmentPane::Relations));
     assert_eq!(view.matrix.filter(), "api");
-    let overview_after = buffer_text(&render_to_buffer((80, 24), |frame| {
-        view.render(frame, &state);
-    }));
+    let overview_after = render_text(&mut view, &state, (80, 24));
     assert_eq!(overview_after, overview_before);
 }
 
@@ -819,50 +651,21 @@ fn completed_quit_confirmation_cancel_preserves_raw_review_state() {
     let mut view = EnvironmentView::default();
     let _ = render_to_buffer((80, 24), |frame| view.render(frame, &state));
     view.selection.raw = Some(0);
-    view.handle_key(
-        KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::PageDown, size, &state);
     let review_scroll = view.reviews[0].scroll();
-    let raw_before = buffer_text(&render_to_buffer((80, 24), |frame| {
-        view.render(frame, &state);
-    }));
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
-        size,
-        &state,
-    );
-    let raw_confirmation = buffer_text(&render_to_buffer((80, 24), |frame| {
-        view.render(frame, &state);
-    }));
+    let raw_before = render_text(&mut view, &state, (80, 24));
+    handle_key_code(&mut view, KeyCode::Char('q'), size, &state);
+    let raw_confirmation = render_text(&mut view, &state, (80, 24));
     assert!(raw_confirmation.contains("Quit"), "{raw_confirmation}");
     assert!(!raw_confirmation.contains("q quit"), "{raw_confirmation}");
-    view.handle_key(
-        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Esc, size, &state);
     assert_eq!(view.selection.raw, Some(0));
     assert_eq!(view.reviews[0].scroll(), review_scroll);
-    let raw_after = buffer_text(&render_to_buffer((80, 24), |frame| {
-        view.render(frame, &state);
-    }));
+    let raw_after = render_text(&mut view, &state, (80, 24));
     assert_eq!(raw_after, raw_before);
-    assert!(
-        view.handle_key(
-            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
-            size,
-            &state,
-        )
-        .is_none()
-    );
+    assert!(handle_key_code(&mut view, KeyCode::Char('q'), size, &state).is_none());
     assert!(matches!(
-        view.handle_key(
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-            size,
-            &state,
-        ),
+        handle_key_code(&mut view, KeyCode::Enter, size, &state),
         Some(EnvironmentInput::Quit)
     ));
 }
@@ -880,23 +683,12 @@ fn completed_mixed_results_use_normal_quit_confirmation() {
         (KeyCode::Char('2'), EnvironmentPane::Matrix),
         (KeyCode::Char('3'), EnvironmentPane::Relations),
     ] {
-        view.handle_key(KeyEvent::new(key, KeyModifiers::NONE), size, &state);
+        handle_key_code(&mut view, key, size, &state);
         assert_eq!(view.focus, focus);
-        assert!(
-            view.handle_key(
-                KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
-                size,
-                &state,
-            )
-            .is_none()
-        );
+        assert!(handle_key_code(&mut view, KeyCode::Char('q'), size, &state).is_none());
         assert!(view.confirming_quit);
         assert!(matches!(
-            view.handle_key(
-                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-                size,
-                &state,
-            ),
+            handle_key_code(&mut view, KeyCode::Enter, size, &state),
             Some(EnvironmentInput::Quit)
         ));
     }
@@ -909,29 +701,11 @@ fn q_remains_search_text_in_the_matrix_filter() {
     let mut view = EnvironmentView::default();
     let _ = render_to_buffer((80, 24), |frame| view.render(frame, &state));
 
-    assert!(
-        view.handle_key(
-            KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE),
-            size,
-            &state,
-        )
-        .is_none()
-    );
+    assert!(handle_key_code(&mut view, KeyCode::Char('/'), size, &state).is_none());
     assert!(view.matrix.searching());
-    assert!(
-        view.handle_key(
-            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
-            size,
-            &state,
-        )
-        .is_none()
-    );
+    assert!(handle_key_code(&mut view, KeyCode::Char('q'), size, &state).is_none());
     assert!(!view.confirming_quit);
-    view.handle_key(
-        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Enter, size, &state);
     assert_eq!(view.matrix.filter(), "q");
 }
 
@@ -941,34 +715,20 @@ fn plan_scroll_resets_when_resize_makes_the_full_document_fit() {
     let mut view = EnvironmentView::default();
     let small = Size::new(80, 24);
 
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
-        small,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Char('v'), small, &state);
     for _ in 0..10 {
-        view.handle_key(
-            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
-            small,
-            &state,
-        );
+        handle_key_code(&mut view, KeyCode::Down, small, &state);
     }
 
-    let narrow = buffer_text(&render_to_buffer((80, 24), |frame| {
-        view.render(frame, &state);
-    }));
+    let narrow = render_text(&mut view, &state, (80, 24));
     assert!(narrow.contains("PLAN LINE 10"), "{narrow}");
     assert!(narrow.contains("Line 11/45"), "{narrow}");
 
-    let medium = buffer_text(&render_to_buffer((120, 40), |frame| {
-        view.render(frame, &state);
-    }));
+    let medium = render_text(&mut view, &state, (120, 40));
     assert!(medium.contains("PLAN LINE 10"), "{medium}");
     assert!(medium.contains("Line 11/45"), "{medium}");
 
-    let wide = buffer_text(&render_to_buffer((160, 60), |frame| {
-        view.render(frame, &state);
-    }));
+    let wide = render_text(&mut view, &state, (160, 60));
     assert!(wide.contains("PLAN LINE 00"), "{wide}");
     assert!(wide.contains("Line 1/45"), "{wide}");
     assert_eq!(view.reviews[0].scroll().0, 0);
@@ -981,32 +741,20 @@ fn overview_round_trip_opens_the_full_plan_from_the_top() {
     for size in [(80, 24), (120, 40), (160, 60)] {
         let mut view = EnvironmentView::default();
         let terminal = Size::new(size.0, size.1);
-        view.handle_key(
-            KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
-            terminal,
-            &state,
-        );
-        let opened = buffer_text(&render_to_buffer(size, |frame| view.render(frame, &state)));
+        handle_key_code(&mut view, KeyCode::Char('v'), terminal, &state);
+        let opened = render_text(&mut view, &state, size);
         assert!(opened.contains("PLAN LINE 00"), "{size:?}: {opened}");
         assert!(opened.contains("Line 1/45"), "{size:?}: {opened}");
 
-        view.handle_key(
-            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
-            terminal,
-            &state,
-        );
-        let overview = buffer_text(&render_to_buffer(size, |frame| view.render(frame, &state)));
+        handle_key_code(&mut view, KeyCode::Char('s'), terminal, &state);
+        let overview = render_text(&mut view, &state, size);
         assert!(
             overview.contains("Same change across envs"),
             "{size:?}: {overview}"
         );
-        view.handle_key(
-            KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
-            terminal,
-            &state,
-        );
+        handle_key_code(&mut view, KeyCode::Char('v'), terminal, &state);
 
-        let reopened = buffer_text(&render_to_buffer(size, |frame| view.render(frame, &state)));
+        let reopened = render_text(&mut view, &state, size);
         assert!(reopened.contains("PLAN LINE 00"), "{size:?}: {reopened}");
         assert!(reopened.contains("Line 1/45"), "{size:?}: {reopened}");
     }
@@ -1019,16 +767,10 @@ fn selecting_visible_environments_preserves_matrix_columns_across_layout_changes
     let wide = Size::new(165, 50);
 
     for _ in 0..2 {
-        view.handle_key(
-            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
-            wide,
-            &state,
-        );
+        handle_key_code(&mut view, KeyCode::Down, wide, &state);
     }
 
-    let all_columns = buffer_text(&render_to_buffer((165, 50), |frame| {
-        view.render(frame, &state);
-    }));
+    let all_columns = render_text(&mut view, &state, (165, 50));
     for environment in ["dev", "stg", "prod"] {
         assert!(
             matrix_header(&all_columns).contains(environment),
@@ -1036,25 +778,11 @@ fn selecting_visible_environments_preserves_matrix_columns_across_layout_changes
         );
     }
 
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE),
-        wide,
-        &state,
-    );
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE),
-        wide,
-        &state,
-    );
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE),
-        wide,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Char('b'), wide, &state);
+    handle_key_code(&mut view, KeyCode::Char('b'), wide, &state);
+    handle_key_code(&mut view, KeyCode::Char('f'), wide, &state);
 
-    let maximized = buffer_text(&render_to_buffer((165, 50), |frame| {
-        view.render(frame, &state);
-    }));
+    let maximized = render_text(&mut view, &state, (165, 50));
     for environment in ["dev", "stg", "prod"] {
         assert!(
             matrix_header(&maximized).contains(environment),
@@ -1062,37 +790,21 @@ fn selecting_visible_environments_preserves_matrix_columns_across_layout_changes
         );
     }
 
-    let resized = buffer_text(&render_to_buffer((120, 40), |frame| {
-        view.render(frame, &state);
-    }));
+    let resized = render_text(&mut view, &state, (120, 40));
     for environment in ["dev", "stg", "prod"] {
         assert!(matrix_header(&resized).contains(environment), "{resized}");
     }
 
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
-        wide,
-        &state,
-    );
-    let raw = buffer_text(&render_to_buffer((165, 50), |frame| {
-        view.render(frame, &state);
-    }));
+    handle_key_code(&mut view, KeyCode::Char('v'), wide, &state);
+    let raw = render_text(&mut view, &state, (165, 50));
     assert!(raw.contains("PLAN LINE 00"), "{raw}");
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
-        wide,
-        &state,
-    );
-    let returned = buffer_text(&render_to_buffer((165, 50), |frame| {
-        view.render(frame, &state);
-    }));
+    handle_key_code(&mut view, KeyCode::Char('s'), wide, &state);
+    let returned = render_text(&mut view, &state, (165, 50));
     for environment in ["dev", "stg", "prod"] {
         assert!(matrix_header(&returned).contains(environment), "{returned}");
     }
 
-    let narrowed = buffer_text(&render_to_buffer((59, 24), |frame| {
-        view.render(frame, &state);
-    }));
+    let narrowed = render_text(&mut view, &state, (59, 24));
     assert!(matrix_header(&narrowed).contains("stg"), "{narrowed}");
     assert!(matrix_header(&narrowed).contains("prod"), "{narrowed}");
     assert!(!matrix_header(&narrowed).contains("dev"), "{narrowed}");
@@ -1105,28 +817,16 @@ fn narrow_selection_keeps_the_previous_column_and_manual_scroll_position() {
     let narrow = Size::new(59, 24);
 
     for _ in 0..2 {
-        view.handle_key(
-            KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE),
-            narrow,
-            &state,
-        );
+        handle_key_code(&mut view, KeyCode::Char(']'), narrow, &state);
     }
 
-    let selected = buffer_text(&render_to_buffer((59, 24), |frame| {
-        view.render(frame, &state);
-    }));
+    let selected = render_text(&mut view, &state, (59, 24));
     assert!(matrix_header(&selected).contains("stg"), "{selected}");
     assert!(matrix_header(&selected).contains("prod"), "{selected}");
     assert!(!matrix_header(&selected).contains("dev"), "{selected}");
 
-    view.handle_key(
-        KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
-        narrow,
-        &state,
-    );
-    let manually_scrolled = buffer_text(&render_to_buffer((59, 24), |frame| {
-        view.render(frame, &state);
-    }));
+    handle_key_code(&mut view, KeyCode::Right, narrow, &state);
+    let manually_scrolled = render_text(&mut view, &state, (59, 24));
     assert!(
         matrix_header(&manually_scrolled).contains("prod"),
         "{manually_scrolled}"
@@ -1136,36 +836,18 @@ fn narrow_selection_keeps_the_previous_column_and_manual_scroll_position() {
         "{manually_scrolled}"
     );
 
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
-        narrow,
-        &state,
-    );
-    let raw = buffer_text(&render_to_buffer((59, 24), |frame| {
-        view.render(frame, &state);
-    }));
+    handle_key_code(&mut view, KeyCode::Char('v'), narrow, &state);
+    let raw = render_text(&mut view, &state, (59, 24));
     assert!(raw.contains("PLAN LINE 00"), "{raw}");
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
-        narrow,
-        &state,
-    );
-    let returned = buffer_text(&render_to_buffer((59, 24), |frame| {
-        view.render(frame, &state);
-    }));
+    handle_key_code(&mut view, KeyCode::Char('s'), narrow, &state);
+    let returned = render_text(&mut view, &state, (59, 24));
     assert!(matrix_header(&returned).contains("prod"), "{returned}");
     assert!(!matrix_header(&returned).contains("stg"), "{returned}");
 
     for _ in 0..2 {
-        view.handle_key(
-            KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
-            narrow,
-            &state,
-        );
+        handle_key_code(&mut view, KeyCode::Left, narrow, &state);
     }
-    let manually_scrolled = buffer_text(&render_to_buffer((59, 24), |frame| {
-        view.render(frame, &state);
-    }));
+    let manually_scrolled = render_text(&mut view, &state, (59, 24));
     assert!(
         matrix_header(&manually_scrolled).contains("dev"),
         "{manually_scrolled}"
@@ -1179,9 +861,7 @@ fn narrow_selection_keeps_the_previous_column_and_manual_scroll_position() {
         "{manually_scrolled}"
     );
 
-    let resized_after_manual_scroll = buffer_text(&render_to_buffer((50, 24), |frame| {
-        view.render(frame, &state);
-    }));
+    let resized_after_manual_scroll = render_text(&mut view, &state, (50, 24));
     assert!(
         matrix_header(&resized_after_manual_scroll).contains("dev"),
         "{resized_after_manual_scroll}"
@@ -1199,45 +879,19 @@ fn selecting_an_excluded_environment_keeps_the_matrix_start() {
     let size = Size::new(165, 50);
 
     for _ in 0..2 {
-        view.handle_key(
-            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
-            size,
-            &state,
-        );
+        handle_key_code(&mut view, KeyCode::Down, size, &state);
     }
     render_to_buffer((165, 50), |frame| view.render(frame, &state));
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE),
-        size,
-        &state,
-    );
-    view.handle_key(
-        KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Char('b'), size, &state);
+    handle_key_code(&mut view, KeyCode::Right, size, &state);
     render_to_buffer((165, 50), |frame| view.render(frame, &state));
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE),
-        size,
-        &state,
-    );
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE),
-        size,
-        &state,
-    );
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Char('b'), size, &state);
+    handle_key_code(&mut view, KeyCode::Char('1'), size, &state);
+    handle_key_code(&mut view, KeyCode::Char(' '), size, &state);
 
     for (key, expected) in [(KeyCode::Up, 1), (KeyCode::Down, 2)] {
-        view.handle_key(KeyEvent::new(key, KeyModifiers::NONE), size, &state);
-        let rendered = buffer_text(&render_to_buffer((165, 50), |frame| {
-            view.render(frame, &state);
-        }));
+        handle_key_code(&mut view, key, size, &state);
+        let rendered = render_text(&mut view, &state, (165, 50));
         let header = matrix_header(&rendered);
         assert!(header.contains("stg"), "{rendered}");
         assert!(!header.contains("dev"), "{rendered}");
@@ -1251,34 +905,18 @@ fn filtered_plan_position_tracks_the_visible_source_line_after_resize() {
     let mut state = overview_plan_session(&["a-ready", "b-ready"]);
     let mut view = EnvironmentView::default();
     let small = Size::new(80, 24);
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
-        small,
-        &state,
-    );
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE),
-        small,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Char('v'), small, &state);
+    handle_key_code(&mut view, KeyCode::Char('/'), small, &state);
     for character in "terraform_data.api".chars() {
-        if let Some(EnvironmentInput::Review(index, action)) = view.handle_key(
-            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
-            small,
-            &state,
-        ) {
+        if let Some(EnvironmentInput::Review(index, action)) =
+            handle_key_code(&mut view, KeyCode::Char(character), small, &state)
+        {
             state.update_review(index, *action, std::time::Instant::now());
         }
     }
-    view.handle_key(
-        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        small,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Enter, small, &state);
 
-    let filtered = buffer_text(&render_to_buffer((80, 24), |frame| {
-        view.render(frame, &state);
-    }));
+    let filtered = render_text(&mut view, &state, (80, 24));
     let first_visible_line = usize::from(view.reviews[0].scroll().0) + 1;
     assert!(filtered.contains("PLAN LINE 20"), "{filtered}");
     assert!(
@@ -1286,18 +924,14 @@ fn filtered_plan_position_tracks_the_visible_source_line_after_resize() {
         "{filtered}"
     );
 
-    let medium = buffer_text(&render_to_buffer((120, 40), |frame| {
-        view.render(frame, &state);
-    }));
+    let medium = render_text(&mut view, &state, (120, 40));
     let first_visible_line = usize::from(view.reviews[0].scroll().0) + 1;
     assert!(
         medium.contains(&format!("Line {first_visible_line}/45")),
         "{medium}"
     );
 
-    let wide = buffer_text(&render_to_buffer((160, 60), |frame| {
-        view.render(frame, &state);
-    }));
+    let wide = render_text(&mut view, &state, (160, 60));
     assert!(wide.contains("PLAN LINE 00"), "{wide}");
     assert!(wide.contains("Line 1/45"), "{wide}");
     assert_eq!(view.reviews[0].scroll().0, 0);
@@ -1309,22 +943,12 @@ fn raw_environment_help_explains_bracket_navigation_at_supported_widths() {
     let mut view = EnvironmentView::default();
     let size = Size::new(80, 24);
 
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Char('v'), size, &state);
     assert_eq!(view.selection.raw, Some(0));
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Char('?'), size, &state);
 
     for (width, height) in [(80, 24), (40, 16)] {
-        let text = buffer_text(&render_to_buffer((width, height), |frame| {
-            view.render(frame, &state);
-        }));
+        let text = render_text(&mut view, &state, (width, height));
         let compact = text
             .chars()
             .filter(|character| !character.is_whitespace())
@@ -1343,16 +967,8 @@ fn raw_environment_help_scrolls_by_line_and_page_without_moving_the_plan() {
     let mut view = EnvironmentView::default();
     let size = Size::new(80, 24);
 
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
-        size,
-        &state,
-    );
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Char('v'), size, &state);
+    handle_key_code(&mut view, KeyCode::Char('?'), size, &state);
     let plan_scroll = view.reviews[0].scroll();
 
     for (key, expected) in [
@@ -1363,7 +979,7 @@ fn raw_environment_help_scrolls_by_line_and_page_without_moving_the_plan() {
         (KeyCode::Char('k'), 8),
         (KeyCode::PageUp, 0),
     ] {
-        view.handle_key(KeyEvent::new(key, KeyModifiers::NONE), size, &state);
+        handle_key_code(&mut view, key, size, &state);
         assert_eq!(view.reviews[0].overlay_scroll(), expected, "{key:?}");
     }
 
@@ -1377,18 +993,15 @@ fn small_terminals_keep_cancel_and_quit_operable() {
     for size in [(0, 0), (1, 1), (16, 4), (40, 10)] {
         let mut view = EnvironmentView::default();
         render_to_buffer(size, |frame| view.render(frame, &state));
-        view.handle_key(
-            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+        handle_key_code(
+            &mut view,
+            KeyCode::Char('q'),
             Size::new(size.0, size.1),
             &state,
         );
         render_to_buffer(size, |frame| view.render(frame, &state));
         assert!(matches!(
-            view.handle_key(
-                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-                Size::new(size.0, size.1),
-                &state
-            ),
+            handle_key_code(&mut view, KeyCode::Enter, Size::new(size.0, size.1), &state),
             Some(EnvironmentInput::Interrupt)
         ));
     }
@@ -1399,23 +1012,13 @@ fn environment_sidebar_filters_comparison_without_changing_the_selected_plan() {
     let state = partial_session();
     let mut view = EnvironmentView::default();
     let size = Size::new(160, 60);
-    view.handle_key(
-        KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Down, size, &state);
     assert_eq!(view.selection.column, 1);
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Char(' '), size, &state);
     assert_eq!(view.selection.column, 1);
     assert_eq!(view.selected_environments, Some(vec![0, 2, 3, 4]));
     view.sync(&state);
-    let filtered = buffer_text(&render_to_buffer((160, 60), |frame| {
-        view.render(frame, &state);
-    }));
+    let filtered = render_text(&mut view, &state, (160, 60));
     let header = filtered
         .lines()
         .find(|line| line.contains("Address"))
@@ -1424,26 +1027,16 @@ fn environment_sidebar_filters_comparison_without_changing_the_selected_plan() {
     assert!(columns.contains("a-ready"), "{header}");
     assert!(!columns.contains("b-error"), "{header}");
 
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Char('o'), size, &state);
     assert_eq!(view.selected_environments, Some(vec![1]));
     view.sync(&state);
-    let filtered = buffer_text(&render_to_buffer((160, 60), |frame| {
-        view.render(frame, &state);
-    }));
+    let filtered = render_text(&mut view, &state, (160, 60));
     let header = filtered
         .lines()
         .find(|line| line.contains("Address"))
         .unwrap();
     assert!(header.contains("b-error"), "{header}");
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Char(' '), size, &state);
     assert_eq!(view.selected_environments, Some(vec![1]));
     assert!(
         view.notice
@@ -1451,16 +1044,10 @@ fn environment_sidebar_filters_comparison_without_changing_the_selected_plan() {
             .is_some_and(|notice| notice.to_lowercase().contains("at least one"))
     );
 
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Char('a'), size, &state);
     assert_eq!(view.selected_environments, None);
 
-    let text = buffer_text(&render_to_buffer((80, 24), |frame| {
-        view.render(frame, &state);
-    }));
+    let text = render_text(&mut view, &state, (80, 24));
     assert!(text.contains("b-error"), "{text}");
     assert!(text.contains("Error"), "{text}");
     assert!(
@@ -1474,17 +1061,13 @@ fn sidebar_width_thresholds_restore_the_manual_setting() {
     let state = partial_session();
     let mut view = EnvironmentView::default();
 
-    let wide = buffer_text(&render_to_buffer((120, 40), |frame| {
-        view.render(frame, &state);
-    }));
+    let wide = render_text(&mut view, &state, (120, 40));
     assert_eq!(view.sidebar, SidebarSetting::Open);
     assert_eq!(view.focus, EnvironmentPane::Environments);
     assert!(wide.contains("[1] Envs"));
 
     let mut narrow = EnvironmentView::default();
-    let text = buffer_text(&render_to_buffer((119, 40), |frame| {
-        narrow.render(frame, &state);
-    }));
+    let text = render_text(&mut narrow, &state, (119, 40));
     assert_eq!(narrow.sidebar, SidebarSetting::Closed);
     assert_eq!(narrow.focus, EnvironmentPane::Matrix);
     assert!(!text.contains("[1] Envs"));
@@ -1492,19 +1075,11 @@ fn sidebar_width_thresholds_restore_the_manual_setting() {
     assert!(summary.contains("a-ready"), "{summary}");
     assert!(!summary.contains("b-error"), "{summary}");
 
-    narrow.handle_key(
-        KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE),
-        Size::new(90, 40),
-        &state,
-    );
+    handle_key_code(&mut narrow, KeyCode::Char('b'), Size::new(90, 40), &state);
     assert_eq!(narrow.sidebar, SidebarSetting::Open);
-    let hidden = buffer_text(&render_to_buffer((89, 40), |frame| {
-        narrow.render(frame, &state);
-    }));
+    let hidden = render_text(&mut narrow, &state, (89, 40));
     assert!(!hidden.contains("[1] Envs"));
-    let restored = buffer_text(&render_to_buffer((90, 40), |frame| {
-        narrow.render(frame, &state);
-    }));
+    let restored = render_text(&mut narrow, &state, (90, 40));
     assert!(restored.contains("[1] Envs"));
 }
 
@@ -1528,17 +1103,12 @@ fn sidebar_cannot_be_maximized_and_footer_keeps_help_and_quit_last() {
     let state = partial_session();
     let size = ratatui::layout::Size::new(120, 40);
     let mut view = EnvironmentView::default();
-    let press = |view: &mut EnvironmentView, code| {
-        view.handle_key(KeyEvent::new(code, KeyModifiers::NONE), size, &state);
-    };
 
     let _ = render_to_buffer((120, 40), |frame| view.render(frame, &state));
-    press(&mut view, KeyCode::Char('f'));
+    handle_key_code(&mut view, KeyCode::Char('f'), size, &state);
     assert_eq!(view.maximized, None);
     assert_eq!(view.focus, EnvironmentPane::Environments);
-    let focused = buffer_text(&render_to_buffer((120, 40), |frame| {
-        view.render(frame, &state);
-    }));
+    let focused = render_text(&mut view, &state, (120, 40));
     let footer = focused
         .lines()
         .rev()
@@ -1551,50 +1121,42 @@ fn sidebar_cannot_be_maximized_and_footer_keeps_help_and_quit_last() {
     assert!(!footer.contains("f maximize"), "{footer}");
     assert!(footer.ends_with("? help | q quit"), "{footer}");
 
-    press(&mut view, KeyCode::Char('?'));
-    let help = buffer_text(&render_to_buffer((120, 40), |frame| {
-        view.render(frame, &state);
-    }));
+    handle_key_code(&mut view, KeyCode::Char('?'), size, &state);
+    let help = render_text(&mut view, &state, (120, 40));
     assert!(
         help.contains("maximize or restore [2] Compare / [3] Relations"),
         "{help}"
     );
     assert!(!help.contains("maximize or restore [1]"), "{help}");
-    press(&mut view, KeyCode::Esc);
+    handle_key_code(&mut view, KeyCode::Esc, size, &state);
 
-    press(&mut view, KeyCode::Char('b'));
+    handle_key_code(&mut view, KeyCode::Char('b'), size, &state);
     assert_eq!(view.sidebar, SidebarSetting::Closed);
     assert_eq!(view.focus, EnvironmentPane::Matrix);
-    press(&mut view, KeyCode::Char('f'));
+    handle_key_code(&mut view, KeyCode::Char('f'), size, &state);
     assert_eq!(view.maximized, Some(EnvironmentPane::Matrix));
-    let maximized = buffer_text(&render_to_buffer((120, 40), |frame| {
-        view.render(frame, &state);
-    }));
-    press(&mut view, KeyCode::Char('b'));
+    let maximized = render_text(&mut view, &state, (120, 40));
+    handle_key_code(&mut view, KeyCode::Char('b'), size, &state);
     assert_eq!(view.sidebar, SidebarSetting::Closed);
     assert_eq!(view.maximized, Some(EnvironmentPane::Matrix));
     assert!(maximized.contains("[2] Compare"), "{maximized}");
 
-    let hidden = buffer_text(&render_to_buffer((89, 40), |frame| {
-        view.render(frame, &state);
-    }));
+    let hidden = render_text(&mut view, &state, (89, 40));
     assert!(!hidden.contains("[1] Envs"), "{hidden}");
     assert_eq!(view.maximized, Some(EnvironmentPane::Matrix));
-    let restored_width = buffer_text(&render_to_buffer((90, 40), |frame| {
-        view.render(frame, &state);
-    }));
+    let restored_width = render_text(&mut view, &state, (90, 40));
     assert!(!restored_width.contains("[1] Envs"), "{restored_width}");
 
-    press(&mut view, KeyCode::Char('1'));
+    handle_key_code(&mut view, KeyCode::Char('1'), size, &state);
     assert_eq!(view.maximized, None);
     assert_eq!(view.focus, EnvironmentPane::Environments);
     assert_eq!(view.sidebar, SidebarSetting::Open);
-    press(&mut view, KeyCode::Char('b'));
+    handle_key_code(&mut view, KeyCode::Char('b'), size, &state);
     assert_eq!(view.sidebar, SidebarSetting::Closed);
-    press(&mut view, KeyCode::Char('3'));
-    press(&mut view, KeyCode::Char('f'));
+    handle_key_code(&mut view, KeyCode::Char('3'), size, &state);
+    handle_key_code(&mut view, KeyCode::Char('f'), size, &state);
     assert_eq!(view.maximized, Some(EnvironmentPane::Relations));
-    press(&mut view, KeyCode::Esc);
+    handle_key_code(&mut view, KeyCode::Esc, size, &state);
     assert_eq!(view.maximized, None);
     assert_eq!(view.focus, EnvironmentPane::Relations);
 }
@@ -1613,9 +1175,7 @@ fn single_environment_hides_sidebar_and_its_shortcuts() {
     );
     let size = Size::new(120, 40);
     let mut view = EnvironmentView::default();
-    let text = buffer_text(&render_to_buffer((120, 40), |frame| {
-        view.render(frame, &state);
-    }));
+    let text = render_text(&mut view, &state, (120, 40));
     assert_eq!(view.sidebar, SidebarSetting::Closed);
     assert!(!text.contains("[1] Envs"), "{text}");
     assert!(text.contains("[3] Relations"), "{text}");
@@ -1627,22 +1187,16 @@ fn single_environment_hides_sidebar_and_its_shortcuts() {
     assert!(text.contains("2/3 focus"), "{text}");
 
     for key in [KeyCode::Char('1'), KeyCode::Char('b')] {
-        view.handle_key(KeyEvent::new(key, KeyModifiers::NONE), size, &state);
+        handle_key_code(&mut view, key, size, &state);
         assert_eq!(view.sidebar, SidebarSetting::Closed);
         assert_eq!(view.focus, EnvironmentPane::Matrix);
     }
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Char('3'), size, &state);
     assert_eq!(view.focus, EnvironmentPane::Relations);
     assert_eq!(view.active_pane(size.width), EnvironmentPane::Relations);
 
     view.help();
-    let help = buffer_text(&render_to_buffer((120, 40), |frame| {
-        view.render(frame, &state);
-    }));
+    let help = render_text(&mut view, &state, (120, 40));
     assert!(!help.contains("1 opens Envs"), "{help}");
     assert!(!help.contains("toggle the Envs sidebar"), "{help}");
     assert!(help.contains("Current: Overview"), "{help}");
@@ -1679,20 +1233,12 @@ fn message_dialog_scrolls_through_long_error_details() {
     let mut view = EnvironmentView::default();
     let _ = view.open(&state, index);
     let size = Size::new(40, 16);
-    let top = buffer_text(&render_to_buffer((40, 16), |frame| {
-        view.render(frame, &state);
-    }));
+    let top = render_text(&mut view, &state, (40, 16));
     assert!(top.contains("Diagnostic line 00"), "{top}");
     assert!(top.contains("Diagnostic line 12"), "{top}");
 
-    view.handle_key(
-        KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
-        size,
-        &state,
-    );
-    let scrolled = buffer_text(&render_to_buffer((40, 16), |frame| {
-        view.render(frame, &state);
-    }));
+    handle_key_code(&mut view, KeyCode::PageDown, size, &state);
+    let scrolled = render_text(&mut view, &state, (40, 16));
     assert!(!scrolled.contains("Diagnostic line 00"), "{scrolled}");
     assert!(scrolled.contains("Diagnostic line 04"), "{scrolled}");
 }
@@ -1797,9 +1343,7 @@ fn pending_production_environment_shows_its_badge_before_the_plan_finishes() {
     );
     let mut view = EnvironmentView::default();
 
-    let text = buffer_text(&render_to_buffer((120, 40), |frame| {
-        view.render(frame, &state);
-    }));
+    let text = render_text(&mut view, &state, (120, 40));
 
     assert!(text.contains("prod [PROD]"), "{text}");
     assert!(text.contains("Pending"), "{text}");
@@ -1875,15 +1419,16 @@ fn ready_review_keeps_position_filter_counts_and_copy_notices() {
             ..EnvironmentView::default()
         };
 
-        let text = buffer_text(&render_to_buffer(size, |frame| view.render(frame, &state)));
+        let text = render_text(&mut view, &state, size);
         assert!(text.contains("Esc overview"), "{size:?}: {text}");
         assert!(text.contains("1/2"), "{size:?}: {text}");
         for (result, notice) in [
             (CopyResult::Written, "Copied."),
             (CopyResult::Failed, "Copy failed."),
         ] {
-            let Some(EnvironmentInput::Review(index, action)) = view.handle_key(
-                KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+            let Some(EnvironmentInput::Review(index, action)) = handle_key_code(
+                &mut view,
+                KeyCode::Char('y'),
                 Size::new(size.0, size.1),
                 &state,
             ) else {
@@ -1902,7 +1447,7 @@ fn ready_review_keeps_position_filter_counts_and_copy_notices() {
                 std::time::Instant::now(),
             );
 
-            let text = buffer_text(&render_to_buffer(size, |frame| view.render(frame, &state)));
+            let text = render_text(&mut view, &state, size);
             assert!(text.contains(notice), "{size:?}: {text}");
             assert!(text.contains("Esc overview"), "{size:?}: {text}");
         }
@@ -1913,9 +1458,7 @@ fn ready_review_keeps_position_filter_counts_and_copy_notices() {
             std::time::Instant::now(),
         );
 
-        let text = buffer_text(&render_to_buffer(size, |frame| {
-            view.render(frame, &filtered);
-        }));
+        let text = render_text(&mut view, &filtered, size);
         assert!(text.contains("No matches"), "{size:?}: {text}");
         assert!(text.contains("Esc clear"), "{size:?}: {text}");
         assert!(!text.contains("Esc overview"), "{size:?}: {text}");
@@ -1972,27 +1515,13 @@ fn apply_key_in_plan_detail_targets_only_the_open_environment() {
     let mut view = EnvironmentView::default();
     let size = Size::new(120, 40);
     render_to_buffer((120, 40), |frame| view.render(frame, &state));
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE),
-        size,
-        &state,
-    );
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
-        size,
-        &state,
-    );
-    let raw = buffer_text(&render_to_buffer((120, 40), |frame| {
-        view.render(frame, &state);
-    }));
+    handle_key_code(&mut view, KeyCode::Char(']'), size, &state);
+    handle_key_code(&mut view, KeyCode::Char('v'), size, &state);
+    let raw = render_text(&mut view, &state, (120, 40));
     assert!(raw.contains("b-prod plan"), "{raw}");
     assert!(raw.contains("a apply"), "{raw}");
 
-    let input = view.handle_key(
-        KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    let input = handle_key_code(&mut view, KeyCode::Char('a'), size, &state);
     assert!(matches!(
         input,
         Some(EnvironmentInput::Review(1, action))
@@ -2007,22 +1536,9 @@ fn apply_key_waits_for_every_environment_plan() {
     let mut view = EnvironmentView::default();
     let size = Size::new(120, 40);
     render_to_buffer((120, 40), |frame| view.render(frame, &state));
-    view.handle_key(
-        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
-        size,
-        &state,
-    );
+    handle_key_code(&mut view, KeyCode::Char('v'), size, &state);
 
-    assert!(
-        view.handle_key(
-            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
-            size,
-            &state,
-        )
-        .is_none()
-    );
-    let dialog = buffer_text(&render_to_buffer((120, 40), |frame| {
-        view.render(frame, &state);
-    }));
+    assert!(handle_key_code(&mut view, KeyCode::Char('a'), size, &state).is_none());
+    let dialog = render_text(&mut view, &state, (120, 40));
     assert!(dialog.contains("every environment plan"), "{dialog}");
 }

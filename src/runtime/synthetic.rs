@@ -654,7 +654,7 @@ mod tests {
     use ratatui::backend::TestBackend;
 
     use super::*;
-    use crate::app::execution::ExecutionStage;
+    use crate::{app::execution::ExecutionStage, runtime::event_loop::test_support::terminal_text};
 
     struct SyntheticSession {
         state: SessionState,
@@ -725,16 +725,7 @@ mod tests {
                 self.quit_confirmation,
             )
             .expect("synthetic screen should render");
-            let buffer = terminal.backend().buffer();
-            let area = buffer.area();
-            (area.y..area.bottom())
-                .map(|y| {
-                    (area.x..area.right())
-                        .map(|x| buffer.cell((x, y)).expect("test cell").symbol())
-                        .collect::<String>()
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
+            terminal_text(terminal)
         }
     }
 
