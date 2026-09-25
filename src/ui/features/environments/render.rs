@@ -884,16 +884,7 @@ fn overview_footer(context: OverviewFooterContext<'_>) -> Vec<Line<'static>> {
         );
     }
     if width < 45 {
-        return compact_overview_footer(
-            width,
-            focus,
-            expanded,
-            comparison_toggle_available,
-            enter_action,
-            selected,
-            maximized,
-            environment_navigation,
-        );
+        return compact_overview_footer(context);
     }
     let mut items = Vec::new();
     if focus == environments::EnvironmentPane::Environments {
@@ -973,16 +964,18 @@ fn overview_common_footer_items(
     items
 }
 
-fn compact_overview_footer(
-    width: u16,
-    focus: environments::EnvironmentPane,
-    expanded: Option<bool>,
-    comparison_toggle_available: bool,
-    enter_action: Option<MatrixEnterAction>,
-    selected: Option<&EnvironmentPlan>,
-    maximized: bool,
-    environment_navigation: EnvironmentNavigation,
-) -> Vec<Line<'static>> {
+fn compact_overview_footer(context: OverviewFooterContext<'_>) -> Vec<Line<'static>> {
+    let OverviewFooterContext {
+        width,
+        focus,
+        expanded,
+        comparison_toggle_available,
+        enter_action,
+        selected,
+        maximized,
+        environment_navigation,
+        ..
+    } = context;
     let mut items = Vec::new();
     if focus == environments::EnvironmentPane::Environments {
         items.push((100, overview_footer_hint(&["Enter"], "open plan")));
