@@ -310,6 +310,26 @@ def assert_screen_unchanged(name, timeout=1):
     observed.append(name)
 
 
+def stacked_overview_panes(current):
+    lines = current.splitlines()
+    changes = next((index for index, line in enumerate(lines) if "[2] Changes" in line), None)
+    relations = next((index for index, line in enumerate(lines) if "[3] Relations" in line), None)
+    # Side-by-side panes share heading rows, so row ranges below would mix the two panes.
+    if changes is None or relations is None or changes >= relations:
+        raise RuntimeError(f"Overview panes are not stacked vertically; screen={current!r}")
+    return lines[changes + 1:relations], lines[relations + 1:]
+
+
+def assert_first_overview_row_selected(name):
+    current = screen.text()
+    changes, relations = stacked_overview_panes(current)
+    if not any(line.startswith("│> ") and "terraform_data.api" in line for line in changes):
+        raise RuntimeError(f"first Changes row is not selected; screen={current!r}")
+    if not any(line.startswith("│> ") and "terraform_data.api" in line for line in relations):
+        raise RuntimeError(f"relation of the first row is not selected; screen={current!r}")
+    observed.append(name)
+
+
 def send_text(text):
     for character in text:
         send_key(character.encode())
@@ -665,9 +685,10 @@ try:
         exit_code = quit_with_enter()
     elif scenario == "default_overview":
         wait_parts(
-            ["Ready", "[2] Changes", "[3] Relations", "terraform_data.server[*]"],
+            ["Ready", "[2] Changes", "[3] Relations", "terraform_data.server[*]", "q quit"],
             "default_overview",
         )
+        assert_first_overview_row_selected("default_overview_first_row_selected")
         send_key(b"q")
         send_key(b"\r")
         exit_code = wait_exit()

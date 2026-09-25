@@ -422,7 +422,7 @@ Plan: 0 to add, 1 to change, 0 to destroy.
   "configuration": {
     "root_module": {
       "resources": [
-        {"mode":"managed","type":"terraform_data","name":"api","expressions":{"input":{"references":["terraform_data.server[\"one\"]"]}}},
+        {"mode":"managed","type":"terraform_data","name":"api","expressions":{"input":{"references":["terraform_data.server.id","terraform_data.server"]}}},
         {"mode":"managed","type":"terraform_data","name":"server","expressions":{}}
       ]
     }
@@ -740,14 +740,15 @@ Plan: 0 to add, 3 to change, 0 to destroy.
     }
 
     #[test]
-    fn pty_no_argument_terraform_plan_opens_single_environment_overview() {
+    fn pty_no_argument_plan_opens_overview_with_the_first_row_and_relation_selected() {
         let fixture = Fixture::new();
-        fixture.use_overview_plan();
+        fixture.use_overview_relations_plan();
         let result = fixture.run_with_arguments("default_overview", 100, 24, "", &[]);
 
         assert_eq!(result.exit_code, 0);
         result.assert_restored();
         result.observed("default_overview");
+        result.observed("default_overview_first_row_selected");
         assert!(fixture.invocation_arguments()[0].starts_with("plan -detailed-exitcode -out="));
         assert_eq!(fixture.invoked_tools(), vec!["terraform".to_owned(); 6]);
         fixture.assert_saved_plan_removed();
