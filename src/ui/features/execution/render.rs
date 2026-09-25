@@ -1950,10 +1950,10 @@ mod tests {
                     bars: (true, true),
                 },
                 ReservationCase {
-                    name: "vertical_only_narrower_fullwidth",
+                    name: "vertical_only_narrower",
                     extra_lines: 1,
                     width_delta: -1,
-                    fill: 'あ',
+                    fill: 'x',
                     bars: (true, false),
                 },
                 ReservationCase {
@@ -1961,6 +1961,13 @@ mod tests {
                     extra_lines: 1,
                     width_delta: 0,
                     fill: 'x',
+                    bars: (true, true),
+                },
+                ReservationCase {
+                    name: "both_equal_fullwidth",
+                    extra_lines: 1,
+                    width_delta: 0,
+                    fill: 'あ',
                     bars: (true, true),
                 },
             ] {
