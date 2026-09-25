@@ -330,7 +330,7 @@ fn layout_with_content(
     };
     let footer_message = footer_status.as_ref().map(|(message, _)| message.as_str());
     let available_footer_width = footer::available_width(panel_width, footer_message);
-    let normal_footer_lines = footer::layout_with_notice(
+    let normal_footer_lines = footer::layout_prioritized(
         footer_items(
             searching,
             applyable,
@@ -339,8 +339,7 @@ fn layout_with_content(
             navigation,
             available_footer_width,
         ),
-        panel_width,
-        footer_message,
+        available_footer_width,
     );
     let normal_required = footer::layout_with_notice(
         required_footer_items(searching, content.matches.len(), filter_visible, navigation),
@@ -463,12 +462,19 @@ fn common_footer_height(
                     navigation,
                     footer::available_width(width, notice),
                 ),
-                required_footer_items(false, match_count, false, navigation),
-                required_footer_items(true, match_count, true, navigation),
-                required_footer_items(false, match_count.max(2), true, navigation),
+                prioritized(required_footer_items(false, match_count, false, navigation)),
+                prioritized(required_footer_items(true, match_count, true, navigation)),
+                prioritized(required_footer_items(
+                    false,
+                    match_count.max(2),
+                    true,
+                    navigation,
+                )),
             ]
             .into_iter()
-            .map(move |items| footer::layout_with_notice(items, width, notice).len())
+            .map(move |items| {
+                footer::layout_prioritized(items, footer::available_width(width, notice)).len()
+            })
         })
         .max()
         .unwrap_or(1)
@@ -1689,6 +1695,7 @@ fn horizontal_offset(start: usize, end: usize, line_width: usize, width: u16) ->
     u16::try_from(offset.min(line_width.saturating_sub(width))).unwrap_or(u16::MAX)
 }
 
+// Apply has the lowest priority so narrow footers keep help and quit reachable.
 fn footer_items(
     searching: bool,
     applyable: bool,
@@ -1696,42 +1703,52 @@ fn footer_items(
     filtered: bool,
     navigation: ReviewNavigation,
     width: u16,
-) -> Vec<Line<'static>> {
+) -> Vec<(u8, Line<'static>)> {
+    let apply = |description| applyable.then(|| (0, footer::hint(&["a"], description)));
     let mut items = if searching {
         vec![
             footer::hint(&["Enter"], "confirm"),
             footer::hint(&["Esc"], "cancel"),
         ]
+        .into_iter()
+        .map(|item| (1, item))
+        .collect()
     } else if filtered {
-        let mut items = vec![
+        let mut items = [
             footer::hint(&["Esc"], "clear / edit"),
             footer::hint(&["y"], "copy all"),
             footer::hint(&["?"], "help"),
             footer::hint(&["q"], "quit"),
-        ];
-        if applyable {
-            items.push(footer::hint(&["a"], "apply all"));
-        }
+        ]
+        .into_iter()
+        .map(|item| (1, item))
+        .collect::<Vec<_>>();
+        items.extend(apply("apply all"));
         items
     } else {
         let mut items = if navigation == ReviewNavigation::Standalone && width >= 29 {
             vec![
-                footer::hint(&["s"], "overview"),
-                footer::hint(&["/"], "filter"),
+                (1, footer::hint(&["s"], "overview")),
+                (1, footer::hint(&["/"], "filter")),
             ]
         } else {
-            vec![footer::hint(&["/"], "filter")]
+            vec![(1, footer::hint(&["/"], "filter"))]
         };
-        if applyable {
-            items.push(footer::hint(&["a"], "apply"));
-        }
-        items.extend([footer::hint(&["?"], "help"), footer::hint(&["q"], "quit")]);
+        items.extend(apply("apply"));
+        items.extend([
+            (1, footer::hint(&["?"], "help")),
+            (1, footer::hint(&["q"], "quit")),
+        ]);
         items
     };
     if navigation == ReviewNavigation::Environments && !searching && !filtered {
-        items.insert(0, footer::hint(&["Esc"], "overview"));
+        items.insert(0, (1, footer::hint(&["Esc"], "overview")));
     }
     items
+}
+
+fn prioritized(items: Vec<Line<'static>>) -> Vec<(u8, Line<'static>)> {
+    items.into_iter().map(|item| (1, item)).collect()
 }
 
 fn required_footer_items(
@@ -4377,8 +4394,26 @@ End of synthetic plan body."#;
         }
 
         #[test]
+        fn narrow_footer_drops_apply_before_help_and_quit() {
+            for width in 24..=28 {
+                let lines = footer::layout_prioritized(
+                    footer_items(false, true, 0, false, ReviewNavigation::Environments, width),
+                    width,
+                );
+                let text = lines
+                    .iter()
+                    .flat_map(|line| line.spans.iter())
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>();
+
+                assert!(text.contains("? help"), "width {width}: {text}");
+                assert!(text.contains("q quit"), "width {width}: {text}");
+            }
+        }
+
+        #[test]
         fn single_environment_footer_shows_overview_when_it_fits() {
-            let wide = footer::layout_with_notice(
+            let wide = footer::layout_prioritized(
                 footer_items(
                     false,
                     true,
@@ -4387,8 +4422,7 @@ End of synthetic plan body."#;
                     ReviewNavigation::Standalone,
                     footer::available_width(80, Some("Line 1/43")),
                 ),
-                80,
-                Some("Line 1/43"),
+                footer::available_width(80, Some("Line 1/43")),
             );
             let wide_text = wide
                 .iter()
@@ -4400,7 +4434,7 @@ End of synthetic plan body."#;
             assert!(wide_text.starts_with("s overview"), "{wide_text}");
             assert!(!wide_text.contains("y copy plan"), "{wide_text}");
 
-            let narrow = footer::layout_with_notice(
+            let narrow = footer::layout_prioritized(
                 footer_items(
                     false,
                     true,
@@ -4409,8 +4443,7 @@ End of synthetic plan body."#;
                     ReviewNavigation::Standalone,
                     footer::available_width(24, Some("L1/43")),
                 ),
-                24,
-                Some("L1/43"),
+                footer::available_width(24, Some("L1/43")),
             );
             let narrow_text = narrow
                 .iter()
