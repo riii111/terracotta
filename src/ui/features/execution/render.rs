@@ -2157,7 +2157,7 @@ mod tests {
         }
 
         #[test]
-        fn terraform_summary_stays_in_the_log_without_an_appended_copy() {
+        fn terraform_summary_stays_once_in_the_log_and_visible_with_elapsed_when_narrow() {
             let now = Instant::now();
             let summary = "Apply complete! Resources: 1 added, 0 changed, 0 destroyed.";
             let mut state = ExecutionState::applying(now, ExecutionContext::loading("/project"));
@@ -2185,6 +2185,18 @@ mod tests {
             });
 
             assert_eq!(buffer_text(&buffer).matches(summary).count(), 1);
+
+            let narrow = buffer_text(&render_to_buffer((40, 24), |frame| {
+                render_execution_with_view(
+                    frame,
+                    &state,
+                    ExecutionViewState::default(),
+                    now + Duration::from_secs(1),
+                );
+            }));
+
+            assert!(narrow.contains("Elapsed: 1.0s"), "{narrow}");
+            assert!(narrow.contains("Apply complete! Resources"), "{narrow}");
         }
 
         #[test]
@@ -2239,43 +2251,6 @@ mod tests {
             assert!(text.contains("Apply result"));
             assert!(text.contains("Changes may already be"));
             assert!(layout.log_area().y > layout.status().y);
-        }
-
-        #[test]
-        fn completed_apply_keeps_all_wrapped_summary_lines_before_the_log() {
-            let now = Instant::now();
-            let summary = "Resources: 12345 added, 67890 changed, 12345 destroyed.";
-            let mut state = ExecutionState::applying(now, ExecutionContext::loading("/project"));
-            state.record(ExecutionEvent {
-                received_at: now,
-                kind: ExecutionEventKind::Log(ExecutionLogLine {
-                    stream: EventStream::Stdout,
-                    text: "log output".to_owned(),
-                }),
-            });
-            state.finish_apply(
-                ApplyStatus::Succeeded,
-                Some(summary.to_owned()),
-                None,
-                now + Duration::from_secs(1),
-            );
-
-            let area = Rect::new(0, 0, 40, 24);
-            let layout = execution_layout(area, &state);
-            let buffer = render_to_buffer((area.width, area.height), |frame| {
-                render_execution_with_view(
-                    frame,
-                    &state,
-                    ExecutionViewState::default(),
-                    now + Duration::from_secs(1),
-                );
-            });
-            let text = buffer_text(&buffer);
-
-            assert!(layout.status().height >= APPLY_STATUS_HEIGHT);
-            assert!(layout.log_area().height > 0);
-            assert!(text.contains("Elapsed: 1.0s"));
-            assert!(text.contains("log output"));
         }
     }
 

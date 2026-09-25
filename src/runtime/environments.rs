@@ -187,7 +187,6 @@ pub(super) fn run(invocation: &Invocation, environments: Vec<Environment>) -> io
     })
 }
 
-// The apply confirmation and progress of the one environment whose plan detail started it.
 struct EnvironmentApply {
     index: usize,
     execution_view: execution::ExecutionViewState,

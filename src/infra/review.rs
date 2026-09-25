@@ -768,7 +768,7 @@ mod tests {
     }
 
     #[test]
-    fn marks_a_native_configuration_changed_after_git_collection_as_incomplete() {
+    fn marks_native_configurations_changed_or_deleted_after_git_collection_as_incomplete() {
         let repository = TestRepository::new();
         repository.write(
             "main.tf",
@@ -777,6 +777,10 @@ mod tests {
         repository.write(
             "second.tf",
             "resource \"terraform_data\" \"second\" {\n  input = \"head\"\n}\n",
+        );
+        repository.write(
+            "third.tf",
+            "resource \"terraform_data\" \"third\" {\n  input = \"head\"\n}\n",
         );
         repository.commit("initial");
         repository.write(
@@ -792,46 +796,22 @@ mod tests {
                     "second.tf",
                     "resource \"terraform_data\" \"second\" {\n  input = \"unintended\"\n}\n",
                 );
-            },
-        );
-
-        assert!(review.analysis_issues().iter().any(|issue| {
-            issue.kind() == AnalysisIssueKind::ConfigurationChanged
-                && issue.path().is_some_and(|path| path.ends_with("second.tf"))
-        }));
-        assert!(review.attributions()[0].needs_review());
-    }
-
-    #[test]
-    fn marks_a_native_configuration_deleted_after_git_collection_as_incomplete() {
-        let repository = TestRepository::new();
-        repository.write(
-            "main.tf",
-            "resource \"terraform_data\" \"value\" {\n  input = \"head\"\n}\n",
-        );
-        repository.write(
-            "second.tf",
-            "resource \"terraform_data\" \"second\" {\n  input = \"head\"\n}\n",
-        );
-        repository.commit("initial");
-        repository.write(
-            "main.tf",
-            "resource \"terraform_data\" \"value\" {\n  input = \"intended\"\n}\n",
-        );
-
-        let review = run_fake_review_after_git_diff(
-            &repository.path,
-            plan_output(Some("terraform_data.value")),
-            || {
-                fs::remove_file(repository.path.join("second.tf"))
+                fs::remove_file(repository.path.join("third.tf"))
                     .expect("late configuration deletion should succeed");
             },
         );
 
-        assert!(review.analysis_issues().iter().any(|issue| {
-            issue.kind() == AnalysisIssueKind::ConfigurationChanged
-                && issue.path().is_some_and(|path| path.ends_with("second.tf"))
-        }));
+        for path in ["second.tf", "third.tf"] {
+            assert!(
+                review.analysis_issues().iter().any(|issue| {
+                    issue.kind() == AnalysisIssueKind::ConfigurationChanged
+                        && issue
+                            .path()
+                            .is_some_and(|issue_path| issue_path.ends_with(path))
+                }),
+                "late configuration change should be reported for {path}"
+            );
+        }
         assert!(review.attributions()[0].needs_review());
     }
 
