@@ -1035,8 +1035,22 @@ Plan: 0 to add, 3 to change, 0 to destroy.
         assert_eq!(result.exit_code, 0);
         result.assert_restored();
         result.observed("apply_success");
-        assert_single_apply_of_reviewed_plan(&fixture);
-        assert!(fixture.root.join("review.tfplan").exists());
+        let output = fixture.root.join("review.tfplan");
+        assert!(output.exists());
+        let arguments = fixture.invocation_arguments();
+        let plans = arguments
+            .iter()
+            .filter(|arguments| arguments.starts_with("plan "))
+            .count();
+        let applies = arguments
+            .iter()
+            .filter(|arguments| arguments.starts_with("apply "))
+            .collect::<Vec<_>>();
+        assert_eq!(plans, 1, "{arguments:?}");
+        assert_eq!(
+            applies,
+            [&format!("apply -json -input=false {}", output.display())]
+        );
     }
 
     #[test]
