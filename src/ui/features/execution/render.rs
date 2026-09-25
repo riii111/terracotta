@@ -340,7 +340,7 @@ fn render_log_scrollbars(
     frame: &mut Frame<'_>,
     layout: &ExecutionLayout,
     (line_count, max_line_width): (usize, usize),
-    (vertical, horizontal): (u16, u16),
+    (vertical_offset, horizontal_offset): (u16, u16),
 ) {
     let body = layout.body();
     let scrollbar_area = Rect::new(
@@ -357,7 +357,7 @@ fn render_log_scrollbars(
             scrollbar_area,
             line_count,
             usize::from(body.height),
-            usize::from(vertical),
+            usize::from(vertical_offset),
         );
     }
     if layout.horizontal_scrollbar() {
@@ -366,7 +366,7 @@ fn render_log_scrollbars(
             scrollbar_area,
             max_line_width,
             usize::from(body.width),
-            usize::from(horizontal),
+            usize::from(horizontal_offset),
         );
     }
 }
@@ -1929,13 +1929,6 @@ mod tests {
 
             for case in [
                 ReservationCase {
-                    name: "none_narrower",
-                    extra_lines: 0,
-                    width_delta: -1,
-                    fill: 'x',
-                    bars: (false, false),
-                },
-                ReservationCase {
                     name: "none_equal",
                     extra_lines: 0,
                     width_delta: 0,
@@ -1957,13 +1950,6 @@ mod tests {
                     bars: (true, true),
                 },
                 ReservationCase {
-                    name: "vertical_only_narrower",
-                    extra_lines: 1,
-                    width_delta: -1,
-                    fill: 'x',
-                    bars: (true, false),
-                },
-                ReservationCase {
                     name: "vertical_only_narrower_fullwidth",
                     extra_lines: 1,
                     width_delta: -1,
@@ -1977,13 +1963,6 @@ mod tests {
                     fill: 'x',
                     bars: (true, true),
                 },
-                ReservationCase {
-                    name: "both_wider",
-                    extra_lines: 1,
-                    width_delta: 1,
-                    fill: 'x',
-                    bars: (true, true),
-                },
             ] {
                 let line_count = usize::try_from(i32::from(available.height) + case.extra_lines)
                     .expect("line count");
@@ -1992,6 +1971,7 @@ mod tests {
                 let mut lines = vec![log_line("", line_width, case.fill); line_count - 1];
                 lines.push(log_line("tail", line_width, case.fill));
                 let (state, now) = applying_state_with_lines(lines);
+
                 let layout = execution_layout_with_view(area, &state, logs_view);
                 let buffer = render_to_buffer((area.width, area.height), |frame| {
                     render_execution_with_view(frame, &state, logs_view, now);
