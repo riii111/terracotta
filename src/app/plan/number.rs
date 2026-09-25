@@ -2,7 +2,7 @@
 pub(super) struct CanonicalNumber(String);
 
 // Terraform and OpenTofu print numbers as plain decimals from big.Float, so only other
-// notation reaches the i128 exponent limit. Values beyond it are not normalised, and
+// notation reaches the i128 exponent limit. Values beyond it are not normalized, and
 // callers handle them conservatively instead of comparing them as numbers.
 pub(super) fn canonical_number(value: &str) -> Option<CanonicalNumber> {
     let (sign, unsigned) = value
@@ -47,7 +47,7 @@ mod tests {
     }
 
     #[test]
-    fn keeps_every_mantissa_digit_without_float_conversion() {
+    fn canonicalizes_exact_digits_without_float_conversion() {
         struct NumberCase {
             name: &'static str,
             input: String,

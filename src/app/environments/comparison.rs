@@ -688,6 +688,11 @@ mod tests {
     #[test]
     fn numbers_outside_the_normalizable_range_are_uncertain_rather_than_same() {
         let number = |text: &str| PlanValue::Number(text.to_owned());
+        let numeric_update = |after: PlanValue| {
+            let mut change = update(json!({"n": 0}), json!({}));
+            change.after = Some(PlanValue::Object(BTreeMap::from([("n".to_owned(), after)])));
+            change
+        };
         let out_of_range = "1e170141183460469231731687303715884105728";
         let other_out_of_range = "2e170141183460469231731687303715884105728";
         let cases = [
@@ -709,12 +714,6 @@ mod tests {
             ),
         ];
         for (name, left, right) in cases {
-            let numeric_update = |after: PlanValue| {
-                let mut change = update(json!({"n": 0}), json!({}));
-                change.after = Some(PlanValue::Object(BTreeMap::from([("n".to_owned(), after)])));
-                change
-            };
-
             let comparison = compared(
                 vec![Some(numeric_update(left)), Some(numeric_update(right))],
                 None,

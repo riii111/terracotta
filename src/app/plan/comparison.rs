@@ -52,7 +52,7 @@ enum Value {
     Unknown,
     Bool(bool),
     Number(CanonicalNumber),
-    // Keeps the original text so that distinct numbers outside the normalisable range
+    // Keeps the original text so that distinct numbers outside the normalizable range
     // never compare equal; comparisons involving it stay uncertain.
     UnnormalizedNumber(String),
     String(String),
