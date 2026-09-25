@@ -133,15 +133,6 @@ fn prepare(
     }
 }
 
-pub(crate) fn render(
-    frame: &mut Frame<'_>,
-    state: &ReviewSessionState,
-    view: &OverviewViewState,
-    now: Instant,
-) {
-    render_with_quit_confirmation(frame, state, view, now, false);
-}
-
 pub(crate) fn render_with_quit_confirmation(
     frame: &mut Frame<'_>,
     state: &ReviewSessionState,
@@ -743,6 +734,15 @@ mod tests {
         ui::test_support::{buffer_text, render_to_buffer},
     };
     use ratatui::style::Color;
+
+    fn render(
+        frame: &mut Frame<'_>,
+        state: &ReviewSessionState,
+        view: &OverviewViewState,
+        now: Instant,
+    ) {
+        render_with_quit_confirmation(frame, state, view, now, false);
+    }
 
     fn review() -> PlanReview {
         review_with_plan(server_plan())
