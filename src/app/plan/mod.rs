@@ -1,8 +1,3 @@
-#![expect(
-    dead_code,
-    reason = "detailed plan data is retained for Overview and dormant Git attribution"
-)]
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Debug, Formatter};
 
@@ -73,11 +68,6 @@ pub(crate) struct PlanResource {
 }
 
 impl PlanResource {
-    #[must_use]
-    pub(crate) fn has_action(&self, action: &PlanAction) -> bool {
-        self.actions.iter().any(|candidate| candidate == action)
-    }
-
     #[must_use]
     pub(crate) fn is_replacement(&self) -> bool {
         self.kind == ResourceChangeKind::Replace
@@ -321,13 +311,4 @@ pub(crate) struct ProviderSchema {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProviderSchemas {
     pub(crate) providers: BTreeMap<String, ProviderSchema>,
-}
-
-impl ProviderSchemas {
-    #[must_use]
-    pub(crate) const fn empty() -> Self {
-        Self {
-            providers: BTreeMap::new(),
-        }
-    }
 }
