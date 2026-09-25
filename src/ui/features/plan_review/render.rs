@@ -341,10 +341,9 @@ fn layout_with_content(
         ),
         available_footer_width,
     );
-    let normal_required = footer::layout_with_notice(
+    let normal_required = footer::layout_prioritized(
         required_footer_items(searching, content.matches.len(), filter_visible, navigation),
-        panel_width,
-        footer_message,
+        available_footer_width,
     );
     let footer_height = common_footer_height(
         applyable,
@@ -462,14 +461,9 @@ fn common_footer_height(
                     navigation,
                     footer::available_width(width, notice),
                 ),
-                prioritized(required_footer_items(false, match_count, false, navigation)),
-                prioritized(required_footer_items(true, match_count, true, navigation)),
-                prioritized(required_footer_items(
-                    false,
-                    match_count.max(2),
-                    true,
-                    navigation,
-                )),
+                required_footer_items(false, match_count, false, navigation),
+                required_footer_items(true, match_count, true, navigation),
+                required_footer_items(false, match_count.max(2), true, navigation),
             ]
             .into_iter()
             .map(move |items| {
@@ -1695,7 +1689,7 @@ fn horizontal_offset(start: usize, end: usize, line_width: usize, width: u16) ->
     u16::try_from(offset.min(line_width.saturating_sub(width))).unwrap_or(u16::MAX)
 }
 
-// Apply has the lowest priority so narrow footers keep help and quit reachable.
+// Narrow footers drop apply first; outside a filter they also keep quit and help ahead of other hints.
 fn footer_items(
     searching: bool,
     applyable: bool,
@@ -1736,19 +1730,15 @@ fn footer_items(
         };
         items.extend(apply("apply"));
         items.extend([
-            (1, footer::hint(&["?"], "help")),
-            (1, footer::hint(&["q"], "quit")),
+            (3, footer::hint(&["?"], "help")),
+            (4, footer::hint(&["q"], "quit")),
         ]);
         items
     };
     if navigation == ReviewNavigation::Environments && !searching && !filtered {
-        items.insert(0, (1, footer::hint(&["Esc"], "overview")));
+        items.insert(0, (2, footer::hint(&["Esc"], "overview")));
     }
     items
-}
-
-fn prioritized(items: Vec<Line<'static>>) -> Vec<(u8, Line<'static>)> {
-    items.into_iter().map(|item| (1, item)).collect()
 }
 
 fn required_footer_items(
@@ -1756,32 +1746,32 @@ fn required_footer_items(
     match_count: usize,
     filtered: bool,
     navigation: ReviewNavigation,
-) -> Vec<Line<'static>> {
+) -> Vec<(u8, Line<'static>)> {
     let mut items = if searching {
         vec![
-            footer::hint(&["Enter"], "confirm"),
-            footer::hint(&["Esc"], "cancel"),
+            (1, footer::hint(&["Enter"], "confirm")),
+            (1, footer::hint(&["Esc"], "cancel")),
         ]
     } else if filtered {
         let mut items = vec![
-            footer::hint(&["Esc"], "clear / edit"),
-            footer::hint(&["y"], "copy all"),
-            footer::hint(&["?"], "help"),
-            footer::hint(&["q"], "quit"),
+            (1, footer::hint(&["Esc"], "clear / edit")),
+            (1, footer::hint(&["y"], "copy all")),
+            (1, footer::hint(&["?"], "help")),
+            (1, footer::hint(&["q"], "quit")),
         ];
         if match_count >= 2 {
-            items.insert(1, footer::hint(&["n/N"], "next/prev"));
+            items.insert(1, (1, footer::hint(&["n/N"], "next/prev")));
         }
         items
     } else {
         vec![
-            footer::hint(&["/"], "filter"),
-            footer::hint(&["?"], "help"),
-            footer::hint(&["q"], "quit"),
+            (1, footer::hint(&["/"], "filter")),
+            (3, footer::hint(&["?"], "help")),
+            (4, footer::hint(&["q"], "quit")),
         ]
     };
     if navigation == ReviewNavigation::Environments && !searching && !filtered {
-        items.insert(0, footer::hint(&["Esc"], "overview"));
+        items.insert(0, (2, footer::hint(&["Esc"], "overview")));
     }
     items
 }
@@ -4394,20 +4384,16 @@ End of synthetic plan body."#;
         }
 
         #[test]
-        fn narrow_footer_drops_apply_before_help_and_quit() {
+        fn narrow_environment_footer_keeps_help_and_quit() {
+            let state = review_state(review_with_applyable(true));
             for width in 24..=28 {
-                let lines = footer::layout_prioritized(
-                    footer_items(false, true, 0, false, ReviewNavigation::Environments, width),
-                    width,
-                );
-                let text = lines
-                    .iter()
-                    .flat_map(|line| line.spans.iter())
-                    .map(|span| span.content.as_ref())
-                    .collect::<String>();
+                let mut view = PlanReviewViewState::default();
+                let text = buffer_text(&render_to_buffer((width, 24), |frame| {
+                    render_environment(frame, frame.area(), &state, &mut view, Instant::now());
+                }));
 
-                assert!(text.contains("? help"), "width {width}: {text}");
-                assert!(text.contains("q quit"), "width {width}: {text}");
+                assert!(text.contains("q quit"), "width {width}:\n{text}");
+                assert!(text.contains("? help"), "width {width}:\n{text}");
             }
         }
 
