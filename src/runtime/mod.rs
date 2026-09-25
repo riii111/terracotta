@@ -4,7 +4,7 @@ use std::{
     io::{self, IsTerminal, Write},
     path::Path,
     process::ExitCode,
-    sync::{Arc, Mutex, mpsc},
+    sync::mpsc,
     thread::{self, JoinHandle},
     time::Instant,
 };
@@ -170,6 +170,7 @@ fn run_saved_plan_review(
     variable_sources: VariableSources,
 ) -> ExitCode {
     let changed = plan_run.changed;
+    let saved_plan = plan_run.saved_plan;
     let review_root = match fs::canonicalize(display_root) {
         Ok(root) => root,
         Err(error) => {
@@ -177,25 +178,13 @@ fn run_saved_plan_review(
                 "failed to resolve the {} execution directory before review: {error}",
                 tool.display_name()
             ));
-            let _ = plan_run.saved_plan.cleanup();
+            let _ = saved_plan.cleanup();
             return ExitCode::from(EXECUTION_FAILURE);
         }
     };
     let cancellation = CancellationToken::new();
     let (sender, receiver) = mpsc::channel();
     let history = HistoryStore::platform();
-    let saved_plan_slot = Arc::new(Mutex::new(Some(plan_run.saved_plan)));
-    let Some(plan_path) = saved_plan_slot
-        .lock()
-        .ok()
-        .and_then(|slot| slot.as_ref().map(|plan| plan.path().to_owned()))
-    else {
-        report_error(&format!(
-            "the reviewed {} plan is unavailable",
-            tool.display_name()
-        ));
-        return ExitCode::from(EXECUTION_FAILURE);
-    };
     let context = ExecutionContext::loading(review_root)
         .with_tool(tool)
         .with_launch_root(launch_root)
@@ -205,7 +194,7 @@ fn run_saved_plan_review(
         display_root,
         launch_root,
         global_arguments,
-        &plan_path,
+        saved_plan.path(),
         changed,
         apply_entry,
         context.clone(),
@@ -216,7 +205,7 @@ fn run_saved_plan_review(
         Ok(worker) => worker,
         Err(error) => {
             report_error(&format!("failed to start the plan worker: {error}"));
-            let _ = take_saved_plan(&saved_plan_slot).map_or(Ok(()), terraform::SavedPlan::cleanup);
+            let _ = saved_plan.cleanup();
             return ExitCode::from(EXECUTION_FAILURE);
         }
     };
@@ -236,21 +225,20 @@ fn run_saved_plan_review(
         global_arguments,
         apply_arguments,
         sender: &sender,
-        saved_plan_slot: &saved_plan_slot,
+        plan_path: saved_plan.path(),
         cancellation: &cancellation,
         clipboard: &mut clipboard,
         apply_worker: &mut apply_worker,
         history: history.as_ref(),
     };
     let ui_result = run_interactive(context, &receiver, &mut worker, effects, initial_overview);
-    if ui_result.is_err() {
-        cancellation.cancel();
-    }
-    let apply_join = apply_worker.join();
-    let plan_join = worker.join();
-    let ui_result = finalize_ui_result(ui_result, &apply_join, &plan_join);
-    let cleanup_result =
-        take_saved_plan(&saved_plan_slot).map_or(Ok(()), terraform::SavedPlan::cleanup);
+    let (ui_result, cleanup_result) = finish_review(
+        ui_result,
+        &cancellation,
+        &mut apply_worker,
+        &mut worker,
+        saved_plan,
+    );
     let primary_exit = match ui_result {
         Ok(SessionOutcome::Reviewed(metadata)) => {
             report_reviewed(&metadata);
@@ -394,6 +382,24 @@ fn report_interrupted(phase: ExecutionStage) {
     let _ = writeln!(io::stdout(), "{message}");
 }
 
+// The saved plan outlives both workers: it is removed once, only after every worker that may
+// read it has been joined.
+fn finish_review(
+    ui_result: io::Result<SessionOutcome>,
+    cancellation: &CancellationToken,
+    apply_worker: &mut WorkerGuard,
+    plan_worker: &mut WorkerGuard,
+    saved_plan: terraform::SavedPlan,
+) -> (io::Result<SessionOutcome>, io::Result<()>) {
+    if ui_result.is_err() {
+        cancellation.cancel();
+    }
+    let apply_join = apply_worker.join();
+    let plan_join = plan_worker.join();
+    let ui_result = finalize_ui_result(ui_result, &apply_join, &plan_join);
+    (ui_result, saved_plan.cleanup())
+}
+
 fn finalize_ui_result(
     ui_result: io::Result<SessionOutcome>,
     apply_join: &thread::Result<()>,
@@ -527,12 +533,6 @@ fn with_previous_durations(review: PlanReview, history: Option<&HistoryStore>) -
     review.with_previous_durations(previous_durations)
 }
 
-fn take_saved_plan(
-    slot: &Arc<Mutex<Option<terraform::SavedPlan>>>,
-) -> Option<terraform::SavedPlan> {
-    slot.lock().ok().and_then(|mut slot| slot.take())
-}
-
 pub(super) fn spawn_apply_worker(
     tool: Tool,
     root: &Path,
@@ -617,10 +617,128 @@ impl Drop for WorkerGuard {
 
 #[cfg(test)]
 mod tests {
+    use std::{path::PathBuf, time::Duration};
+
     use super::*;
 
     fn panic_join() -> thread::Result<()> {
         Err(Box::new("worker panic"))
+    }
+
+    fn temporary_saved_plan() -> terraform::SavedPlan {
+        let (saved_plan, _) = terraform::saved_plan_for_plan(Path::new("."), &[])
+            .expect("a temporary saved plan should be created");
+        saved_plan
+    }
+
+    // Reports whether cancellation was seen and the saved plan still existed when the worker was
+    // about to exit, which fails if cleanup ran before the worker was joined.
+    fn plan_reading_worker(
+        plan_path: PathBuf,
+        cancellation: &CancellationToken,
+        wait_for_cancellation: bool,
+    ) -> (WorkerGuard, mpsc::Receiver<(bool, bool)>) {
+        let (observed, observations) = mpsc::channel();
+        let worker_cancellation = cancellation.clone();
+        let handle = thread::spawn(move || {
+            let started = Instant::now();
+            while wait_for_cancellation
+                && !worker_cancellation.is_cancelled()
+                && started.elapsed() < Duration::from_secs(5)
+            {
+                thread::sleep(Duration::from_millis(1));
+            }
+            thread::sleep(Duration::from_millis(20));
+            let _ = observed.send((worker_cancellation.is_cancelled(), plan_path.exists()));
+        });
+        let guard = WorkerGuard {
+            cancellation: cancellation.clone(),
+            handle: Some(handle),
+        };
+        (guard, observations)
+    }
+
+    fn idle_worker(cancellation: &CancellationToken) -> WorkerGuard {
+        WorkerGuard {
+            cancellation: cancellation.clone(),
+            handle: None,
+        }
+    }
+
+    #[test]
+    fn normal_exit_joins_both_workers_before_removing_the_saved_plan() {
+        let saved_plan = temporary_saved_plan();
+        let plan_path = saved_plan.path().to_owned();
+        let cancellation = CancellationToken::new();
+        let (mut plan_worker, plan_observed) =
+            plan_reading_worker(plan_path.clone(), &cancellation, false);
+        let (mut apply_worker, apply_observed) =
+            plan_reading_worker(plan_path.clone(), &cancellation, false);
+        let outcome = SessionOutcome::NoChanges;
+
+        let (ui_result, cleanup) = finish_review(
+            Ok(outcome.clone()),
+            &cancellation,
+            &mut apply_worker,
+            &mut plan_worker,
+            saved_plan,
+        );
+
+        assert_eq!(ui_result.expect("the UI outcome should be kept"), outcome);
+        cleanup.expect("the saved plan should be removed");
+        assert!(!cancellation.is_cancelled());
+        assert_eq!(plan_observed.try_recv(), Ok((false, true)));
+        assert_eq!(apply_observed.try_recv(), Ok((false, true)));
+        assert!(!plan_path.exists());
+    }
+
+    #[test]
+    fn ui_error_cancels_and_joins_the_worker_before_removing_the_saved_plan() {
+        let saved_plan = temporary_saved_plan();
+        let plan_path = saved_plan.path().to_owned();
+        let cancellation = CancellationToken::new();
+        let (mut plan_worker, plan_observed) =
+            plan_reading_worker(plan_path.clone(), &cancellation, true);
+        let mut apply_worker = idle_worker(&cancellation);
+
+        let (ui_result, cleanup) = finish_review(
+            Err(io::Error::other("terminal failed")),
+            &cancellation,
+            &mut apply_worker,
+            &mut plan_worker,
+            saved_plan,
+        );
+
+        let error = ui_result.expect_err("the UI error should be kept");
+        assert_eq!(error.to_string(), "terminal failed");
+        cleanup.expect("the saved plan should be removed");
+        assert_eq!(plan_observed.try_recv(), Ok((true, true)));
+        assert!(!plan_path.exists());
+    }
+
+    #[test]
+    fn worker_panic_fails_the_review_and_still_removes_the_saved_plan() {
+        let saved_plan = temporary_saved_plan();
+        let plan_path = saved_plan.path().to_owned();
+        let cancellation = CancellationToken::new();
+        let mut plan_worker = WorkerGuard {
+            cancellation: cancellation.clone(),
+            handle: Some(thread::spawn(|| panic!("secret panic payload"))),
+        };
+        let mut apply_worker = idle_worker(&cancellation);
+
+        let (ui_result, cleanup) = finish_review(
+            Ok(SessionOutcome::Interrupted(ExecutionStage::Initializing)),
+            &cancellation,
+            &mut apply_worker,
+            &mut plan_worker,
+            saved_plan,
+        );
+
+        let error = ui_result.expect_err("the worker panic should fail the review");
+        assert_eq!(error.to_string(), "plan worker panicked");
+        cleanup.expect("the saved plan should be removed");
+        assert!(!plan_path.exists());
     }
 
     #[test]
