@@ -253,23 +253,14 @@ static TEMP_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU6
 mod tests {
     use std::sync::Arc;
 
+    use tempfile::TempDir;
+
     use crate::app::{
         execution::{ExecutionContext, ExecutionTargetSpec, Tool},
         plan::PlanAction,
     };
 
     use super::*;
-
-    fn temporary_root(name: &str) -> PathBuf {
-        env::temp_dir().join(format!(
-            "terracotta-history-{name}-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("test clock should be after the epoch")
-                .as_nanos()
-        ))
-    }
 
     fn key(address: &str, tool: Tool) -> HistoryKey {
         let context = ExecutionContext::loading("/project")
@@ -299,7 +290,8 @@ mod tests {
 
     #[test]
     fn stores_versioned_owner_only_json_and_reads_the_duration() {
-        let root = temporary_root("round-trip");
+        let fixture = TempDir::new().expect("test directory should be created");
+        let root = fixture.path().join("history");
         let store = HistoryStore::new(root.clone());
         let key = key("terraform_data.api", Tool::Terraform);
 
@@ -341,14 +333,13 @@ mod tests {
                 0o600
             );
         }
-
-        fs::remove_dir_all(root).expect("test history should be removed");
     }
 
     #[cfg(unix)]
     #[test]
     fn malformed_history_is_treated_as_missing() {
-        let root = temporary_root("corrupt");
+        let fixture = TempDir::new().expect("test directory should be created");
+        let root = fixture.path().join("history");
         let store = HistoryStore::new(root.clone());
         let key = key("terraform_data.api", Tool::Terraform);
         fs::create_dir_all(&root).expect("root should exist");
@@ -356,12 +347,12 @@ mod tests {
             .expect("corrupt history should be written");
 
         assert_eq!(load(&store, &key), None);
-        fs::remove_dir_all(root).expect("test history should be removed");
     }
 
     #[test]
     fn concurrent_records_for_different_keys_survive_the_shared_lock() {
-        let root = Arc::new(temporary_root("concurrent"));
+        let fixture = TempDir::new().expect("test directory should be created");
+        let root = Arc::new(fixture.path().join("history"));
         let mut handles = Vec::new();
         for index in 0..8 {
             let root = Arc::clone(&root);
@@ -382,17 +373,16 @@ mod tests {
             let key = key(&format!("terraform_data.target_{index}"), Tool::Terraform);
             assert_eq!(load(&store, &key), Some(Duration::from_millis(index)));
         }
-        fs::remove_dir_all(&*root).expect("test history should be removed");
     }
 
     #[test]
     fn write_failure_is_reported_without_creating_a_record() {
-        let root = temporary_root("write-failure");
+        let fixture = TempDir::new().expect("test directory should be created");
+        let root = fixture.path().join("history");
         fs::write(&root, b"not a directory").expect("blocking file should be written");
-        let store = HistoryStore::new(root.clone());
+        let store = HistoryStore::new(root);
         let key = key("terraform_data.api", Tool::Terraform);
 
         assert!(store.record(&[success(key, 1)]).is_err());
-        fs::remove_file(root).expect("blocking file should be removed");
     }
 }

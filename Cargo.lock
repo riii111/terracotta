@@ -1861,6 +1861,7 @@ dependencies = [
  "rstest",
  "serde_json",
  "sha2 0.11.0",
+ "tempfile",
  "windows-sys 0.61.2",
 ]
 
