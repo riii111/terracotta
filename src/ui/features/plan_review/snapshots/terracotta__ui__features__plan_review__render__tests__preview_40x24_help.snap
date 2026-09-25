@@ -4,18 +4,18 @@ expression: buffer_text(buffer)
 ---
 Target: main [PROD] Workspace: default
 C┌Help────────────────────────────────┐
- │ Navigation                       ▲ │
-─│ ↑ / ↓ / j / k                    ┃ │─
- │   scroll vertically              ┃ │▲
- │ ← / → / h / l                    ┃ │┃
+-│ Navigation                       ▲ │
+ │ ↑ / ↓ / j / k                    ┃ │
+─│   scroll vertically              ┃ │─
+ │ ← / → / h / l                    ┃ │▲
  │   scroll horizontally            ┃ │┃
  │ PgUp / PgDn                      ┃ │┃
  │   scroll one page                ┃ │┃
  │ Home / End                       ┃ │┃
  │   go to the top or bottom        ┃ │┃
  │ s                                ┃ ││
--│   overview                       ┃ ││
- │                                  ┃ ││
+ │   overview                       ┃ ││
+-│                                  ┃ ││
  │ Review                           ┃ ││
  │ /                                │ ││
  │   filter the full plan           │ ││

@@ -20,10 +20,7 @@ use crate::{
             ExecutionLogLine, ExecutionPhase, ExecutionState, ExecutionTargetSpec, ResourceAction,
             ResourceEvent, ResourceEventKind, Tool,
         },
-        plan::{
-            Plan, PlanAction, PlanSummary, PlanValue, ResourceChange, ResourceChangeKind,
-            ResourceMode,
-        },
+        plan::{Plan, PlanAction, PlanValue, ResourceChange, ResourceChangeKind, ResourceMode},
         review::{PlanBlock, PlanBlockKind, PlanDocument, PlanLineKind, PlanMetadata, PlanReview},
         session::{Action, Effect, ReviewSessionState, SessionState},
     },
@@ -225,10 +222,6 @@ fn apply_synthetic_action(
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "the synthetic plan keeps its complete screen fixture in one readable example"
-)]
 fn synthetic_review() -> ReviewSessionState {
     let plan = PlanReview::new(
         PathBuf::from("/workspace/infra/prod"),
@@ -277,55 +270,37 @@ fn synthetic_review() -> ReviewSessionState {
                 PlanLineKind::Summary,
             ],
         ),
-        PlanMetadata::new(
-            vec![
-                "terraform_data.example".to_owned(),
-                "terraform_data.cache".to_owned(),
-                "terraform_data.old".to_owned(),
+        Plan {
+            value_addresses: BTreeSet::new(),
+            resource_changes: vec![
+                synthetic_change(
+                    "terraform_data.example",
+                    ResourceChangeKind::Update,
+                    vec![PlanAction::Update],
+                    "before",
+                    "after",
+                ),
+                synthetic_change(
+                    "terraform_data.cache",
+                    ResourceChangeKind::Create,
+                    vec![PlanAction::Create],
+                    "",
+                    "cache",
+                ),
+                synthetic_change(
+                    "terraform_data.old",
+                    ResourceChangeKind::Delete,
+                    vec![PlanAction::Delete],
+                    "old",
+                    "",
+                ),
             ],
-            Vec::new(),
-            1,
-            1,
-            1,
-            true,
-        )
-        .with_apply_targets(synthetic_apply_targets()),
+            unsupported_changes: Vec::new(),
+            output_changes: Vec::new(),
+        },
+        PlanMetadata::new(Vec::new(), true),
         Vec::new(),
     )
-    .with_plan(Plan {
-        value_addresses: BTreeSet::new(),
-        resource_changes: vec![
-            synthetic_change(
-                "terraform_data.example",
-                ResourceChangeKind::Update,
-                vec![PlanAction::Update],
-                "before",
-                "after",
-            ),
-            synthetic_change(
-                "terraform_data.cache",
-                ResourceChangeKind::Create,
-                vec![PlanAction::Create],
-                "",
-                "cache",
-            ),
-            synthetic_change(
-                "terraform_data.old",
-                ResourceChangeKind::Delete,
-                vec![PlanAction::Delete],
-                "old",
-                "",
-            ),
-        ],
-        summary: PlanSummary {
-            creates: 1,
-            updates: 1,
-            replaces: 0,
-            deletes: 1,
-        },
-        unsupported_changes: Vec::new(),
-        output_changes: Vec::new(),
-    })
     .with_context(
         ExecutionContext::loading("/workspace/infra/prod")
             .with_launch_root("/workspace")
@@ -523,17 +498,11 @@ fn synthetic_environment_review(directory: &Path, count: usize) -> PlanReview {
         directory.to_owned(),
         "default".to_owned(),
         PlanDocument::with_blocks_and_line_kinds(lines.join("\n"), blocks, Vec::new()),
-        PlanMetadata::new(
-            changes
-                .iter()
-                .map(|change| change.address.clone())
-                .collect(),
-            Vec::new(),
-            0,
-            count,
-            0,
-            true,
-        ),
+        Plan {
+            resource_changes: changes,
+            ..Plan::empty()
+        },
+        PlanMetadata::new(Vec::new(), true),
         Vec::new(),
     )
     .with_apply_allowed(false)
@@ -543,18 +512,6 @@ fn synthetic_environment_review(directory: &Path, count: usize) -> PlanReview {
             .with_workspace("default")
             .with_tool_version(Tool::Terraform, "1.9.0"),
     )
-    .with_plan(Plan {
-        value_addresses: BTreeSet::new(),
-        resource_changes: changes,
-        summary: PlanSummary {
-            creates: 0,
-            updates: count,
-            replaces: 0,
-            deletes: 0,
-        },
-        unsupported_changes: Vec::new(),
-        output_changes: Vec::new(),
-    })
 }
 
 pub(super) fn run_synthetic_execution() -> io::Result<()> {

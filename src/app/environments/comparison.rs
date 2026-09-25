@@ -337,12 +337,21 @@ mod tests {
     }
 
     fn review(changes: Vec<ResourceChange>, schema: Option<ProviderSchemas>) -> PlanReview {
-        let addresses = changes
+        plan_review(
+            Plan {
+                resource_changes: changes,
+                ..Plan::empty()
+            },
+            schema,
+        )
+    }
+
+    fn plan_review(plan: Plan, schema: Option<ProviderSchemas>) -> PlanReview {
+        let addresses = plan
+            .resource_changes
             .iter()
             .map(|change| change.address.clone())
             .collect();
-        let mut plan = Plan::empty();
-        plan.resource_changes = changes;
         PlanReview::new(
             PathBuf::from("/test"),
             "default".to_owned(),
@@ -355,10 +364,10 @@ mod tests {
                 )],
                 Vec::new(),
             ),
-            PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, true),
+            plan,
+            PlanMetadata::new(Vec::new(), true),
             Vec::new(),
         )
-        .with_plan(plan)
         .with_provider_schemas(schema)
     }
 
@@ -780,7 +789,7 @@ mod tests {
         let mut session =
             EnvironmentSession::new(vec![environment("dev"), environment("prod")], false);
         complete_next(&mut session, review(vec![change], None));
-        complete_next(&mut session, review(Vec::new(), None).with_plan(plan));
+        complete_next(&mut session, plan_review(plan, None));
 
         let comparison = compare_all(session.plans());
 

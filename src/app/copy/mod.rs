@@ -322,6 +322,7 @@ mod tests {
             ApplyStatus, DiagnosticSeverity, DiagnosticSource, EventStream, ExecutionContext,
             ExecutionEvent, ExecutionEventKind, ExecutionLogLine,
         },
+        plan::Plan,
         review::{
             PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata,
             test_support::{plan_document, plan_document_with_blocks},
@@ -367,7 +368,7 @@ mod tests {
             Case {
                 name: "summary_only",
                 document: plan_document(plan_text.to_owned()),
-                metadata: PlanMetadata::new(Vec::new(), Vec::new(), 0, 1, 0, true),
+                metadata: PlanMetadata::new(Vec::new(), true),
                 diagnostics: vec![warning(None)],
                 expected: "Provider warning\nTerraform plan body\n".to_owned(),
                 source: plan_text.to_owned(),
@@ -375,7 +376,7 @@ mod tests {
             Case {
                 name: "summary_and_detail",
                 document: plan_document(plan_text.to_owned()),
-                metadata: PlanMetadata::new(Vec::new(), Vec::new(), 0, 1, 0, true),
+                metadata: PlanMetadata::new(Vec::new(), true),
                 diagnostics: vec![warning(Some("warning detail"))],
                 expected: "Provider warning\nwarning detail\nTerraform plan body\n".to_owned(),
                 source: plan_text.to_owned(),
@@ -386,14 +387,7 @@ mod tests {
                     show_text.clone(),
                     vec![PlanBlock::new(0..show_end, PlanBlockKind::Common)],
                 ),
-                metadata: PlanMetadata::new(
-                    vec!["terraform_data.api".to_owned()],
-                    vec!["endpoint".to_owned()],
-                    1,
-                    0,
-                    0,
-                    true,
-                ),
+                metadata: PlanMetadata::new(vec!["endpoint".to_owned()], true),
                 diagnostics: Vec::new(),
                 expected: show_text.clone(),
                 source: show_text,
@@ -403,6 +397,7 @@ mod tests {
                 PathBuf::from("/project"),
                 "default".to_owned(),
                 case.document,
+                Plan::empty(),
                 case.metadata,
                 case.diagnostics,
             );

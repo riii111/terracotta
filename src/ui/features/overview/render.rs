@@ -242,35 +242,35 @@ fn render_terminal_size_notice(frame: &mut Frame<'_>, area: Rect, quit_confirmat
 }
 
 fn status_line(review: &PlanReview, view: &OverviewViewState) -> Line<'static> {
-    let metadata = review.metadata();
+    let counts = review.summary();
     let mut spans = vec![
         environments::ready_status_marker(),
         Span::styled("Ready", theme::overview_text_style()),
     ];
     append_count(
         &mut spans,
-        metadata.additions(),
+        counts.creates,
         "+",
         "add",
         theme::overview_total_add_style(),
     );
     append_count(
         &mut spans,
-        metadata.changes(),
+        counts.updates,
         "~",
         "update",
         theme::overview_total_update_style(),
     );
     append_count(
         &mut spans,
-        metadata.replacements(),
+        counts.replaces,
         "",
         "replace",
         theme::overview_total_replace_style(),
     );
     append_count(
         &mut spans,
-        metadata.deletions(),
+        counts.deletes,
         "-",
         "destroy",
         theme::overview_total_destroy_style(),
@@ -420,7 +420,7 @@ fn overview_lines(
     }
     if content.rows.is_empty() {
         lines.push(Line::from(Span::styled(
-            if review.metadata().has_changes() {
+            if review.has_changes() {
                 "No matching resource changes. Press v for the full plan."
             } else {
                 "No resource changes to summarize. Press v for the full plan."
@@ -721,11 +721,12 @@ mod tests {
             execution::{ExecutionContext, VariableSources},
             plan::{
                 AttributeType, ConfigurationRelationStatus, Plan, PlanAction, PlanRelations,
-                PlanSummary, PlanValue, ProviderSchema, ProviderSchemas, RelationEndpoint,
-                RelationEvidence, RelationGraph, RelationGraphGroup, RelationGraphLink,
-                RelationGraphLinkKind, RelationNode, RelationNodeId, RelationSource,
-                RelationUnresolvedReason, ResourceChange, ResourceChangeKind, ResourceMode,
-                ResourceSchema, StateRelationStatus,
+                PlanValue, ProviderSchema, ProviderSchemas, RelationEndpoint, RelationEvidence,
+                RelationGraph, RelationGraphGroup, RelationGraphLink, RelationGraphLinkKind,
+                RelationNode, RelationNodeId, RelationSource, RelationUnresolvedReason,
+                ResourceChange, ResourceChangeKind, ResourceMode, ResourceSchema,
+                StateRelationStatus, UnsupportedChange, UnsupportedChangeKind,
+                UnsupportedChangeScope,
             },
             review::{PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata},
             session::test_support::overview_session,
@@ -744,6 +745,10 @@ mod tests {
     }
 
     fn review() -> PlanReview {
+        review_with_plan(server_plan())
+    }
+
+    fn review_with_plan(plan: Plan) -> PlanReview {
         let addresses = vec![
             "terraform_data.server[\"one\"]".to_owned(),
             "terraform_data.server[\"two\"]".to_owned(),
@@ -752,10 +757,25 @@ mod tests {
             "Terraform will perform actions.\n\nserver blocks\n".to_owned(),
             vec![
                 PlanBlock::new(0..2, PlanBlockKind::Common),
-                PlanBlock::with_addresses(2..3, PlanBlockKind::Resource, addresses.clone()),
+                PlanBlock::with_addresses(2..3, PlanBlockKind::Resource, addresses),
             ],
             Vec::new(),
         );
+        PlanReview::new(
+            PathBuf::from("/repo/infra"),
+            "default".to_owned(),
+            document,
+            plan,
+            PlanMetadata::new(vec!["endpoint".to_owned()], true),
+            Vec::new(),
+        )
+    }
+
+    fn server_plan() -> Plan {
+        let addresses = vec![
+            "terraform_data.server[\"one\"]".to_owned(),
+            "terraform_data.server[\"two\"]".to_owned(),
+        ];
         let change = |address: String| ResourceChange {
             address,
             provider: None,
@@ -780,32 +800,23 @@ mod tests {
             previous_address: None,
             importing: None,
         };
-        PlanReview::new(
-            PathBuf::from("/repo/infra"),
-            "default".to_owned(),
-            document,
-            PlanMetadata::new(Vec::new(), vec!["endpoint".to_owned()], 0, 2, 0, true)
-                .with_nonstandard_changes(1),
-            Vec::new(),
-        )
-        .with_plan(Plan {
-            value_addresses: BTreeSet::new(),
+        Plan {
             resource_changes: addresses.into_iter().map(change).collect(),
-            summary: PlanSummary {
-                creates: 0,
-                updates: 2,
-                replaces: 0,
-                deletes: 0,
-            },
-            unsupported_changes: Vec::new(),
-            output_changes: Vec::new(),
-        })
+            unsupported_changes: vec![UnsupportedChange {
+                scope: UnsupportedChangeScope::Output,
+                address: "endpoint".to_owned(),
+                actions: vec![PlanAction::Update],
+                kind: UnsupportedChangeKind::Output,
+                reason: None,
+                action_type: None,
+            }],
+            ..Plan::empty()
+        }
     }
 
     fn unknown_review() -> PlanReview {
-        let base = review();
         let provider = "registry.example/provider".to_owned();
-        let mut plan = base.plan().clone();
+        let mut plan = server_plan();
         for change in &mut plan.resource_changes {
             change.provider = Some(provider.clone());
             change.before = Some(PlanValue::Object(BTreeMap::from([(
@@ -821,34 +832,31 @@ mod tests {
                 PlanValue::Bool(true),
             )])));
         }
-        base.with_plan(plan)
-            .with_provider_schemas(Some(ProviderSchemas {
-                providers: BTreeMap::from([(
-                    provider,
-                    ProviderSchema {
-                        resources: BTreeMap::from([(
-                            "terraform_data".to_owned(),
-                            ResourceSchema {
-                                attributes: BTreeMap::from([
-                                    ("input".to_owned(), AttributeType::String),
-                                    ("output".to_owned(), AttributeType::String),
-                                ]),
-                                block_types: BTreeMap::new(),
-                            },
-                        )]),
-                    },
-                )]),
-            }))
+        review_with_plan(plan).with_provider_schemas(Some(ProviderSchemas {
+            providers: BTreeMap::from([(
+                provider,
+                ProviderSchema {
+                    resources: BTreeMap::from([(
+                        "terraform_data".to_owned(),
+                        ResourceSchema {
+                            attributes: BTreeMap::from([
+                                ("input".to_owned(), AttributeType::String),
+                                ("output".to_owned(), AttributeType::String),
+                            ]),
+                            block_types: BTreeMap::new(),
+                        },
+                    )]),
+                },
+            )]),
+        }))
     }
 
     fn related_review() -> PlanReview {
-        let base = review();
-        let mut plan = base.plan().clone();
+        let mut plan = server_plan();
         let mut network = plan.resource_changes[0].clone();
         network.address = "terraform_data.network".to_owned();
         network.resource_name = Some("network".to_owned());
         plan.resource_changes.push(network);
-        plan.summary.updates += 1;
         let relations = PlanRelations::from_saved_plan(
             ConfigurationRelationStatus::Available,
             vec![RelationEvidence::resolved(
@@ -860,16 +868,7 @@ mod tests {
         )
         .with_state(StateRelationStatus::NoPriorState, Vec::new());
 
-        PlanReview::new(
-            base.root().to_path_buf(),
-            base.workspace().to_owned(),
-            base.document().clone(),
-            PlanMetadata::new(Vec::new(), vec!["endpoint".to_owned()], 0, 3, 0, true)
-                .with_nonstandard_changes(1),
-            Vec::new(),
-        )
-        .with_plan(plan)
-        .with_relations(relations)
+        review_with_plan(plan).with_relations(relations)
     }
 
     #[test]

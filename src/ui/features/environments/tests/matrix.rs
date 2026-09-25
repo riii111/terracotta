@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    time::Instant,
-};
+use std::{collections::BTreeMap, time::Instant};
 
 use rstest::rstest;
 
@@ -10,10 +7,9 @@ use crate::app::environments::overview::OverviewRowId;
 use crate::app::{
     execution::{ExecutionContext, SensitiveValue},
     plan::{
-        AttributeType, ConfigurationRelationStatus, Plan, PlanAction, PlanRelations, PlanSummary,
-        PlanValue, ProviderSchema, ProviderSchemas, RelationEndpoint, RelationEvidence,
-        RelationSource, ResourceChange, ResourceChangeKind, ResourceMode, ResourceSchema,
-        StateRelationStatus,
+        AttributeType, ConfigurationRelationStatus, PlanAction, PlanRelations, PlanValue,
+        ProviderSchema, ProviderSchemas, RelationEndpoint, RelationEvidence, RelationSource,
+        ResourceChange, ResourceChangeKind, ResourceMode, ResourceSchema, StateRelationStatus,
     },
     review::{PlanBlock, PlanBlockKind, PlanDocument},
 };
@@ -165,45 +161,23 @@ fn complete_with_plan_document_and_relations_and_schemas(
 ) {
     let index = state.start_next().expect("pending environment");
     let directory = state.plans()[index].directory().to_owned();
-    let count = |kind| changes.iter().filter(|change| change.kind == kind).count();
-    let summary = PlanSummary {
-        creates: count(ResourceChangeKind::Create),
-        updates: count(ResourceChangeKind::Update),
-        replaces: count(ResourceChangeKind::Replace),
-        deletes: count(ResourceChangeKind::Delete),
-    };
-    let metadata = PlanMetadata::new(
-        changes
-            .iter()
-            .map(|change| change.address.clone())
-            .collect(),
-        Vec::new(),
-        summary.creates,
-        summary.updates,
-        summary.deletes,
-        !changes.is_empty(),
-    )
-    .with_resource_changes(Vec::new(), summary.replaces)
-    .with_sensitive_values(sensitive_values);
+    let applyable = !changes.is_empty();
     let review = PlanReview::new(
         directory.clone(),
         "default".to_owned(),
         PlanDocument::with_blocks_and_line_kinds(text, blocks, Vec::new()),
-        metadata,
+        Plan {
+            resource_changes: changes,
+            ..Plan::empty()
+        },
+        PlanMetadata::new(Vec::new(), applyable).with_sensitive_values(sensitive_values),
         Vec::new(),
     )
     .with_relations(relations)
     .with_provider_schemas(provider_schemas)
     .with_context(ExecutionContext::loading(directory).with_workspace("default"))
     .with_apply_allowed(false)
-    .with_apply_entry(false)
-    .with_plan(Plan {
-        resource_changes: changes,
-        value_addresses: BTreeSet::new(),
-        summary,
-        unsupported_changes: Vec::new(),
-        output_changes: Vec::new(),
-    });
+    .with_apply_entry(false);
     state.complete(
         index,
         PlanResult::Ready {
