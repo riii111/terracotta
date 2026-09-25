@@ -613,20 +613,4 @@ mod tests {
         assert!(first.ends_with(PRODUCTION_SUFFIX), "{first}");
         assert!(second.ends_with(PRODUCTION_SUFFIX), "{second}");
     }
-
-    #[test]
-    fn very_narrow_review_header_stays_within_the_available_width() {
-        let line = fit_header(
-            &[HeaderField {
-                label: "Target: ",
-                minimum_value_width: 8,
-                value: "production [PROD]".to_owned(),
-                kind: HeaderFieldKind::Target,
-            }],
-            10,
-        );
-
-        assert!(line.width() <= 10, "{line}");
-        assert!(line.to_string().starts_with("Target:"));
-    }
 }

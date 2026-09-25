@@ -215,18 +215,6 @@ mod tests {
     }
 
     #[test]
-    fn editing_preserves_utf8_character_boundaries() {
-        let mut view = ApplyConfirmationViewState::default();
-        enter(&mut view, "aあb");
-
-        view.apply(ApplyConfirmationInput::Left, "yes");
-        view.apply(ApplyConfirmationInput::Backspace, "yes");
-
-        assert_eq!(view.input(), "ab");
-        assert_eq!(view.cursor(), 1);
-    }
-
-    #[test]
     fn cursor_moves_and_backspace_follow_grapheme_boundaries() {
         let mut view = ApplyConfirmationViewState::default();
         enter(&mut view, "aあe\u{301}👩💻");

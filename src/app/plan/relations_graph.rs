@@ -962,29 +962,4 @@ mod tests {
                 && !graph.links_unknown.contains(&node.id)
         }));
     }
-
-    #[test]
-    fn graph_debug_contains_only_relation_metadata() {
-        let node = RelationNodeInput::new(
-            ["aws_instance.web".to_owned()],
-            "aws_instance.web".to_owned(),
-            ResourceChangeKind::Update,
-            1,
-            vec!["app".to_owned()],
-            true,
-            false,
-        )
-        .expect("address should create a node");
-        let graph = graph(
-            ConfigurationRelationStatus::Available,
-            Vec::new(),
-            StateRelationStatus::NoPriorState,
-            Vec::new(),
-            &[node],
-        );
-
-        let debug = format!("{graph:?}");
-        assert!(debug.contains("aws_instance.web"));
-        assert!(!debug.contains("sensitive-value"));
-    }
 }

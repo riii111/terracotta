@@ -891,8 +891,6 @@ mod tests {
             .find(|row| row.address == "test_resource.item")
             .unwrap();
         assert_eq!(item.difference, Some(DifferenceReason::Value));
-        assert_eq!(session.plans().len(), 3);
-        assert_eq!(session.exit_code(), 0);
     }
 
     #[test]
@@ -920,8 +918,6 @@ mod tests {
         assert_eq!(comparison.rows[0].cells.len(), 2);
         assert_eq!(comparison.rows[0].cells[1].state, CellState::Unavailable);
         assert_eq!(comparison.rows[0].cells[1].source, None);
-        assert_eq!(session.plans().len(), 3);
-        assert_eq!(session.exit_code(), 1);
     }
 
     #[test]

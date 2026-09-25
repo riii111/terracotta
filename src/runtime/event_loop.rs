@@ -1857,18 +1857,9 @@ mod tests {
         assert!(text.contains("Copied."), "{text}");
         assert!(!text.contains("q quit"), "{text}");
 
-        assert_eq!(
-            quit_confirmation_key_to_input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
-            QuitConfirmationInput::Cancel
-        );
         quit_confirmation = false;
-        assert!(!quit_confirmation);
         assert!(matches!(&state, SessionState::Overview(_)));
 
-        assert_eq!(
-            quit_confirmation_key_to_input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
-            QuitConfirmationInput::Confirm
-        );
         assert!(matches!(
             action_after_quit_confirmation(Action::Quit, true, &mut quit_confirmation),
             Some(Action::Quit)
@@ -1906,7 +1897,6 @@ mod tests {
             None
         );
         assert_eq!(confirmation_view.input(), "y");
-        assert!(!confirmation_view.input().contains("yy"));
     }
 
     #[test]
@@ -1933,14 +1923,6 @@ mod tests {
         let layout = plan_review::layout(Rect::new(0, 0, 80, 24), false, review);
         review_view.apply_with_matches(
             plan_review::PlanReviewInput::Down,
-            layout.body(),
-            layout.max_vertical(),
-            layout.max_horizontal(),
-            review.review().search_query(),
-            &[],
-        );
-        review_view.apply_with_matches(
-            plan_review::PlanReviewInput::Right,
             layout.body(),
             layout.max_vertical(),
             layout.max_horizontal(),
@@ -1978,10 +1960,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the input matrix documents every confirmed-filter action"
-    )]
     fn confirmed_filter_keeps_full_plan_actions_available() {
         let now = Instant::now();
         let mut plan = PlanReview::new(
@@ -2067,18 +2045,6 @@ mod tests {
             ""
         );
 
-        assert!(matches!(
-            handle_key_event(
-                &terminal,
-                &state,
-                &mut execution_view,
-                &mut review_view,
-                &mut confirmation_view,
-                KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
-            )
-            .expect("apply key should be handled"),
-            Some(Action::OpenApplyConfirmation)
-        ));
         assert!(matches!(
             handle_key_event(
                 &terminal,

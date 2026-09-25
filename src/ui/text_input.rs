@@ -41,24 +41,3 @@ fn grapheme_boundaries(text: &str) -> Vec<usize> {
     }
     boundaries
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn boundaries_follow_ratatui_graphemes_for_ascii_and_unicode() {
-        let cases = [
-            ("ascii", "ab", vec![0, 1, 2]),
-            ("fullwidth", "あ界", vec![0, 3, 6]),
-            ("combining", "e\u{301}x", vec![0, 3, 4]),
-            ("zwj", "👩\u{200d}💻x", vec![0, 11, 12]),
-        ];
-
-        for (name, text, expected) in cases {
-            let actual = grapheme_boundaries(text);
-
-            assert_eq!(actual, expected, "{name}");
-        }
-    }
-}

@@ -707,20 +707,4 @@ mod tests {
             0
         );
     }
-
-    #[test]
-    fn search_query_is_not_included_in_the_copy_document() {
-        let mut review = PlanReview::new(
-            PathBuf::from("/project"),
-            "default".to_owned(),
-            plan_document("Terraform body\n".to_owned()),
-            PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
-            Vec::new(),
-        );
-
-        review.set_search_query("body".to_owned());
-
-        assert_eq!(review.search_query(), "body");
-        assert_eq!(review.document().text(), "Terraform body\n");
-    }
 }

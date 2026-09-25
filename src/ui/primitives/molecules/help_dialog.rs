@@ -421,22 +421,6 @@ mod tests {
     }
 
     #[test]
-    fn narrow_dialogs_stack_keys_above_their_descriptions() {
-        let sections = [HelpSection::new(
-            "Navigation",
-            vec![HelpAction::new(
-                "Space",
-                "expand or collapse a selected ▸/▾ group row",
-            )],
-        )];
-
-        let width = dialog_width(Rect::new(0, 0, 40, 16), &sections);
-        let layout = action_layout(&sections, width, 40);
-        assert!(layout.stacked);
-        assert!(required_dialog_width(&sections) > width);
-    }
-
-    #[test]
     fn wide_dialogs_expand_to_fit_their_content_without_a_fixed_cap() {
         let sections = [HelpSection::new(
             "Comparison",

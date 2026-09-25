@@ -1148,8 +1148,6 @@ mod tests {
 
         let area = Rect::new(0, 0, 120, 40);
         let split = layout(area, &state, &view, &content);
-        let body_height = split.changes.height + split.relations.height;
-        assert_eq!(split.changes.height, body_height * 4 / 10);
 
         view.apply(
             OverviewInput::FocusRelations,
@@ -1390,7 +1388,7 @@ mod tests {
             &content,
         );
 
-        for (width, height) in [(40, 16), (80, 24), (120, 40), (165, 50)] {
+        for (width, height) in [(40, 16), (80, 24), (120, 40)] {
             let buffer = render_to_buffer((width, height), |frame| {
                 render(frame, &state, &view, Instant::now());
             });

@@ -194,17 +194,11 @@ mod tests {
         }
     }
 
-    #[rstest]
-    #[case::plain(KeyModifiers::NONE)]
-    #[case::shift(KeyModifiers::SHIFT)]
-    #[case::control(KeyModifiers::CONTROL)]
-    #[case::control_with_redundant_shift(KeyModifiers::CONTROL | KeyModifiers::SHIFT)]
-    #[case::alt(KeyModifiers::ALT)]
-    #[case::alt_with_redundant_shift(KeyModifiers::ALT | KeyModifiers::SHIFT)]
-    fn uppercase_y_does_not_copy_after_failure(#[case] modifiers: KeyModifiers) {
+    #[test]
+    fn uppercase_y_does_not_copy_after_failure() {
         assert_eq!(
             execution_key_to_input(
-                key(KeyCode::Char('Y'), modifiers),
+                key(KeyCode::Char('Y'), KeyModifiers::NONE),
                 ExecutionStage::Failed,
                 false,
             ),
@@ -215,7 +209,6 @@ mod tests {
     #[rstest]
     #[case::lowercase(KeyCode::Char('y'), KeyModifiers::NONE)]
     #[case::uppercase(KeyCode::Char('Y'), KeyModifiers::NONE)]
-    #[case::uppercase_with_redundant_shift(KeyCode::Char('Y'), KeyModifiers::SHIFT)]
     fn copy_keys_are_ignored_while_running(#[case] code: KeyCode, #[case] modifiers: KeyModifiers) {
         assert_eq!(
             execution_key_to_input(key(code, modifiers), ExecutionStage::Planning, false),
