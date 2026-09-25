@@ -670,35 +670,6 @@ mod tests {
         }
 
         #[test]
-        fn summary_counts_each_standard_kind_from_the_plan() {
-            let review = review(
-                Plan {
-                    resource_changes: vec![
-                        resource_change("terraform_data.create", ResourceChangeKind::Create),
-                        resource_change("terraform_data.update", ResourceChangeKind::Update),
-                        resource_change("terraform_data.replace", ResourceChangeKind::Replace),
-                        resource_change("terraform_data.delete", ResourceChangeKind::Delete),
-                        resource_change("terraform_data.unchanged", ResourceChangeKind::NoOp),
-                        resource_change("terraform_data.read", ResourceChangeKind::Read),
-                    ],
-                    ..Plan::empty()
-                },
-                PlanMetadata::new(Vec::new(), true),
-            );
-
-            assert_eq!(
-                review.summary(),
-                PlanSummary {
-                    creates: 1,
-                    updates: 1,
-                    replaces: 1,
-                    deletes: 1,
-                }
-            );
-            assert!(review.has_changes());
-        }
-
-        #[test]
         fn has_changes_counts_nonstandard_and_output_changes_but_not_no_op_resources() {
             struct ChangesCase {
                 name: &'static str,

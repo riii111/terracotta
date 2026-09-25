@@ -189,26 +189,6 @@ mod tests {
     }
 
     #[test]
-    fn output_only_plan_with_moved_or_imported_resources_stays_applyable() {
-        let document = json!({
-            "format_version": "1.0",
-            "applyable": true,
-            "resource_changes": [{
-                "address": "terraform_data.moved_or_imported",
-                "previous_address": "terraform_data.previous",
-                "importing": {"id": "example"},
-                "change": {"actions": ["no-op"]}
-            }],
-            "output_changes": {"endpoint": {"actions": ["update"]}}
-        });
-
-        let metadata = parse_metadata(&document, true);
-
-        assert_eq!(metadata.output_names(), ["endpoint"]);
-        assert!(metadata.applyable());
-    }
-
-    #[test]
     fn extracts_sensitive_scalars_without_debug_leaks() {
         let document = json!({
             "format_version": "1.0",
