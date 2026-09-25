@@ -874,6 +874,28 @@ try:
         wait_new("Quit Terracotta?", "quit_confirmation_after_copy")
         send_key(b"\r")
         exit_code = wait_exit()
+    elif scenario == "empty_filter_quit":
+        wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
+        send_key(b"/")
+        wait_new("/ ", "empty_filter_input")
+        send_text("not-present")
+        observe_current_or_wait("No matches", "empty_filter_no_matches")
+        send_key(b"\r")
+        wait_new("y copy all", "empty_filter_confirmed")
+        send_key(b"\x03")
+        wait_new("Quit Terracotta?", "empty_filter_ctrl_c")
+        send_key(b"\x1b")
+        wait_screen(
+            lambda current: "Quit Terracotta?" not in current
+            and "Filter: /not-present" in current
+            and "No matching changes." in current,
+            "empty_filter_ctrl_c_cancelled",
+            "filtered review after cancelling quit confirmation",
+        )
+        send_key(b"\x03")
+        wait_new("Quit Terracotta?", "empty_filter_ctrl_c_again")
+        send_key(b"\r")
+        exit_code = wait_exit()
     elif scenario == "failure":
         observed.append("failed")
         exit_code = wait_exit()
@@ -891,9 +913,11 @@ try:
         exit_code = wait_exit()
     else:
         raise RuntimeError(f"unknown scenario: {scenario}")
+    restored = b"\x1b[?1049l" in output
+    cursor_restored = b"\x1b[?25h" in output
     print(f"exit={exit_code}")
-    print(f"restored={str(b'\x1b[?1049l' in output).lower()}")
-    print(f"cursor_restored={str(b'\x1b[?25h' in output).lower()}")
+    print(f"restored={str(restored).lower()}")
+    print(f"cursor_restored={str(cursor_restored).lower()}")
     print("observed=" + ",".join(observed))
 except BaseException as error:
     kill_child()

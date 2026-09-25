@@ -70,6 +70,9 @@ pub(crate) fn key_to_input(
 
 const fn confirmed_filter_key_to_input(key: KeyEvent) -> Option<PlanReviewInput> {
     match (key.code, key.modifiers) {
+        (KeyCode::Char('c'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
+            Some(PlanReviewInput::Quit)
+        }
         (KeyCode::Char('/'), KeyModifiers::NONE) => Some(PlanReviewInput::SearchStart),
         (KeyCode::Esc, KeyModifiers::NONE) => Some(PlanReviewInput::SearchCancel),
         (KeyCode::Char('n'), KeyModifiers::NONE) => Some(PlanReviewInput::SearchNext),
@@ -290,6 +293,45 @@ mod tests {
             ),
             Some(PlanReviewInput::SearchPrevious)
         );
+    }
+
+    #[test]
+    fn ctrl_c_quits_outside_search_and_cancels_search_input() {
+        struct CtrlCCase {
+            name: &'static str,
+            searching: bool,
+            filter_confirmed: bool,
+            expected: PlanReviewInput,
+        }
+        let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+
+        for case in [
+            CtrlCCase {
+                name: "full_review",
+                searching: false,
+                filter_confirmed: false,
+                expected: PlanReviewInput::Quit,
+            },
+            CtrlCCase {
+                name: "search_input",
+                searching: true,
+                filter_confirmed: false,
+                expected: PlanReviewInput::SearchCancel,
+            },
+            CtrlCCase {
+                name: "confirmed_filter",
+                searching: false,
+                filter_confirmed: true,
+                expected: PlanReviewInput::Quit,
+            },
+        ] {
+            assert_eq!(
+                key_to_input(key, case.searching, case.filter_confirmed),
+                Some(case.expected),
+                "case: {}",
+                case.name
+            );
+        }
     }
 
     #[test]

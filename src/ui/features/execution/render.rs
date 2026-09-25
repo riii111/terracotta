@@ -144,15 +144,7 @@ fn render_apply_execution(
         view,
         now,
     );
-    render_log_panel(
-        frame,
-        layout.log_panel(),
-        layout.body(),
-        state,
-        view,
-        content,
-        now,
-    );
+    render_log_panel(frame, &layout, state, view, content, now);
     render_footer(
         frame,
         layout.shell.footer(),
@@ -251,8 +243,7 @@ fn render_target_panel(
 
 fn render_log_panel(
     frame: &mut Frame<'_>,
-    panel: Rect,
-    body: Rect,
+    layout: &ExecutionLayout,
     state: &ExecutionState,
     view: ExecutionViewState,
     content: PreparedContent<'_>,
@@ -270,13 +261,13 @@ fn render_log_panel(
             .borders(Borders::ALL)
             .border_style(theme::frame_style())
             .title(title),
-        panel,
+        layout.log_panel(),
     );
     let line_count = content.lines.len();
     let max_line_width = content.max_width;
-    let (max_vertical, max_horizontal) = scroll_limits(line_count, max_line_width, body);
+    let max_vertical = layout.max_vertical();
     let scroll = view.vertical_offset(initial_scroll(state, max_vertical), max_vertical);
-    let horizontal = view.horizontal().min(max_horizontal);
+    let horizontal = view.horizontal().min(layout.max_horizontal());
     let lines = if state.copy_feedback().flash_active(now) {
         flash_lines(content.lines)
     } else {
@@ -286,33 +277,14 @@ fn render_log_panel(
         Paragraph::new(lines)
             .style(theme::body_style())
             .scroll((scroll, horizontal)),
-        body,
+        layout.body(),
     );
-    let (vertical, horizontal_scrollbar) = scrollbar_reservations(line_count, max_line_width, body);
-    let scrollbar_area = Rect::new(
-        body.x,
-        body.y,
-        body.width.saturating_add(u16::from(vertical)),
-        body.height.saturating_add(u16::from(horizontal_scrollbar)),
+    render_log_scrollbars(
+        frame,
+        layout,
+        (line_count, max_line_width),
+        (scroll, horizontal),
     );
-    if vertical {
-        scrollbar::render_vertical(
-            frame,
-            scrollbar_area,
-            line_count,
-            usize::from(body.height),
-            usize::from(scroll),
-        );
-    }
-    if horizontal_scrollbar {
-        scrollbar::render_horizontal(
-            frame,
-            scrollbar_area,
-            max_line_width,
-            usize::from(body.width),
-            usize::from(horizontal),
-        );
-    }
 }
 
 fn render_log_view(
@@ -344,6 +316,32 @@ fn render_log_view(
             .scroll((scroll, horizontal)),
         layout.log_area(),
     );
+    render_log_scrollbars(
+        frame,
+        layout,
+        (line_count, max_line_width),
+        (scroll, horizontal),
+    );
+    frame.render_widget(
+        separator::render(layout.separator().width),
+        layout.separator(),
+    );
+    render_footer(
+        frame,
+        layout.shell.footer(),
+        layout.shell.footer_lines(),
+        notice,
+    );
+}
+
+// Bars are drawn only from the layout's reservation, so rendering never re-measures a body
+// that already excludes the bar cells.
+fn render_log_scrollbars(
+    frame: &mut Frame<'_>,
+    layout: &ExecutionLayout,
+    (line_count, max_line_width): (usize, usize),
+    (vertical_offset, horizontal_offset): (u16, u16),
+) {
     let body = layout.body();
     let scrollbar_area = Rect::new(
         body.x,
@@ -359,7 +357,7 @@ fn render_log_view(
             scrollbar_area,
             line_count,
             usize::from(body.height),
-            usize::from(scroll),
+            usize::from(vertical_offset),
         );
     }
     if layout.horizontal_scrollbar() {
@@ -368,19 +366,9 @@ fn render_log_view(
             scrollbar_area,
             max_line_width,
             usize::from(body.width),
-            usize::from(horizontal),
+            usize::from(horizontal_offset),
         );
     }
-    frame.render_widget(
-        separator::render(layout.separator().width),
-        layout.separator(),
-    );
-    render_footer(
-        frame,
-        layout.shell.footer(),
-        layout.shell.footer_lines(),
-        notice,
-    );
 }
 
 fn render_footer(
@@ -1580,15 +1568,19 @@ mod tests {
     }
 
     fn applying_state_with_content(line_count: u16, line_width: u16) -> (ExecutionState, Instant) {
+        let text = "x".repeat(usize::from(line_width));
+        applying_state_with_lines(vec![text; usize::from(line_count)])
+    }
+
+    fn applying_state_with_lines(lines: Vec<String>) -> (ExecutionState, Instant) {
         let now = Instant::now();
         let mut state = ExecutionState::applying(now, ExecutionContext::loading("/repo"));
-        let text = "x".repeat(usize::from(line_width));
-        for _ in 0..line_count {
+        for text in lines {
             state.record(ExecutionEvent {
                 received_at: now,
                 kind: ExecutionEventKind::Log(ExecutionLogLine {
                     stream: EventStream::Stdout,
-                    text: text.clone(),
+                    text,
                 }),
             });
         }
@@ -1892,7 +1884,7 @@ mod tests {
                 }
             }
 
-            let area = Rect::new(0, 0, 80, 24);
+            let area = Rect::new(0, 0, 80, 40);
             let (base_state, _) = applying_state_with_content(1, 1);
             let mut logs_view = ExecutionViewState::default();
             logs_view.open_logs();
@@ -1917,6 +1909,156 @@ mod tests {
             assert_eq!(horizontal_layout.max_horizontal(), 1);
             assert!(!horizontal_layout.vertical_scrollbar());
             assert_scrollbar_positions(&horizontal_buffer, &horizontal_layout, 0, 1);
+        }
+
+        #[test]
+        fn apply_log_scrollbars_stay_inside_the_panel_at_reserved_width_boundaries() {
+            struct ReservationCase {
+                name: &'static str,
+                extra_lines: i32,
+                width_delta: i32,
+                fill: char,
+                bars: (bool, bool),
+            }
+
+            let area = Rect::new(0, 0, 80, 24);
+            let (base_state, _) = applying_state_with_content(1, 1);
+            let mut logs_view = ExecutionViewState::default();
+            logs_view.open_logs();
+            let available = execution_layout_with_view(area, &base_state, logs_view).log_area();
+
+            for case in [
+                ReservationCase {
+                    name: "none_equal",
+                    extra_lines: 0,
+                    width_delta: 0,
+                    fill: 'x',
+                    bars: (false, false),
+                },
+                ReservationCase {
+                    name: "horizontal_only_wider",
+                    extra_lines: -1,
+                    width_delta: 1,
+                    fill: 'x',
+                    bars: (false, true),
+                },
+                ReservationCase {
+                    name: "horizontal_takes_the_last_row",
+                    extra_lines: 0,
+                    width_delta: 1,
+                    fill: 'x',
+                    bars: (true, true),
+                },
+                ReservationCase {
+                    name: "vertical_only_narrower",
+                    extra_lines: 1,
+                    width_delta: -1,
+                    fill: 'x',
+                    bars: (true, false),
+                },
+                ReservationCase {
+                    name: "both_equal",
+                    extra_lines: 1,
+                    width_delta: 0,
+                    fill: 'x',
+                    bars: (true, true),
+                },
+                ReservationCase {
+                    name: "both_equal_fullwidth",
+                    extra_lines: 1,
+                    width_delta: 0,
+                    fill: 'あ',
+                    bars: (true, true),
+                },
+            ] {
+                let line_count = usize::try_from(i32::from(available.height) + case.extra_lines)
+                    .expect("line count");
+                let line_width = usize::try_from(i32::from(available.width) + case.width_delta)
+                    .expect("line width");
+                let mut lines = vec![log_line("", line_width, case.fill); line_count - 1];
+                lines.push(log_line("tail", line_width, case.fill));
+                let (state, now) = applying_state_with_lines(lines);
+
+                let layout = execution_layout_with_view(area, &state, logs_view);
+                let buffer = render_to_buffer((area.width, area.height), |frame| {
+                    render_execution_with_view(frame, &state, logs_view, now);
+                });
+
+                assert_eq!(layout.log_area(), available, "case: {}", case.name);
+                assert_eq!(
+                    (layout.vertical_scrollbar(), layout.horizontal_scrollbar()),
+                    case.bars,
+                    "case: {}",
+                    case.name
+                );
+                assert_panel_border(&buffer, layout.log_panel(), case.name);
+                assert_log_bar_ends(&buffer, &layout, case.name);
+                let body = layout.body();
+                let tail_row = body.y + u16::try_from(line_count - 1).expect("tail row")
+                    - layout.max_vertical();
+                let tail = (body.x..body.x + 4)
+                    .map(|x| buffer[(x, tail_row)].symbol())
+                    .collect::<String>();
+                assert_eq!(tail, "tail", "case: {}", case.name);
+            }
+        }
+
+        fn assert_log_bar_ends(buffer: &Buffer, layout: &ExecutionLayout, name: &str) {
+            let body = layout.body();
+            let (vertical, horizontal) =
+                (layout.vertical_scrollbar(), layout.horizontal_scrollbar());
+            if vertical {
+                assert_eq!(buffer[(body.right(), body.y)].symbol(), "▲", "case: {name}");
+            }
+            if vertical && !horizontal {
+                let end = buffer[(body.right(), body.bottom() - 1)].symbol();
+                assert_eq!(end, "▼", "case: {name}");
+            }
+            if horizontal {
+                assert_eq!(
+                    buffer[(body.x, body.bottom())].symbol(),
+                    "◀︎",
+                    "case: {name}"
+                );
+                let end_x = body.right() - u16::from(!vertical);
+                assert_eq!(buffer[(end_x, body.bottom())].symbol(), "▶︎", "case: {name}");
+            }
+        }
+
+        fn log_line(prefix: &str, width: usize, fill: char) -> String {
+            let fill_width = if fill.is_ascii() { 1 } else { 2 };
+            let remaining = width - prefix.len();
+            let mut line = prefix.to_owned();
+            line.extend(std::iter::repeat_n(fill, remaining / fill_width));
+            line.extend(std::iter::repeat_n('x', remaining % fill_width));
+            line
+        }
+
+        fn assert_panel_border(buffer: &Buffer, panel: Rect, name: &str) {
+            let row = |y: u16| {
+                (panel.x..panel.right())
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            };
+            let horizontal = "─".repeat(usize::from(panel.width - 2));
+            let title = "Logs: All logs";
+            assert_eq!(
+                row(panel.y),
+                format!(
+                    "┌{title}{}┐",
+                    "─".repeat(usize::from(panel.width - 2) - title.len())
+                ),
+                "case: {name}"
+            );
+            assert_eq!(
+                row(panel.bottom() - 1),
+                format!("└{horizontal}┘"),
+                "case: {name}"
+            );
+            for y in panel.y + 1..panel.bottom() - 1 {
+                assert_eq!(buffer[(panel.x, y)].symbol(), "│", "case: {name}");
+                assert_eq!(buffer[(panel.right() - 1, y)].symbol(), "│", "case: {name}");
+            }
         }
     }
 
