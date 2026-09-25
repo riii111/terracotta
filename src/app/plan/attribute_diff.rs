@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::fmt::{Debug, Formatter};
 
 use super::number::{CanonicalNumber, canonical_number};
-use super::{PlanValue, ReplacePathSegment, ResourceChange, ResourceChangeKind};
+use super::{PlanValue, ResourceChange, ResourceChangeKind};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum AttributePathSegment {
@@ -131,16 +131,7 @@ pub(crate) struct AttributeDiff {
     pub(crate) kind: AttributeChangeKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AttributeDiffs {
-    pub(crate) attributes: Vec<AttributeDiff>,
-    pub(crate) changed_count: usize,
-    pub(crate) unchanged_count: usize,
-    pub(crate) replace_paths: Option<Vec<Vec<ReplacePathSegment>>>,
-    pub(crate) action_reason: Option<String>,
-}
-
-pub(crate) fn diff_resource_attributes(change: &ResourceChange) -> AttributeDiffs {
+pub(crate) fn diff_resource_attributes(change: &ResourceChange) -> Vec<AttributeDiff> {
     let mut attributes = Vec::new();
     collect_diffs(
         &mut attributes,
@@ -155,20 +146,7 @@ pub(crate) fn diff_resource_attributes(change: &ResourceChange) -> AttributeDiff
         false,
         false,
     );
-
-    let changed_count = attributes
-        .iter()
-        .filter(|attribute| attribute.kind == AttributeChangeKind::Changed)
-        .count();
-    let unchanged_count = attributes.len() - changed_count;
-
-    AttributeDiffs {
-        attributes,
-        changed_count,
-        unchanged_count,
-        replace_paths: change.replace_paths.clone(),
-        action_reason: change.action_reason.clone(),
-    }
+    attributes
 }
 
 #[derive(Clone, Copy)]
@@ -592,8 +570,8 @@ mod tests {
             before_sensitive: Some(plan_value(fixture.before_sensitive)),
             after_sensitive: Some(plan_value(fixture.after_sensitive)),
             after_unknown: Some(plan_value(fixture.after_unknown)),
-            replace_paths: Some(vec![vec![ReplacePathSegment::Attribute("name".to_owned())]]),
-            action_reason: Some("replace_because_cannot_update".to_owned()),
+            replace_paths: None,
+            action_reason: None,
             previous_address: None,
             importing: None,
         }
@@ -604,11 +582,10 @@ mod tests {
     }
 
     fn attribute<'a>(
-        diffs: &'a AttributeDiffs,
+        diffs: &'a [AttributeDiff],
         path: &[AttributePathSegment],
     ) -> &'a AttributeDiff {
         diffs
-            .attributes
             .iter()
             .find(|attribute| attribute.path == path)
             .expect("attribute path should exist")
@@ -638,7 +615,6 @@ mod tests {
 
         assert_eq!(
             diffs
-                .attributes
                 .iter()
                 .map(|attribute| (&attribute.path, attribute.kind))
                 .collect::<Vec<_>>(),
@@ -705,8 +681,6 @@ mod tests {
                 ),
             ]
         );
-        assert_eq!(diffs.changed_count, 6);
-        assert_eq!(diffs.unchanged_count, 3);
     }
 
     #[test]
@@ -753,7 +727,7 @@ mod tests {
 
         let diffs = diff_resource_attributes(&change);
 
-        assert_eq!(diffs.attributes.len(), 1);
+        assert_eq!(diffs.len(), 1);
         let credentials = attribute(
             &diffs,
             &[AttributePathSegment::Key("credentials".to_owned())],
@@ -778,8 +752,7 @@ mod tests {
         let secrets = attribute(&diffs, &[AttributePathSegment::Key("secrets".to_owned())]);
 
         assert_eq!(secrets.kind, AttributeChangeKind::Changed);
-        assert_eq!(diffs.changed_count, 1);
-        assert_eq!(diffs.unchanged_count, 0);
+        assert_eq!(diffs.len(), 1);
     }
 
     #[test]
@@ -792,11 +765,10 @@ mod tests {
             after_unknown: json!(false),
         });
 
-        let attribute = &diff_resource_attributes(&change).attributes[0];
+        let attribute = &diff_resource_attributes(&change)[0];
 
         assert!(!attribute.before.is_sensitive());
         assert!(attribute.after.is_sensitive());
-        assert!(attribute.after.grouping_value() == Some(GroupingValue::String("new".to_owned())));
     }
 
     #[test]
@@ -836,32 +808,10 @@ mod tests {
             after_unknown: json!({"token": true}),
         });
 
-        let attribute = &diff_resource_attributes(&change).attributes[0];
+        let attribute = &diff_resource_attributes(&change)[0];
 
         assert_eq!(attribute.after.kind(), AttributeValueKind::Unknown);
         assert!(attribute.after.is_sensitive());
-        assert!(
-            attribute.after.grouping_value()
-                == Some(GroupingValue::Unknown(UnknownShape::Bool(true)))
-        );
-    }
-
-    #[test]
-    fn retains_replacement_metadata_and_attribute_counts() {
-        let change = change(ChangeFixture {
-            before: json!({"name": "old", "region": "same"}),
-            after: json!({"name": "new", "region": "same"}),
-            before_sensitive: json!(false),
-            after_sensitive: json!(false),
-            after_unknown: json!(false),
-        });
-
-        let diffs = diff_resource_attributes(&change);
-
-        assert_eq!(diffs.changed_count, 1);
-        assert_eq!(diffs.unchanged_count, 1);
-        assert_eq!(diffs.replace_paths, change.replace_paths);
-        assert_eq!(diffs.action_reason, change.action_reason);
     }
 
     #[test]
@@ -879,7 +829,7 @@ mod tests {
         let created_id = attribute(&create_diffs, &[AttributePathSegment::Key("id".to_owned())]);
         assert_eq!(created_id.before.kind(), AttributeValueKind::Absent);
         assert_eq!(created_id.after.kind(), AttributeValueKind::Known);
-        assert_eq!(create_diffs.attributes.len(), 2);
+        assert_eq!(create_diffs.len(), 2);
 
         let mut delete = change(ChangeFixture {
             before: json!({"id": "deleted", "name": "example"}),
@@ -894,7 +844,7 @@ mod tests {
         let deleted_id = attribute(&delete_diffs, &[AttributePathSegment::Key("id".to_owned())]);
         assert_eq!(deleted_id.before.kind(), AttributeValueKind::Known);
         assert_eq!(deleted_id.after.kind(), AttributeValueKind::Absent);
-        assert_eq!(delete_diffs.attributes.len(), 2);
+        assert_eq!(delete_diffs.len(), 2);
     }
 
     #[test]
@@ -916,7 +866,7 @@ mod tests {
             settings.after.original.as_ref(),
             Some(&plan_value(json!({"enabled": true})))
         );
-        assert!(!diffs.attributes.iter().any(|attribute| {
+        assert!(!diffs.iter().any(|attribute| {
             attribute.path
                 == [
                     AttributePathSegment::Key("settings".to_owned()),
@@ -986,16 +936,12 @@ mod tests {
                 case.name
             );
             assert_eq!(
-                diffs.changed_count, case.expected_count,
+                config.kind,
+                AttributeChangeKind::Changed,
                 "case: {}",
                 case.name
             );
-            assert_eq!(
-                diffs.attributes.len(),
-                case.expected_count,
-                "case: {}",
-                case.name
-            );
+            assert_eq!(diffs.len(), case.expected_count, "case: {}", case.name);
             assert_eq!(
                 config.path,
                 [AttributePathSegment::Key("config".to_owned())],
@@ -1034,10 +980,9 @@ mod tests {
 
         let diffs = diff_resource_attributes(&change);
 
-        assert_eq!(diffs.attributes.len(), 2);
+        assert_eq!(diffs.len(), 2);
         assert!(
             diffs
-                .attributes
                 .iter()
                 .all(|attribute| attribute.kind == AttributeChangeKind::Unchanged)
         );

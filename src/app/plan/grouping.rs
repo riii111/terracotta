@@ -123,13 +123,12 @@ pub(crate) fn grouping_candidate(
 
     let address = normalize_resource_address(&change.address)?;
     let diffs = diff_resource_attributes(change);
-    let has_changed_unknown = diffs.attributes.iter().any(|attribute| {
+    let has_changed_unknown = diffs.iter().any(|attribute| {
         attribute.kind == AttributeChangeKind::Changed && attribute.after.is_unknown()
     });
-    let mut attributes = Vec::with_capacity(diffs.changed_count);
+    let mut attributes = Vec::new();
 
     for attribute in diffs
-        .attributes
         .iter()
         .filter(|attribute| attribute.kind == AttributeChangeKind::Changed)
     {
