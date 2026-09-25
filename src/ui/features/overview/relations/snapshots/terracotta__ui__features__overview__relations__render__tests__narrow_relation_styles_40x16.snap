@@ -3,7 +3,7 @@ source: src/ui/features/overview/relations/render.rs
 expression: buffer_visual_snapshot(&output)
 ---
 40x16
-row 0: 0..3 fg=DarkGray bg=Reset modifier=NONE text="┌  " | 3..16 fg=Reset bg=Reset modifier=BOLD text="[3] Relations" | 16..40 fg=DarkGray bg=Reset modifier=NONE text=" · prod · whole env────┐"
+row 0: 0..3 fg=DarkGray bg=Reset modifier=NONE text="┌  " | 3..16 fg=Reset bg=Reset modifier=BOLD text="[3] Relations" | 16..23 fg=Reset bg=Reset modifier=NONE text=" · prod" | 23..40 fg=DarkGray bg=Reset modifier=NONE text=" · whole env────┐"
 row 1: 0..1 fg=DarkGray bg=Reset modifier=NONE text="│" | 1..39 fg=Reset bg=Reset modifier=NONE text="ng_resource_with_many_segments.this_6 " | 39..40 fg=DarkGray bg=Reset modifier=NONE text="│"
 row 2: 0..1 fg=DarkGray bg=Reset modifier=NONE text="│" | 1..39 fg=Reset bg=Reset modifier=NONE text="ng_resource_with_many_segments.this_7 " | 39..40 fg=DarkGray bg=Reset modifier=NONE text="│"
 row 3: 0..1 fg=DarkGray bg=Reset modifier=NONE text="│" | 1..39 fg=Reset bg=Reset modifier=NONE text="ng_resource_with_many_segments.this_8 " | 39..40 fg=DarkGray bg=Reset modifier=NONE text="│"

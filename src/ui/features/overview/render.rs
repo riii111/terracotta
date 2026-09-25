@@ -17,13 +17,13 @@ use crate::ui::{
         atoms::{scrollbar, separator},
         molecules::{help_dialog, terminal_notice},
     },
-    shell::{context, footer, header, layout as shell_layout},
+    shell::{context, environments, footer, header, layout as shell_layout},
     theme,
 };
 
 use super::{
     OverviewContent, OverviewOverlay, OverviewPane, OverviewViewState,
-    relations::{self, RelationGraphView},
+    relations::{self, RelationGraphTitle, RelationGraphView},
 };
 
 const MIN_WIDTH: u16 = 40;
@@ -145,15 +145,7 @@ pub(crate) fn render_with_quit_confirmation(
 ) {
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
-        terminal_notice::render_wrapped(
-            frame,
-            area,
-            if quit_confirmation {
-                "Terminal too small. Resize or press Enter/Esc to decide."
-            } else {
-                "Terminal too small. Resize or press q to quit."
-            },
-        );
+        render_terminal_size_notice(frame, area, quit_confirmation);
         return;
     }
     let content = OverviewContent::from_review(state.review(), view.filter(), view.expanded());
@@ -164,18 +156,10 @@ pub(crate) fn render_with_quit_confirmation(
     if (layout.changes.width == 0 || layout.changes.height == 0)
         && (layout.relations.width == 0 || layout.relations.height == 0)
     {
-        terminal_notice::render_wrapped(
-            frame,
-            area,
-            if quit_confirmation {
-                "Terminal too small. Resize or press Enter/Esc to decide."
-            } else {
-                "Terminal too small. Resize or press q to quit."
-            },
-        );
+        render_terminal_size_notice(frame, area, quit_confirmation);
         return;
     }
-    header::render_review(frame, layout.shell.header(), state.review());
+    header::render_overview_review(frame, layout.shell.header(), state.review());
     frame.render_widget(
         Block::new().style(theme::overview_background_style()),
         layout.shell.content(),
@@ -213,7 +197,10 @@ pub(crate) fn render_with_quit_confirmation(
             layout.relations,
             graph,
             &RelationGraphView {
-                title: "whole env",
+                title: RelationGraphTitle {
+                    environment: None,
+                    scope: "whole env",
+                },
                 selected_node: view.selected_node_id(&content),
                 focused: view.focus() == OverviewPane::Relations,
                 maximized: view.maximized() == Some(OverviewPane::Relations),
@@ -245,9 +232,24 @@ pub(crate) fn render_with_quit_confirmation(
     render_overlay(frame, area, state.review(), view);
 }
 
+fn render_terminal_size_notice(frame: &mut Frame<'_>, area: Rect, quit_confirmation: bool) {
+    terminal_notice::render_wrapped(
+        frame,
+        area,
+        if quit_confirmation {
+            "Terminal too small. Resize or press Enter/Esc to decide."
+        } else {
+            "Terminal too small. Resize or press q to quit."
+        },
+    );
+}
+
 fn status_line(review: &PlanReview, view: &OverviewViewState) -> Line<'static> {
     let metadata = review.metadata();
-    let mut spans = vec![Span::styled("Ready", theme::overview_text_style())];
+    let mut spans = vec![
+        environments::ready_status_marker(),
+        Span::styled("Ready", theme::overview_text_style()),
+    ];
     append_count(
         &mut spans,
         metadata.additions(),
@@ -603,6 +605,10 @@ fn render_overlay(
                 help_dialog::HelpSection::new(
                     "Review",
                     vec![
+                        help_dialog::HelpAction::new(
+                            "✓ Ready",
+                            "plan acquisition completed; review and apply safety are separate",
+                        ),
                         help_dialog::HelpAction::new("Enter", "open the selected raw block"),
                         help_dialog::HelpAction::new("/", "filter Changes full addresses"),
                         help_dialog::HelpAction::new(
@@ -725,6 +731,7 @@ mod tests {
         },
         ui::test_support::{buffer_text, render_to_buffer},
     };
+    use ratatui::style::Color;
 
     fn review() -> PlanReview {
         let addresses = vec![
@@ -855,6 +862,53 @@ mod tests {
         .with_relations(relations)
     }
 
+    #[test]
+    fn overview_ready_marker_and_tool_metadata_use_their_own_styles() {
+        let state = OverviewSessionState::new(review());
+        let view = OverviewViewState::default();
+        let buffer = render_to_buffer((120, 40), |frame| {
+            render(frame, &state, &view, Instant::now());
+        });
+        let text = buffer_text(&buffer);
+        let status_y = text
+            .lines()
+            .position(|line| line.contains("✓ Ready"))
+            .expect("the Ready status is visible");
+        let status_line = text.lines().nth(status_y).unwrap();
+        let marker_x = ratatui::text::Line::from(
+            &status_line[..status_line.find('✓').expect("status marker")],
+        )
+        .width();
+        assert_eq!(
+            buffer
+                .cell((
+                    u16::try_from(marker_x).unwrap(),
+                    u16::try_from(status_y).unwrap()
+                ))
+                .unwrap()
+                .fg,
+            Color::Green
+        );
+        assert_eq!(
+            buffer
+                .cell((
+                    u16::try_from(marker_x + 2).unwrap(),
+                    u16::try_from(status_y).unwrap()
+                ))
+                .unwrap()
+                .fg,
+            Color::Reset
+        );
+
+        let header = text.lines().next().unwrap();
+        let tool_x =
+            ratatui::text::Line::from(&header[..header.find("terraform").unwrap()]).width();
+        assert_eq!(
+            buffer.cell((u16::try_from(tool_x).unwrap(), 0)).unwrap().fg,
+            Color::Reset
+        );
+    }
+
     fn mixed_relation_graph() -> RelationGraph {
         let nodes = [
             ("terraform_data.source", BTreeSet::new()),
@@ -979,7 +1033,10 @@ mod tests {
                 relations_area,
                 content.relations.as_ref().unwrap(),
                 &RelationGraphView {
-                    title: "whole env",
+                    title: RelationGraphTitle {
+                        environment: None,
+                        scope: "whole env",
+                    },
                     selected_node: None,
                     focused: true,
                     maximized: false,

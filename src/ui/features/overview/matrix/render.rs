@@ -30,6 +30,7 @@ pub(crate) fn render(
     area: Rect,
     state: &EnvironmentSession,
     view: &mut MatrixView,
+    show_same_change_toggle: bool,
 ) {
     if area.width < 30 || area.height < 5 {
         frame.render_widget(
@@ -46,7 +47,15 @@ pub(crate) fn render(
     let columns = visible_columns(view, &column_widths, column_budget);
 
     render_column_headers(frame, area, state, view, &columns, address_width);
-    render_content(frame, area, state, view, &columns, address_width);
+    render_content(
+        frame,
+        area,
+        state,
+        view,
+        &columns,
+        address_width,
+        show_same_change_toggle,
+    );
 }
 
 fn render_content(
@@ -56,8 +65,16 @@ fn render_content(
     view: &mut MatrixView,
     columns: &[(usize, usize)],
     address_width: usize,
+    show_same_change_toggle: bool,
 ) {
-    let (lines, selected_lines) = content_lines(view, state, area.width, columns, address_width);
+    let (lines, selected_lines) = content_lines(
+        view,
+        state,
+        area.width,
+        columns,
+        address_width,
+        show_same_change_toggle,
+    );
     let legend = symbol_legend(area.width);
     let body = Rect::new(
         area.x,
@@ -94,6 +111,7 @@ fn content_lines(
     width: u16,
     columns: &[(usize, usize)],
     address_width: usize,
+    show_same_change_toggle: bool,
 ) -> (Vec<Line<'static>>, Option<(usize, usize)>) {
     let filtered = view.environments.len() != state.plans().len();
     let partial = view
@@ -116,7 +134,13 @@ fn content_lines(
                 let selected_line = lines.len();
                 selected_lines = Some((selected_line, selected_line));
             }
-            lines.push(summary_line(summary, selected, view.same_expanded, width));
+            lines.push(summary_line(
+                summary,
+                selected,
+                view.same_expanded,
+                show_same_change_toggle,
+                width,
+            ));
             continue;
         }
         if row.difference.is_some() && section != Some(true) {
@@ -130,7 +154,7 @@ fn content_lines(
                 } else {
                     "Differs across envs"
                 },
-                theme::overview_accent_style(),
+                theme::overview_section_heading_style(),
             ));
         } else if row.difference.is_none() && !summary_seen && section != Some(false) {
             if section.is_some() {
@@ -148,7 +172,7 @@ fn content_lines(
             } else {
                 "Same change across envs"
             };
-            lines.push(Line::styled(title, theme::overview_accent_style()));
+            lines.push(Line::styled(title, theme::overview_section_heading_style()));
         }
         let row_line_index = lines.len();
         if selected {
@@ -468,6 +492,7 @@ fn summary_line(
     summary: &super::view::SameChangeSummary,
     selected: bool,
     expanded: bool,
+    show_toggle_hint: bool,
     width: u16,
 ) -> Line<'static> {
     let label = if width < 64 {
@@ -481,7 +506,12 @@ fn summary_line(
             theme::overview_text_style(),
         ),
         Span::raw(" "),
-        Span::styled(label, theme::overview_text_style()),
+        Span::styled(
+            if expanded { "▾" } else { "▸" },
+            theme::overview_section_heading_style(),
+        ),
+        Span::raw(" "),
+        Span::styled(label, theme::overview_section_heading_style()),
     ];
     if summary.has_unknown {
         spans.push(Span::styled(
@@ -537,15 +567,18 @@ fn summary_line(
         "?",
         theme::overview_warning_style(),
     );
-    spans.push(Span::styled(
-        if expanded {
-            "  Space collapse"
-        } else {
-            "  Space expand"
-        },
-        theme::overview_muted_style(),
-    ));
-    Line::from(spans)
+    let mut line = Line::from(spans);
+    let hint = if expanded {
+        "  Space collapse"
+    } else {
+        "  Space expand"
+    };
+    if show_toggle_hint
+        && line.width().saturating_add(Line::from(hint).width()) <= usize::from(width)
+    {
+        line.push_span(Span::styled(hint, theme::overview_text_style()));
+    }
+    line
 }
 
 fn push_count(
@@ -644,6 +677,7 @@ mod tests {
     use super::*;
     use crate::ui::features::overview::OverviewInput;
     use crate::ui::test_support::{buffer_text, render_to_buffer};
+    use ratatui::style::Color;
 
     fn matrix_view(first_column: usize) -> MatrixView {
         let mut view = MatrixView::default();
@@ -719,7 +753,7 @@ mod tests {
         });
         let state = EnvironmentSession::new(Vec::new(), false);
         let output = render_to_buffer((40, 5), |frame| {
-            render(frame, frame.area(), &state, &mut view);
+            render(frame, frame.area(), &state, &mut view, false);
         });
         let text = buffer_text(&output);
 
@@ -738,9 +772,64 @@ mod tests {
             has_unknown: true,
         };
 
-        let line = summary_line(&summary, false, false, 40).to_string();
+        let line = summary_line(&summary, false, false, false, 40).to_string();
 
         assert!(line.contains("[unknown values]"), "{line}");
+    }
+
+    #[test]
+    fn same_change_summary_shows_its_expansion_state_without_selection() {
+        let summary = super::super::view::SameChangeSummary {
+            rows: 1,
+            actions: super::super::view::ChangeCounts {
+                updates: 1,
+                ..Default::default()
+            },
+            has_unknown: false,
+        };
+
+        let collapsed = summary_line(&summary, false, false, false, 80);
+        let expanded = summary_line(&summary, false, true, false, 80);
+
+        assert!(
+            collapsed
+                .to_string()
+                .starts_with("  ▸ Same change across envs")
+        );
+        assert!(
+            expanded
+                .to_string()
+                .starts_with("  ▾ Same change across envs")
+        );
+        assert!(!collapsed.to_string().contains("Space"));
+        assert!(!expanded.to_string().contains("Space"));
+        assert_eq!(collapsed.spans[2].style.fg, Some(Color::Reset));
+        assert!(
+            collapsed.spans[2]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
+        assert_eq!(collapsed.spans[2].style.bg, Some(Color::Reset));
+    }
+
+    #[test]
+    fn same_change_summary_only_adds_a_complete_hint_when_it_fits() {
+        let summary = super::super::view::SameChangeSummary {
+            rows: 1,
+            actions: super::super::view::ChangeCounts {
+                updates: 1,
+                ..Default::default()
+            },
+            has_unknown: false,
+        };
+
+        let fits = summary_line(&summary, true, false, true, 80);
+        let too_narrow = summary_line(&summary, true, false, true, 32);
+
+        assert!(fits.to_string().ends_with("Space expand"));
+        assert_eq!(fits.spans.last().unwrap().style.fg, Some(Color::Reset));
+        assert!(!too_narrow.to_string().contains("Space"));
     }
 
     #[test]

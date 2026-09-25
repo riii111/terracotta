@@ -28,8 +28,12 @@ pub(crate) fn overview_muted_style() -> Style {
     Style::default().fg(Color::DarkGray).bg(Color::Reset)
 }
 
-pub(crate) fn overview_accent_style() -> Style {
+pub(crate) fn overview_selection_marker_style() -> Style {
     Style::default().fg(Color::Green).bg(Color::Reset)
+}
+
+pub(crate) fn overview_section_heading_style() -> Style {
+    overview_text_style().add_modifier(Modifier::BOLD)
 }
 
 pub(crate) fn overview_header_style() -> Style {
@@ -80,11 +84,15 @@ pub(crate) fn relation_muted_style() -> Style {
 }
 
 pub(crate) fn relation_section_style() -> Style {
-    overview_accent_style().add_modifier(Modifier::BOLD)
+    overview_section_heading_style()
 }
 
 pub(crate) fn relation_warning_style() -> Style {
     overview_warning_style().add_modifier(Modifier::BOLD)
+}
+
+pub(crate) fn relation_difference_style() -> Style {
+    overview_text_style().add_modifier(Modifier::BOLD)
 }
 
 pub(crate) fn relation_create_style() -> Style {

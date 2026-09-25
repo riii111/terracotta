@@ -40,7 +40,15 @@ pub(crate) fn render_review(frame: &mut Frame<'_>, area: Rect, review: &PlanRevi
     render(
         frame,
         area,
-        vec![compact_review_header_line(review, area.width)],
+        vec![compact_review_header_line(review, area.width, false)],
+    );
+}
+
+pub(crate) fn render_overview_review(frame: &mut Frame<'_>, area: Rect, review: &PlanReview) {
+    render(
+        frame,
+        area,
+        vec![compact_review_header_line(review, area.width, true)],
     );
 }
 
@@ -187,7 +195,11 @@ fn plan_review_changes_line(review: &PlanReview) -> Line<'static> {
     line
 }
 
-fn compact_review_header_line(review: &PlanReview, width: u16) -> Line<'static> {
+fn compact_review_header_line(
+    review: &PlanReview,
+    width: u16,
+    normal_tool_style: bool,
+) -> Line<'static> {
     let context = review.context();
     let target_name = match context.display_name() {
         ExecutionContextValue::Known(name) => {
@@ -215,6 +227,7 @@ fn compact_review_header_line(review: &PlanReview, width: u16) -> Line<'static> 
             relative_directory(context.cwd_path(), context.launch_root_path()),
         ],
         width,
+        normal_tool_style,
     )
 }
 
@@ -343,12 +356,12 @@ fn truncate_directory(value: &str, max_width: usize) -> String {
     truncate_middle(value, max_width)
 }
 
-fn fit_compact_header(parts: &[String], width: u16) -> Line<'static> {
+fn fit_compact_header(parts: &[String], width: u16, normal_tool_style: bool) -> Line<'static> {
     let width = usize::from(width);
     let separator_width = Line::from(GAP).width();
     let full = parts.join(GAP);
-    let value = if Line::from(full.as_str()).width() <= width {
-        full
+    let values = if Line::from(full.as_str()).width() <= width {
+        parts.to_vec()
     } else {
         let separators = separator_width.saturating_mul(parts.len().saturating_sub(1));
         let available = width.saturating_sub(separators);
@@ -364,35 +377,52 @@ fn fit_compact_header(parts: &[String], width: u16) -> Line<'static> {
             })
             .collect::<Vec<_>>();
         if available < minimums.iter().sum() {
-            truncate_middle(&full, width)
-        } else {
-            let mut allocations = minimums;
-            let mut remaining = available.saturating_sub(allocations.iter().sum());
-            for (allocation, part) in allocations.iter_mut().zip(parts) {
-                let extra = remaining.min(
-                    Line::from(part.as_str())
-                        .width()
-                        .saturating_sub(*allocation),
-                );
-                *allocation += extra;
-                remaining -= extra;
-            }
-            parts
-                .iter()
-                .zip(allocations)
-                .enumerate()
-                .map(|(index, (part, allocation))| {
-                    truncate_compact_header_part(
-                        part,
-                        allocation,
-                        index == parts.len().saturating_sub(1),
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(GAP)
+            return Line::from(Span::styled(
+                truncate_middle(&full, width),
+                if normal_tool_style {
+                    theme::overview_text_style()
+                } else {
+                    theme::secondary_style()
+                },
+            ));
         }
+        let mut allocations = minimums;
+        let mut remaining = available.saturating_sub(allocations.iter().sum());
+        for (allocation, part) in allocations.iter_mut().zip(parts) {
+            let extra = remaining.min(
+                Line::from(part.as_str())
+                    .width()
+                    .saturating_sub(*allocation),
+            );
+            *allocation += extra;
+            remaining -= extra;
+        }
+        parts
+            .iter()
+            .zip(allocations)
+            .enumerate()
+            .map(|(index, (part, allocation))| {
+                truncate_compact_header_part(
+                    part,
+                    allocation,
+                    index == parts.len().saturating_sub(1),
+                )
+            })
+            .collect::<Vec<_>>()
     };
-    Line::from(Span::styled(value, theme::secondary_style()))
+    let mut spans = Vec::new();
+    for (index, value) in values.into_iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::styled(GAP, theme::secondary_style()));
+        }
+        let style = if normal_tool_style && index == 2 {
+            theme::overview_text_style()
+        } else {
+            theme::secondary_style()
+        };
+        spans.push(Span::styled(value, style));
+    }
+    Line::from(spans)
 }
 
 fn truncate_compact_header_part(value: &str, max_width: usize, is_directory: bool) -> String {

@@ -22,8 +22,14 @@ pub(crate) struct RelationGraphScroll {
     pub(crate) horizontal: u16,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct RelationGraphTitle<'a> {
+    pub(crate) environment: Option<&'a str>,
+    pub(crate) scope: &'a str,
+}
+
 pub(crate) struct RelationGraphView<'a> {
-    pub(crate) title: &'a str,
+    pub(crate) title: RelationGraphTitle<'a>,
     pub(crate) selected_node: Option<&'a RelationNodeId>,
     pub(crate) focused: bool,
     pub(crate) maximized: bool,
@@ -36,21 +42,7 @@ pub(crate) fn render(
     graph: &RelationGraph,
     view: &RelationGraphView<'_>,
 ) -> RelationGraphScroll {
-    let title = Line::from(vec![
-        Span::styled(
-            if view.focused { "* " } else { "  " },
-            if view.focused {
-                theme::relation_frame_style(true)
-            } else {
-                theme::relation_muted_style()
-            },
-        ),
-        Span::styled(
-            "[3] Relations",
-            theme::relation_text_style().add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(format!(" · {}", view.title), theme::relation_muted_style()),
-    ]);
+    let title = title_line(view.title, view.focused);
     let block = Block::bordered()
         .title(title)
         .border_style(theme::relation_frame_style(view.focused))
@@ -109,6 +101,34 @@ pub(crate) fn render(
         );
     }
     scroll
+}
+
+pub(crate) fn title_line(title: RelationGraphTitle<'_>, focused: bool) -> Line<'static> {
+    let mut spans = vec![
+        Span::styled(
+            if focused { "* " } else { "  " },
+            if focused {
+                theme::relation_frame_style(true)
+            } else {
+                theme::relation_muted_style()
+            },
+        ),
+        Span::styled(
+            "[3] Relations",
+            theme::relation_text_style().add_modifier(Modifier::BOLD),
+        ),
+    ];
+    if let Some(environment) = title.environment {
+        spans.push(Span::styled(
+            format!(" · {environment}"),
+            theme::relation_text_style(),
+        ));
+    }
+    spans.push(Span::styled(
+        format!(" · {}", title.scope),
+        theme::relation_muted_style(),
+    ));
+    Line::from(spans)
 }
 
 fn visible_legend_lines(
@@ -673,7 +693,7 @@ fn node_line(
         ));
     }
     if node.differs {
-        spans.push(Span::styled(" !", theme::relation_warning_style()));
+        spans.push(Span::styled(" !", theme::relation_difference_style()));
     }
     if !node.unresolved.is_empty() {
         spans.push(Span::styled(" ?", theme::relation_muted_style()));
@@ -853,9 +873,43 @@ mod tests {
     };
 
     use super::{
-        RelationGraphScroll, RelationGraphView, compact_legend_lines, graph_lines, legend_lines,
-        node_line, render,
+        RelationGraphScroll, RelationGraphTitle, RelationGraphView, compact_legend_lines,
+        graph_lines, legend_lines, node_line, render, title_line,
     };
+
+    #[test]
+    fn relation_title_keeps_environment_and_scope_styles_separate() {
+        let title = title_line(
+            RelationGraphTitle {
+                environment: Some("prod · blue"),
+                scope: "not compared",
+            },
+            false,
+        );
+
+        assert_eq!(
+            title.to_string(),
+            "  [3] Relations · prod · blue · not compared"
+        );
+        assert_eq!(title.spans[2].content, " · prod · blue");
+        assert_eq!(title.spans[2].style.fg, Some(Color::Reset));
+        assert_eq!(title.spans[2].style.bg, Some(Color::Reset));
+        assert_eq!(title.spans[3].content, " · not compared");
+        assert_eq!(title.spans[3].style.fg, Some(Color::DarkGray));
+
+        let single_environment = title_line(
+            RelationGraphTitle {
+                environment: None,
+                scope: "whole env",
+            },
+            true,
+        );
+        assert_eq!(
+            single_environment.to_string(),
+            "* [3] Relations · whole env"
+        );
+        assert_eq!(single_environment.spans[2].style.fg, Some(Color::DarkGray));
+    }
 
     #[test]
     fn relation_legend_shows_only_applicable_explanations() {
@@ -925,7 +979,7 @@ mod tests {
                 frame,
                 Rect::new(0, 0, 165, 50),
                 &graph,
-                &view("whole env", None, false, 0, 0),
+                &view(None, "whole env", None, false, 0, 0),
             );
         });
         insta::assert_snapshot!(
@@ -990,7 +1044,10 @@ mod tests {
                 Rect::new(0, 0, 165, 50),
                 &graph,
                 &RelationGraphView {
-                    title: "prod · whole env",
+                    title: RelationGraphTitle {
+                        environment: Some("prod"),
+                        scope: "whole env",
+                    },
                     selected_node: None,
                     focused: true,
                     maximized: false,
@@ -1034,7 +1091,7 @@ mod tests {
                 frame,
                 Rect::new(0, 0, 165, 50),
                 &chain,
-                &view("prod · whole env", None, false, 0, 0),
+                &view(Some("prod"), "whole env", None, false, 0, 0),
             );
         }));
         let merge = merge_graph();
@@ -1043,7 +1100,7 @@ mod tests {
                 frame,
                 Rect::new(0, 0, 165, 50),
                 &merge,
-                &view("prod · whole env", None, false, 0, 0),
+                &view(Some("prod"), "whole env", None, false, 0, 0),
             );
         }));
 
@@ -1077,7 +1134,7 @@ mod tests {
                 frame,
                 Rect::new(0, 0, 165, 50),
                 &graph,
-                &view("dev · whole env", None, false, 0, 0),
+                &view(Some("dev"), "whole env", None, false, 0, 0),
             );
         });
         let text = buffer_text(&output);
@@ -1127,7 +1184,7 @@ mod tests {
                 frame,
                 Rect::new(0, 0, 120, 40),
                 &graph,
-                &view("dev · whole env", None, true, 0, 0),
+                &view(Some("dev"), "whole env", None, true, 0, 0),
             );
         }));
 
@@ -1145,7 +1202,7 @@ mod tests {
                 frame,
                 Rect::new(0, 0, 80, 24),
                 &graph,
-                &view("whole env", None, false, 0, 0),
+                &view(None, "whole env", None, false, 0, 0),
             );
         });
         let text = buffer_text(&output);
@@ -1217,7 +1274,7 @@ mod tests {
                 frame,
                 Rect::new(0, 0, 165, 50),
                 &graph,
-                &view("whole env", None, false, 0, 0),
+                &view(None, "whole env", None, false, 0, 0),
             );
         }));
 
@@ -1235,7 +1292,8 @@ mod tests {
                 Rect::new(0, 0, 80, 24),
                 &graph,
                 &view(
-                    "prod · not compared",
+                    Some("prod"),
+                    "not compared",
                     graph.nodes.first().map(|node| &node.id),
                     false,
                     0,
@@ -1281,7 +1339,10 @@ mod tests {
                 Rect::new(0, 0, 100, 30),
                 &graph,
                 &RelationGraphView {
-                    title: "prod · whole env",
+                    title: RelationGraphTitle {
+                        environment: Some("prod"),
+                        scope: "whole env",
+                    },
                     selected_node: None,
                     focused: false,
                     maximized: true,
@@ -1308,7 +1369,7 @@ mod tests {
                 frame,
                 Rect::new(0, 0, 40, 16),
                 &graph,
-                &view("prod · whole env", None, false, u16::MAX, u16::MAX),
+                &view(Some("prod"), "whole env", None, false, u16::MAX, u16::MAX),
             );
         });
         let text = buffer_text(&output);
@@ -1335,7 +1396,7 @@ mod tests {
                     frame,
                     Rect::new(0, 0, 120, height),
                     &graph,
-                    &view("prod · whole env", None, false, 0, 0),
+                    &view(Some("prod"), "whole env", None, false, 0, 0),
                 );
             }));
 
@@ -1357,14 +1418,15 @@ mod tests {
     }
 
     fn view<'a>(
-        title: &'a str,
+        environment: Option<&'a str>,
+        scope: &'a str,
         selected_node: Option<&'a RelationNodeId>,
         focused: bool,
         vertical: u16,
         horizontal: u16,
     ) -> RelationGraphView<'a> {
         RelationGraphView {
-            title,
+            title: RelationGraphTitle { environment, scope },
             selected_node,
             focused,
             maximized: false,

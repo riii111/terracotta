@@ -23,6 +23,36 @@ pub(crate) enum EnvironmentPane {
     Relations,
 }
 
+pub(crate) fn status_marker(state: &EnvironmentState) -> Span<'static> {
+    let (symbol, style) = match state {
+        EnvironmentState::Ready { .. } => ("✓", theme::overview_total_add_style()),
+        EnvironmentState::Error => ("✗", theme::overview_total_destroy_style()),
+        EnvironmentState::Pending | EnvironmentState::Running | EnvironmentState::ExcludedHcp => {
+            ("", theme::overview_muted_style())
+        }
+    };
+    fixed_status_marker(symbol, style)
+}
+
+pub(crate) fn ready_status_marker() -> Span<'static> {
+    fixed_status_marker("✓", theme::overview_total_add_style())
+}
+
+fn fixed_status_marker(symbol: &str, style: ratatui::style::Style) -> Span<'static> {
+    const WIDTH: usize = 2;
+    let padding = WIDTH.saturating_sub(Line::from(symbol).width());
+    Span::styled(format!("{symbol}{}", " ".repeat(padding)), style)
+}
+
+pub(crate) fn status_style(state: &EnvironmentState) -> ratatui::style::Style {
+    match state {
+        EnvironmentState::Pending | EnvironmentState::Running => theme::overview_muted_style(),
+        EnvironmentState::Ready { .. } => theme::overview_text_style(),
+        EnvironmentState::Error => theme::overview_total_destroy_style(),
+        EnvironmentState::ExcludedHcp => theme::overview_warning_style(),
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct EnvironmentSelection {
     pub(crate) column: usize,
@@ -174,7 +204,7 @@ pub(crate) fn render_header(
         Paragraph::new(Line::from(vec![
             Span::styled(title, theme::overview_header_style()),
             Span::styled(" ".repeat(gap), theme::overview_header_style()),
-            Span::styled(tool, theme::overview_header_muted_style()),
+            Span::styled(tool, theme::overview_text_style()),
         ]))
         .style(theme::overview_header_style()),
         area,

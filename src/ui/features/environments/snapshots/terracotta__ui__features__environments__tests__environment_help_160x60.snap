@@ -3,16 +3,13 @@ source: src/ui/features/environments/tests.rs
 expression: text
 ---
 terracotta ▸ a-ready                                                                                                                                   terraform
-a-ready Ready No changes  │  b-error Error  │  c-running Running  │  d-pending Pending  │  e-hcp Excluded: HCP execution
+a-ready ✓ Ready No changes  │  b-error ✗ Error  │  c-running   Running  │  d-pending   Pending  │  e-hcp   Excluded: HCP execution
 ┌* [2] Compare · Ready 1/5─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│Address     a-ready     b-error     c-running     d-pending     e-hcp        why                                                                              │
 │                      ┌Help────────────────────────────────────────────────────────────────────────────────────────────────────────────┐                      │
-│No matching resource c│ Current: Multi-environment Overview                                                                            │                      │
-│                      │ ↑ / ↓ / j / k      select environments in [1], rows in [2], or scroll [3]                                      │                      │
+│                      │ Current: Multi-environment Overview                                                                            │                      │
+│Address     a-ready   │ ↑ / ↓ / j / k      select environments in [1], rows in [2], or scroll [3]                                      │                      │
 │                      │ Space              include or exclude an environment in [1]                                                    │                      │
-│                      │ Space              expand or collapse the selected group or Same change summary in [2]                         │                      │
+│No matching resource c│ Space              expand or collapse the selected group or Same change summary in [2]                         │                      │
 │                      │ o / a              compare only the selected environment / all environments in [1]                             │                      │
 │                      │ [ / ]              select the previous or next environment                                                     │                      │
 │                      │ 1 / 2 / 3          focus Envs / Compare / Relations; 1 opens Envs                                              │                      │
@@ -24,13 +21,13 @@ a-ready Ready No changes  │  b-error Error  │  c-running Running  │  d-pen
 │                      │                                                                                                                │                      │
 │                      │ Other                                                                                                          │                      │
 │                      │ ← / → / h / l      scroll columns in [2] or [3]                                                                │                      │
-│blank: absent   .: unc│ PageUp / PageDown  move rows in [2] or scroll [3]                                                              │                      │
-└──────────────────────│ Home / End / g / G select first/last environment in [1] or row in [2]; scroll [3] to an edge                   │──────────────────────┘
-┌  [3] Relations · a-re│ v                  open the full plan from the top                                                             │──────────────────────┐
-│No changes to show    │ y                  copy the selected environment's plan                                                        │                      │
-│                      │ c                  show environment context                                                                    │                      │
-│                      │ ?                  show or close this help                                                                     │                      │
-│                      │ q                  quit; confirms first while acquiring                                                        │                      │
+│                      │ PageUp / PageDown  move rows in [2] or scroll [3]                                                              │                      │
+│                      │ Home / End / g / G select first/last environment in [1] or row in [2]; scroll [3] to an edge                   │                      │
+│                      │ v                  open the full plan from the top                                                             │                      │
+│blank: absent   .: unc│ y                  copy the selected environment's plan                                                        │                      │
+└──────────────────────│ c                  show environment context                                                                    │──────────────────────┘
+┌  [3] Relations · a-re│ ?                  show or close this help                                                                     │──────────────────────┐
+│No changes to show    │ q                  quit; confirms first while acquiring                                                        │                      │
 │                      │                                                                                                                │                      │
 │                      │ Matrix legend                                                                                                  │                      │
 │                      │ + / ~ / -          create / update / delete                                                                    │                      │
@@ -46,6 +43,12 @@ a-ready Ready No changes  │  b-error Error  │  c-running Running  │  d-pen
 │                      │ Scope              only Ready plans are compared                                                               │                      │
 │                      │ why: missing       resource is present in only some Ready plans                                                │                      │
 │                      │                                                                                                                │                      │
+│                      │ Plan status                                                                                                    │                      │
+│                      │ ✓ Ready            plan acquisition completed; review and apply safety are separate                            │                      │
+│                      │ ✗ Error            acquisition failed; r retries the plan                                                      │                      │
+│                      │ Pending / Running  plan acquisition is incomplete                                                              │                      │
+│                      │ Excluded           HCP performs the plan execution                                                             │                      │
+│                      │                                                                                                                │                      │
 │                      │ Relations                                                                                                      │                      │
 │                      │ A ──> B            B uses A                                                                                    │                      │
 │                      │ block-level        may not apply to this instance                                                              │                      │
@@ -55,9 +58,6 @@ a-ready Ready No changes  │  b-error Error  │  c-running Running  │  d-pen
 │                      │ Scope              configuration references and recorded dependencies; not cause, impact, or execution order   │                      │
 │                      │ ?/Esc close                                                                                                    │                      │
 │                      └────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘                      │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
 │                                                                                                                                                              │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 v full plan | / filter | [/] env | b toggle envs | 1/2/3 focus | f maximize | ? help | q quit

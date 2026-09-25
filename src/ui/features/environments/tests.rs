@@ -220,6 +220,31 @@ fn pending_running_ready_error_and_excluded_remain_distinct_at_supported_sizes()
             insta::assert_snapshot!("environment_acquisition", text);
         }
     }
+
+    let buffer = render_to_buffer((120, 40), |frame| {
+        EnvironmentView::default().render(frame, &state);
+    });
+    let (ready_x, ready_y) = text_position(&buffer, "✓ Ready").expect("Ready marker is shown");
+    let ready_marker = buffer.cell((ready_x, ready_y)).unwrap();
+    assert_eq!(ready_marker.fg, Color::Green);
+    assert_eq!(ready_marker.bg, Color::Reset);
+    assert_eq!(
+        buffer.cell((ready_x + 2, ready_y)).unwrap().fg,
+        Color::Reset
+    );
+
+    let (error_x, error_y) = text_position(&buffer, "✗ Error").expect("Error marker is shown");
+    assert_eq!(error_x, ready_x);
+    let error_marker = buffer.cell((error_x, error_y)).unwrap();
+    assert_eq!(error_marker.fg, Color::Red);
+    assert_eq!(error_marker.bg, Color::Reset);
+
+    for status in ["Pending", "Running"] {
+        let (status_x, status_y) = text_position(&buffer, status).expect("status is shown");
+        assert_eq!(status_x, ready_x + 2);
+        assert_eq!(buffer.cell((status_x - 1, status_y)).unwrap().symbol(), " ");
+        assert_eq!(buffer.cell((status_x - 2, status_y)).unwrap().symbol(), " ");
+    }
 }
 
 #[test]
@@ -1396,8 +1421,9 @@ fn environment_sidebar_filters_comparison_without_changing_the_selected_plan() {
         .lines()
         .find(|line| line.contains("Address"))
         .unwrap();
-    assert!(header.contains("a-ready"), "{header}");
-    assert!(!header.contains("b-error"), "{header}");
+    let columns = header.split("││").nth(1).unwrap_or(header);
+    assert!(columns.contains("a-ready"), "{header}");
+    assert!(!columns.contains("b-error"), "{header}");
 
     view.handle_key(
         KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
@@ -1594,7 +1620,8 @@ fn single_environment_hides_sidebar_and_its_shortcuts() {
     assert_eq!(view.sidebar, SidebarSetting::Closed);
     assert!(!text.contains("[1] Envs"), "{text}");
     assert!(text.contains("[3] Relations"), "{text}");
-    assert!(text.contains("only-env Pending"), "{text}");
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(normalized.contains("only-env Pending"), "{text}");
     assert!(!text.contains("toggle envs"), "{text}");
     assert!(!text.contains("1/2 focus"), "{text}");
     assert!(!text.contains("[/] env"), "{text}");

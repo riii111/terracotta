@@ -197,7 +197,7 @@ fn environment_name_line(
         Span::styled(
             marker,
             if selected {
-                theme::overview_accent_style()
+                theme::overview_selection_marker_style()
             } else {
                 theme::overview_muted_style()
             },
@@ -216,14 +216,6 @@ fn environment_name_line(
 }
 
 fn status_line(plan: &EnvironmentPlan, width: u16) -> Line<'static> {
-    let style = match plan.state() {
-        EnvironmentState::Pending | EnvironmentState::Running => theme::overview_muted_style(),
-        EnvironmentState::Ready { .. } => theme::overview_text_style(),
-        EnvironmentState::Error => {
-            theme::overview_total_destroy_style().add_modifier(Modifier::BOLD)
-        }
-        EnvironmentState::ExcludedHcp => theme::overview_warning_style(),
-    };
     let status = if matches!(plan.state(), EnvironmentState::ExcludedHcp) {
         "Excluded"
     } else {
@@ -231,9 +223,10 @@ fn status_line(plan: &EnvironmentPlan, width: u16) -> Line<'static> {
     };
     Line::from(vec![
         Span::styled("    ", theme::overview_text_style()),
+        environments::status_marker(plan.state()),
         Span::styled(
-            fit_prefix(status, usize::from(width).saturating_sub(4)),
-            style,
+            fit_prefix(status, usize::from(width).saturating_sub(6)),
+            environments::status_style(plan.state()),
         ),
     ])
 }

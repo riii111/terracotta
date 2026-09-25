@@ -3,7 +3,7 @@ source: src/ui/features/environments/tests.rs
 expression: text
 ---
 terracotta ▸ a-ready                                                                                           terraform
-a-r┌Help────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ion
+a-r┌Help────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 ┌* │ Current: Multi-environment Overview                                                                          ▲ │──┐
 │  │ ↑ / ↓ / j / k      select environments in [1], rows in [2], or scroll [3]                                    ┃ │  │
 │  │ Space              include or exclude an environment in [1]                                                  ┃ │  │
@@ -28,9 +28,9 @@ a-r┌Help───────────────────────�
 │  │ q                  quit; confirms first while acquiring                                                      ┃ │  │
 │  │                                                                                                              ┃ │  │
 │  │ Matrix legend                                                                                                ┃ │  │
-│  │ + / ~ / -          create / update / delete                                                                  ┃ │  │
-│  │ +/- / -/+          replace (create→delete / delete→create)                                                   ┃ │  │
-│  │ blank              resource absent from this environment                                                     ┃ │  │
+│  │ + / ~ / -          create / update / delete                                                                  │ │  │
+│  │ +/- / -/+          replace (create→delete / delete→create)                                                   │ │  │
+│  │ blank              resource absent from this environment                                                     │ │  │
 │  │ .                  resource present, with no change                                                          │ │  │
 │  │ ?                  plan unavailable; action unknown                                                          │ │  │
 │  │ [unknown values]   known changes and unknown paths match; final values may differ                            │ │  │

@@ -3,12 +3,12 @@ source: src/ui/features/environments/tests/matrix.rs
 expression: rendered.as_str()
 ---
 terracotta ▸ env-11                                                    terraform
-env-11 Ready ~1
+env-11 ✓ Ready ~1
 ┌* [2] Compare─────────────────────────────────────────────────────────────────┐
 │                                                                              │
 │Address             env-08      env-09      env-10      env-11       why      │
 │                                                                              │
-│> Same change across envs: 1 changes ~1  Space expand                         │
+│> ▸ Same change across envs: 1 changes ~1  Space expand                       │
 │                                                                              │
 │blank: absent   .: unchanged   ?: plan unavailable                            │
 └──────────────────────────────────────────────────────────────────────────────┘
