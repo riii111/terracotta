@@ -162,6 +162,7 @@ pub(crate) struct OverviewViewState {
     filter: String,
     overlay: Option<OverviewOverlay>,
     overlay_scroll: u16,
+    max_overlay_scroll: Cell<Option<u16>>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -348,11 +349,13 @@ impl OverviewViewState {
             OverviewInput::OpenHelp => {
                 self.overlay = Some(OverviewOverlay::Help);
                 self.overlay_scroll = 0;
+                self.max_overlay_scroll.set(None);
                 None
             }
             OverviewInput::OpenContext => {
                 self.overlay = Some(OverviewOverlay::Context);
                 self.overlay_scroll = 0;
+                self.max_overlay_scroll.set(None);
                 None
             }
             OverviewInput::Copy => Some(OverviewCommand::Copy),
@@ -554,12 +557,22 @@ impl OverviewViewState {
         self.overlay_scroll
     }
 
+    // Relative moves start from the offset the last render could show, so End (u16::MAX) is
+    // followed by visible movement. Only overlays whose render reports a limit are clamped.
     pub(crate) const fn scroll_overlay(&mut self, delta: i16) {
+        let current = match self.max_overlay_scroll.get() {
+            Some(max) if self.overlay_scroll > max => max,
+            _ => self.overlay_scroll,
+        };
         if delta.is_negative() {
-            self.overlay_scroll = self.overlay_scroll.saturating_sub(delta.unsigned_abs());
+            self.overlay_scroll = current.saturating_sub(delta.unsigned_abs());
         } else {
-            self.overlay_scroll = self.overlay_scroll.saturating_add(delta.cast_unsigned());
+            self.overlay_scroll = current.saturating_add(delta.cast_unsigned());
         }
+    }
+
+    pub(crate) fn set_max_overlay_scroll(&self, max: u16) {
+        self.max_overlay_scroll.set(Some(max));
     }
 
     pub(crate) const fn overlay_top(&mut self) {
