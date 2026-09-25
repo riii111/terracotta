@@ -382,12 +382,15 @@ impl Invocation {
                     | "refresh"
                     | "refresh-only"
                     | "destroy"
+                    | "detailed-exitcode"
+                    | "out"
+                    | "generate-config-out"
             ) {
                 index += 1;
                 if !argument.to_string_lossy().contains('=')
                     && matches!(
                         option.as_str(),
-                        "var" | "var-file" | "target" | "replace" | "parallelism" | "lock-timeout"
+                        "var" | "var-file" | "target" | "replace" | "out" | "generate-config-out"
                     )
                 {
                     index += 1;
@@ -816,6 +819,24 @@ mod tests {
             ]
             .map(OsString::from)
         );
+    }
+
+    #[test]
+    fn plan_only_options_are_not_passed_to_apply() {
+        let parsed = invocation(
+            &[
+                "plan",
+                "-detailed-exitcode",
+                "-out=user.tfplan",
+                "-generate-config-out",
+                "generated.tf",
+                "-lock=false",
+            ],
+            &[],
+        )
+        .expect("plan arguments");
+
+        assert_eq!(parsed.apply_arguments(), [OsString::from("-lock=false")]);
     }
 
     #[test]
