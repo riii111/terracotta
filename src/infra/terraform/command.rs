@@ -12,12 +12,11 @@ use std::{
 };
 
 use crate::app::execution::{
-    EventStream, ExecutionEvent, ExecutionEventKind, ExecutionLogLine, ProcessExitStatus,
-    ProcessTermination, Tool,
+    EventStream, ExecutionEvent, ExecutionEventKind, ProcessExitStatus, ProcessTermination, Tool,
 };
 use crate::infra::CancellationToken;
 
-use super::{events::TerraformEventParser, line_buffer::LineBuffer, show::PlanParseError};
+use super::{events::TerraformEventParser, show::PlanParseError};
 
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
@@ -314,79 +313,6 @@ struct ObservedOutput {
     chunks: usize,
 }
 
-enum EventParser {
-    Json(TerraformEventParser),
-    Text(TextLineParser),
-}
-
-impl EventParser {
-    fn push(
-        &mut self,
-        stream: EventStream,
-        bytes: &[u8],
-        received_at: Instant,
-    ) -> Vec<ExecutionEvent> {
-        match self {
-            Self::Json(parser) => parser.push(stream, bytes, received_at),
-            Self::Text(parser) => parser.push(stream, bytes, received_at),
-        }
-    }
-
-    fn finish(&mut self, stream: EventStream, received_at: Instant) -> Vec<ExecutionEvent> {
-        match self {
-            Self::Json(parser) => parser.finish(stream, received_at),
-            Self::Text(parser) => parser.finish(stream, received_at),
-        }
-    }
-}
-
-#[derive(Default)]
-struct TextLineParser {
-    stdout: LineBuffer,
-    stderr: LineBuffer,
-}
-
-impl TextLineParser {
-    fn push(
-        &mut self,
-        stream: EventStream,
-        bytes: &[u8],
-        received_at: Instant,
-    ) -> Vec<ExecutionEvent> {
-        let mut events = Vec::new();
-        self.buffer_mut(stream).push(bytes, |line| {
-            events.push(log_event(stream, line, received_at));
-        });
-        events
-    }
-
-    fn finish(&mut self, stream: EventStream, received_at: Instant) -> Vec<ExecutionEvent> {
-        let line = self.buffer_mut(stream).finish();
-        if line.is_empty() {
-            Vec::new()
-        } else {
-            vec![log_event(stream, &line, received_at)]
-        }
-    }
-
-    const fn buffer_mut(&mut self, stream: EventStream) -> &mut LineBuffer {
-        match stream {
-            EventStream::Stdout => &mut self.stdout,
-            EventStream::Stderr => &mut self.stderr,
-        }
-    }
-}
-
-fn log_event(stream: EventStream, line: &[u8], received_at: Instant) -> ExecutionEvent {
-    ExecutionEvent {
-        received_at,
-        kind: ExecutionEventKind::Log(ExecutionLogLine {
-            stream,
-            text: String::from_utf8_lossy(line).into_owned(),
-        }),
-    }
-}
-
 pub(crate) fn resolve_executable(tool: Tool) -> io::Result<std::path::PathBuf> {
     let current = std::env::current_exe()?;
     let path = std::env::var_os("PATH").unwrap_or_default();
@@ -575,16 +501,7 @@ pub(super) fn run_command(
     cancellation: &CancellationToken,
     runner: &dyn ProcessRunner,
 ) -> Result<ProcessResult, TerraformExecutionError> {
-    run_command_with_parser(
-        tool,
-        root,
-        command,
-        arguments,
-        cancellation,
-        runner,
-        None,
-        false,
-    )
+    run_command_with_events(tool, root, command, arguments, cancellation, runner, None)
 }
 
 pub(super) fn run_command_with_events(
@@ -594,45 +511,9 @@ pub(super) fn run_command_with_events(
     arguments: &[OsString],
     cancellation: &CancellationToken,
     runner: &dyn ProcessRunner,
-    event_sink: Option<&mut dyn FnMut(ExecutionEvent)>,
-) -> Result<ProcessResult, TerraformExecutionError> {
-    run_command_with_parser(
-        tool,
-        root,
-        command,
-        arguments,
-        cancellation,
-        runner,
-        event_sink,
-        false,
-    )
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "command parsing keeps process and event boundaries explicit"
-)]
-#[expect(
-    clippy::too_many_lines,
-    reason = "command execution keeps polling, cancellation, and output draining together"
-)]
-fn run_command_with_parser(
-    tool: Tool,
-    root: &Path,
-    command: TerraformCommand,
-    arguments: &[OsString],
-    cancellation: &CancellationToken,
-    runner: &dyn ProcessRunner,
     mut event_sink: Option<&mut dyn FnMut(ExecutionEvent)>,
-    text: bool,
 ) -> Result<ProcessResult, TerraformExecutionError> {
-    let mut parser = event_sink.is_some().then(|| {
-        if text {
-            EventParser::Text(TextLineParser::default())
-        } else {
-            EventParser::Json(TerraformEventParser::new())
-        }
-    });
+    let mut parser = event_sink.is_some().then(TerraformEventParser::new);
     let mut observed = ObservedOutput::default();
     if cancellation.is_cancelled() {
         if let Some(event_sink) = event_sink {
@@ -738,7 +619,7 @@ fn run_command_with_parser(
 }
 
 fn emit_chunks(
-    parser: &mut EventParser,
+    parser: &mut TerraformEventParser,
     observed: &mut ObservedOutput,
     chunks: Vec<ProcessOutputChunk>,
     event_sink: &mut dyn FnMut(ExecutionEvent),
@@ -759,7 +640,7 @@ fn emit_chunks(
 }
 
 fn emit_unobserved_output(
-    parser: &mut EventParser,
+    parser: &mut TerraformEventParser,
     observed: &mut ObservedOutput,
     output: &ProcessOutput,
     event_sink: &mut dyn FnMut(ExecutionEvent),
@@ -798,7 +679,7 @@ fn emit_unobserved_output(
 }
 
 fn emit_remaining_stream(
-    parser: &mut EventParser,
+    parser: &mut TerraformEventParser,
     observed: usize,
     stream: EventStream,
     output: &[u8],
@@ -812,7 +693,10 @@ fn emit_remaining_stream(
     }
 }
 
-fn emit_parser_remainders(parser: &mut EventParser, event_sink: &mut dyn FnMut(ExecutionEvent)) {
+fn emit_parser_remainders(
+    parser: &mut TerraformEventParser,
+    event_sink: &mut dyn FnMut(ExecutionEvent),
+) {
     for stream in [EventStream::Stdout, EventStream::Stderr] {
         for event in parser.finish(stream, Instant::now()) {
             event_sink(event);
@@ -1064,6 +948,8 @@ fn join_readers(readers: &mut Vec<JoinHandle<io::Result<()>>>) -> io::Result<()>
 // to this implementation module in production.
 #[cfg(test)]
 mod tests {
+    use crate::app::execution::{Diagnostic, DiagnosticSource};
+
     use super::*;
 
     impl ProcessOutput {
@@ -1096,61 +982,16 @@ mod tests {
         }
     }
 
-    fn log_text(event: &ExecutionEvent) -> Option<(EventStream, &str)> {
-        let ExecutionEventKind::Log(line) = &event.kind else {
+    fn non_json_text(event: &ExecutionEvent) -> Option<(EventStream, &str)> {
+        let ExecutionEventKind::Diagnostic(Diagnostic {
+            summary,
+            source: DiagnosticSource::NonJson { stream },
+            ..
+        }) = &event.kind
+        else {
             return None;
         };
-        Some((line.stream, line.text.as_str()))
-    }
-
-    #[test]
-    fn text_parser_preserves_interleaved_stream_order_and_split_utf8() {
-        let now = Instant::now();
-        let mut parser = TextLineParser::default();
-        let message = "初期化しました\n".as_bytes();
-        let split = "初".len() - 1;
-
-        assert!(
-            parser
-                .push(EventStream::Stdout, &message[..split], now)
-                .is_empty()
-        );
-        let stderr = parser.push(EventStream::Stderr, b"warning\n", now);
-        let stdout = parser.push(EventStream::Stdout, &message[split..], now);
-
-        assert_eq!(log_text(&stderr[0]), Some((EventStream::Stderr, "warning")));
-        assert_eq!(
-            log_text(&stdout[0]),
-            Some((EventStream::Stdout, "初期化しました"))
-        );
-    }
-
-    #[test]
-    fn text_parser_preserves_chunked_long_lines_empty_lines_and_final_fragment() {
-        let now = Instant::now();
-        let mut parser = TextLineParser::default();
-        let long_line = "x".repeat(100_000);
-        let input = format!("{long_line}\r\n\n続き\n未完了").into_bytes();
-        let mut events = Vec::new();
-
-        for chunk in input.chunks(8 * 1024) {
-            events.extend(parser.push(EventStream::Stdout, chunk, now));
-        }
-
-        assert!(
-            events
-                .iter()
-                .filter_map(log_text)
-                .all(|(_, text)| text != "未完了")
-        );
-
-        events.extend(parser.finish(EventStream::Stdout, now));
-
-        let lines = events.iter().filter_map(log_text).map(|(_, text)| text);
-        assert_eq!(
-            lines.collect::<Vec<_>>(),
-            vec![long_line.as_str(), "", "続き", "未完了"]
-        );
+        Some((*stream, summary.as_str()))
     }
 
     #[test]
@@ -1180,7 +1021,7 @@ mod tests {
             output.append(chunk);
         }
 
-        let mut parser = EventParser::Text(TextLineParser::default());
+        let mut parser = TerraformEventParser::new();
         let mut observed = ObservedOutput::default();
         let mut events = Vec::new();
         emit_chunks(
@@ -1201,11 +1042,11 @@ mod tests {
         assert_eq!(observed.stderr, output.stderr.len());
         assert_eq!(observed.chunks, 4);
         assert_eq!(
-            events.iter().filter_map(log_text).collect::<Vec<_>>(),
+            events.iter().map(non_json_text).collect::<Vec<_>>(),
             [
-                (EventStream::Stderr, "warning"),
-                (EventStream::Stdout, "初期化"),
-                (EventStream::Stdout, "final line"),
+                Some((EventStream::Stderr, "warning")),
+                Some((EventStream::Stdout, "初期化")),
+                Some((EventStream::Stdout, "final line")),
             ]
         );
     }

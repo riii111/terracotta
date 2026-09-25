@@ -451,7 +451,7 @@ mod tests {
             "@message": "初期化しました"
         })
         .to_string();
-        let input = format!("\r\n{event}\r\n未完了").into_bytes();
+        let input = format!("\r\n警告\r\n{event}\r\n未完了").into_bytes();
         let mut events = Vec::new();
 
         for chunk in input.chunks(2) {
@@ -459,16 +459,25 @@ mod tests {
         }
         events.extend(parser.finish(EventStream::Stdout, timestamp));
 
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 3);
         assert!(matches!(
             &events[0].kind,
+            ExecutionEventKind::Diagnostic(diagnostic)
+                if diagnostic.summary == "警告"
+                    && diagnostic.source
+                        == DiagnosticSource::NonJson {
+                            stream: EventStream::Stdout,
+                        }
+        ));
+        assert!(matches!(
+            &events[1].kind,
             ExecutionEventKind::Informational {
                 event_type,
                 message: Some(message),
             } if event_type == "version" && message == "初期化しました"
         ));
         assert!(matches!(
-            &events[1].kind,
+            &events[2].kind,
             ExecutionEventKind::Diagnostic(diagnostic)
                 if diagnostic.summary == "未完了"
                     && diagnostic.detail.is_none()

@@ -13,7 +13,7 @@ use crate::infra::CancellationToken;
 
 use super::command::{
     ProcessOutput, ProcessRunner, ProcessStatus, TerraformCommand, TerraformExecutionError,
-    TerraformExecutionErrorKind, interrupted_error, non_zero_error, run_command_with_events,
+    TerraformExecutionErrorKind, interrupted_error, non_zero_error, run_command,
 };
 
 mod json;
@@ -121,14 +121,13 @@ fn run_show(
     }
     let mut arguments = global_arguments.to_vec();
     arguments.extend(show_arguments(plan_path, json));
-    let output = run_command_with_events(
+    let output = run_command(
         tool,
         root,
         TerraformCommand::Show,
         &arguments,
         cancellation,
         runner,
-        None,
     )?;
     if output.interrupted {
         return Err(interrupted_error(tool, TerraformCommand::Show, output));
