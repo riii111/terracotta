@@ -93,11 +93,10 @@ pub(crate) struct ExecutionContext {
 }
 
 impl ExecutionContext {
-    pub(crate) fn loading(cwd: impl Into<String>) -> Self {
-        let cwd = PathBuf::from(cwd.into());
+    pub(crate) fn loading(cwd: impl Into<PathBuf>) -> Self {
         Self {
             launch_root: None,
-            cwd,
+            cwd: cwd.into(),
             workspace: ExecutionContextValue::Loading,
             display_name: ExecutionContextValue::Loading,
             production: None,

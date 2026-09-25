@@ -344,7 +344,7 @@ impl EnvironmentPlan {
         self.review()
             .and_then(|review| review.review().context().is_production())
             .unwrap_or_else(|| {
-                ExecutionContext::loading(self.directory.display().to_string())
+                ExecutionContext::loading(&self.directory)
                     .with_workspace(self.workspace().unwrap_or("default"))
                     .is_production()
                     == Some(true)

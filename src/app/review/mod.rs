@@ -401,8 +401,7 @@ impl PlanReview {
         metadata: PlanMetadata,
         diagnostics: Vec<Diagnostic>,
     ) -> Self {
-        let context =
-            ExecutionContext::loading(root.display().to_string()).with_workspace(workspace.clone());
+        let context = ExecutionContext::loading(&root).with_workspace(workspace.clone());
         Self {
             root,
             workspace,
@@ -706,5 +705,22 @@ mod tests {
             filtered.matching_resources() + filtered.matching_outputs(),
             0
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn review_context_keeps_non_utf8_root() {
+        use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+        let root = PathBuf::from(OsString::from_vec(b"/repo/infra-\xff".to_vec()));
+
+        let review = PlanReview::new(
+            root.clone(),
+            "default".to_owned(),
+            plan_document(String::new()),
+            PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
+            Vec::new(),
+        );
+
+        assert_eq!(review.context().cwd_path(), root);
     }
 }
