@@ -1238,7 +1238,7 @@ mod tests {
     use crate::app::copy::{CopyResult, CopyTarget};
     use crate::app::execution::{
         ApplyStatus, Diagnostic, DiagnosticSeverity, DiagnosticSource, ExecutionAction,
-        ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionLogLine,
+        ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionLogLine, ExecutionPhase,
         ExecutionTargetSpec, ResourceAction, ResourceEvent, ResourceEventKind,
     };
     use crate::app::session::{self, Action, SessionState};
@@ -1532,6 +1532,20 @@ mod tests {
     }
 
     #[test]
+    fn renders_plan_progress_and_failure() {
+        let (running, now) = plan_state(Some(ExecutionPhase::Planning), &["planning output"]);
+        let mut failed = running.clone();
+        failed.fail("synthetic plan failure".to_owned(), now);
+
+        for (name, state) in [("plan-progress", &running), ("plan-failure", &failed)] {
+            let buffer = render_to_buffer((80, 24), |frame| {
+                render_execution_with_view(frame, state, ExecutionViewState::default(), now);
+            });
+            snapshot(&format!("preview_80x24_{name}"), &buffer);
+        }
+    }
+
+    #[test]
     fn apply_stopping_at_minimum_size_shows_resize_notice() {
         let (state, now) = applying_state_with_content(1, 1);
         let mut stopping_state = state;
@@ -1585,6 +1599,31 @@ mod tests {
             });
         }
         (state, now)
+    }
+
+    fn plan_state(phase: Option<ExecutionPhase>, lines: &[&str]) -> (ExecutionState, Instant) {
+        let started_at = Instant::now();
+        let mut state = ExecutionState::with_context(
+            started_at,
+            ExecutionContext::loading("/repo/environments/production/main")
+                .with_workspace("default"),
+        );
+        if let Some(phase) = phase {
+            state.record(ExecutionEvent {
+                received_at: started_at,
+                kind: ExecutionEventKind::Phase(phase),
+            });
+        }
+        for text in lines {
+            state.record(ExecutionEvent {
+                received_at: started_at,
+                kind: ExecutionEventKind::Log(ExecutionLogLine {
+                    stream: EventStream::Stdout,
+                    text: (*text).to_owned(),
+                }),
+            });
+        }
+        (state, started_at + Duration::from_secs(2))
     }
 
     mod layout {
@@ -2393,6 +2432,215 @@ mod tests {
             assert!(text.contains("Apply result"));
             assert!(text.contains("Changes may already be"));
             assert!(layout.log_area().y > layout.status().y);
+        }
+    }
+
+    mod plan_execution {
+        use super::*;
+
+        fn long_plan_lines() -> Vec<String> {
+            (0..40)
+                .map(|index| match index {
+                    3 => "Error: initial failure".to_owned(),
+                    39 => "tail marker".to_owned(),
+                    _ => format!("log line {index}"),
+                })
+                .collect()
+        }
+
+        fn render_text(
+            (width, height): (u16, u16),
+            state: &ExecutionState,
+            view: ExecutionViewState,
+            now: Instant,
+            quit_confirmation: bool,
+        ) -> String {
+            buffer_text(&render_to_buffer((width, height), |frame| {
+                render_execution_with_quit_confirmation(frame, state, view, now, quit_confirmation);
+            }))
+        }
+
+        #[test]
+        fn running_stages_show_their_status_and_cancel_footer() {
+            struct StageCase {
+                name: &'static str,
+                phase: Option<ExecutionPhase>,
+                title: &'static str,
+                status: &'static str,
+            }
+
+            for case in [
+                StageCase {
+                    name: "initializing",
+                    phase: None,
+                    title: "Initializing",
+                    status: "Initializing...",
+                },
+                StageCase {
+                    name: "planning",
+                    phase: Some(ExecutionPhase::Planning),
+                    title: "Planning",
+                    status: "Planning...",
+                },
+                StageCase {
+                    name: "reading",
+                    phase: Some(ExecutionPhase::Reading),
+                    title: "Reading",
+                    status: "Reading plan...",
+                },
+            ] {
+                let (state, now) = plan_state(case.phase, &[]);
+
+                let text = render_text((80, 24), &state, ExecutionViewState::default(), now, false);
+
+                assert!(text.contains(case.title), "case: {}", case.name);
+                assert!(text.contains(case.status), "case: {}", case.name);
+                assert!(text.contains("Follow: On"), "case: {}", case.name);
+                assert!(
+                    text.contains("Waiting for Terraform output..."),
+                    "case: {}",
+                    case.name
+                );
+                assert!(text.contains("Ctrl-C cancel"), "case: {}", case.name);
+                assert!(text.contains("End follow latest"), "case: {}", case.name);
+                assert!(!text.contains("quit"), "case: {}", case.name);
+                assert!(!text.contains("Tab focus"), "case: {}", case.name);
+            }
+        }
+
+        #[test]
+        fn running_plan_follows_the_newest_line_until_scrolled_up() {
+            let lines = long_plan_lines();
+            let lines = lines.iter().map(String::as_str).collect::<Vec<_>>();
+            let (state, now) = plan_state(Some(ExecutionPhase::Planning), &lines);
+            let layout = execution_layout(Rect::new(0, 0, 80, 24), &state);
+
+            let following = render_text((80, 24), &state, ExecutionViewState::default(), now, false);
+            let mut view = ExecutionViewState::default();
+            view.apply_scroll(
+                ExecutionScroll::Up,
+                layout.max_vertical(),
+                layout.max_vertical(),
+                layout.body().height,
+            );
+            let scrolled = render_text((80, 24), &state, view, now, false);
+
+            assert!(following.contains("tail marker"));
+            assert!(following.contains("Follow: On"));
+            assert!(!scrolled.contains("tail marker"));
+            assert!(scrolled.contains("Follow: Off"));
+        }
+
+        #[test]
+        fn failed_plan_starts_at_the_first_error_and_offers_diagnostic_copy() {
+            let lines = long_plan_lines();
+            let lines = lines.iter().map(String::as_str).collect::<Vec<_>>();
+            let (mut state, now) = plan_state(Some(ExecutionPhase::Planning), &lines);
+            state.fail("synthetic plan failure".to_owned(), now);
+
+            let initial = render_text((80, 24), &state, ExecutionViewState::default(), now, false);
+            let mut view = ExecutionViewState::default();
+            view.end();
+            let end = render_text((80, 24), &state, view, now, false);
+
+            assert!(initial.contains("Failed"));
+            assert!(initial.contains("Terraform failed: Exited(1)"));
+            assert!(initial.contains("Error: initial failure"));
+            assert!(!initial.contains("tail marker"));
+            assert!(initial.contains("q/Ctrl-C quit"));
+            assert!(initial.contains("y copy diagnostic"));
+            assert!(!initial.contains("Ctrl-C cancel"));
+            assert!(end.contains("tail marker"));
+        }
+
+        #[test]
+        fn narrow_terminal_notice_depends_on_the_stage_and_quit_confirmation() {
+            struct NoticeCase {
+                name: &'static str,
+                failed: bool,
+                quit_confirmation: bool,
+                expected: &'static str,
+            }
+
+            for case in [
+                NoticeCase {
+                    name: "running",
+                    failed: false,
+                    quit_confirmation: false,
+                    expected: "Terminal too small. Resize or press Ctrl-C to cancel.",
+                },
+                NoticeCase {
+                    name: "failed",
+                    failed: true,
+                    quit_confirmation: false,
+                    expected: "Terminal too small. Resize or press q to quit.",
+                },
+                NoticeCase {
+                    name: "quit_confirmation",
+                    failed: false,
+                    quit_confirmation: true,
+                    expected: "Quit? Enter exit / Esc cancel",
+                },
+            ] {
+                let (mut state, now) = plan_state(Some(ExecutionPhase::Planning), &["output"]);
+                if case.failed {
+                    state.fail("synthetic plan failure".to_owned(), now);
+                }
+
+                let text = render_text(
+                    (MIN_WIDTH - 1, MIN_HEIGHT),
+                    &state,
+                    ExecutionViewState::default(),
+                    now,
+                    case.quit_confirmation,
+                );
+
+                assert_eq!(
+                    text.split_whitespace().collect::<Vec<_>>().join(" "),
+                    case.expected,
+                    "case: {}",
+                    case.name
+                );
+            }
+        }
+
+        #[test]
+        fn quit_confirmation_and_copy_notice_replace_the_failed_footer_in_place() {
+            let (mut state, now) = plan_state(Some(ExecutionPhase::Planning), &["output"]);
+            state.fail("synthetic plan failure".to_owned(), now);
+            let area = Rect::new(0, 0, 80, 24);
+            let normal = execution_layout(area, &state);
+            let waiting = execution_layout_with_quit_confirmation_and_view(
+                area,
+                &state,
+                ExecutionViewState::default(),
+                true,
+            );
+
+            let confirmation = render_text((80, 24), &state, ExecutionViewState::default(), now, true);
+            let mut session = SessionState::new(state);
+            session::update(
+                &mut session,
+                Action::CopyCompleted {
+                    target: CopyTarget::Diagnostic,
+                    result: CopyResult::Written,
+                },
+                now,
+            );
+            let copied = render_text(
+                (80, 24),
+                session.execution().expect("execution should be visible"),
+                ExecutionViewState::default(),
+                now,
+                false,
+            );
+
+            assert_eq!(waiting.body(), normal.body());
+            assert_eq!(waiting.max_vertical(), normal.max_vertical());
+            assert!(confirmation.contains("Quit Terracotta?   [Enter] Quit   [Esc] Cancel"));
+            assert!(!confirmation.contains("q/Ctrl-C quit"));
+            assert!(copied.contains("Copied."));
+            assert!(copied.contains("q/Ctrl-C quit"));
         }
     }
 
