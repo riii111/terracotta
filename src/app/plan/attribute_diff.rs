@@ -1,12 +1,8 @@
 use std::collections::BTreeSet;
-use std::fmt::{Debug, Formatter, Write};
+use std::fmt::{Debug, Formatter};
 
 use super::number::{CanonicalNumber, canonical_number};
-use super::{PlanValue, ReplacePathSegment, ResourceChange, ResourceChangeKind};
-
-const ABSENT_DISPLAY: &str = "<absent>";
-const SENSITIVE_DISPLAY: &str = "<sensitive>";
-const UNKNOWN_DISPLAY: &str = "<unknown>";
+use super::{PlanValue, ResourceChange, ResourceChangeKind};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum AttributePathSegment {
@@ -28,7 +24,6 @@ pub(crate) struct AttributeValue {
     original: Option<PlanValue>,
     unknown_marker: Option<PlanValue>,
     sensitive: bool,
-    display: String,
 }
 
 impl Debug for AttributeValue {
@@ -42,7 +37,6 @@ impl Debug for AttributeValue {
                 "unknown_marker",
                 &self.unknown_marker.as_ref().map(|_| "<redacted>"),
             )
-            .field("display", &"<redacted>")
             .finish()
     }
 }
@@ -84,42 +78,6 @@ impl AttributeValue {
             }
             _ => None,
         }
-    }
-
-    #[must_use]
-    pub(crate) fn display(&self) -> String {
-        self.display.clone()
-    }
-
-    #[must_use]
-    #[expect(
-        dead_code,
-        reason = "dormant attribute reveal behavior remains available for future plan review"
-    )]
-    pub(crate) const fn is_revealable(&self) -> bool {
-        self.sensitive
-            && self.unknown_marker.is_none()
-            && matches!(
-                self.kind,
-                AttributeValueKind::Known | AttributeValueKind::Null
-            )
-    }
-
-    #[must_use]
-    pub(crate) const fn is_unmasked_unknown(&self) -> bool {
-        matches!(self.kind, AttributeValueKind::Unknown) && !self.sensitive
-    }
-
-    #[must_use]
-    #[expect(
-        dead_code,
-        reason = "dormant attribute reveal behavior remains available for future plan review"
-    )]
-    pub(crate) fn revealed_display(&self) -> Option<String> {
-        if !self.is_revealable() {
-            return None;
-        }
-        self.original.as_ref().map(display_plan_value)
     }
 }
 
@@ -173,16 +131,7 @@ pub(crate) struct AttributeDiff {
     pub(crate) kind: AttributeChangeKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AttributeDiffs {
-    pub(crate) attributes: Vec<AttributeDiff>,
-    pub(crate) changed_count: usize,
-    pub(crate) unchanged_count: usize,
-    pub(crate) replace_paths: Option<Vec<Vec<ReplacePathSegment>>>,
-    pub(crate) action_reason: Option<String>,
-}
-
-pub(crate) fn diff_resource_attributes(change: &ResourceChange) -> AttributeDiffs {
+pub(crate) fn diff_resource_attributes(change: &ResourceChange) -> Vec<AttributeDiff> {
     let mut attributes = Vec::new();
     collect_diffs(
         &mut attributes,
@@ -197,20 +146,7 @@ pub(crate) fn diff_resource_attributes(change: &ResourceChange) -> AttributeDiff
         false,
         false,
     );
-
-    let changed_count = attributes
-        .iter()
-        .filter(|attribute| attribute.kind == AttributeChangeKind::Changed)
-        .count();
-    let unchanged_count = attributes.len() - changed_count;
-
-    AttributeDiffs {
-        attributes,
-        changed_count,
-        unchanged_count,
-        replace_paths: change.replace_paths.clone(),
-        action_reason: change.action_reason.clone(),
-    }
+    attributes
 }
 
 #[derive(Clone, Copy)]
@@ -453,58 +389,12 @@ fn attribute_value(
             Some(_) => AttributeValueKind::Known,
         }
     };
-    let display = display_attribute_value(
-        kind,
-        value,
-        sensitive_marker,
-        unknown_marker,
-        inherited_sensitive,
-    );
-
     AttributeValue {
         kind,
         original: value.cloned(),
         unknown_marker: unknown_marker
             .and_then(|marker| marker_contains_true(Some(marker)).then(|| marker.clone())),
         sensitive: is_sensitive,
-        display,
-    }
-}
-
-fn display_attribute_value(
-    kind: AttributeValueKind,
-    value: Option<&PlanValue>,
-    sensitive_marker: Option<&PlanValue>,
-    unknown_marker: Option<&PlanValue>,
-    inherited_sensitive: bool,
-) -> String {
-    let sensitive_here = inherited_sensitive || marker_is_true(sensitive_marker);
-    let sensitive = sensitive_here || marker_contains_true(sensitive_marker);
-
-    if sensitive_here && !matches!(kind, AttributeValueKind::Absent) {
-        return SENSITIVE_DISPLAY.to_owned();
-    }
-
-    match kind {
-        AttributeValueKind::Absent => ABSENT_DISPLAY.to_owned(),
-        AttributeValueKind::Null => {
-            if sensitive {
-                SENSITIVE_DISPLAY.to_owned()
-            } else {
-                "null".to_owned()
-            }
-        }
-        AttributeValueKind::Unknown => {
-            if sensitive {
-                SENSITIVE_DISPLAY.to_owned()
-            } else {
-                UNKNOWN_DISPLAY.to_owned()
-            }
-        }
-        AttributeValueKind::Known => value.map_or_else(
-            || ABSENT_DISPLAY.to_owned(),
-            |value| display_plan_value_with_markers(value, sensitive_marker, unknown_marker),
-        ),
     }
 }
 
@@ -635,224 +525,12 @@ const fn value_array_length(value: Option<&PlanValue>) -> Option<usize> {
     }
 }
 
-fn display_plan_value(value: &PlanValue) -> String {
-    match value {
-        PlanValue::Null => "null".to_owned(),
-        PlanValue::Bool(value) => value.to_string(),
-        PlanValue::Number(value) => value.clone(),
-        PlanValue::String(value) => display_string(value),
-        PlanValue::Array(values) => {
-            let values = values.iter().map(display_plan_value).collect::<Vec<_>>();
-            format!("[{}]", values.join(", "))
-        }
-        PlanValue::Object(values) => {
-            let values = values
-                .iter()
-                .map(|(key, value)| {
-                    format!("{} = {}", display_string(key), display_plan_value(value))
-                })
-                .collect::<Vec<_>>();
-            format!("{{{}}}", values.join(", "))
-        }
-    }
-}
-
-fn display_plan_value_with_markers(
-    value: &PlanValue,
-    sensitive_marker: Option<&PlanValue>,
-    unknown_marker: Option<&PlanValue>,
-) -> String {
-    if marker_is_true(sensitive_marker) {
-        return SENSITIVE_DISPLAY.to_owned();
-    }
-    if marker_is_true(unknown_marker) {
-        return UNKNOWN_DISPLAY.to_owned();
-    }
-
-    match value {
-        PlanValue::Object(_) => {
-            if marker_contains_true(sensitive_marker)
-                && !matches!(sensitive_marker, Some(PlanValue::Object(_)))
-            {
-                return SENSITIVE_DISPLAY.to_owned();
-            }
-            if marker_contains_true(unknown_marker)
-                && !matches!(unknown_marker, Some(PlanValue::Object(_)))
-            {
-                return UNKNOWN_DISPLAY.to_owned();
-            }
-            let mut keys = BTreeSet::new();
-            add_object_keys(&mut keys, Some(value));
-            add_object_keys(&mut keys, sensitive_marker);
-            add_object_keys(&mut keys, unknown_marker);
-            let values = keys
-                .into_iter()
-                .map(|key| {
-                    let segment = AttributePathSegment::Key(key.clone());
-                    format!(
-                        "{} = {}",
-                        display_string(&key),
-                        display_optional_plan_value_with_markers(
-                            child_value(Some(value), &segment),
-                            child_value(sensitive_marker, &segment),
-                            child_value(unknown_marker, &segment),
-                        )
-                    )
-                })
-                .collect::<Vec<_>>();
-            format!("{{{}}}", values.join(", "))
-        }
-        PlanValue::Array(_) => {
-            if marker_contains_true(sensitive_marker)
-                && !matches!(sensitive_marker, Some(PlanValue::Array(_)))
-            {
-                return SENSITIVE_DISPLAY.to_owned();
-            }
-            if marker_contains_true(unknown_marker)
-                && !matches!(unknown_marker, Some(PlanValue::Array(_)))
-            {
-                return UNKNOWN_DISPLAY.to_owned();
-            }
-            let length = [Some(value), sensitive_marker, unknown_marker]
-                .into_iter()
-                .filter_map(value_array_length)
-                .max()
-                .unwrap_or(0);
-            let values = (0..length)
-                .map(|index| {
-                    let segment = AttributePathSegment::Index(index);
-                    display_optional_plan_value_with_markers(
-                        child_value(Some(value), &segment),
-                        child_value(sensitive_marker, &segment),
-                        child_value(unknown_marker, &segment),
-                    )
-                })
-                .collect::<Vec<_>>();
-            format!("[{}]", values.join(", "))
-        }
-        PlanValue::Null | PlanValue::Bool(_) | PlanValue::Number(_) | PlanValue::String(_) => {
-            if marker_contains_true(sensitive_marker) {
-                SENSITIVE_DISPLAY.to_owned()
-            } else if marker_contains_true(unknown_marker) {
-                UNKNOWN_DISPLAY.to_owned()
-            } else {
-                display_plan_value(value)
-            }
-        }
-    }
-}
-
-fn display_optional_plan_value_with_markers(
-    value: Option<&PlanValue>,
-    sensitive_marker: Option<&PlanValue>,
-    unknown_marker: Option<&PlanValue>,
-) -> String {
-    value.map_or_else(
-        || display_missing_plan_value_with_markers(sensitive_marker, unknown_marker),
-        |value| display_plan_value_with_markers(value, sensitive_marker, unknown_marker),
-    )
-}
-
-fn display_missing_plan_value_with_markers(
-    sensitive_marker: Option<&PlanValue>,
-    unknown_marker: Option<&PlanValue>,
-) -> String {
-    if marker_is_true(sensitive_marker) {
-        return SENSITIVE_DISPLAY.to_owned();
-    }
-    if marker_is_true(unknown_marker) {
-        return UNKNOWN_DISPLAY.to_owned();
-    }
-
-    match (
-        metadata_container_kind(sensitive_marker),
-        metadata_container_kind(unknown_marker),
-    ) {
-        (Some(ContainerKind::Object) | None, Some(ContainerKind::Object))
-        | (Some(ContainerKind::Object), None) => {
-            let mut keys = BTreeSet::new();
-            add_object_keys(&mut keys, sensitive_marker);
-            add_object_keys(&mut keys, unknown_marker);
-            let values = keys
-                .into_iter()
-                .map(|key| {
-                    let segment = AttributePathSegment::Key(key.clone());
-                    format!(
-                        "{} = {}",
-                        display_string(&key),
-                        display_missing_plan_value_with_markers(
-                            child_value(sensitive_marker, &segment),
-                            child_value(unknown_marker, &segment),
-                        )
-                    )
-                })
-                .collect::<Vec<_>>();
-            format!("{{{}}}", values.join(", "))
-        }
-        (Some(ContainerKind::Array) | None, Some(ContainerKind::Array))
-        | (Some(ContainerKind::Array), None) => {
-            let length = [sensitive_marker, unknown_marker]
-                .into_iter()
-                .filter_map(value_array_length)
-                .max()
-                .unwrap_or(0);
-            let values = (0..length)
-                .map(|index| {
-                    let segment = AttributePathSegment::Index(index);
-                    display_missing_plan_value_with_markers(
-                        child_value(sensitive_marker, &segment),
-                        child_value(unknown_marker, &segment),
-                    )
-                })
-                .collect::<Vec<_>>();
-            format!("[{}]", values.join(", "))
-        }
-        (Some(_), Some(_)) | (None, None) => {
-            if marker_contains_true(sensitive_marker) {
-                SENSITIVE_DISPLAY.to_owned()
-            } else if marker_contains_true(unknown_marker) {
-                UNKNOWN_DISPLAY.to_owned()
-            } else {
-                ABSENT_DISPLAY.to_owned()
-            }
-        }
-    }
-}
-
-fn display_string(value: &str) -> String {
-    let mut displayed = String::with_capacity(value.len() + 2);
-    displayed.push('"');
-    for character in value.chars() {
-        match character {
-            '"' => displayed.push_str("\\\""),
-            '\\' => displayed.push_str("\\\\"),
-            '\u{08}' => displayed.push_str("\\b"),
-            '\u{0c}' => displayed.push_str("\\f"),
-            '\n' => displayed.push_str("\\n"),
-            '\r' => displayed.push_str("\\r"),
-            '\t' => displayed.push_str("\\t"),
-            character if character.is_control() => {
-                let _ = write!(displayed, "\\u{:04x}", character as u32);
-            }
-            character => displayed.push(character),
-        }
-    }
-    displayed.push('"');
-    displayed
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
 
     use super::*;
     use crate::app::plan::{PlanAction, ResourceMode};
-
-    impl AttributeValue {
-        fn revealed(&self) -> Option<&PlanValue> {
-            self.original.as_ref()
-        }
-    }
 
     fn plan_value(value: Value) -> PlanValue {
         match value {
@@ -892,8 +570,8 @@ mod tests {
             before_sensitive: Some(plan_value(fixture.before_sensitive)),
             after_sensitive: Some(plan_value(fixture.after_sensitive)),
             after_unknown: Some(plan_value(fixture.after_unknown)),
-            replace_paths: Some(vec![vec![ReplacePathSegment::Attribute("name".to_owned())]]),
-            action_reason: Some("replace_because_cannot_update".to_owned()),
+            replace_paths: None,
+            action_reason: None,
             previous_address: None,
             importing: None,
         }
@@ -904,11 +582,10 @@ mod tests {
     }
 
     fn attribute<'a>(
-        diffs: &'a AttributeDiffs,
+        diffs: &'a [AttributeDiff],
         path: &[AttributePathSegment],
     ) -> &'a AttributeDiff {
         diffs
-            .attributes
             .iter()
             .find(|attribute| attribute.path == path)
             .expect("attribute path should exist")
@@ -938,7 +615,6 @@ mod tests {
 
         assert_eq!(
             diffs
-                .attributes
                 .iter()
                 .map(|attribute| (&attribute.path, attribute.kind))
                 .collect::<Vec<_>>(),
@@ -1005,8 +681,6 @@ mod tests {
                 ),
             ]
         );
-        assert_eq!(diffs.changed_count, 6);
-        assert_eq!(diffs.unchanged_count, 3);
     }
 
     #[test]
@@ -1031,10 +705,14 @@ mod tests {
         assert_eq!(null_value.after.kind(), AttributeValueKind::Null);
         assert_eq!(new_value.before.kind(), AttributeValueKind::Absent);
         assert_eq!(new_value.after.kind(), AttributeValueKind::Null);
-        assert_eq!(new_value.before.display(), "<absent>");
-        assert_eq!(new_value.after.display(), "null");
-        assert!(!new_value.before.is_unmasked_unknown());
-        assert!(!new_value.after.is_unmasked_unknown());
+        assert!(matches!(
+            new_value.before.grouping_value(),
+            Some(GroupingValue::Absent)
+        ));
+        assert!(matches!(
+            new_value.after.grouping_value(),
+            Some(GroupingValue::Null)
+        ));
     }
 
     #[test]
@@ -1049,7 +727,7 @@ mod tests {
 
         let diffs = diff_resource_attributes(&change);
 
-        assert_eq!(diffs.attributes.len(), 1);
+        assert_eq!(diffs.len(), 1);
         let credentials = attribute(
             &diffs,
             &[AttributePathSegment::Key("credentials".to_owned())],
@@ -1058,43 +736,6 @@ mod tests {
         assert_eq!(credentials.before.kind(), AttributeValueKind::Known);
         assert_eq!(credentials.after.kind(), AttributeValueKind::Known);
         assert!(credentials.before.is_sensitive() && credentials.after.is_sensitive());
-        assert!(!credentials.before.is_unmasked_unknown());
-        assert!(!credentials.after.is_unmasked_unknown());
-        assert_eq!(credentials.before.display(), "<sensitive>");
-        assert_eq!(
-            credentials.after.display(),
-            "{\"token\" = <sensitive>, \"user\" = \"bob\"}"
-        );
-    }
-
-    #[test]
-    fn keeps_marker_only_children_in_masked_composite_displays() {
-        let change = change(ChangeFixture {
-            before: json!({
-                "credentials": {"user": "alice", "token": "old"},
-                "items": ["old"]
-            }),
-            after: json!({"credentials": {"user": "bob"}, "items": ["new"]}),
-            before_sensitive: json!({"credentials": true, "items": true}),
-            after_sensitive: json!(false),
-            after_unknown: json!({
-                "credentials": {"token": true},
-                "items": [false, true]
-            }),
-        });
-
-        let diffs = diff_resource_attributes(&change);
-        let credentials = attribute(
-            &diffs,
-            &[AttributePathSegment::Key("credentials".to_owned())],
-        );
-        let items = attribute(&diffs, &[AttributePathSegment::Key("items".to_owned())]);
-
-        assert_eq!(
-            credentials.after.display(),
-            "{\"token\" = <unknown>, \"user\" = \"bob\"}"
-        );
-        assert_eq!(items.after.display(), "[\"new\", <unknown>]");
     }
 
     #[test]
@@ -1111,12 +752,11 @@ mod tests {
         let secrets = attribute(&diffs, &[AttributePathSegment::Key("secrets".to_owned())]);
 
         assert_eq!(secrets.kind, AttributeChangeKind::Changed);
-        assert_eq!(diffs.changed_count, 1);
-        assert_eq!(diffs.unchanged_count, 0);
+        assert_eq!(diffs.len(), 1);
     }
 
     #[test]
-    fn keeps_one_sided_sensitive_values_masked_only_on_that_side() {
+    fn marks_one_sided_sensitive_values_only_on_that_side() {
         let change = change(ChangeFixture {
             before: json!({"public": "old"}),
             after: json!({"public": "new"}),
@@ -1125,11 +765,10 @@ mod tests {
             after_unknown: json!(false),
         });
 
-        let attribute = &diff_resource_attributes(&change).attributes[0];
+        let attribute = &diff_resource_attributes(&change)[0];
 
-        assert_eq!(attribute.before.display(), "\"old\"");
-        assert_eq!(attribute.after.display(), "<sensitive>");
-        assert_eq!(attribute.after.revealed(), Some(&plan_value(json!("new"))));
+        assert!(!attribute.before.is_sensitive());
+        assert!(attribute.after.is_sensitive());
     }
 
     #[test]
@@ -1148,17 +787,19 @@ mod tests {
 
         assert_eq!(known.after.kind(), AttributeValueKind::Known);
         assert!(known.after.is_sensitive());
-        assert!(!known.after.is_unmasked_unknown());
-        assert_eq!(known.after.display(), "<sensitive>");
+        assert!(!known.after.is_unknown());
         assert_eq!(future.before.kind(), AttributeValueKind::Absent);
         assert_eq!(future.after.kind(), AttributeValueKind::Unknown);
         assert!(future.after.is_unknown());
-        assert!(future.after.is_unmasked_unknown());
-        assert_eq!(future.after.display(), "<unknown>");
+        assert!(!future.after.is_sensitive());
+        assert!(matches!(
+            future.after.grouping_value(),
+            Some(GroupingValue::Unknown(UnknownShape::Bool(true)))
+        ));
     }
 
     #[test]
-    fn masks_unknown_values_without_losing_internal_value_or_state() {
+    fn marks_sensitive_unknown_values_as_both_unknown_and_sensitive() {
         let change = change(ChangeFixture {
             before: json!({"token": "old"}),
             after: json!({"token": "planned"}),
@@ -1167,34 +808,10 @@ mod tests {
             after_unknown: json!({"token": true}),
         });
 
-        let attribute = &diff_resource_attributes(&change).attributes[0];
+        let attribute = &diff_resource_attributes(&change)[0];
 
         assert_eq!(attribute.after.kind(), AttributeValueKind::Unknown);
         assert!(attribute.after.is_sensitive());
-        assert!(!attribute.after.is_unmasked_unknown());
-        assert_eq!(attribute.after.display(), "<sensitive>");
-        assert_eq!(
-            attribute.after.revealed(),
-            Some(&plan_value(json!("planned")))
-        );
-    }
-
-    #[test]
-    fn retains_replacement_metadata_and_attribute_counts() {
-        let change = change(ChangeFixture {
-            before: json!({"name": "old", "region": "same"}),
-            after: json!({"name": "new", "region": "same"}),
-            before_sensitive: json!(false),
-            after_sensitive: json!(false),
-            after_unknown: json!(false),
-        });
-
-        let diffs = diff_resource_attributes(&change);
-
-        assert_eq!(diffs.changed_count, 1);
-        assert_eq!(diffs.unchanged_count, 1);
-        assert_eq!(diffs.replace_paths, change.replace_paths);
-        assert_eq!(diffs.action_reason, change.action_reason);
     }
 
     #[test]
@@ -1212,7 +829,7 @@ mod tests {
         let created_id = attribute(&create_diffs, &[AttributePathSegment::Key("id".to_owned())]);
         assert_eq!(created_id.before.kind(), AttributeValueKind::Absent);
         assert_eq!(created_id.after.kind(), AttributeValueKind::Known);
-        assert_eq!(create_diffs.attributes.len(), 2);
+        assert_eq!(create_diffs.len(), 2);
 
         let mut delete = change(ChangeFixture {
             before: json!({"id": "deleted", "name": "example"}),
@@ -1227,7 +844,7 @@ mod tests {
         let deleted_id = attribute(&delete_diffs, &[AttributePathSegment::Key("id".to_owned())]);
         assert_eq!(deleted_id.before.kind(), AttributeValueKind::Known);
         assert_eq!(deleted_id.after.kind(), AttributeValueKind::Absent);
-        assert_eq!(delete_diffs.attributes.len(), 2);
+        assert_eq!(delete_diffs.len(), 2);
     }
 
     #[test]
@@ -1245,9 +862,11 @@ mod tests {
 
         assert_eq!(settings.before.kind(), AttributeValueKind::Null);
         assert_eq!(settings.after.kind(), AttributeValueKind::Known);
-        assert_eq!(settings.before.display(), "null");
-        assert_eq!(settings.after.display(), "{\"enabled\" = true}");
-        assert!(!diffs.attributes.iter().any(|attribute| {
+        assert_eq!(
+            settings.after.original.as_ref(),
+            Some(&plan_value(json!({"enabled": true})))
+        );
+        assert!(!diffs.iter().any(|attribute| {
             attribute.path
                 == [
                     AttributePathSegment::Key("settings".to_owned()),
@@ -1263,6 +882,7 @@ mod tests {
             before: Value,
             after_unknown: Value,
             expected_before_kind: AttributeValueKind,
+            expected_shape: UnknownShape,
             expected_count: usize,
         }
 
@@ -1272,6 +892,9 @@ mod tests {
                 before: json!(null),
                 after_unknown: json!({"config": {"token": true}}),
                 expected_before_kind: AttributeValueKind::Null,
+                expected_shape: UnknownShape::Object(
+                    [("token".to_owned(), UnknownShape::Bool(true))].into(),
+                ),
                 expected_count: 1,
             },
             Case {
@@ -1279,6 +902,7 @@ mod tests {
                 before: json!({"old": true}),
                 after_unknown: json!({"config": [true]}),
                 expected_before_kind: AttributeValueKind::Known,
+                expected_shape: UnknownShape::Array(vec![UnknownShape::Bool(true)]),
                 expected_count: 1,
             },
         ] {
@@ -1306,18 +930,18 @@ mod tests {
                 "case: {}",
                 case.name
             );
-            assert_eq!(config.after.display(), "<unknown>", "case: {}", case.name);
-            assert_eq!(
-                diffs.changed_count, case.expected_count,
+            assert!(
+                config.after.grouping_value() == Some(GroupingValue::Unknown(case.expected_shape)),
                 "case: {}",
                 case.name
             );
             assert_eq!(
-                diffs.attributes.len(),
-                case.expected_count,
+                config.kind,
+                AttributeChangeKind::Changed,
                 "case: {}",
                 case.name
             );
+            assert_eq!(diffs.len(), case.expected_count, "case: {}", case.name);
             assert_eq!(
                 config.path,
                 [AttributePathSegment::Key("config".to_owned())],
@@ -1325,25 +949,6 @@ mod tests {
                 case.name
             );
         }
-    }
-
-    #[test]
-    fn quotes_and_escapes_known_strings_and_object_keys() {
-        let change = change(ChangeFixture {
-            before: json!({"settings": null}),
-            after: json!({"settings": {"line\nkey": "<unknown>\n\"", "null": "null"}}),
-            before_sensitive: json!(false),
-            after_sensitive: json!(false),
-            after_unknown: json!(false),
-        });
-
-        let diffs = diff_resource_attributes(&change);
-        let settings = attribute(&diffs, &[AttributePathSegment::Key("settings".to_owned())]);
-
-        assert_eq!(
-            settings.after.display(),
-            "{\"line\\nkey\" = \"<unknown>\\n\\\"\", \"null\" = \"null\"}"
-        );
     }
 
     #[test]
@@ -1375,10 +980,9 @@ mod tests {
 
         let diffs = diff_resource_attributes(&change);
 
-        assert_eq!(diffs.attributes.len(), 2);
+        assert_eq!(diffs.len(), 2);
         assert!(
             diffs
-                .attributes
                 .iter()
                 .all(|attribute| attribute.kind == AttributeChangeKind::Unchanged)
         );
