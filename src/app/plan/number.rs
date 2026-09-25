@@ -1,278 +1,203 @@
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct CanonicalNumber(String);
 
+// Terraform and OpenTofu print numbers as plain decimals from big.Float, so only other
+// notation reaches the i128 exponent limit. Values beyond it are not normalised, and
+// callers handle them conservatively instead of comparing them as numbers.
 pub(super) fn canonical_number(value: &str) -> Option<CanonicalNumber> {
-    let mut parser = NumberParser::new(value);
-    let negative = parser.take_sign();
-    let integer = parser.take_digits()?;
-    let fraction = parser.take_fraction()?;
-    let exponent = parser.take_exponent()?;
-    if !parser.is_complete() {
+    let (sign, unsigned) = value
+        .strip_prefix('-')
+        .map_or(("", value), |unsigned| ("-", unsigned));
+    let (mantissa, exponent) = unsigned.split_once(['e', 'E']).unwrap_or((unsigned, "0"));
+    let (integer, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    if !is_digits(integer) || (mantissa.contains('.') && !is_digits(fraction)) {
         return None;
     }
+    let exponent = exponent.parse::<i128>().ok()?;
 
-    let mut digits = integer;
-    digits.push_str(&fraction);
-    let first_non_zero = digits
-        .bytes()
-        .position(|digit| digit != b'0')
-        .unwrap_or(digits.len());
-    if first_non_zero == digits.len() {
+    let digits = format!("{integer}{fraction}");
+    let significant = digits.trim_start_matches('0');
+    if significant.is_empty() {
         return Some(CanonicalNumber("0".to_owned()));
     }
-    digits.drain(..first_non_zero);
-
-    let trailing_zero_count = digits
-        .bytes()
-        .rev()
-        .take_while(|digit| *digit == b'0')
-        .count();
-    digits.truncate(digits.len() - trailing_zero_count);
-
-    let mut scale = exponent;
-    scale.adjust(false, fraction.len());
-    scale.adjust(true, trailing_zero_count);
-
-    let sign = if negative { "-" } else { "" };
-    Some(CanonicalNumber(format!(
-        "{sign}{digits}e{}",
-        scale.as_string()
-    )))
+    let trimmed = significant.trim_end_matches('0');
+    let shift = i128::try_from(significant.len() - trimmed.len()).ok()?
+        - i128::try_from(fraction.len()).ok()?;
+    let scale = exponent.checked_add(shift)?;
+    Some(CanonicalNumber(format!("{sign}{trimmed}e{scale}")))
 }
 
-struct NumberParser<'a> {
-    input: &'a [u8],
-    position: usize,
-}
-
-impl<'a> NumberParser<'a> {
-    const fn new(input: &'a str) -> Self {
-        Self {
-            input: input.as_bytes(),
-            position: 0,
-        }
-    }
-
-    fn take_sign(&mut self) -> bool {
-        if self.input.get(self.position) == Some(&b'-') {
-            self.position += 1;
-            true
-        } else {
-            false
-        }
-    }
-
-    fn take_digits(&mut self) -> Option<String> {
-        let start = self.position;
-        while self
-            .input
-            .get(self.position)
-            .is_some_and(u8::is_ascii_digit)
-        {
-            self.position += 1;
-        }
-        (self.position > start)
-            .then(|| String::from_utf8_lossy(&self.input[start..self.position]).into())
-    }
-
-    fn take_fraction(&mut self) -> Option<String> {
-        if self.input.get(self.position) != Some(&b'.') {
-            return Some(String::new());
-        }
-        self.position += 1;
-        self.take_digits()
-    }
-
-    fn take_exponent(&mut self) -> Option<DecimalExponent> {
-        if !matches!(self.input.get(self.position), Some(b'e' | b'E')) {
-            return Some(DecimalExponent::zero());
-        }
-        self.position += 1;
-        let negative = match self.input.get(self.position) {
-            Some(b'-') => {
-                self.position += 1;
-                true
-            }
-            Some(b'+') => {
-                self.position += 1;
-                false
-            }
-            _ => false,
-        };
-        let digits = self.take_digits()?;
-        Some(DecimalExponent::new(negative, &digits))
-    }
-
-    const fn is_complete(&self) -> bool {
-        self.position == self.input.len()
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct DecimalExponent {
-    negative: bool,
-    digits: String,
-}
-
-impl DecimalExponent {
-    fn new(negative: bool, digits: &str) -> Self {
-        let first_non_zero = digits
-            .bytes()
-            .position(|digit| digit != b'0')
-            .unwrap_or(digits.len());
-        if first_non_zero == digits.len() {
-            return Self::zero();
-        }
-        Self {
-            negative,
-            digits: digits[first_non_zero..].to_owned(),
-        }
-    }
-
-    const fn zero() -> Self {
-        Self {
-            negative: false,
-            digits: String::new(),
-        }
-    }
-
-    fn adjust(&mut self, positive: bool, amount: usize) {
-        if amount == 0 {
-            return;
-        }
-        let amount = amount.to_string();
-        if self.digits.is_empty() {
-            self.negative = !positive;
-            self.digits = amount;
-            return;
-        }
-        if self.negative != positive {
-            self.digits = add_decimal_digits(&self.digits, &amount);
-            return;
-        }
-        match self
-            .digits
-            .len()
-            .cmp(&amount.len())
-            .then_with(|| self.digits.cmp(&amount))
-        {
-            std::cmp::Ordering::Greater => {
-                self.digits = subtract_decimal_digits(&self.digits, &amount);
-            }
-            std::cmp::Ordering::Equal => {
-                self.digits.clear();
-                self.negative = false;
-            }
-            std::cmp::Ordering::Less => {
-                self.digits = subtract_decimal_digits(&amount, &self.digits);
-                self.negative = !self.negative;
-            }
-        }
-    }
-
-    fn as_string(&self) -> String {
-        if self.digits.is_empty() {
-            "0".to_owned()
-        } else if self.negative {
-            format!("-{}", self.digits)
-        } else {
-            self.digits.clone()
-        }
-    }
-}
-
-fn add_decimal_digits(left: &str, right: &str) -> String {
-    let mut result = Vec::with_capacity(left.len().max(right.len()) + 1);
-    let mut carry = 0u8;
-    let mut left = left.bytes().rev();
-    let mut right = right.bytes().rev();
-    loop {
-        let left_digit = left.next();
-        let right_digit = right.next();
-        if left_digit.is_none() && right_digit.is_none() {
-            if carry != 0 {
-                result.push(b'1');
-            }
-            result.reverse();
-            return String::from_utf8(result).expect("decimal digits are valid UTF-8");
-        }
-        let sum = left_digit.map_or(0, |digit| digit - b'0')
-            + right_digit.map_or(0, |digit| digit - b'0')
-            + carry;
-        result.push(b'0' + sum % 10);
-        carry = sum / 10;
-    }
-}
-
-fn subtract_decimal_digits(left: &str, right: &str) -> String {
-    let mut result = Vec::with_capacity(left.len());
-    let mut borrow = 0i16;
-    let left = left.bytes().rev();
-    let mut right = right.bytes().rev();
-    for left_digit in left {
-        let mut difference = i16::from(left_digit - b'0') - borrow;
-        let right_digit = right.next().map_or(0, |digit| digit - b'0');
-        difference -= i16::from(right_digit);
-        if difference < 0 {
-            difference += 10;
-            borrow = 1;
-        } else {
-            borrow = 0;
-        }
-        result.push(
-            b'0' + u8::try_from(difference).expect("decimal subtraction stays within one digit"),
-        );
-    }
-    while result.last() == Some(&b'0') {
-        result.pop();
-    }
-    result.reverse();
-    String::from_utf8(result).expect("decimal digits are valid UTF-8")
+fn is_digits(value: &str) -> bool {
+    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::canonical_number;
 
-    struct NumberCase {
-        name: &'static str,
-        input: &'static str,
-        expected: &'static str,
+    const I128_MAX: &str = "170141183460469231731687303715884105727";
+    const I128_MAX_PLUS_ONE: &str = "170141183460469231731687303715884105728";
+    const I128_MIN: &str = "-170141183460469231731687303715884105728";
+    const I128_MIN_MINUS_ONE: &str = "-170141183460469231731687303715884105729";
+
+    fn canonical(value: &str) -> Option<String> {
+        canonical_number(value).map(|number| number.0)
     }
 
     #[test]
-    fn canonicalizes_large_decimal_values_without_float_conversion() {
+    fn keeps_every_mantissa_digit_without_float_conversion() {
+        struct NumberCase {
+            name: &'static str,
+            input: String,
+            expected: String,
+        }
+
+        let long_integer = "12345678901234567890123456789012345678901234567890";
+        let long_fraction = "98765432109876543210987654321098765432109876543219";
         let cases = [
             NumberCase {
-                name: "preserves integers above 2^53",
-                input: "9007199254740993",
-                expected: "9007199254740993e0",
+                name: "integer above 2^53",
+                input: "9007199254740993".to_owned(),
+                expected: "9007199254740993e0".to_owned(),
             },
             NumberCase {
-                name: "removes fractional trailing zeros",
-                input: "-12.300e2",
-                expected: "-123e1",
+                name: "negative integer above 2^64",
+                input: "-18446744073709551617".to_owned(),
+                expected: "-18446744073709551617e0".to_owned(),
             },
             NumberCase {
-                name: "normalizes zero with sign and exponent",
-                input: "-0.000e+99",
-                expected: "0",
+                name: "mantissa longer than i128",
+                input: format!("{long_integer}.{long_fraction}"),
+                expected: format!("{long_integer}{long_fraction}e-50"),
             },
             NumberCase {
-                name: "retains arbitrary exponent precision",
-                input: "1e999999999999999999",
-                expected: "1e999999999999999999",
+                name: "fractional trailing zeros",
+                input: "-12.300e2".to_owned(),
+                expected: "-123e1".to_owned(),
+            },
+            NumberCase {
+                name: "long zero-padded positive exponent",
+                input: format!("1e+{}5", "0".repeat(200)),
+                expected: "1e5".to_owned(),
+            },
+            NumberCase {
+                name: "long zero-padded negative exponent",
+                input: format!("1E-{}5", "0".repeat(200)),
+                expected: "1e-5".to_owned(),
             },
         ];
 
         for case in cases {
-            let actual = canonical_number(case.input).map(|number| number.0);
             assert_eq!(
-                actual.as_deref(),
-                Some(case.expected),
+                canonical(&case.input).as_deref(),
+                Some(case.expected.as_str()),
                 "case: {}",
                 case.name
             );
         }
+    }
+
+    #[rstest]
+    #[case::plain_integer("1500")]
+    #[case::fraction_zeros("1500.000")]
+    #[case::leading_zeros("0001500")]
+    #[case::mantissa_fraction("1.5e3")]
+    #[case::integer_mantissa("15e2")]
+    #[case::uppercase_exponent("0.0015E+6")]
+    #[case::negative_exponent("150000e-2")]
+    fn equivalent_notations_share_one_canonical_form(#[case] input: &str) {
+        assert_eq!(canonical(input).as_deref(), Some("15e2"));
+    }
+
+    #[rstest]
+    #[case::zero("0")]
+    #[case::negative_zero("-0")]
+    #[case::negative_zero_fraction("-0.000")]
+    #[case::zero_with_exponent("0e-5")]
+    #[case::negative_zero_with_exponent("-0.000e+99")]
+    fn every_zero_is_unsigned(#[case] input: &str) {
+        assert_eq!(canonical(input).as_deref(), Some("0"));
+    }
+
+    #[test]
+    fn distinct_values_stay_distinct() {
+        let pairs = [
+            ("9007199254740992", "9007199254740993"),
+            ("0.1", "0.10000000000000000000000000001"),
+            ("-1", "1"),
+            ("1e-5", "1e5"),
+        ];
+
+        for (left, right) in pairs {
+            assert_ne!(canonical(left), canonical(right), "{left} vs {right}");
+        }
+    }
+
+    #[test]
+    fn accepts_exponents_up_to_the_i128_bounds() {
+        let cases = [
+            (format!("1e{I128_MAX}"), format!("1e{I128_MAX}")),
+            (format!("1e{I128_MIN}"), format!("1e{I128_MIN}")),
+            (format!("1.0e{I128_MIN}"), format!("1e{I128_MIN}")),
+            (format!("0e{I128_MAX}"), "0".to_owned()),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(
+                canonical(&input).as_deref(),
+                Some(expected.as_str()),
+                "{input}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_values_whose_exponent_leaves_the_i128_range() {
+        let inputs = [
+            format!("1e{I128_MAX_PLUS_ONE}"),
+            format!("1e{I128_MIN_MINUS_ONE}"),
+            format!("0e{I128_MAX_PLUS_ONE}"),
+            format!("10e{I128_MAX}"),
+            format!("0.1e{I128_MIN}"),
+        ];
+
+        for input in inputs {
+            assert_eq!(canonical(&input), None, "{input}");
+        }
+    }
+
+    #[rstest]
+    #[case::empty("")]
+    #[case::sign_only("-")]
+    #[case::double_sign("--1")]
+    #[case::plus_sign("+1")]
+    #[case::missing_integer(".5")]
+    #[case::missing_fraction("1.")]
+    #[case::two_points("1.2.3")]
+    fn rejects_malformed_mantissa(#[case] input: &str) {
+        assert_eq!(canonical(input), None);
+    }
+
+    #[rstest]
+    #[case::missing_digits("1e")]
+    #[case::sign_only("1e+")]
+    #[case::double_sign("1e+-1")]
+    #[case::fraction("1e1.5")]
+    #[case::second_exponent("1e1e1")]
+    fn rejects_malformed_exponent(#[case] input: &str) {
+        assert_eq!(canonical(input), None);
+    }
+
+    #[rstest]
+    #[case::separator("1_000")]
+    #[case::hexadecimal("0x10")]
+    #[case::whitespace(" 1")]
+    #[case::non_ascii_digit("\u{ff11}")]
+    #[case::not_a_number("NaN")]
+    #[case::infinity("Infinity")]
+    fn rejects_non_decimal_text(#[case] input: &str) {
+        assert_eq!(canonical(input), None);
     }
 }

@@ -52,6 +52,9 @@ enum Value {
     Unknown,
     Bool(bool),
     Number(CanonicalNumber),
+    // Keeps the original text so that distinct numbers outside the normalisable range
+    // never compare equal; comparisons involving it stay uncertain.
+    UnnormalizedNumber(String),
     String(String),
     Object(BTreeMap<String, Self>),
     Sequence(Vec<Self>),
@@ -140,9 +143,8 @@ fn comparison_value(
     }
     match value {
         Some(PlanValue::Bool(value)) => Value::Bool(*value),
-        Some(PlanValue::Number(value)) => {
-            canonical_number(value).map_or(Value::Unknown, Value::Number)
-        }
+        Some(PlanValue::Number(value)) => canonical_number(value)
+            .map_or_else(|| Value::UnnormalizedNumber(value.clone()), Value::Number),
         Some(PlanValue::String(value)) => Value::String(value.clone()),
         Some(PlanValue::Object(values)) => object_value(Some(values), unknown, kind),
         Some(PlanValue::Array(values)) => array_value(values, unknown, kind),
@@ -246,7 +248,7 @@ impl ValueComparison {
 }
 
 fn compare_values(left: &Value, right: &Value) -> ValueComparison {
-    if left == right {
+    if left == right && !left.has_unnormalized_number() {
         return ValueComparison::default();
     }
     match (left, right) {
@@ -272,8 +274,8 @@ fn compare_values(left: &Value, right: &Value) -> ValueComparison {
             }
             result
         }
-        (Value::Unknown, _)
-        | (_, Value::Unknown)
+        (Value::Unknown | Value::UnnormalizedNumber(_), _)
+        | (_, Value::Unknown | Value::UnnormalizedNumber(_))
         | (
             Value::UntypedSequence(_),
             Value::UntypedSequence(_) | Value::Sequence(_) | Value::Set(_),
@@ -356,14 +358,22 @@ fn assign_set_member(
 
 impl Value {
     fn has_unknown(&self) -> bool {
-        match self {
-            Self::Unknown => true,
-            Self::Object(values) => values.values().any(Self::has_unknown),
-            Self::Sequence(values) | Self::Set(values) | Self::UntypedSequence(values) => {
-                values.iter().any(Self::has_unknown)
+        self.contains(&|value| matches!(value, Self::Unknown))
+    }
+
+    fn has_unnormalized_number(&self) -> bool {
+        self.contains(&|value| matches!(value, Self::UnnormalizedNumber(_)))
+    }
+
+    fn contains(&self, predicate: &impl Fn(&Self) -> bool) -> bool {
+        predicate(self)
+            || match self {
+                Self::Object(values) => values.values().any(|value| value.contains(predicate)),
+                Self::Sequence(values) | Self::Set(values) | Self::UntypedSequence(values) => {
+                    values.iter().any(|value| value.contains(predicate))
+                }
+                _ => false,
             }
-            _ => false,
-        }
     }
 }
 
