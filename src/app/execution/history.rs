@@ -189,6 +189,21 @@ mod tests {
     }
 
     #[test]
+    fn utf8_directory_keeps_the_existing_file_stem() {
+        let key = key(
+            "/repo/infra",
+            "default",
+            "aws_vpc.main",
+            vec![PlanAction::Update],
+        );
+
+        assert_eq!(
+            key.file_stem(),
+            "711cb7d1909624a2d85171d5733035684ecfb0c53772f822987b8a9cfa669aa9"
+        );
+    }
+
+    #[test]
     fn target_key_uses_the_canonical_context_and_full_action_sequence() {
         let context = ExecutionContext::loading("/repo/infra/../infra")
             .with_workspace("default")

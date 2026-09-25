@@ -197,6 +197,10 @@ fn run_saved_plan_review(
         ));
         return ExitCode::from(EXECUTION_FAILURE);
     };
+    let context = ExecutionContext::loading(review_root)
+        .with_tool(tool)
+        .with_launch_root(launch_root)
+        .with_variable_sources(variable_sources);
     let worker = match spawn_review_worker(
         tool,
         display_root,
@@ -205,7 +209,7 @@ fn run_saved_plan_review(
         &plan_path,
         changed,
         apply_entry,
-        review_context(tool, &review_root, launch_root, variable_sources.clone()),
+        context.clone(),
         &cancellation,
         history.as_ref(),
         sender.clone(),
@@ -226,7 +230,6 @@ fn run_saved_plan_review(
         handle: None,
     };
     let mut clipboard = ClipboardExecutor::new();
-    let context = review_context(tool, &review_root, launch_root, variable_sources);
     let effects = event_loop::RuntimeEffects {
         tool,
         root: launch_root,
@@ -292,18 +295,6 @@ fn run_saved_plan_review(
     } else {
         primary_exit
     }
-}
-
-fn review_context(
-    tool: Tool,
-    review_root: &Path,
-    launch_root: &Path,
-    variable_sources: VariableSources,
-) -> ExecutionContext {
-    ExecutionContext::loading(review_root)
-        .with_tool(tool)
-        .with_launch_root(launch_root)
-        .with_variable_sources(variable_sources)
 }
 
 pub(crate) fn run_synthetic() -> io::Result<()> {
@@ -717,21 +708,5 @@ mod tests {
         let actual = finalize_ui_result(Ok(outcome.clone()), &apply_join, &plan_join)
             .expect("successful worker joins should preserve the UI result");
         assert_eq!(actual, outcome);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn review_context_keeps_non_utf8_review_root() {
-        use std::{os::unix::ffi::OsStringExt, path::PathBuf};
-        let review_root = PathBuf::from(OsString::from_vec(b"/repo/infra-\xff".to_vec()));
-
-        let context = review_context(
-            Tool::Terraform,
-            &review_root,
-            Path::new("/repo"),
-            VariableSources::default(),
-        );
-
-        assert_eq!(context.cwd_path(), review_root);
     }
 }

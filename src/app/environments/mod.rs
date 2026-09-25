@@ -680,6 +680,17 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_production_environment_is_detected_before_plan_completion() {
+        use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+        let directory = PathBuf::from(OsString::from_vec(b"/repo/prod-\xff".to_vec()));
+
+        let state = EnvironmentSession::new(vec![available_named("default", directory)], false);
+
+        assert!(state.plans()[0].is_production());
+    }
+
     #[test]
     fn default_workspace_orders_by_directory_name_without_parent_tokens() {
         let environments = [

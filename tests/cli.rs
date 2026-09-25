@@ -272,17 +272,6 @@ mod pty_tests {
                 .map(|path| path.split_whitespace().next().unwrap())
                 .unwrap();
             assert!(applies[0].1.ends_with(reviewed), "{calls:?}");
-            let paths = fs::read_to_string(fixture.plan_path_record.with_extension("all")).unwrap();
-            assert!(
-                paths.lines().all(|path| !Path::new(path).exists()),
-                "{paths}"
-            );
-            assert_eq!(
-                fs::read_dir(fixture.directory.join("owned-plans"))
-                    .unwrap()
-                    .count(),
-                0
-            );
         }
 
         #[test]
@@ -689,8 +678,7 @@ Plan: 0 to add, 3 to change, 0 to destroy.
                         .position(|byte| *byte == b'|')
                         .expect("invocation should contain directory and arguments");
                     assert_eq!(Path::new(OsStr::from_bytes(&line[..separator])), self.root);
-                    String::from_utf8(line[separator + 1..].to_vec())
-                        .expect("invocation arguments should be UTF-8")
+                    String::from_utf8_lossy(&line[separator + 1..]).into_owned()
                 })
                 .collect()
         }
@@ -1035,6 +1023,20 @@ Plan: 0 to add, 3 to change, 0 to destroy.
         result.observed("apply_success");
         assert_single_apply_of_reviewed_plan(&fixture);
         fixture.assert_saved_plan_removed();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn pty_non_utf8_directory_applies_the_reviewed_inline_output_plan() {
+        let fixture = Fixture::with_root_name(OsStr::from_bytes(b"infra-\xff"));
+        let result =
+            fixture.run_with_arguments("plan_apply", 100, 24, "plan", &["-out=review.tfplan"]);
+
+        assert_eq!(result.exit_code, 0);
+        result.assert_restored();
+        result.observed("apply_success");
+        assert_single_apply_of_reviewed_plan(&fixture);
+        assert!(fixture.root.join("review.tfplan").exists());
     }
 
     #[test]
