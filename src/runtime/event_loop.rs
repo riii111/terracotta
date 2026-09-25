@@ -942,10 +942,7 @@ mod tests {
     };
 
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::{
-        backend::TestBackend,
-        style::{Color, Modifier},
-    };
+    use ratatui::{backend::TestBackend, buffer::Cell};
     use rstest::rstest;
 
     use super::*;
@@ -2069,7 +2066,14 @@ mod tests {
         let flash_active_at = started_at + Duration::from_millis(100);
         let expired_at = started_at + Duration::from_millis(200);
         let (mut state, mut terminal, execution_view, review_view, confirmation_view) =
-            copy_runtime_fixture(target, CopyResult::Written, started_at);
+            copy_runtime_fixture(target, started_at);
+        let before_copy = copy_target_cells(target, &terminal);
+        record_copy(
+            &mut state,
+            target.copy_target(),
+            CopyResult::Written,
+            started_at,
+        );
         let mut dirty = false;
         assert!(
             draw_if_needed(
@@ -2084,11 +2088,8 @@ mod tests {
             .expect("copy result should render")
         );
 
-        assert!(
-            copy_target_has_flash_style(target, &terminal),
-            "{}",
-            terminal_text(&terminal)
-        );
+        let flash = copy_target_cells(target, &terminal);
+        assert_ne!(flash, before_copy, "{}", terminal_text(&terminal));
         assert!(
             draw_if_needed(
                 &mut state,
@@ -2102,7 +2103,7 @@ mod tests {
             .expect("active flash should render")
         );
 
-        assert!(copy_target_has_flash_style(target, &terminal));
+        assert_eq!(copy_target_cells(target, &terminal), flash);
 
         assert!(
             draw_if_needed(
@@ -2118,18 +2119,10 @@ mod tests {
         );
 
         assert!(should_draw(&state, false));
-        assert!(!copy_target_has_flash_style(target, &terminal));
+        assert_eq!(copy_target_cells(target, &terminal), before_copy);
         match target {
             CopyFlashTarget::Review => {
                 assert!(terminal_text(&terminal).contains("Copied."));
-                assert!(buffer_text_prefix_has_style(
-                    &terminal,
-                    "terraform_data.api",
-                    "terraform_data",
-                    Color::Rgb(0x11, 0x14, 0x19),
-                    Color::Rgb(0xf4, 0x9e, 0x4c),
-                    Modifier::BOLD,
-                ));
             }
             CopyFlashTarget::Apply => {
                 assert!(terminal_text(&terminal).contains("Apply complete"));
@@ -2173,7 +2166,14 @@ mod tests {
     ) {
         let started_at = Instant::now();
         let (mut state, mut terminal, execution_view, review_view, confirmation_view) =
-            copy_runtime_fixture(target, CopyResult::Failed, started_at);
+            copy_runtime_fixture(target, started_at);
+        let before_copy = copy_target_cells(target, &terminal);
+        record_copy(
+            &mut state,
+            target.copy_target(),
+            CopyResult::Failed,
+            started_at,
+        );
         let mut dirty = true;
 
         assert!(
@@ -2188,7 +2188,7 @@ mod tests {
             )
             .expect("failed copy result should render")
         );
-        assert!(!copy_target_has_flash_style(target, &terminal));
+        assert_eq!(copy_target_cells(target, &terminal), before_copy);
         assert!(terminal_text(&terminal).contains("Copy failed."));
         assert!(should_draw(&state, false));
         let notice_expired_at = started_at + Duration::from_secs(5);
@@ -2676,72 +2676,37 @@ mod tests {
         text
     }
 
-    fn buffer_has_flash_style(terminal: &Terminal<TestBackend>) -> bool {
-        terminal
-            .backend()
-            .buffer()
-            .content()
+    fn copy_target_cells(target: CopyFlashTarget, terminal: &Terminal<TestBackend>) -> Vec<Cell> {
+        let texts: &[&str] = match target {
+            CopyFlashTarget::Review => &["copy body marker", "terraform_data.api"],
+            CopyFlashTarget::Apply => &["flash"],
+        };
+        texts
             .iter()
-            .any(|cell| cell.bg == Color::Rgb(0xf4, 0x9e, 0x4c))
+            .flat_map(|text| text_cells(terminal, text))
+            .collect()
     }
 
-    fn buffer_text_prefix_has_style(
-        terminal: &Terminal<TestBackend>,
-        text: &str,
-        prefix: &str,
-        foreground: Color,
-        background: Color,
-        modifier: Modifier,
-    ) -> bool {
+    fn text_cells(terminal: &Terminal<TestBackend>, text: &str) -> Vec<Cell> {
         let buffer = terminal.backend().buffer();
         let area = buffer.area();
-        let symbols_per_row = |y| {
-            (area.x..area.right())
-                .map(|x| buffer.cell((x, y)).expect("text cell").symbol())
-                .collect::<Vec<_>>()
-        };
         for y in area.y..area.bottom() {
-            let symbols = symbols_per_row(y);
+            let symbols = (area.x..area.right())
+                .map(|x| buffer.cell((x, y)).expect("text cell").symbol())
+                .collect::<Vec<_>>();
             for start in 0..symbols.len() {
-                if !symbols[start..]
-                    .iter()
-                    .copied()
-                    .collect::<String>()
-                    .starts_with(text)
-                {
+                if !symbols[start..].concat().starts_with(text) {
                     continue;
                 }
-                if (0..prefix.chars().count()).all(|offset| {
-                    let cell = buffer
-                        .cell((
-                            area.x + u16::try_from(start + offset).expect("text offset"),
-                            y,
-                        ))
-                        .expect("text cell");
-                    cell.fg == foreground && cell.bg == background && cell.modifier == modifier
-                }) {
-                    return true;
-                }
+                return (0..text.chars().count())
+                    .map(|offset| {
+                        let x = area.x + u16::try_from(start + offset).expect("text offset");
+                        buffer.cell((x, y)).expect("text cell").clone()
+                    })
+                    .collect();
             }
         }
-        false
-    }
-
-    fn copy_target_has_flash_style(
-        target: CopyFlashTarget,
-        terminal: &Terminal<TestBackend>,
-    ) -> bool {
-        match target {
-            CopyFlashTarget::Review => buffer_text_prefix_has_style(
-                terminal,
-                "copy body marker",
-                "copy body marker",
-                Color::Rgb(0x11, 0x14, 0x19),
-                Color::Rgb(0xf4, 0x9e, 0x4c),
-                Modifier::empty(),
-            ),
-            CopyFlashTarget::Apply => buffer_has_flash_style(terminal),
-        }
+        panic!("{text} should be visible\n{}", terminal_text(terminal));
     }
 
     fn review_state() -> SessionState {
@@ -2847,7 +2812,6 @@ mod tests {
 
     fn copy_runtime_fixture(
         target: CopyFlashTarget,
-        result: CopyResult,
         started_at: Instant,
     ) -> (
         SessionState,
@@ -2857,14 +2821,24 @@ mod tests {
         plan_review::ApplyConfirmationViewState,
     ) {
         let mut state = copy_flash_state(target, started_at);
-        record_copy(&mut state, target.copy_target(), result, started_at);
-        let terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
         let execution_view = execution::ExecutionViewState::default();
         let review_view = match target {
             CopyFlashTarget::Review => copy_review_view(&state),
             CopyFlashTarget::Apply => plan_review::PlanReviewViewState::default(),
         };
         let confirmation_view = plan_review::ApplyConfirmationViewState::default();
+        let mut dirty = true;
+        draw_if_needed(
+            &mut state,
+            &mut terminal,
+            execution_view,
+            &review_view,
+            &confirmation_view,
+            &mut dirty,
+            started_at,
+        )
+        .expect("state before copy should render");
         (
             state,
             terminal,
