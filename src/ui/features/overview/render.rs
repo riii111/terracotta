@@ -647,13 +647,17 @@ fn render_overlay(
             ],
             view.overlay_scroll(),
         ),
-        OverviewOverlay::Context => render_dialog(
-            frame,
-            area,
-            overlay_title(overlay),
-            context::context_lines(review.context()),
-            view.overlay_scroll(),
-        ),
+        OverviewOverlay::Context => {
+            if let Some(max_scroll) = render_dialog(
+                frame,
+                area,
+                overlay_title(overlay),
+                context::context_lines(review.context()),
+                view.overlay_scroll(),
+            ) {
+                view.set_max_overlay_scroll(max_scroll);
+            }
+        }
     }
 }
 
@@ -663,19 +667,16 @@ fn render_dialog(
     title: &'static str,
     lines: Vec<Line<'static>>,
     scroll: u16,
-) {
+) -> Option<u16> {
     let width = area.width.saturating_sub(4).min(96);
-    let height = u16::try_from(
-        Paragraph::new(lines.clone())
-            .wrap(Wrap { trim: false })
-            .line_count(width.saturating_sub(2)),
-    )
-    .unwrap_or(u16::MAX)
-    .saturating_add(3)
-    .min(area.height.saturating_sub(2));
+    let body = Paragraph::new(lines).wrap(Wrap { trim: false });
+    let height = u16::try_from(body.line_count(width.saturating_sub(2)))
+        .unwrap_or(u16::MAX)
+        .saturating_add(3)
+        .min(area.height.saturating_sub(2));
     if width < 12 || height < 4 {
         terminal_notice::render_wrapped(frame, area, "Terminal too small. Resize or press Esc.");
-        return;
+        return None;
     }
     let dialog = Rect::new(
         area.x + area.width.saturating_sub(width) / 2,
@@ -696,19 +697,20 @@ fn render_dialog(
         inner.width,
         inner.height.saturating_sub(1),
     );
-    frame.render_widget(
-        Paragraph::new(lines)
-            .style(theme::body_style())
-            .wrap(Wrap { trim: false })
-            .scroll((scroll, 0)),
-        content,
-    );
+    let max_scroll = u16::try_from(
+        body.line_count(content.width)
+            .saturating_sub(usize::from(content.height)),
+    )
+    .unwrap_or(u16::MAX);
+    let scroll = scroll.min(max_scroll);
+    frame.render_widget(body.style(theme::body_style()).scroll((scroll, 0)), content);
     footer::render(
         frame,
         Rect::new(inner.x, inner.bottom().saturating_sub(1), inner.width, 1),
         &[footer::hint(&["?", "Esc"], "close")],
         None,
     );
+    Some(max_scroll)
 }
 
 const fn overlay_title(overlay: OverviewOverlay) -> &'static str {
@@ -729,6 +731,7 @@ mod tests {
     use crate::ui::features::overview::OverviewInput;
     use crate::{
         app::{
+            execution::{ExecutionContext, VariableSources},
             plan::{
                 AttributeType, ConfigurationRelationStatus, Plan, PlanAction, PlanRelations,
                 PlanSummary, PlanValue, ProviderSchema, ProviderSchemas, RelationEndpoint,
@@ -1437,5 +1440,91 @@ mod tests {
         assert!(bottom_text.contains("quit"));
         assert_eq!(bottom_text.matches("close").count(), 1);
         insta::assert_snapshot!("overview_help_40x16_bottom", bottom_text);
+    }
+
+    fn long_context_state() -> OverviewSessionState {
+        OverviewSessionState::new(review().with_context(
+            ExecutionContext::loading("/repo/environments/production").with_variable_sources(
+                VariableSources::new(
+                    Vec::new(),
+                    Vec::new(),
+                    false,
+                    (0..32).map(|index| format!("TF_VAR_{index:02}")).collect(),
+                ),
+            ),
+        ))
+    }
+
+    fn context_view(state: &OverviewSessionState) -> OverviewViewState {
+        let mut view = OverviewViewState::default();
+        let content = OverviewContent::from_review(state.review(), "", view.expanded());
+        view.apply(
+            OverviewInput::OpenContext,
+            Rect::new(0, 0, 80, 24),
+            Rect::default(),
+            0,
+            &content,
+        );
+        view
+    }
+
+    fn last_context_body_line(
+        state: &OverviewSessionState,
+        view: &OverviewViewState,
+        (width, height): (u16, u16),
+    ) -> (String, String) {
+        let text = buffer_text(&render_to_buffer((width, height), |frame| {
+            render(frame, state, view, Instant::now());
+        }));
+        let rows = text.lines().collect::<Vec<_>>();
+        let footer = rows
+            .iter()
+            .position(|row| row.contains("close"))
+            .unwrap_or_else(|| panic!("{width}x{height}: context footer\n{text}"));
+        (rows[footer - 1].to_owned(), text)
+    }
+
+    #[test]
+    fn context_dialog_keeps_the_last_line_visible_after_end_paging_and_resize() {
+        let long = long_context_state();
+        let short = OverviewSessionState::new(review());
+        let mut view = context_view(&long);
+
+        let (_, top) = last_context_body_line(&long, &view, (80, 24));
+        assert!(top.contains("Execution directory"), "{top}");
+        assert!(!top.contains("TF_VAR_31"), "{top}");
+
+        view.overlay_bottom();
+        for size in [(80, 24), (40, 16)] {
+            let (line, text) = last_context_body_line(&long, &view, size);
+            assert!(line.contains("TF_VAR_31"), "{size:?}\n{text}");
+        }
+
+        view.overlay_top();
+        for _ in 0..10 {
+            view.scroll_overlay(8);
+        }
+        let (line, text) = last_context_body_line(&long, &view, (80, 24));
+        assert!(line.contains("TF_VAR_31"), "{text}");
+
+        view.overlay_bottom();
+        let (line, text) = last_context_body_line(&short, &view, (80, 24));
+        assert!(line.contains("none detected"), "{text}");
+        assert!(text.contains("Execution directory"), "{text}");
+    }
+
+    #[test]
+    fn context_dialog_scrolls_up_from_the_end_by_one_line_and_one_page() {
+        for (name, delta, expected) in [("up", -1, "TF_VAR_30"), ("page_up", -8, "TF_VAR_23")] {
+            let state = long_context_state();
+            let mut view = context_view(&state);
+            view.overlay_bottom();
+            last_context_body_line(&state, &view, (80, 24));
+
+            view.scroll_overlay(delta);
+            let (line, text) = last_context_body_line(&state, &view, (80, 24));
+
+            assert!(line.contains(expected), "case: {name}\n{text}");
+        }
     }
 }

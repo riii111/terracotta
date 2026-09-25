@@ -119,13 +119,11 @@ fn configuration_files(root: &Path, tool: Tool) -> io::Result<Vec<PathBuf>> {
             if name.ends_with(".tofu") || name.ends_with(".tofu.json") {
                 return true;
             }
-            if name.ends_with(".tf") {
-                let tofu_name = format!("{}.tofu", name.trim_end_matches(".tf"));
-                return !names.contains(&tofu_name);
+            if let Some(stem) = name.strip_suffix(".tf") {
+                return !names.contains(&format!("{stem}.tofu"));
             }
-            if name.ends_with(".tf.json") {
-                let tofu_name = format!("{}.tofu.json", name.trim_end_matches(".tf.json"));
-                return !names.contains(&tofu_name);
+            if let Some(stem) = name.strip_suffix(".tf.json") {
+                return !names.contains(&format!("{stem}.tofu.json"));
             }
             false
         })
@@ -361,6 +359,18 @@ mod tests {
         "main.tofu.json",
         r#"{"terraform":{"cloud":{}}}"#
     )]
+    #[case::hcl_repeated_extension(
+        "a.tf.tf",
+        "terraform {\n  backend \"s3\" {}\n}\n",
+        "a.tf.tofu",
+        "terraform {\n  cloud {}\n}\n"
+    )]
+    #[case::json_repeated_extension(
+        "a.tf.json.tf.json",
+        r#"{"terraform":{"backend":{"s3":{}}}}"#,
+        "a.tf.json.tofu.json",
+        r#"{"terraform":{"cloud":{}}}"#
+    )]
     fn opentofu_prefers_tofu_configuration_over_same_named_terraform_file(
         #[case] terraform_name: &str,
         #[case] terraform_source: &str,
@@ -375,6 +385,80 @@ mod tests {
             ExecutionLocation::HcpCandidate
         );
     }
+
+    #[test]
+    fn same_named_terraform_file_is_excluded_only_by_its_exact_tofu_counterpart() {
+        struct SelectionCase {
+            name: &'static str,
+            tool: Tool,
+            files: &'static [&'static str],
+            expected: &'static [&'static str],
+        }
+
+        for case in [
+            SelectionCase {
+                name: "hcl_repeated_extension_with_counterpart",
+                tool: Tool::OpenTofu,
+                files: &["a.tf.tf", "a.tf.tofu"],
+                expected: &["a.tf.tofu"],
+            },
+            SelectionCase {
+                name: "hcl_repeated_extension_with_unrelated_tofu",
+                tool: Tool::OpenTofu,
+                files: &["a.tf.tf", "a.tofu"],
+                expected: &["a.tf.tf", "a.tofu"],
+            },
+            SelectionCase {
+                name: "hcl_repeated_extension_without_counterpart",
+                tool: Tool::OpenTofu,
+                files: &["a.tf.tf"],
+                expected: &["a.tf.tf"],
+            },
+            SelectionCase {
+                name: "json_repeated_extension_with_counterpart",
+                tool: Tool::OpenTofu,
+                files: &["a.tf.json.tf.json", "a.tf.json.tofu.json"],
+                expected: &["a.tf.json.tofu.json"],
+            },
+            SelectionCase {
+                name: "json_repeated_extension_with_unrelated_tofu",
+                tool: Tool::OpenTofu,
+                files: &["a.tf.json.tf.json", "a.tofu.json"],
+                expected: &["a.tf.json.tf.json", "a.tofu.json"],
+            },
+            SelectionCase {
+                name: "json_repeated_extension_without_counterpart",
+                tool: Tool::OpenTofu,
+                files: &["a.tf.json.tf.json"],
+                expected: &["a.tf.json.tf.json"],
+            },
+            SelectionCase {
+                name: "terraform_ignores_tofu_files",
+                tool: Tool::Terraform,
+                files: &[
+                    "a.tf.tf",
+                    "a.tf.tofu",
+                    "a.tf.json.tf.json",
+                    "a.tf.json.tofu.json",
+                ],
+                expected: &["a.tf.json.tf.json", "a.tf.tf"],
+            },
+        ] {
+            let fixture = Fixture::new(case.files[0], "");
+            for file in &case.files[1..] {
+                fs::write(fixture.0.join(file), "").unwrap();
+            }
+
+            let selected = configuration_files(&fixture.0, case.tool).unwrap();
+
+            let selected = selected
+                .iter()
+                .map(|path| path.file_name().and_then(OsStr::to_str).unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(selected, case.expected, "case: {}", case.name);
+        }
+    }
+
     #[rstest]
     #[case::hcl("main.tf", "terraform {\n backend \"local\" {}\n backend \"s3\" {}\n}")]
     #[case::json("main.tf.json", r#"{"terraform":{"backend":{"local":[{},{}]}}}"#)]
