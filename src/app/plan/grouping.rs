@@ -952,6 +952,15 @@ mod tests {
                 expected_group_count: 1,
                 expected_repeated: 2,
             },
+            NumberGroupingCase {
+                name: "keeps identical numbers with an out-of-range exponent ungrouped",
+                inputs: &[
+                    ("1e170141183460469231731687303715884105728", "2"),
+                    ("1e170141183460469231731687303715884105728", "2"),
+                ],
+                expected_group_count: 2,
+                expected_repeated: 0,
+            },
         ];
 
         for case in cases {
