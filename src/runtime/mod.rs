@@ -2,7 +2,6 @@ use std::{
     ffi::OsString,
     fmt, fs,
     io::{self, IsTerminal, Write},
-    panic::{self, AssertUnwindSafe},
     path::Path,
     process::ExitCode,
     sync::{Arc, Mutex, mpsc},
@@ -305,19 +304,6 @@ pub(crate) fn run_synthetic_execution() -> io::Result<()> {
     synthetic::run_synthetic_execution()
 }
 
-fn run_terminal<F, R>(callback: F) -> R
-where
-    F: FnOnce(&mut ratatui::DefaultTerminal) -> R,
-{
-    match panic::catch_unwind(AssertUnwindSafe(|| ratatui::run(callback))) {
-        Ok(result) => result,
-        Err(payload) => {
-            let _ = crossterm::execute!(io::stdout(), crossterm::cursor::Show);
-            panic::resume_unwind(payload);
-        }
-    }
-}
-
 fn run_interactive(
     context: ExecutionContext,
     receiver: &mpsc::Receiver<PlanReviewMessage>,
@@ -325,7 +311,7 @@ fn run_interactive(
     effects: event_loop::RuntimeEffects<'_, ClipboardExecutor>,
     initial_overview: bool,
 ) -> io::Result<SessionOutcome> {
-    run_terminal(|terminal| {
+    ratatui::run(|terminal| {
         #[cfg(feature = "test-support")]
         if test_support::panic_after_draw_requested() {
             terminal.draw(|_| {})?;
