@@ -185,7 +185,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_provider_resource_types_without_treating_objects_as_maps() {
+    fn parses_resource_types_and_omitted_sections_structurally() {
         let document = json!({
             "format_version": "1.0",
             "provider_schemas": {
@@ -196,6 +196,8 @@ mod tests {
                                 "attributes": {
                                     "labels": {"type": ["map", "string"]},
                                     "nested": {"type": ["object", {"name": "string"}]},
+                                    "tags": {"type": ["set", "string"]},
+                                    "pair": {"type": ["tuple", ["string", "bool"]]},
                                     "framework_nested": {
                                         "nested_type": {
                                             "nesting_mode": "list",
@@ -207,68 +209,35 @@ mod tests {
                                             "nesting_mode": "group",
                                             "attributes": {"name": {"type": "string"}}
                                         }
-                                    }
-                                },
-                                "block_types": {
-                                    "settings": {"nesting_mode": "list", "block": {"attributes": {}}}
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        });
-
-        let schemas = parse_provider_schemas(document.to_string().as_bytes())
-            .expect("provider schema should parse");
-        let provider = schemas
-            .providers
-            .get("registry.terraform.io/hashicorp/example")
-            .expect("provider should be retained");
-        let resource = provider
-            .resources
-            .get("example_resource")
-            .expect("resource should be retained");
-        assert!(resource.attributes["labels"].is_simple_map());
-        assert!(!resource.attributes["nested"].is_simple_map());
-        assert!(!resource.attributes["framework_nested"].is_simple_map());
-        assert!(!resource.attributes["framework_group"].is_simple_map());
-        assert!(matches!(
-            resource.block_types["settings"],
-            AttributeType::Object(_)
-        ));
-    }
-
-    #[test]
-    fn parses_set_tuple_and_nested_set_types_structurally() {
-        let document = json!({
-            "format_version": "1.0",
-            "provider_schemas": {
-                "example": {
-                    "resource_schemas": {
-                        "example_resource": {
-                            "block": {
-                                "attributes": {
-                                    "tags": {"type": ["set", "string"]},
-                                    "pair": {"type": ["tuple", ["string", "bool"]]},
+                                    },
                                     "rules": {
                                         "nested_type": {
                                             "nesting_mode": "set",
                                             "attributes": {"port": {"type": "number"}}
                                         }
                                     }
+                                },
+                                "block_types": {
+                                    "settings": {"nesting_mode": "list", "block": {"attributes": {}}}
                                 }
                             }
-                        }
+                        },
+                        "empty_resource": {"block": {}}
                     }
-                }
+                },
+                "without_resources": {}
             }
         });
 
         let schemas = parse_provider_schemas(document.to_string().as_bytes())
             .expect("provider schema should parse");
 
-        let attributes = &schemas.providers["example"].resources["example_resource"].attributes;
+        let provider = &schemas.providers["registry.terraform.io/hashicorp/example"];
+        let attributes = &provider.resources["example_resource"].attributes;
+        assert!(attributes["labels"].is_simple_map());
+        assert!(!attributes["nested"].is_simple_map());
+        assert!(!attributes["framework_nested"].is_simple_map());
+        assert!(!attributes["framework_group"].is_simple_map());
         assert_eq!(
             attributes["tags"],
             AttributeType::Set(Box::new(AttributeType::String))
@@ -284,25 +253,14 @@ mod tests {
                 AttributeType::Number
             )]))))
         );
-    }
-
-    #[test]
-    fn omitted_optional_sections_parse_as_empty() {
-        let document = json!({
-            "format_version": "1.0",
-            "provider_schemas": {
-                "without_resources": {},
-                "with_resource": {"resource_schemas": {"example_resource": {"block": {}}}}
-            }
-        });
-
-        let schemas = parse_provider_schemas(document.to_string().as_bytes())
-            .expect("omitted optional sections should parse");
-
+        assert!(matches!(
+            provider.resources["example_resource"].block_types["settings"],
+            AttributeType::Object(_)
+        ));
+        let empty = &provider.resources["empty_resource"];
+        assert!(empty.attributes.is_empty());
+        assert!(empty.block_types.is_empty());
         assert!(schemas.providers["without_resources"].resources.is_empty());
-        let resource = &schemas.providers["with_resource"].resources["example_resource"];
-        assert!(resource.attributes.is_empty());
-        assert!(resource.block_types.is_empty());
     }
 
     #[rstest]
