@@ -325,10 +325,7 @@ fn render_log_view(
     notice: Option<CopyNotice>,
 ) {
     let status = status_lines(state, view, now);
-    frame.render_widget(
-        status_paragraph(status, finished_apply(state)),
-        layout.status(),
-    );
+    frame.render_widget(status_paragraph(status, false), layout.status());
 
     let line_count = content.lines.len();
     let max_line_width = content.max_width;
@@ -1020,82 +1017,34 @@ fn status_lines(
     view: ExecutionViewState,
     now: Instant,
 ) -> Vec<Line<'static>> {
-    if compact_apply(state, view) {
-        let elapsed = Line::from(format!("Elapsed {}", format_elapsed(state.elapsed_at(now))));
-        if state.is_cancelling() {
-            return vec![
-                Line::from(vec![
-                    Span::styled("Stopping...", theme::body_style()),
-                    Span::styled(" Changes may already be applied.", theme::warning_style()),
-                ]),
-                Line::default(),
-                elapsed,
-            ];
-        }
-        return vec![
-            running_status_line("Applying...", state, now),
-            Line::default(),
-            elapsed,
-        ];
-    }
-
-    if !state.is_cancelling() && finished_apply(state) {
-        return completed_apply_status_lines(state, now);
-    }
-
     let status = if state.is_cancelling() {
-        if state.is_apply() {
-            Line::from("Stopping... Changes may already be applied.")
-        } else {
-            Line::from("Stopping...")
-        }
+        Line::from("Stopping...")
     } else {
         match state.stage() {
             ExecutionStage::Initializing => running_status_line("Initializing...", state, now),
             ExecutionStage::Planning => running_status_line("Planning...", state, now),
             ExecutionStage::Reading => running_status_line("Reading plan...", state, now),
-            ExecutionStage::Applying => running_status_line("Applying...", state, now),
-            ExecutionStage::ApplySucceeded => Line::from("Apply complete"),
-            ExecutionStage::ApplyFailed => Line::from("Apply failed"),
-            ExecutionStage::ApplyInterrupted => Line::from("Apply interrupted"),
             ExecutionStage::Failed => Line::from(state.result().map_or_else(
                 || "Terraform failed.".to_owned(),
                 |result| format!("Terraform failed: {:?}", result.termination().status),
             )),
+            ExecutionStage::Applying
+            | ExecutionStage::ApplySucceeded
+            | ExecutionStage::ApplyFailed
+            | ExecutionStage::ApplyInterrupted => {
+                unreachable!("apply stages should use the apply status")
+            }
         }
     };
-    let detail = if state.is_apply() && state.stage() == ExecutionStage::Applying {
-        None
-    } else if state.is_apply() {
-        Some(Line::from(
-            match state.stage() {
-                ExecutionStage::ApplySucceeded => state
-                    .result()
-                    .and_then(|result| result.summary_line())
-                    .unwrap_or("Apply complete."),
-                ExecutionStage::ApplyFailed | ExecutionStage::ApplyInterrupted => {
-                    "Changes may already be applied."
-                }
-                _ => "Applying...",
-            }
-            .to_owned(),
-        ))
-    } else {
-        Some(Line::from(format!(
+    vec![
+        status,
+        Line::from(format!(
             "Waiting {}s    Follow: {}",
             state.waiting_at(now).as_secs(),
             if view.follows_latest() { "On" } else { "Off" }
-        )))
-    };
-    let mut lines = vec![status];
-    if let Some(detail) = detail {
-        lines.push(detail);
-    }
-    lines.push(Line::from(format!(
-        "Elapsed {}",
-        format_elapsed(state.elapsed_at(now))
-    )));
-    lines
+        )),
+        Line::from(format!("Elapsed {}", format_elapsed(state.elapsed_at(now)))),
+    ]
 }
 
 fn running_status_line(label: &str, state: &ExecutionState, now: Instant) -> Line<'static> {
@@ -1105,41 +1054,6 @@ fn running_status_line(label: &str, state: &ExecutionState, now: Instant) -> Lin
         Span::styled(spinner.to_string(), theme::accent_style()),
         Span::styled(format!(" {label}"), theme::body_style()),
     ])
-}
-
-fn completed_apply_status_lines(state: &ExecutionState, now: Instant) -> Vec<Line<'static>> {
-    let status = match state.stage() {
-        ExecutionStage::ApplySucceeded => Line::from(Span::styled(
-            state
-                .result()
-                .and_then(|result| result.summary_line())
-                .map_or_else(|| "Apply complete.".to_owned(), str::to_owned),
-            theme::success_style(),
-        )),
-        ExecutionStage::ApplyFailed => {
-            Line::from(Span::styled("Apply failed", theme::error_style()))
-        }
-        ExecutionStage::ApplyInterrupted => {
-            Line::from(Span::styled("Apply interrupted", theme::warning_style()))
-        }
-        _ => unreachable!("completed apply status should be an apply result"),
-    };
-    let detail = match state.stage() {
-        ExecutionStage::ApplySucceeded => None,
-        ExecutionStage::ApplyFailed | ExecutionStage::ApplyInterrupted => Some(Line::from(
-            Span::styled("Changes may already be applied.", theme::warning_style()),
-        )),
-        _ => unreachable!("completed apply detail should be an apply result"),
-    };
-    let mut lines = vec![status];
-    if let Some(detail) = detail {
-        lines.push(detail);
-    }
-    lines.push(Line::from(Span::styled(
-        format!("Elapsed {}", format_elapsed(state.elapsed_at(now))),
-        theme::secondary_style(),
-    )));
-    lines
 }
 
 const fn finished_apply(state: &ExecutionState) -> bool {
@@ -2449,7 +2363,7 @@ mod tests {
         }
 
         #[test]
-        fn running_status_cycles_the_ascii_spinner_without_repeating_apply_progress() {
+        fn running_status_cycles_the_ascii_spinner() {
             let started_at = Instant::now();
             let state =
                 ExecutionState::with_context(started_at, ExecutionContext::loading("/project"));
@@ -2463,21 +2377,6 @@ mod tests {
                 );
                 assert_eq!(status[0].to_string(), format!("{frame} Initializing..."));
             }
-
-            let applying =
-                ExecutionState::applying(started_at, ExecutionContext::loading("/project"));
-            let status = status_lines(
-                &applying,
-                ExecutionViewState::default(),
-                started_at + Duration::from_millis(100),
-            );
-            assert_eq!(status.len(), 3);
-            assert_eq!(status[0].to_string(), "/ Applying...");
-            assert!(
-                status
-                    .iter()
-                    .all(|line| !line.to_string().contains("Applying...") || line == &status[0])
-            );
         }
 
         #[test]
