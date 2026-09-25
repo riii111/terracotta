@@ -743,51 +743,32 @@ mod tests {
             resource("aws_vpc.main", "managed", json!(["create"])),
             resource("aws_subnet.private", "managed", json!(["update"])),
             resource("aws_instance.api", "managed", json!(["create", "delete"])),
-            resource("aws_instance.worker", "data", json!(["delete"]))
+            resource("aws_instance.worker", "data", json!(["delete"])),
+            resource("aws_instance.queue", "managed", json!(["delete", "create"]))
         ]));
 
         let plan = parse_plan_json(&input).expect("plan should parse");
 
-        assert_eq!(plan.resource_changes.len(), 4);
+        assert_eq!(plan.resource_changes.len(), 5);
         assert_eq!(plan.resource_changes[0].kind, ResourceChangeKind::Create);
         assert_eq!(plan.resource_changes[1].kind, ResourceChangeKind::Update);
         assert_eq!(plan.resource_changes[2].kind, ResourceChangeKind::Replace);
-        assert_eq!(plan.resource_changes[3].kind, ResourceChangeKind::Delete);
-        assert_eq!(plan.resource_changes[3].mode, ResourceMode::Data);
-        assert_eq!(plan.summary.creates, 1);
-        assert_eq!(plan.summary.updates, 1);
-        assert_eq!(plan.summary.replaces, 1);
-        assert_eq!(plan.summary.deletes, 1);
-        assert_eq!(plan.summary.total(), 4);
-    }
-
-    #[test]
-    fn treats_both_replacement_orders_as_one_replace() {
-        let input = plan_with_resources(json!([
-            resource(
-                "aws_instance.create_first",
-                "managed",
-                json!(["create", "delete"])
-            ),
-            resource(
-                "aws_instance.delete_first",
-                "managed",
-                json!(["delete", "create"])
-            )
-        ]));
-
-        let plan = parse_plan_json(&input).expect("plan should parse");
-
-        assert_eq!(plan.summary.replaces, 2);
-        assert_eq!(plan.summary.total(), 2);
         assert_eq!(
-            plan.resource_changes[0].actions,
+            plan.resource_changes[2].actions,
             vec![PlanAction::Create, PlanAction::Delete]
         );
+        assert_eq!(plan.resource_changes[3].kind, ResourceChangeKind::Delete);
+        assert_eq!(plan.resource_changes[3].mode, ResourceMode::Data);
+        assert_eq!(plan.resource_changes[4].kind, ResourceChangeKind::Replace);
         assert_eq!(
-            plan.resource_changes[1].actions,
+            plan.resource_changes[4].actions,
             vec![PlanAction::Delete, PlanAction::Create]
         );
+        assert_eq!(plan.summary.creates, 1);
+        assert_eq!(plan.summary.updates, 1);
+        assert_eq!(plan.summary.replaces, 2);
+        assert_eq!(plan.summary.deletes, 1);
+        assert_eq!(plan.summary.total(), 5);
     }
 
     #[test]

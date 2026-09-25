@@ -698,17 +698,7 @@ mod tests {
     }
 
     #[test]
-    fn filters_group_members_without_changing_repeated_count() {
-        let content = OverviewContent::from_review(&review(), "[1]", &BTreeSet::new());
-
-        assert_eq!(content.repeated, 2);
-        assert_eq!(content.rows.len(), 1);
-        assert_eq!(content.rows[0].count, 1);
-        assert_eq!(content.rows[0].address, "aws_instance.web[1]");
-    }
-
-    #[test]
-    fn filtered_repeated_member_keeps_the_original_complete_node_identity() {
+    fn filtered_repeated_member_keeps_the_group_total_and_complete_node_identity() {
         let review = review();
         let all = OverviewContent::from_review(&review, "", &BTreeSet::new());
         let filtered = OverviewContent::from_review(&review, "[1]", &BTreeSet::new());
@@ -718,7 +708,9 @@ mod tests {
             "aws_instance.web[1]".to_owned(),
         ]);
         assert_eq!(all.rows[0].node_id, expected_node_id);
+        assert_eq!(filtered.repeated, 2);
         assert_eq!(filtered.rows.len(), 1);
+        assert_eq!(filtered.rows[0].count, 1);
         assert_eq!(filtered.rows[0].address, "aws_instance.web[1]");
         assert_eq!(filtered.rows[0].node_id, all.rows[0].node_id);
     }

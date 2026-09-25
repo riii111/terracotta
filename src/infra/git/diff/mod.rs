@@ -980,38 +980,16 @@ mod tests {
     }
 
     #[test]
-    fn reports_when_a_comparison_ref_name_is_ambiguous() {
-        let repository = TestRepository::new();
-        write(&repository, "main.tf", "resource \"example\" \"one\" {}\n");
-        repository.commit("initial");
-        git(&repository.path, &["branch", "compare"]);
-        git(&repository.path, &["tag", "compare"]);
-        git(
-            &repository.path,
-            &["config", "core.warnAmbiguousRefs", "false"],
-        );
-
-        let result = collect_diff_against_ref(&repository.path, "compare");
-
-        assert!(matches!(
-            result.status(),
-            GitDiffStatus::AmbiguousCompareRef { reference, message }
-                if reference == "compare"
-                    && message.contains("refs/heads/compare")
-                    && message.contains("refs/tags/compare")
-        ));
-        assert_eq!(result.compare_ref(), Some("compare"));
-        assert!(result.comparison.resolved_commit.is_none());
-        assert!(result.head_commit().is_some());
-    }
-
-    #[test]
-    fn does_not_treat_an_arbitrary_git_directory_file_as_a_pseudo_ref() {
+    fn reports_an_ambiguous_ref_named_like_a_git_directory_file_without_git_warnings() {
         let repository = TestRepository::new();
         write(&repository, "main.tf", "resource \"example\" \"one\" {}\n");
         repository.commit("initial");
         git(&repository.path, &["branch", "config"]);
         git(&repository.path, &["tag", "config"]);
+        git(
+            &repository.path,
+            &["config", "core.warnAmbiguousRefs", "false"],
+        );
 
         let result = collect_diff_against_ref(&repository.path, "config");
 
@@ -1022,6 +1000,9 @@ mod tests {
                     && message.contains("refs/heads/config")
                     && message.contains("refs/tags/config")
         ));
+        assert_eq!(result.compare_ref(), Some("config"));
+        assert!(result.comparison.resolved_commit.is_none());
+        assert!(result.head_commit().is_some());
     }
 
     #[test]
