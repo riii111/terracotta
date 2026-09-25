@@ -48,6 +48,7 @@ pub(crate) fn run_connected(
     let mut dirty = true;
 
     loop {
+        let awaiting_initial_overview = start_in_overview;
         let (outcome, received) = receive_messages_with_initial_overview(
             messages,
             &mut state,
@@ -82,6 +83,19 @@ pub(crate) fn run_connected(
         ) {
             return Ok(outcome);
         }
+        // The initial Overview opens from a worker message, not a key, so no key path has
+        // aligned its selection and scroll with the terminal before the first draw.
+        if awaiting_initial_overview
+            && !start_in_overview
+            && let Some(overview_state) = state.overview()
+        {
+            let size = terminal.size()?;
+            overview::reconcile_view(
+                Rect::new(0, 0, size.width, size.height),
+                overview_state,
+                review_view.overview_mut(),
+            );
+        }
 
         let now = Instant::now();
         draw_if_needed_with_quit_confirmation(
@@ -114,20 +128,11 @@ pub(crate) fn run_connected(
                         );
                     }
                     if let Some(overview_state) = state.overview() {
-                        let content = overview::OverviewContent::from_review(
-                            overview_state.review(),
-                            review_view.overview().filter(),
-                            review_view.overview().expanded(),
-                        );
-                        let layout = overview::layout(
+                        overview::reconcile_view(
                             Rect::new(0, 0, width, height),
                             overview_state,
-                            review_view.overview(),
-                            &content,
+                            review_view.overview_mut(),
                         );
-                        review_view
-                            .overview_mut()
-                            .reconcile(layout.max_vertical(), content.rows.len());
                     }
                 }
                 Event::Key(key) if key.is_press() => {

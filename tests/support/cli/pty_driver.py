@@ -310,6 +310,23 @@ def assert_screen_unchanged(name, timeout=1):
     observed.append(name)
 
 
+def pane_line(current, title, text):
+    lines = current.splitlines()
+    start = next((index for index, line in enumerate(lines) if title in line), None)
+    if start is None:
+        return None
+    return next((line for line in lines[start + 1:] if text in line), None)
+
+
+def assert_first_overview_row_selected(name):
+    current = screen.text()
+    changes = pane_line(current, "[2] Changes", "terraform_data.api")
+    relations = pane_line(current, "[3] Relations", "terraform_data.api")
+    if not (changes or "").startswith("│> ") or not (relations or "").startswith("│> "):
+        raise RuntimeError(f"first Overview row or its relation is not selected; screen={current!r}")
+    observed.append(name)
+
+
 def send_text(text):
     for character in text:
         send_key(character.encode())
@@ -665,9 +682,10 @@ try:
         exit_code = quit_with_enter()
     elif scenario == "default_overview":
         wait_parts(
-            ["Ready", "[2] Changes", "[3] Relations", "terraform_data.server[*]"],
+            ["Ready", "[2] Changes", "[3] Relations", "terraform_data.server[*]", "q quit"],
             "default_overview",
         )
+        assert_first_overview_row_selected("default_overview_first_row_selected")
         send_key(b"q")
         send_key(b"\r")
         exit_code = wait_exit()
