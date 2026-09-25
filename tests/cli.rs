@@ -180,6 +180,55 @@ mod pty_tests {
             }
         }
 
+        fn plan_output(fixture: &Fixture, environment: &str) -> String {
+            fs::read_to_string(&fixture.invocations)
+                .unwrap()
+                .lines()
+                .filter_map(|line| line.split_once('|'))
+                .find(|(directory, arguments)| {
+                    Path::new(directory).file_name().unwrap() == environment
+                        && arguments.starts_with("plan ")
+                })
+                .and_then(|(_, arguments)| arguments.split("-out=").nth(1))
+                .map(|path| path.split_whitespace().next().unwrap().to_owned())
+                .unwrap()
+        }
+
+        #[test]
+        fn plan_detail_applies_only_the_open_environment_saved_plan() {
+            let fixture = fixture(&["a-dev", "b-stg"]);
+
+            let result = fixture.run("env_apply", 120, 40);
+
+            assert_eq!(result.exit_code, 0);
+            result.assert_restored();
+            result.observed("env_plan_detail");
+            result.observed("env_apply_confirmation");
+            result.observed("env_apply_success");
+            assert_eq!(calls(&fixture, "plan"), ["a-dev", "b-stg"]);
+            assert_eq!(calls(&fixture, "apply"), ["b-stg"]);
+            let reviewed = plan_output(&fixture, "b-stg");
+            let other = plan_output(&fixture, "a-dev");
+            let apply = fs::read_to_string(&fixture.invocations)
+                .unwrap()
+                .lines()
+                .find_map(|line| {
+                    line.split_once('|')
+                        .map(|(_, arguments)| arguments)
+                        .filter(|arguments| arguments.starts_with("apply "))
+                })
+                .unwrap()
+                .to_owned();
+            assert!(apply.starts_with("apply -json -input=false "), "{apply}");
+            assert!(apply.ends_with(&reviewed), "{apply}");
+            assert!(!apply.contains(&other), "{apply}");
+            let paths = fs::read_to_string(fixture.plan_path_record.with_extension("all")).unwrap();
+            assert!(
+                paths.lines().all(|path| !Path::new(path).exists()),
+                "{paths}"
+            );
+        }
+
         #[test]
         fn no_argument_plan_discovers_multiple_environments_and_opens_the_matrix() {
             let fixture = fixture(&["a-dev", "b-stg", "c-prod"]);
@@ -854,7 +903,56 @@ Plan: 0 to add, 3 to change, 0 to destroy.
         result.observed("filter_help");
         result.observed("filter_context");
         result.observed("filter_copy");
+        result.observed("filter_apply_confirmation");
+        result.observed("filter_apply_cancelled");
         result.observed("filter_cleared");
+        assert!(
+            fixture
+                .invocation_arguments()
+                .iter()
+                .all(|arguments| !arguments.starts_with("apply "))
+        );
+        fixture.assert_saved_plan_removed();
+    }
+
+    fn assert_single_apply_of_reviewed_plan(fixture: &Fixture) {
+        let arguments = fixture.invocation_arguments();
+        let plans = arguments
+            .iter()
+            .filter(|arguments| arguments.starts_with("plan "))
+            .collect::<Vec<_>>();
+        let applies = arguments
+            .iter()
+            .filter(|arguments| arguments.starts_with("apply "))
+            .collect::<Vec<_>>();
+        assert_eq!(plans.len(), 1, "{arguments:?}");
+        assert_eq!(applies.len(), 1, "{arguments:?}");
+        assert!(applies[0].starts_with("apply -json -input=false "));
+        assert_eq!(
+            plans[0].split("-out=").nth(1),
+            applies[0].split("-json -input=false ").nth(1)
+        );
+    }
+
+    #[rstest]
+    #[case::plan("plan_apply", "plan")]
+    #[case::default_entry("default_apply", "")]
+    fn pty_plan_entry_applies_the_reviewed_saved_plan_without_replanning(
+        #[case] scenario: &str,
+        #[case] command: &str,
+    ) {
+        let fixture = Fixture::new();
+        let result = fixture.run_with_command(scenario, 100, 24, command);
+
+        assert_eq!(result.exit_code, 0);
+        result.assert_restored();
+        if command.is_empty() {
+            result.observed("default_overview");
+        }
+        result.observed("plan_apply_offered");
+        result.observed("apply_confirmation");
+        result.observed("apply_success");
+        assert_single_apply_of_reviewed_plan(&fixture);
         fixture.assert_saved_plan_removed();
     }
 
@@ -1128,6 +1226,41 @@ Plan: 0 to add, 3 to change, 0 to destroy.
         result.assert_restored();
         result.observed("demo_tui");
         result.observed("demo_overview");
+    }
+
+    #[rstest]
+    #[case::single("single")]
+    #[case::multi("multi")]
+    #[ignore = "requires Terraform CLI and the interactive demo"]
+    fn demo_plan_detail_applies_the_open_environment(#[case] mode: &str) {
+        let output = Command::new("python3")
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .args([
+                "tests/support/cli/pty_driver.py",
+                "python3",
+                env!("CARGO_MANIFEST_DIR"),
+                "120",
+                "40",
+                "demo_apply",
+                "fixtures/demo.py",
+                mode,
+            ])
+            .env("RUSTC_WRAPPER", "")
+            .env_remove("TF_IN_AUTOMATION")
+            .env_remove("CI")
+            .output()
+            .expect("demo apply PTY should start");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let result = PtyResult::parse(&String::from_utf8_lossy(&output.stdout));
+        assert_eq!(result.exit_code, 0);
+        result.assert_restored();
+        result.observed("demo_plan_detail");
+        result.observed("demo_apply_confirmation");
+        result.observed("demo_apply_success");
     }
 
     struct BasicScenario {

@@ -269,9 +269,7 @@ fn layout_with_content(
 ) -> PlanReviewLayout {
     let panel_width = area.width;
     let content_metrics = content.metrics();
-    let applyable = state.review().apply_entry()
-        && state.review().apply_allowed()
-        && state.review().metadata().applyable();
+    let applyable = state.review().apply_allowed() && state.review().metadata().applyable();
     let filter_visible = filter_active(searching, state);
     let showing = filter_footer_status(
         state.review().search_query(),
@@ -989,7 +987,7 @@ fn plan_help_sections(
         help_dialog::HelpAction::new("c", "show execution context"),
         help_dialog::HelpAction::new("y", "copy the full plan"),
     ];
-    if review.apply_entry() && review.apply_allowed() && review.metadata().applyable() {
+    if review.apply_allowed() && review.metadata().applyable() {
         action_items.push(help_dialog::HelpAction::new("a", "apply the full plan"));
     }
     vec![
@@ -1708,11 +1706,12 @@ fn footer_items(
         let mut items = vec![
             footer::hint(&["Esc"], "clear / edit"),
             footer::hint(&["y"], "copy all"),
+            footer::hint(&["?"], "help"),
+            footer::hint(&["q"], "quit"),
         ];
         if applyable {
             items.push(footer::hint(&["a"], "apply all"));
         }
-        items.extend([footer::hint(&["?"], "help"), footer::hint(&["q"], "quit")]);
         items
     } else {
         let mut items = if navigation == ReviewNavigation::Standalone && width >= 29 {
@@ -3400,34 +3399,36 @@ End of synthetic plan body."#;
                 assert!(text.contains("/ edit"), "case: {}", case.name);
                 assert!(text.contains("y copy all"), "case: {}", case.name);
                 assert!(text.contains("? help"), "case: {}", case.name);
-                assert!(!text.contains("a apply"), "case: {}", case.name);
+                assert!(text.contains("a apply all"), "case: {}", case.name);
                 assert!(text.contains("q quit"), "case: {}", case.name);
             }
         }
 
         #[test]
         fn confirmed_filter_narrow_footer_keeps_required_actions_before_match_navigation() {
-            for (query, plan) in [
-                ("not-present", zero_match_review()),
-                ("endpoint", review()),
-                (SEARCH_TERM, review()),
-            ] {
-                let mut plan = plan;
-                plan.set_search_query(query.to_owned());
-                let state = review_state(plan);
-                let buffer = render_to_buffer((24, 24), |frame| {
-                    render(
-                        frame,
-                        &state,
-                        &PlanReviewViewState::default(),
-                        Instant::now(),
-                    );
-                });
-                let text = buffer_text(&buffer);
-                assert!(text.contains("Esc clear"), "query: {query}");
-                assert!(text.contains("/ edit"), "query: {query}");
-                assert!(text.contains("copy all"), "query: {query}");
-                assert!(text.contains("? help"), "query: {query}");
+            for (width, apply_allowed) in [(24, false), (40, true)] {
+                for (query, plan) in [
+                    ("not-present", zero_match_review()),
+                    ("endpoint", review()),
+                    (SEARCH_TERM, review()),
+                ] {
+                    let mut plan = plan.with_apply_allowed(apply_allowed);
+                    plan.set_search_query(query.to_owned());
+                    let state = review_state(plan);
+                    let buffer = render_to_buffer((width, 24), |frame| {
+                        render(
+                            frame,
+                            &state,
+                            &PlanReviewViewState::default(),
+                            Instant::now(),
+                        );
+                    });
+                    let text = buffer_text(&buffer);
+                    assert!(text.contains("Esc clear"), "{width}: {query}");
+                    assert!(text.contains("/ edit"), "{width}: {query}");
+                    assert!(text.contains("copy all"), "{width}: {query}");
+                    assert!(text.contains("? help"), "{width}: {query}\n{text}");
+                }
             }
         }
 
@@ -4564,14 +4565,12 @@ End of synthetic plan body."#;
             assert_eq!(position_status(10, 47, 40), "L11/47");
         }
 
-        #[test]
-        fn plan_entry_footer_hides_apply_even_when_plan_is_applyable() {
-            let state = review_state(review_with_apply_allowed(true, false));
+        fn footer_text(state: &ReviewSessionState) -> String {
             let view = PlanReviewViewState::default();
             let area = Rect::new(0, 0, 120, 40);
-            let layout = layout(area, false, &state);
+            let layout = layout(area, false, state);
             let buffer = render_to_buffer((area.width, area.height), |frame| {
-                render(frame, &state, &view, Instant::now());
+                render(frame, state, &view, Instant::now());
             });
             let footer = layout.shell.footer();
             let mut footer_text = String::new();
@@ -4580,8 +4579,27 @@ End of synthetic plan body."#;
                     footer_text.push_str(buffer.cell((x, y)).expect("footer cell").symbol());
                 }
             }
+            footer_text
+        }
 
-            assert!(!footer_text.contains("a apply"), "{footer_text}");
+        #[test]
+        fn plan_entry_footer_and_help_offer_apply_for_an_applyable_saved_plan() {
+            let plan = review_with_applyable(true);
+            assert!(!plan.apply_entry());
+            let footer = footer_text(&review_state(plan.clone()));
+            assert!(footer.contains("a apply"), "{footer}");
+
+            let sections = plan_help_sections(&plan, ReviewNavigation::Standalone, false);
+            let help = buffer_text(&render_to_buffer((120, 40), |frame| {
+                help_dialog::render(frame, frame.area(), "Help", &sections, 0);
+            }));
+            assert!(help.contains("apply the full plan"), "{help}");
+        }
+
+        #[test]
+        fn footer_hides_apply_when_the_review_cannot_apply() {
+            let footer = footer_text(&review_state(review_with_apply_allowed(true, false)));
+            assert!(!footer.contains("a apply"), "{footer}");
         }
     }
 }

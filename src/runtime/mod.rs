@@ -273,26 +273,9 @@ fn run_saved_plan_review(
             ExitCode::from(EXECUTION_FAILURE)
         }
         Ok(SessionOutcome::Applied {
-            status: ApplyStatus::Succeeded,
+            status,
             summary_line,
-        }) => {
-            report_apply_success(summary_line.as_deref());
-            ExitCode::SUCCESS
-        }
-        Ok(SessionOutcome::Applied {
-            status: ApplyStatus::Failed,
-            ..
-        }) => {
-            report_apply_failure(false);
-            ExitCode::from(EXECUTION_FAILURE)
-        }
-        Ok(SessionOutcome::Applied {
-            status: ApplyStatus::Interrupted,
-            ..
-        }) => {
-            report_apply_failure(true);
-            ExitCode::from(INTERRUPTED)
-        }
+        }) => report_applied(status, summary_line.as_deref()),
         Ok(SessionOutcome::Interrupted(phase)) => {
             report_interrupted(phase);
             ExitCode::from(INTERRUPTED)
@@ -384,6 +367,23 @@ fn report_no_changes() {
 
 fn report_apply_canceled() {
     let _ = writeln!(io::stdout(), "Apply canceled.");
+}
+
+fn report_applied(status: ApplyStatus, summary_line: Option<&str>) -> ExitCode {
+    match status {
+        ApplyStatus::Succeeded => {
+            report_apply_success(summary_line);
+            ExitCode::SUCCESS
+        }
+        ApplyStatus::Failed => {
+            report_apply_failure(false);
+            ExitCode::from(EXECUTION_FAILURE)
+        }
+        ApplyStatus::Interrupted => {
+            report_apply_failure(true);
+            ExitCode::from(INTERRUPTED)
+        }
+    }
 }
 
 fn report_apply_success(summary_line: Option<&str>) {

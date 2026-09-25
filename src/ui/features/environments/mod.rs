@@ -201,7 +201,12 @@ impl EnvironmentView {
             return result;
         }
         if let Some(index) = self.selection.raw {
-            return self.handle_review_key(key, size, state.plans()[index].review()?);
+            return self.handle_review_key(
+                key,
+                size,
+                state.plans()[index].review()?,
+                state.can_start_apply(),
+            );
         }
 
         if self.active_pane(size.width) == EnvironmentPane::Environments
@@ -611,6 +616,7 @@ impl EnvironmentView {
         key: KeyEvent,
         size: Size,
         review: &ReviewSessionState,
+        can_start_apply: bool,
     ) -> Option<EnvironmentInput> {
         let index = self.selection.raw?;
         let area = Self::raw_area(size);
@@ -649,7 +655,24 @@ impl EnvironmentView {
                     Box::new(Action::Copy(CopyTarget::Plan)),
                 ));
             }
-            PlanReviewInput::Apply | PlanReviewInput::OpenOverview => return None,
+            PlanReviewInput::Apply => {
+                let review = review.review();
+                if !review.apply_allowed() || !review.metadata().applyable() {
+                    return None;
+                }
+                if !can_start_apply {
+                    self.show_dialog(
+                        "Apply waits until every environment plan is ready.\n\nEsc close"
+                            .to_owned(),
+                    );
+                    return None;
+                }
+                return Some(EnvironmentInput::Review(
+                    index,
+                    Box::new(Action::OpenApplyConfirmation),
+                ));
+            }
+            PlanReviewInput::OpenOverview => return None,
             _ => {}
         }
         let layout = plan_review::environment_layout(area, view.searching(), review);

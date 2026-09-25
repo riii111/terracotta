@@ -35,8 +35,9 @@ terracotta tofu plan
 ```
 
 `terracotta plan` runs Terraform's plan synchronously with the original
-arguments. After a successful plan, Terracotta opens the full plan review and
-exits without applying anything.
+arguments. After a successful plan, Terracotta opens the full plan review.
+Quitting applies nothing; press `a` in the plan to confirm and apply that same
+saved plan without re-planning.
 
 `terracotta apply` reviews the saved plan and asks for confirmation before
 applying that exact plan. It does not re-plan after review. A plan that has no
@@ -102,7 +103,11 @@ are excluded, and the Ready count as `Ready x/y` while acquisition is incomplete
 Excluded HCP environments remain visible with their reason.
 
 Press `r` to retry only the selected `Error`, or `q` to stop acquisition and discard
-the temporary plans. Multiple-environment apply is not supported.
+the temporary plans. Once every environment has finished acquisition, press `a`
+in an environment's plan to confirm and apply only that environment's reviewed
+saved plan, in its own directory and without re-planning. Other environments are
+not applied, and applying several environments at once is not supported. After
+the apply result, `q` exits and the exit code reflects that apply.
 
 This discovery path rejects `-out`, `-generate-config-out`, and a shared
 `TF_DATA_DIR` before running commands. Relative `-var-file` paths resolve from the

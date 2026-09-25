@@ -1934,3 +1934,97 @@ fn ready_review_keeps_position_filter_counts_and_copy_notices() {
 }
 
 mod matrix;
+
+fn applyable_session(names: &[&str], ready: usize) -> EnvironmentSession {
+    let environments = names
+        .iter()
+        .map(|name| Environment {
+            tool: Tool::Terraform,
+            availability: EnvironmentAvailability::Available(EnvironmentIdentity {
+                directory: PathBuf::from(format!("/synthetic/{name}")),
+                workspace: "default".to_owned(),
+            }),
+        })
+        .collect();
+    let mut state = EnvironmentSession::new(environments, false);
+    for name in names.iter().take(ready) {
+        let index = state.start_next().expect("environment should start");
+        let review = PlanReview::new(
+            PathBuf::from(format!("/synthetic/{name}")),
+            "default".to_owned(),
+            plan_document(format!("{name} plan\n")),
+            PlanMetadata::new(Vec::new(), Vec::new(), 1, 0, 0, true),
+            Vec::new(),
+        );
+        state.complete(
+            index,
+            PlanResult::Ready {
+                review: Box::new(review),
+                changed: true,
+            },
+            Vec::new(),
+        );
+    }
+    state
+}
+
+#[test]
+fn apply_key_in_plan_detail_targets_only_the_open_environment() {
+    let state = applyable_session(&["a-dev", "b-prod"], 2);
+    let mut view = EnvironmentView::default();
+    let size = Size::new(120, 40);
+    render_to_buffer((120, 40), |frame| view.render(frame, &state));
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    let raw = buffer_text(&render_to_buffer((120, 40), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(raw.contains("b-prod plan"), "{raw}");
+    assert!(raw.contains("a apply"), "{raw}");
+
+    let input = view.handle_key(
+        KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+    assert!(matches!(
+        input,
+        Some(EnvironmentInput::Review(1, action))
+            if matches!(*action, Action::OpenApplyConfirmation)
+    ));
+}
+
+#[test]
+fn apply_key_waits_for_every_environment_plan() {
+    let state = applyable_session(&["a-dev", "b-prod"], 1);
+    assert!(state.acquiring());
+    let mut view = EnvironmentView::default();
+    let size = Size::new(120, 40);
+    render_to_buffer((120, 40), |frame| view.render(frame, &state));
+    view.handle_key(
+        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
+        size,
+        &state,
+    );
+
+    assert!(
+        view.handle_key(
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+            size,
+            &state,
+        )
+        .is_none()
+    );
+    let dialog = buffer_text(&render_to_buffer((120, 40), |frame| {
+        view.render(frame, &state);
+    }));
+    assert!(dialog.contains("every environment plan"), "{dialog}");
+}
