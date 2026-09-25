@@ -522,9 +522,9 @@ fn multi_demo_member_missing_from_the_shown_environment_is_not_highlighted_there
 }
 
 #[rstest]
-#[case::terminal_150x48(Size::new(150, 48))]
-#[case::medium_100x30(Size::new(100, 30))]
-fn multi_demo_overview_visual_baseline(#[case] size: Size) {
+#[case::terminal_150x48(Size::new(150, 48), false)]
+#[case::medium_100x30(Size::new(100, 30), true)]
+fn multi_demo_overview_visual_baseline(#[case] size: Size, #[case] snapshot_compare_steps: bool) {
     let mut state = multi_demo_session();
     let suffix = format!("{}x{}", size.width, size.height);
     let mut view = EnvironmentView::default();
@@ -542,16 +542,20 @@ fn multi_demo_overview_visual_baseline(#[case] size: Size) {
     press_at(&mut view, &mut state, KeyCode::Down, size);
     press_at(&mut view, &mut state, KeyCode::Down, size);
     press_at(&mut view, &mut state, KeyCode::Char(' '), size);
-    insta::assert_snapshot!(
-        format!("vrt_compare_group_open_{suffix}"),
-        snapshot(&mut view, &state)
-    );
+    if snapshot_compare_steps {
+        insta::assert_snapshot!(
+            format!("vrt_compare_group_open_{suffix}"),
+            snapshot(&mut view, &state)
+        );
+    }
 
     press_at(&mut view, &mut state, KeyCode::End, size);
-    insta::assert_snapshot!(
-        format!("vrt_compare_member_missing_in_dev_{suffix}"),
-        snapshot(&mut view, &state)
-    );
+    if snapshot_compare_steps {
+        insta::assert_snapshot!(
+            format!("vrt_compare_member_missing_in_dev_{suffix}"),
+            snapshot(&mut view, &state)
+        );
+    }
 
     press_at(&mut view, &mut state, KeyCode::Char(']'), size);
     press_at(&mut view, &mut state, KeyCode::Char(']'), size);

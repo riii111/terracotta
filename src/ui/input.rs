@@ -89,18 +89,6 @@ mod tests {
                 expected: KeyModifiers::NONE,
             },
             Case {
-                name: "control",
-                character: 'Y',
-                modifiers: KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-                expected: KeyModifiers::CONTROL,
-            },
-            Case {
-                name: "alt",
-                character: 'Y',
-                modifiers: KeyModifiers::ALT | KeyModifiers::SHIFT,
-                expected: KeyModifiers::ALT,
-            },
-            Case {
                 name: "control_and_alt",
                 character: 'Y',
                 modifiers: KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT,

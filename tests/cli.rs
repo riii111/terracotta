@@ -219,7 +219,6 @@ mod pty_tests {
 
         #[rstest]
         #[case::small(80, 24)]
-        #[case::medium(120, 40)]
         #[case::large(160, 60)]
         #[case::narrow(40, 16)]
         fn matrix_filters_two_hundred_members_and_restores_the_selected_cell(

@@ -64,7 +64,7 @@ pub(super) fn buffer_visual_snapshot(buffer: &Buffer) -> String {
     snapshot
 }
 
-pub(super) fn buffer_terminal_capture(buffer: &Buffer) -> String {
+fn buffer_terminal_capture(buffer: &Buffer) -> String {
     let area = buffer.area();
     let mut capture = String::new();
     for y in area.y..area.bottom() {

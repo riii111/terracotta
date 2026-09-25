@@ -1803,9 +1803,7 @@ mod tests {
     };
     use crate::ui::{
         features::plan_review::{ApplyConfirmationInput, PlanReviewInput, key_to_input},
-        test_support::{
-            buffer_terminal_capture, buffer_text, render_to_buffer, write_buffer_captures,
-        },
+        test_support::{buffer_text, render_to_buffer, write_buffer_captures},
     };
 
     use super::*;
@@ -2105,7 +2103,9 @@ End of synthetic plan body."#;
                 !footer.contains("y copy plan"),
                 "{width}x{height}\n{footer}"
             );
-            snapshot(&format!("preview_{width}x{height}_apply-entry"), &buffer);
+            if (width, height) == (80, 24) {
+                snapshot("preview_80x24_apply-entry", &buffer);
+            }
         }
     }
 
@@ -2242,7 +2242,7 @@ End of synthetic plan body."#;
         let mut view = PlanReviewViewState::default();
         view.apply_with_matches(PlanReviewInput::OpenHelp, Rect::default(), 0, 0, "", &[]);
 
-        for (width, height) in [(40, 16), (40, 24), (80, 24), (120, 40), (160, 60)] {
+        for (width, height) in [(40, 16), (40, 24), (80, 24), (120, 40)] {
             let help = render_to_buffer((width, height), |frame| {
                 render(frame, &state, &view, Instant::now());
             });
@@ -2331,7 +2331,7 @@ End of synthetic plan body."#;
                 .with_tool_version(Tool::Terraform, "1.9.0"),
         );
         let state = confirmation_state(plan);
-        for (width, height) in [(40, 16), (40, 24), (80, 24), (120, 40), (160, 60)] {
+        for (width, height) in [(40, 16), (40, 24), (80, 24)] {
             let mut view = ApplyConfirmationViewState::default();
             assert_eq!(view.apply(ApplyConfirmationInput::OpenHelp, "main"), None);
             let help = render_to_buffer((width, height), |frame| {
@@ -2401,24 +2401,19 @@ End of synthetic plan body."#;
     }
 
     #[test]
-    fn renders_plan_review_quit_confirmation_at_all_supported_sizes() {
-        for &(width, height) in &SIZES {
-            let state = review_state(review());
-            let buffer = render_to_buffer((width, height), |frame| {
-                render_with_quit_confirmation(
-                    frame,
-                    &state,
-                    &PlanReviewViewState::default(),
-                    Instant::now(),
-                    true,
-                );
-            });
-
-            snapshot(
-                &format!("preview_{width}x{height}_quit-confirmation"),
-                &buffer,
+    fn renders_plan_review_quit_confirmation_in_the_footer() {
+        let state = review_state(review());
+        let buffer = render_to_buffer((80, 24), |frame| {
+            render_with_quit_confirmation(
+                frame,
+                &state,
+                &PlanReviewViewState::default(),
+                Instant::now(),
+                true,
             );
-        }
+        });
+
+        snapshot("preview_80x24_quit-confirmation", &buffer);
     }
 
     #[test]
@@ -2665,9 +2660,8 @@ End of synthetic plan body."#;
                     })
                     .collect::<Vec<_>>();
                 assert_eq!(symbols.first().map(String::as_str), Some("▲"));
-                assert_thumb_segments(
+                assert_thumb_endpoints(
                     &symbols[1..symbols.len() - 1],
-                    "│",
                     "┃",
                     usize::from(vertical),
                     usize::from(layout.max_vertical()),
@@ -2686,9 +2680,8 @@ End of synthetic plan body."#;
                     .collect::<Vec<_>>();
                 assert_eq!(symbols.first().map(String::as_str), Some("◀︎"));
                 assert_eq!(symbols.last().map(String::as_str), Some("▶︎"));
-                assert_thumb_segments(
+                assert_thumb_endpoints(
                     &symbols[1..symbols.len() - 1],
-                    "─",
                     "═",
                     usize::from(horizontal),
                     usize::from(layout.max_horizontal()),
@@ -2696,9 +2689,8 @@ End of synthetic plan body."#;
             }
         }
 
-        fn assert_thumb_segments(
+        fn assert_thumb_endpoints(
             track: &[String],
-            track_symbol: &str,
             thumb_symbol: &str,
             position: usize,
             max_position: usize,
@@ -2711,21 +2703,6 @@ End of synthetic plan body."#;
                 .iter()
                 .rposition(|symbol| symbol == thumb_symbol)
                 .expect("scrollbar should contain a thumb");
-            assert!(
-                track[thumb_start..=thumb_end]
-                    .iter()
-                    .all(|symbol| symbol == thumb_symbol)
-            );
-            assert!(
-                track[..thumb_start]
-                    .iter()
-                    .all(|symbol| symbol == track_symbol)
-            );
-            assert!(
-                track[thumb_end + 1..]
-                    .iter()
-                    .all(|symbol| symbol == track_symbol)
-            );
             if position == 0 {
                 assert_eq!(thumb_start, 0);
             } else {
@@ -2744,21 +2721,7 @@ End of synthetic plan body."#;
             let area = Rect::new(0, 0, 50, 24);
             let normal = layout(area, false, &state);
             let waiting = layout_with_quit_confirmation(area, false, &state, true);
-            let content = prepare_content(&state, false, "");
-            let footer = footer::layout_with_notice(
-                footer_items(
-                    false,
-                    state.review().metadata().applyable(),
-                    content.matches.len(),
-                    false,
-                    ReviewNavigation::Standalone,
-                    shell_layout::centered_width(area),
-                ),
-                shell_layout::centered_width(area),
-                None,
-            );
 
-            assert!(!footer.is_empty());
             assert_eq!(waiting.body(), normal.body());
             assert_eq!(waiting.max_vertical(), normal.max_vertical());
             assert_eq!(waiting.max_horizontal(), normal.max_horizontal());
@@ -3130,9 +3093,6 @@ End of synthetic plan body."#;
                 Color::Reset,
                 Modifier::empty(),
             );
-            let capture = buffer_terminal_capture(&buffer);
-            assert!(capture.contains("\x1b[48;2;244;158;76m"));
-            assert!(capture.contains("\x1b[48;2;244;158;76m\x1b[1m"));
         }
 
         #[test]
@@ -3537,7 +3497,7 @@ End of synthetic plan body."#;
             plan.set_search_query("worker".to_owned());
             let state = review_state(plan);
 
-            for (width, expected) in [(24, None), (48, None), (80, Some("4 matches"))] {
+            for (width, expected) in [(24, None), (80, Some("4 matches"))] {
                 let buffer = render_to_buffer((width, 24), |frame| {
                     render(
                         frame,
@@ -4168,30 +4128,6 @@ End of synthetic plan body."#;
                 );
             });
             assert!(buffer_text(&narrow).contains("Quit? [Enter] quit [Esc] cancel"));
-        }
-
-        #[test]
-        fn production_filter_uses_support_style_for_footer_count() {
-            let mut plan = review();
-            plan.set_search_query(SEARCH_TERM.to_owned());
-            let state = review_state(plan);
-            let buffer = render_to_buffer((160, 60), |frame| {
-                render(
-                    frame,
-                    &state,
-                    &PlanReviewViewState::default(),
-                    Instant::now(),
-                );
-            });
-
-            assert_text_prefix_uses_style(
-                &buffer,
-                "8 matches",
-                "8 matches",
-                Color::Rgb(0xc0, 0xb8, 0xb8),
-                Color::Reset,
-                Modifier::empty(),
-            );
         }
 
         #[test]

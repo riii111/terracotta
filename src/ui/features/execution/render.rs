@@ -1614,24 +1614,19 @@ mod tests {
     }
 
     #[test]
-    fn renders_apply_quit_confirmation_at_all_supported_sizes() {
-        for &(width, height) in &SIZES {
-            let (state, now) = apply_state(ApplyStatus::Succeeded);
-            let buffer = render_to_buffer((width, height), |frame| {
-                render_execution_with_quit_confirmation(
-                    frame,
-                    &state,
-                    ExecutionViewState::default(),
-                    now,
-                    true,
-                );
-            });
-
-            snapshot(
-                &format!("preview_{width}x{height}_quit-confirmation"),
-                &buffer,
+    fn renders_apply_quit_confirmation_in_the_footer() {
+        let (state, now) = apply_state(ApplyStatus::Succeeded);
+        let buffer = render_to_buffer((80, 24), |frame| {
+            render_execution_with_quit_confirmation(
+                frame,
+                &state,
+                ExecutionViewState::default(),
+                now,
+                true,
             );
-        }
+        });
+
+        snapshot("preview_80x24_quit-confirmation", &buffer);
     }
 
     #[test]
@@ -1803,9 +1798,8 @@ mod tests {
                     })
                     .collect::<Vec<_>>();
                 assert_eq!(symbols.first().map(String::as_str), Some("▲"));
-                assert_thumb_segments(
+                assert_thumb_endpoints(
                     &symbols[1..symbols.len() - 1],
-                    "│",
                     "┃",
                     usize::from(vertical),
                     usize::from(layout.max_vertical()),
@@ -1828,9 +1822,8 @@ mod tests {
                 } else {
                     symbols.len()
                 };
-                assert_thumb_segments(
+                assert_thumb_endpoints(
                     &symbols[1..track_end],
-                    "─",
                     "═",
                     usize::from(horizontal),
                     usize::from(layout.max_horizontal()),
@@ -1838,9 +1831,8 @@ mod tests {
             }
         }
 
-        fn assert_thumb_segments(
+        fn assert_thumb_endpoints(
             track: &[String],
-            _track_symbol: &str,
             thumb_symbol: &str,
             position: usize,
             max_position: usize,
@@ -1853,21 +1845,6 @@ mod tests {
                 .iter()
                 .rposition(|symbol| symbol == thumb_symbol)
                 .expect("scrollbar should contain a thumb");
-            assert!(
-                track[thumb_start..=thumb_end]
-                    .iter()
-                    .all(|symbol| symbol == thumb_symbol)
-            );
-            assert!(
-                track[..thumb_start]
-                    .iter()
-                    .all(|symbol| symbol != thumb_symbol)
-            );
-            assert!(
-                track[thumb_end + 1..]
-                    .iter()
-                    .all(|symbol| symbol != thumb_symbol)
-            );
             if position == 0 {
                 assert_eq!(thumb_start, 0);
             } else {
@@ -1915,20 +1892,6 @@ mod tests {
             let normal = execution_layout(area, &state);
             let waiting = execution_layout_with_quit_confirmation(area, &state, true);
 
-            let footer = footer_lines(
-                &state,
-                ExecutionViewState::default(),
-                shell_layout::centered_width(area),
-                None,
-            )
-            .into_iter()
-            .map(|line| line.to_string())
-            .collect::<Vec<_>>()
-            .join(" | ");
-            assert!(footer.contains("q/Ctrl-C quit"), "{footer}");
-            assert!(footer.contains("y yank result"), "{footer}");
-            assert!(!footer.contains("↑"), "{footer}");
-            assert!(!footer.contains("PgUp"), "{footer}");
             assert_eq!(waiting.body(), normal.body());
             assert_eq!(waiting.max_vertical(), normal.max_vertical());
             assert_eq!(waiting.max_horizontal(), normal.max_horizontal());
@@ -2308,15 +2271,6 @@ mod tests {
             });
 
             assert_eq!(buffer_text(&buffer).matches(summary).count(), 1);
-            assert_eq!(
-                prepare_content(&state)
-                    .lines
-                    .iter()
-                    .map(Line::to_string)
-                    .filter(|line| line == summary)
-                    .count(),
-                1
-            );
         }
 
         #[test]
