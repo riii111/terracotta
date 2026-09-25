@@ -686,6 +686,48 @@ mod tests {
     }
 
     #[test]
+    fn numbers_outside_the_normalizable_range_are_uncertain_rather_than_same() {
+        let number = |text: &str| PlanValue::Number(text.to_owned());
+        let numeric_update = |after: PlanValue| {
+            let mut change = update(json!({"n": 0}), json!({}));
+            change.after = Some(PlanValue::Object(BTreeMap::from([("n".to_owned(), after)])));
+            change
+        };
+        let out_of_range = "1e170141183460469231731687303715884105728";
+        let other_out_of_range = "2e170141183460469231731687303715884105728";
+        let cases = [
+            ("one side", number(out_of_range), number("1")),
+            (
+                "both sides with identical text",
+                number(out_of_range),
+                number(out_of_range),
+            ),
+            (
+                "both sides with different text",
+                number(out_of_range),
+                number(other_out_of_range),
+            ),
+            (
+                "inside identical lists",
+                PlanValue::Array(vec![number(out_of_range)]),
+                PlanValue::Array(vec![number(out_of_range)]),
+            ),
+        ];
+        for (name, left, right) in cases {
+            let comparison = compared(
+                vec![Some(numeric_update(left)), Some(numeric_update(right))],
+                None,
+            );
+
+            assert_eq!(
+                comparison.rows[0].difference,
+                Some(DifferenceReason::Unknown),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
     fn uses_full_addresses_and_omits_resources_that_are_only_no_op() {
         let mut left = update(json!({"a": 0}), json!({"a": 1}));
         left.address = "module.service[\"dev\"].test_resource.item[0]".to_owned();
