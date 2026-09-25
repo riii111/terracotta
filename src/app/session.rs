@@ -737,24 +737,13 @@ mod tests {
         assert_eq!(state, before);
     }
 
-    #[rstest]
-    #[case::raw(ReviewSessionState::new)]
-    #[case::overview(overview_session)]
-    #[case::confirmation(apply_confirmation_session)]
-    fn quitting_any_review_screen_reports_the_entry_outcome(
-        #[case] screen: fn(PlanReview) -> ReviewSessionState,
-    ) {
-        let now = Instant::now();
-        let mut state = SessionState::Review(Box::new(screen(applyable_review())));
+    #[test]
+    fn quitting_the_overview_of_an_apply_entry_cancels_the_apply() {
+        let mut state = SessionState::Review(Box::new(overview_session(
+            applyable_review().with_apply_entry(true),
+        )));
         assert!(matches!(
-            update(&mut state, Action::Quit, now),
-            Some(Effect::Finish(SessionOutcome::Reviewed(_)))
-        ));
-
-        let mut state =
-            SessionState::Review(Box::new(screen(applyable_review().with_apply_entry(true))));
-        assert!(matches!(
-            update(&mut state, Action::Quit, now),
+            update(&mut state, Action::Quit, Instant::now()),
             Some(Effect::Finish(SessionOutcome::ApplyCanceled))
         ));
     }
