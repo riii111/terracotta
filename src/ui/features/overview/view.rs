@@ -30,7 +30,6 @@ pub(crate) struct OverviewRow {
     pub(crate) node_id: Option<RelationNodeId>,
 }
 
-/// Rows projected from the review's prepared Overview model for one filter and expansion state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OverviewContent {
     pub(crate) rows: Vec<OverviewRow>,
