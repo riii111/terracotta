@@ -796,10 +796,7 @@ mod tests {
 
         assert!(!attribute.before.is_sensitive());
         assert!(attribute.after.is_sensitive());
-        assert_eq!(
-            attribute.after.original.as_ref(),
-            Some(&plan_value(json!("new")))
-        );
+        assert!(attribute.after.grouping_value() == Some(GroupingValue::String("new".to_owned())));
     }
 
     #[test]
@@ -830,7 +827,7 @@ mod tests {
     }
 
     #[test]
-    fn keeps_sensitive_unknown_values_with_their_planned_value() {
+    fn marks_sensitive_unknown_values_as_both_unknown_and_sensitive() {
         let change = change(ChangeFixture {
             before: json!({"token": "old"}),
             after: json!({"token": "planned"}),
@@ -843,9 +840,9 @@ mod tests {
 
         assert_eq!(attribute.after.kind(), AttributeValueKind::Unknown);
         assert!(attribute.after.is_sensitive());
-        assert_eq!(
-            attribute.after.original.as_ref(),
-            Some(&plan_value(json!("planned")))
+        assert!(
+            attribute.after.grouping_value()
+                == Some(GroupingValue::Unknown(UnknownShape::Bool(true)))
         );
     }
 
