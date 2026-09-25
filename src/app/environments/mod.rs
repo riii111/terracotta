@@ -483,6 +483,7 @@ fn significant_digits(digits: &[u8]) -> &[u8] {
 mod tests {
     use super::*;
     use crate::app::copy::{CopyResult, CopyTarget};
+    use crate::app::plan::Plan;
     use crate::app::review::{PlanMetadata, test_support::plan_document};
 
     fn available(name: &str) -> Environment {
@@ -505,7 +506,8 @@ mod tests {
                 PathBuf::from("/test"),
                 "chosen".to_owned(),
                 plan_document("No changes.\n".to_owned()),
-                PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, changed),
+                Plan::empty(),
+                PlanMetadata::new(Vec::new(), changed),
                 Vec::new(),
             )),
             changed,

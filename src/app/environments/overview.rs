@@ -713,7 +713,7 @@ mod tests {
         plan.resource_changes = changes(3, "new").into_iter().skip(1).collect();
         plan.value_addresses
             .insert("test_resource.item[0]".to_owned());
-        complete_next(&mut session, review(Vec::new()).with_plan(plan));
+        complete_next(&mut session, plan_review(plan));
 
         let overview = environment_overview(session.plans());
 
@@ -1204,7 +1204,15 @@ mod tests {
     }
 
     fn review(changes: Vec<ResourceChange>) -> PlanReview {
-        let mut addresses: Vec<_> = changes
+        plan_review(Plan {
+            resource_changes: changes,
+            ..Plan::empty()
+        })
+    }
+
+    fn plan_review(plan: Plan) -> PlanReview {
+        let mut addresses: Vec<_> = plan
+            .resource_changes
             .iter()
             .map(|change| change.address.clone())
             .collect();
@@ -1224,16 +1232,14 @@ mod tests {
                 .collect(),
             Vec::new(),
         );
-        let mut plan = Plan::empty();
-        plan.resource_changes = changes;
         PlanReview::new(
             PathBuf::from("/synthetic"),
             "default".to_owned(),
             document,
-            PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, true),
+            plan,
+            PlanMetadata::new(Vec::new(), true),
             Vec::new(),
         )
-        .with_plan(plan)
     }
 
     fn changes(count: usize, after: &str) -> Vec<ResourceChange> {

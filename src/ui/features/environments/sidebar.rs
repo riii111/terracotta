@@ -10,7 +10,7 @@ use ratatui::{
 use crate::{
     app::{
         environments::{EnvironmentPlan, EnvironmentState},
-        review::PlanMetadata,
+        plan::PlanSummary,
     },
     ui::{shell::environments, theme},
 };
@@ -108,19 +108,18 @@ fn environment_lines(
     let status = status_line(plan, width);
     match plan.state() {
         EnvironmentState::Ready { .. } => {
-            let metadata = plan
+            let review = plan
                 .review()
                 .expect("ready environment has a review")
-                .review()
-                .metadata();
-            if !metadata.has_changes() && metadata.nonstandard_changes() == 0 {
+                .review();
+            if !review.has_changes() && review.nonstandard_changes() == 0 {
                 let mut line = status;
                 line.push_span(Span::styled("  No changes", theme::overview_muted_style()));
                 lines.push(line);
                 return lines;
             }
             let (first_counts, second_counts) =
-                count_lines(metadata, widths, wrap_counts, usize::from(width));
+                count_lines(review.summary(), widths, wrap_counts, usize::from(width));
             let combined = append_counts(status.clone(), first_counts.clone());
             if combined.width() <= usize::from(width) {
                 lines.push(combined);
@@ -266,17 +265,13 @@ fn count_widths(plans: &[EnvironmentPlan]) -> CountWidths {
         let Some(review) = plan.review() else {
             continue;
         };
-        let counts = review.review().metadata();
-        widths.additions = widths
-            .additions
-            .max(counts.additions().to_string().len() + 1);
-        widths.updates = widths.updates.max(counts.changes().to_string().len() + 1);
-        widths.deletions = widths
-            .deletions
-            .max(counts.deletions().to_string().len() + 1);
+        let counts = review.review().summary();
+        widths.additions = widths.additions.max(counts.creates.to_string().len() + 1);
+        widths.updates = widths.updates.max(counts.updates.to_string().len() + 1);
+        widths.deletions = widths.deletions.max(counts.deletes.to_string().len() + 1);
         widths.replacements = widths
             .replacements
-            .max(counts.replacements().to_string().len() + " replace".len());
+            .max(counts.replaces.to_string().len() + " replace".len());
     }
     widths
 }
@@ -286,32 +281,32 @@ const fn count_width(widths: CountWidths) -> usize {
 }
 
 fn count_lines(
-    counts: &PlanMetadata,
+    counts: PlanSummary,
     widths: CountWidths,
     wrapped: bool,
     max_width: usize,
 ) -> (Line<'static>, Line<'static>) {
     let add = count_span(
         "+",
-        counts.additions(),
+        counts.creates,
         widths.additions,
         theme::overview_total_add_style(),
     );
     let update = count_span(
         "~",
-        counts.changes(),
+        counts.updates,
         widths.updates,
         theme::overview_total_update_style(),
     );
     let delete = count_span(
         "-",
-        counts.deletions(),
+        counts.deletes,
         widths.deletions,
         theme::overview_total_destroy_style(),
     );
     let replace = count_span(
         "",
-        counts.replacements(),
+        counts.replaces,
         widths.replacements,
         theme::overview_total_replace_style(),
     );
@@ -384,12 +379,15 @@ fn fit_prefix(value: &str, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{CountWidths, count_lines, fit_prefix};
-    use crate::app::review::PlanMetadata;
+    use crate::app::plan::PlanSummary;
 
     #[test]
     fn wrapped_count_lines_fit_the_sidebar_inner_width() {
-        let counts = PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 1000, false)
-            .with_resource_changes(Vec::new(), 1000);
+        let counts = PlanSummary {
+            deletes: 1000,
+            replaces: 1000,
+            ..PlanSummary::default()
+        };
         let widths = CountWidths {
             additions: 2,
             updates: 2,
@@ -397,7 +395,7 @@ mod tests {
             replacements: 12,
         };
 
-        let (first, second) = count_lines(&counts, widths, true, 22);
+        let (first, second) = count_lines(counts, widths, true, 22);
         assert!(first.width() <= 22, "{first}");
         assert!(second.width() <= 22, "{second}");
         assert!(second.to_string().contains("-1000"));

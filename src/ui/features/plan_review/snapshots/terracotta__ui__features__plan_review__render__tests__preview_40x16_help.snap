@@ -4,11 +4,11 @@ expression: buffer_text(buffer)
 ---
 Target: main [PROD] Workspace: default
 C┌Help────────────────────────────────┐
- │ Navigation                       ▲ │
-─│ ↑ / ↓ / j / k                    ┃ │─
- │   scroll vertically              ┃ │▲
- │ ← / → / h / l                    ┃ │┃
- │   scroll horizontally            ┃ ││
+-│ Navigation                       ▲ │
+ │ ↑ / ↓ / j / k                    ┃ │
+─│   scroll vertically              ┃ │─
+ │ ← / → / h / l                    ┃ │▲
+ │   scroll horizontally            ┃ │┃
  │ PgUp / PgDn                      │ ││
  │   scroll one page                │ ││
  │ Home / End                       │ ││

@@ -943,7 +943,7 @@ mod tests {
             ExecutionEventKind, ExecutionLogLine, ExecutionTargetSpec, HistoryKey,
             SuccessfulTarget,
         },
-        plan::PlanAction,
+        plan::{Plan, PlanAction, ResourceChangeKind, test_support::resource_change},
         review::{PlanMetadata, PlanReview, test_support::plan_document},
     };
     use crate::infra::history::HistoryStore;
@@ -1298,7 +1298,8 @@ mod tests {
                     PathBuf::from("/project"),
                     "default".to_owned(),
                     plan_document("No changes.\n".to_owned()),
-                    PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
+                    Plan::empty(),
+                    PlanMetadata::new(Vec::new(), false),
                     Vec::new(),
                 )))
                 .expect("the receiver should still be alive");
@@ -1374,7 +1375,8 @@ mod tests {
                     PathBuf::from("/project"),
                     "default".to_owned(),
                     plan_document("No changes.\n".to_owned()),
-                    PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
+                    Plan::empty(),
+                    PlanMetadata::new(Vec::new(), false),
                     Vec::new(),
                 )))
                 .expect("the receiver should still be alive");
@@ -1396,14 +1398,12 @@ mod tests {
             receive_messages(&receiver, &mut state, &mut execution_view, &mut effects);
         assert!(drained);
         assert!(outcome.is_none());
-        let metadata = state
-            .review()
-            .expect("the final review message should complete the UI state")
-            .review()
-            .metadata()
-            .clone();
+        assert!(
+            state.review().is_some(),
+            "the final review message should complete the UI state"
+        );
         let plan_join = plan_worker.join();
-        let ui_outcome = Ok(SessionOutcome::Reviewed(metadata));
+        let ui_outcome = Ok(SessionOutcome::Reviewed { changes: None });
         let error = finalize_ui_result(ui_outcome, &Ok(()), &plan_join)
             .expect_err("the outer join should report the worker panic");
         assert_eq!(error.to_string(), "plan worker panicked");
@@ -1740,7 +1740,7 @@ mod tests {
         ));
         assert!(matches!(
             session::update(&mut state, Action::Quit, now),
-            Some(Effect::Finish(SessionOutcome::Reviewed(_)))
+            Some(Effect::Finish(SessionOutcome::Reviewed { .. }))
         ));
     }
 
@@ -1785,7 +1785,14 @@ mod tests {
                     .collect::<Vec<_>>()
                     .join("\n"),
             ),
-            PlanMetadata::new(Vec::new(), Vec::new(), 0, 1, 0, true),
+            Plan {
+                resource_changes: vec![resource_change(
+                    "terraform_data.api",
+                    ResourceChangeKind::Update,
+                )],
+                ..Plan::empty()
+            },
+            PlanMetadata::new(Vec::new(), true),
             Vec::new(),
         );
         let mut state = SessionState::Review(Box::new(ReviewSessionState::new(plan)));
@@ -1840,7 +1847,14 @@ mod tests {
             PathBuf::from("/project"),
             "default".to_owned(),
             plan_document("Plan: 1 to add.\n".to_owned()),
-            PlanMetadata::new(Vec::new(), Vec::new(), 1, 0, 0, true),
+            Plan {
+                resource_changes: vec![resource_change(
+                    "terraform_data.worker",
+                    ResourceChangeKind::Create,
+                )],
+                ..Plan::empty()
+            },
+            PlanMetadata::new(Vec::new(), true),
             Vec::new(),
         );
         plan.set_search_query("worker".to_owned());
@@ -2590,7 +2604,8 @@ mod tests {
             PathBuf::from("/project"),
             "default".to_owned(),
             plan_document("No changes.\n".to_owned()),
-            PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
+            Plan::empty(),
+            PlanMetadata::new(Vec::new(), false),
             Vec::new(),
         )
     }
@@ -2644,12 +2659,14 @@ mod tests {
         SessionState::Apply(Box::new(execution))
     }
 
+    // Output-only, so an apply completes without per-resource progress events.
     fn applyable_review_state() -> SessionState {
         SessionState::Review(Box::new(ReviewSessionState::new(PlanReview::new(
             PathBuf::from("/project"),
             "default".to_owned(),
-            plan_document("Plan: 1 to add.\n".to_owned()),
-            PlanMetadata::new(Vec::new(), Vec::new(), 1, 0, 0, true),
+            plan_document("Changes to Outputs:\n  + endpoint = \"example\"\n".to_owned()),
+            Plan::empty(),
+            PlanMetadata::new(vec!["endpoint".to_owned()], true),
             Vec::new(),
         ))))
     }
@@ -2661,7 +2678,8 @@ mod tests {
                     PathBuf::from("/project"),
                     "default".to_owned(),
                     plan_document(copy_plan_text()),
-                    PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
+                    Plan::empty(),
+                    PlanMetadata::new(Vec::new(), false),
                     Vec::new(),
                 );
                 review.set_search_query("terraform_data".to_owned());

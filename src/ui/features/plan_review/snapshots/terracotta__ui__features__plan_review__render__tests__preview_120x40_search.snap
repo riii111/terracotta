@@ -3,7 +3,7 @@ source: src/ui/features/plan_review/render.rs
 expression: buffer_text(buffer)
 ---
 Target: main [PROD] Workspace: default Tool: terraform loading... Dir: /repo/environments/production/main
-Changes  +2 add  ~2 update  -1 destroy
+Changes  +1 add  ~1 update  1 replace  -1 destroy
 Filter: /terraform_data
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   # terraform_data.api will be updated in-place                                                                        ▲

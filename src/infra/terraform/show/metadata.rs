@@ -1,47 +1,17 @@
 use serde_json::{Map, Value};
 
-use crate::app::execution::{ExecutionTargetSpec, SensitiveValue};
-use crate::app::plan::{Plan, PlanResource};
+use crate::app::execution::SensitiveValue;
 use crate::app::review::PlanMetadata;
 
 pub(super) fn metadata_from_document(
     root: &Map<String, Value>,
-    plan: &Plan,
     detailed_exit_has_changes: bool,
 ) -> PlanMetadata {
-    let resource_addresses = plan
-        .resource_changes
-        .iter()
-        .map(|change| change.address.clone())
-        .collect::<Vec<_>>();
-    let resource_changes = plan
-        .resource_changes
-        .iter()
-        .map(|change| PlanResource {
-            address: change.address.clone(),
-            actions: change.actions.clone(),
-            kind: change.kind,
-        })
-        .collect::<Vec<_>>();
-    let mut apply_targets = Vec::new();
-    for resource in &plan.resource_changes {
-        if resource.kind.is_standard_change()
-            && resource.previous_address.is_none()
-            && resource.importing.is_none()
-        {
-            apply_targets.push(ExecutionTargetSpec {
-                address: resource.address.clone(),
-                actions: resource.actions.clone(),
-            });
-        }
-    }
-
     let output_names = root
         .get("output_changes")
         .and_then(Value::as_object)
         .map(|outputs| outputs.keys().cloned().collect())
         .unwrap_or_default();
-    let sensitive_values = sensitive_values(root);
     let errored = root.get("errored").and_then(Value::as_bool) == Some(true);
     let applyable = !errored
         && root
@@ -49,18 +19,7 @@ pub(super) fn metadata_from_document(
             .and_then(Value::as_bool)
             .unwrap_or(detailed_exit_has_changes);
 
-    PlanMetadata::new(
-        resource_addresses,
-        output_names,
-        plan.summary.creates,
-        plan.summary.updates,
-        plan.summary.deletes,
-        applyable,
-    )
-    .with_resource_changes(resource_changes, plan.summary.replaces)
-    .with_apply_targets(apply_targets)
-    .with_nonstandard_changes(plan.unsupported_changes.len())
-    .with_sensitive_values(sensitive_values)
+    PlanMetadata::new(output_names, applyable).with_sensitive_values(sensitive_values(root))
 }
 
 fn sensitive_values(root: &Map<String, Value>) -> Vec<SensitiveValue> {
@@ -159,183 +118,78 @@ fn collect_scalar_values(value: &Value, values: &mut Vec<SensitiveValue>) {
 
 #[cfg(test)]
 mod tests {
-    use rstest::rstest;
     use serde_json::json;
 
-    use super::super::{PlanParseError, json};
     use super::*;
 
-    fn parse_metadata(
-        input: &[u8],
-        detailed_exit_has_changes: bool,
-    ) -> Result<PlanMetadata, PlanParseError> {
-        let document =
-            serde_json::from_slice::<Value>(input).map_err(|_| PlanParseError::InvalidJson)?;
-        let root = document
-            .as_object()
-            .ok_or(PlanParseError::RootMustBeObject)?;
-        let plan = json::parse_plan_document(&document)?;
-        Ok(metadata_from_document(
-            root,
-            &plan,
-            detailed_exit_has_changes,
-        ))
+    fn parse_metadata(document: &Value, detailed_exit_has_changes: bool) -> PlanMetadata {
+        let root = document.as_object().expect("plan JSON root is an object");
+        metadata_from_document(root, detailed_exit_has_changes)
     }
 
     #[test]
-    fn extracts_boundaries_counts_and_output_only_applyability_without_values() {
+    fn extracts_output_names_without_values() {
         let document = json!({
             "format_version": "1.2",
-            "resource_changes": [
-                {"address": "terraform_data.replace", "change": {"actions": ["delete", "create"], "after": "secret"}},
-                {"address": "terraform_data.update", "change": {"actions": ["update"]}}
-            ],
             "output_changes": {"endpoint": {"after": "secret-output"}}
         });
 
-        let metadata =
-            parse_metadata(document.to_string().as_bytes(), true).expect("metadata should parse");
+        let metadata = parse_metadata(&document, true);
 
-        assert_eq!(metadata.additions(), 0);
-        assert_eq!(metadata.changes(), 1);
-        assert_eq!(metadata.replacements(), 1);
-        assert_eq!(metadata.deletions(), 0);
-        assert_eq!(metadata.resource_addresses().len(), 2);
-        assert!(
-            metadata
-                .output_names()
-                .iter()
-                .any(|output| output == "endpoint")
-        );
-        assert!(metadata.applyable());
-        assert_eq!(
-            metadata.replacement_addresses().collect::<Vec<_>>(),
-            ["terraform_data.replace"]
-        );
+        assert_eq!(metadata.output_names(), ["endpoint"]);
         let debug = format!("{metadata:?}");
         assert!(!debug.contains("secret"));
     }
 
     #[test]
-    fn errored_plan_is_never_applyable_and_exit_zero_is_no_change() {
-        let errored = json!({"format_version": "1.0", "errored": true, "applyable": true});
-        let errored_metadata =
-            parse_metadata(errored.to_string().as_bytes(), true).expect("metadata should parse");
-        assert!(!errored_metadata.applyable());
+    fn applyability_follows_errored_then_applyable_then_detailed_exit_code() {
+        struct ApplyableCase {
+            name: &'static str,
+            document: Value,
+            detailed_exit_has_changes: bool,
+            expected: bool,
+        }
 
-        let no_change = json!({"format_version": "1.0"});
-        let no_change_metadata =
-            parse_metadata(no_change.to_string().as_bytes(), false).expect("metadata should parse");
-        assert!(!no_change_metadata.applyable());
+        for case in [
+            ApplyableCase {
+                name: "errored_overrides_applyable",
+                document: json!({"format_version": "1.0", "errored": true, "applyable": true}),
+                detailed_exit_has_changes: true,
+                expected: false,
+            },
+            ApplyableCase {
+                name: "applyable_false_overrides_exit_code",
+                document: json!({"format_version": "1.0", "applyable": false}),
+                detailed_exit_has_changes: true,
+                expected: false,
+            },
+            ApplyableCase {
+                name: "applyable_true_overrides_exit_code",
+                document: json!({"format_version": "1.0", "applyable": true}),
+                detailed_exit_has_changes: false,
+                expected: true,
+            },
+            ApplyableCase {
+                name: "missing_applyable_uses_exit_code_changes",
+                document: json!({"format_version": "1.0"}),
+                detailed_exit_has_changes: true,
+                expected: true,
+            },
+            ApplyableCase {
+                name: "missing_applyable_uses_exit_code_no_changes",
+                document: json!({"format_version": "1.0"}),
+                detailed_exit_has_changes: false,
+                expected: false,
+            },
+        ] {
+            let metadata = parse_metadata(&case.document, case.detailed_exit_has_changes);
+
+            assert_eq!(metadata.applyable(), case.expected, "case: {}", case.name);
+        }
     }
 
     #[test]
-    fn output_only_import_and_move_metadata_do_not_require_create_counts() {
-        let document = json!({
-            "format_version": "1.0",
-            "applyable": true,
-            "resource_changes": [{
-                "address": "terraform_data.moved_or_imported",
-                "previous_address": "terraform_data.previous",
-                "importing": {"id": "example"},
-                "change": {"actions": ["no-op"]}
-            }],
-            "output_changes": {"endpoint": {"actions": ["update"]}}
-        });
-
-        let metadata =
-            parse_metadata(document.to_string().as_bytes(), true).expect("metadata should parse");
-
-        assert_eq!(metadata.additions(), 0);
-        assert_eq!(metadata.changes(), 0);
-        assert_eq!(metadata.deletions(), 0);
-        assert!(
-            metadata
-                .output_names()
-                .iter()
-                .any(|output| output == "endpoint")
-        );
-        assert!(metadata.applyable());
-        assert!(metadata.has_changes());
-    }
-
-    #[rstest]
-    #[case::import(json!({
-        "address": "terraform_data.imported",
-        "change": {"actions": ["create"], "importing": {"id": "example"}}
-    }))]
-    #[case::moved_resource(json!({
-        "address": "terraform_data.moved",
-        "previous_address": "terraform_data.previous",
-        "change": {"actions": ["no-op"]}
-    }))]
-    #[case::read(json!({
-        "address": "terraform_data.read",
-        "change": {"actions": ["read"]}
-    }))]
-    fn nonstandard_only_resource_changes_remain_changes_without_four_category_counts(
-        #[case] resource: serde_json::Value,
-    ) {
-        let document = json!({
-            "format_version": "1.0",
-            "applyable": true,
-            "resource_changes": [resource]
-        });
-        let metadata =
-            parse_metadata(document.to_string().as_bytes(), true).expect("metadata should parse");
-
-        assert!(metadata.has_changes());
-        assert_eq!(metadata.additions(), 0);
-        assert_eq!(metadata.changes(), 0);
-        assert_eq!(metadata.replacements(), 0);
-        assert_eq!(metadata.deletions(), 0);
-    }
-
-    #[test]
-    fn lists_replacements_in_either_order_without_counting_them_as_deletes() {
-        let document = json!({
-            "format_version": "1.0",
-            "applyable": true,
-            "resource_changes": [
-                {"address": "terraform_data.create_first", "previous_address": "terraform_data.old", "change": {"actions": ["create", "delete"]}},
-                {"address": "terraform_data.delete_first", "change": {"actions": ["delete", "create"]}},
-                {"address": "terraform_data.destroy", "change": {"actions": ["delete"]}},
-                {"address": "terraform_data.moved_destroy", "previous_address": "terraform_data.previous", "change": {"actions": ["delete"]}}
-            ]
-        });
-
-        let metadata =
-            parse_metadata(document.to_string().as_bytes(), true).expect("metadata should parse");
-
-        assert_eq!(metadata.replacements(), 1);
-        assert_eq!(metadata.deletions(), 1);
-        assert_eq!(
-            metadata.replacement_addresses().collect::<Vec<_>>(),
-            ["terraform_data.delete_first"]
-        );
-        assert_eq!(
-            metadata.destructive_addresses().collect::<Vec<_>>(),
-            ["terraform_data.destroy"]
-        );
-    }
-
-    #[test]
-    fn no_op_resources_are_not_reported_as_changes() {
-        let document = json!({
-            "format_version": "1.0",
-            "resource_changes": [
-                {"address": "terraform_data.unchanged", "change": {"actions": ["no-op"]}}
-            ]
-        });
-
-        let metadata =
-            parse_metadata(document.to_string().as_bytes(), true).expect("metadata should parse");
-
-        assert!(!metadata.has_changes());
-    }
-
-    #[test]
-    fn extracts_apply_targets_and_sensitive_scalars_without_debug_leaks() {
+    fn extracts_sensitive_scalars_without_debug_leaks() {
         let document = json!({
             "format_version": "1.0",
             "applyable": true,
@@ -349,18 +203,6 @@ mod tests {
                         "after": {"token": "new-secret"},
                         "after_sensitive": {"token": true}
                     }
-                },
-                {
-                    "address": "terraform_data.imported",
-                    "change": {
-                        "actions": ["create"],
-                        "importing": {"id": "import-id"}
-                    }
-                },
-                {
-                    "address": "terraform_data.moved",
-                    "previous_address": "terraform_data.old",
-                    "change": {"actions": ["create"]}
                 }
             ],
             "output_changes": {
@@ -374,11 +216,8 @@ mod tests {
             }
         });
 
-        let metadata =
-            parse_metadata(document.to_string().as_bytes(), true).expect("metadata should parse");
+        let metadata = parse_metadata(&document, true);
 
-        assert_eq!(metadata.apply_targets().len(), 1);
-        assert_eq!(metadata.apply_targets()[0].address, "terraform_data.api");
         assert_eq!(
             metadata.sensitive_values(),
             [

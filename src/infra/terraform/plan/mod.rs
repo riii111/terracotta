@@ -290,10 +290,10 @@ pub(crate) fn read_saved_plan_review(
         display_root.to_owned(),
         workspace,
         document,
+        plan,
         metadata,
         Vec::new(),
     )
-    .with_plan(plan)
     .with_relations(relations)
     .with_provider_schemas(provider_schemas)
     .with_context(context)
@@ -1270,9 +1270,9 @@ mod tests {
         );
 
         let plan = result.expect("Terraform plan should be obtained");
-        assert_eq!(plan.summary.creates, 1);
-        assert_eq!(plan.summary.updates, 2);
-        assert_eq!(plan.summary.replaces, 1);
-        assert_eq!(plan.summary.deletes, 1);
+        assert_eq!(plan.summary().creates, 1);
+        assert_eq!(plan.summary().updates, 2);
+        assert_eq!(plan.summary().replaces, 1);
+        assert_eq!(plan.summary().deletes, 1);
     }
 }

@@ -7,12 +7,16 @@ use super::{
         ApplyStatus, ExecutionAction, ExecutionEvent, ExecutionStage, ExecutionState,
         SuccessfulTarget,
     },
-    review::{PlanMetadata, PlanReview, PlanReviewMessage},
+    plan::PlanSummary,
+    review::{PlanReview, PlanReviewMessage},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SessionOutcome {
-    Reviewed(PlanMetadata),
+    /// `changes` is `None` when the reviewed plan changes nothing.
+    Reviewed {
+        changes: Option<PlanSummary>,
+    },
     NoChanges,
     ApplyCanceled,
     Applied {
@@ -403,7 +407,7 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
             *state = SessionState::Apply(Box::new(ExecutionState::applying_with_previous(
                 now,
                 confirmation.review.context().clone(),
-                confirmation.review.metadata().apply_targets().to_vec(),
+                confirmation.review.apply_targets(),
                 confirmation.review.metadata().sensitive_values().to_vec(),
                 confirmation.review.previous_durations(),
             )));
@@ -490,9 +494,9 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
             SessionState::Review(review) if review.review.apply_entry() => {
                 Some(Effect::Finish(SessionOutcome::ApplyCanceled))
             }
-            SessionState::Review(review) => Some(Effect::Finish(SessionOutcome::Reviewed(
-                review.review.metadata().clone(),
-            ))),
+            SessionState::Review(review) => Some(Effect::Finish(SessionOutcome::Reviewed {
+                changes: review.review.has_changes().then(|| review.review.summary()),
+            })),
             SessionState::Apply(execution) => execution.result().map(|result| {
                 Effect::Finish(SessionOutcome::Applied {
                     status: match execution.stage() {
@@ -534,10 +538,12 @@ mod tests {
     use std::time::Duration;
 
     use super::super::copy::CopyNotice;
-    use super::super::execution::{ExecutionContext, ExecutionTargetSpec};
-    use super::super::plan::PlanAction;
+    use super::super::execution::ExecutionContext;
+    use super::super::plan::{
+        Plan, PlanAction, ResourceChange, ResourceChangeKind, test_support::resource_change,
+    };
     use super::super::review::{
-        PlanBlock, PlanBlockKind,
+        PlanBlock, PlanBlockKind, PlanMetadata,
         test_support::{plan_document, plan_document_with_blocks},
     };
     use super::test_support::{apply_confirmation_session, overview_session};
@@ -549,17 +555,20 @@ mod tests {
             PathBuf::from("/project"),
             "default".to_owned(),
             plan_document("No changes.\n".to_owned()),
-            PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
+            Plan::empty(),
+            PlanMetadata::new(Vec::new(), false),
             Vec::new(),
         )
     }
 
+    // Output-only, so an apply completes without per-resource progress events.
     fn applyable_review() -> PlanReview {
         PlanReview::new(
             PathBuf::from("/project"),
             "default".to_owned(),
             plan_document("Terraform will perform actions.\n".to_owned()),
-            PlanMetadata::new(Vec::new(), Vec::new(), 0, 1, 0, true),
+            Plan::empty(),
+            PlanMetadata::new(vec!["endpoint".to_owned()], true),
             Vec::new(),
         )
     }
@@ -802,7 +811,14 @@ mod tests {
                     PlanBlock::new(6..9, PlanBlockKind::Common),
                 ],
             ),
-            PlanMetadata::new(Vec::new(), Vec::new(), 1, 0, 0, false),
+            Plan {
+                resource_changes: vec![resource_change(
+                    "terraform_data.api",
+                    ResourceChangeKind::Create,
+                )],
+                ..Plan::empty()
+            },
+            PlanMetadata::new(Vec::new(), false),
             Vec::new(),
         );
         filtered.set_search_query("not-present".to_owned());
@@ -826,10 +842,18 @@ mod tests {
             panic!("plan copy should be available");
         };
         assert_eq!(effect.text(), source);
-        assert!(matches!(
-            update(&mut state, Action::Quit, now),
-            Some(Effect::Finish(SessionOutcome::Reviewed(_)))
-        ));
+        let Some(Effect::Finish(outcome)) = update(&mut state, Action::Quit, now) else {
+            panic!("quitting the review should finish the session");
+        };
+        assert_eq!(
+            outcome,
+            SessionOutcome::Reviewed {
+                changes: Some(PlanSummary {
+                    creates: 1,
+                    ..PlanSummary::default()
+                }),
+            }
+        );
         assert!(state.review().is_some());
     }
 
@@ -976,10 +1000,15 @@ mod tests {
         update(&mut state, Action::ReviewCompleted(applyable_review()), now);
         update(&mut state, Action::OpenApplyConfirmation, now);
 
-        assert!(matches!(
-            update(&mut state, Action::Quit, now),
-            Some(Effect::Finish(SessionOutcome::Reviewed(_)))
-        ));
+        let Some(Effect::Finish(outcome)) = update(&mut state, Action::Quit, now) else {
+            panic!("quitting the review should finish the session");
+        };
+        assert_eq!(
+            outcome,
+            SessionOutcome::Reviewed {
+                changes: Some(PlanSummary::default()),
+            }
+        );
 
         let mut state = SessionState::new(ExecutionState::with_context(
             now,
@@ -1041,7 +1070,14 @@ mod tests {
             PathBuf::from("/repo/prod"),
             "default".to_owned(),
             plan_document("Terraform will perform actions.\n".to_owned()),
-            PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 1, true),
+            Plan {
+                resource_changes: vec![resource_change(
+                    "terraform_data.old",
+                    ResourceChangeKind::Delete,
+                )],
+                ..Plan::empty()
+            },
+            PlanMetadata::new(Vec::new(), true),
             Vec::new(),
         );
         let mut state = SessionState::new(ExecutionState::with_context(
@@ -1060,23 +1096,35 @@ mod tests {
     }
 
     #[test]
+    fn quitting_a_review_without_changes_reports_no_changes() {
+        let now = Instant::now();
+        let mut state = SessionState::new(ExecutionState::with_context(
+            now,
+            ExecutionContext::loading("/project"),
+        ));
+        update(&mut state, Action::ReviewCompleted(review()), now);
+
+        let Some(Effect::Finish(outcome)) = update(&mut state, Action::Quit, now) else {
+            panic!("quitting the review should finish the session");
+        };
+        assert_eq!(outcome, SessionOutcome::Reviewed { changes: None });
+    }
+
+    #[test]
     fn filtered_review_applies_the_complete_plan() {
         let now = Instant::now();
-        let targets = vec![
-            ExecutionTargetSpec {
-                address: "terraform_data.api".to_owned(),
-                actions: vec![PlanAction::Update],
-            },
-            ExecutionTargetSpec {
-                address: "terraform_data.worker".to_owned(),
-                actions: vec![PlanAction::Create],
-            },
-        ];
         let mut filtered = PlanReview::new(
             PathBuf::from("/project"),
             "default".to_owned(),
             plan_document("Terraform will perform actions.\n".to_owned()),
-            PlanMetadata::new(Vec::new(), Vec::new(), 1, 1, 0, true).with_apply_targets(targets),
+            Plan {
+                resource_changes: vec![
+                    resource_change("terraform_data.api", ResourceChangeKind::Update),
+                    resource_change("terraform_data.worker", ResourceChangeKind::Create),
+                ],
+                ..Plan::empty()
+            },
+            PlanMetadata::new(Vec::new(), true),
             Vec::new(),
         )
         .with_apply_entry(true);
@@ -1110,6 +1158,56 @@ mod tests {
         assert_eq!(targets[0].actions(), &[PlanAction::Update]);
         assert_eq!(targets[1].address(), "terraform_data.worker");
         assert_eq!(targets[1].actions(), &[PlanAction::Create]);
+    }
+
+    #[test]
+    fn apply_start_pairs_previous_durations_with_targets_in_plan_order() {
+        let now = Instant::now();
+        let api_duration = Duration::from_secs(3);
+        let worker_duration = Duration::from_secs(7);
+        let review = PlanReview::new(
+            PathBuf::from("/project"),
+            "default".to_owned(),
+            plan_document("Terraform will perform actions.\n".to_owned()),
+            Plan {
+                resource_changes: vec![
+                    resource_change("terraform_data.api", ResourceChangeKind::Update),
+                    ResourceChange {
+                        previous_address: Some("terraform_data.previous".to_owned()),
+                        ..resource_change("terraform_data.moved", ResourceChangeKind::Move)
+                    },
+                    resource_change("terraform_data.worker", ResourceChangeKind::Create),
+                ],
+                ..Plan::empty()
+            },
+            PlanMetadata::new(Vec::new(), true),
+            Vec::new(),
+        )
+        .with_previous_durations(vec![Some(api_duration), Some(worker_duration)]);
+        let mut state = SessionState::new(ExecutionState::with_context(
+            now,
+            ExecutionContext::loading("/project"),
+        ));
+        update(&mut state, Action::ReviewCompleted(review), now);
+        update(&mut state, Action::OpenApplyConfirmation, now);
+
+        update(&mut state, Action::ConfirmApply("yes".to_owned()), now);
+
+        let targets = state
+            .apply()
+            .expect("confirmation should start apply")
+            .progress()
+            .targets();
+        assert_eq!(
+            targets
+                .iter()
+                .map(|target| (target.address(), target.previous()))
+                .collect::<Vec<_>>(),
+            [
+                ("terraform_data.api", Some(api_duration)),
+                ("terraform_data.worker", Some(worker_duration)),
+            ]
+        );
     }
 
     #[test]

@@ -85,9 +85,14 @@ pub(super) fn read_review_with_arguments(
     let (plan, metadata, relation_analysis) =
         json::parse_plan_json_with_metadata(&json.output.stdout, plan_changed)
             .map_err(|error| invalid_plan(tool, error))?;
+    let resource_addresses = plan
+        .resource_changes
+        .iter()
+        .map(|change| change.address.clone())
+        .collect::<Vec<_>>();
     let document = parse_document(
         text.output.stdout,
-        metadata.resource_addresses(),
+        &resource_addresses,
         metadata.output_names(),
     )
     .map_err(|error| invalid_plan(tool, error))?;

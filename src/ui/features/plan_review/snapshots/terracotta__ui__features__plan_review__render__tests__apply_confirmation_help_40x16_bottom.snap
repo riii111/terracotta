@@ -4,11 +4,11 @@ expression: buffer_text(buffer)
 ---
 Target: main [PROD] Workspace: default
 C┌Apply help──────────────────────────┐
- │   delete before the cursor       ▲ │
-─│                                  │ │─
- │ Context                          │ │▲
- │ Tab                              │ │┃
- │   show execution context         │ ││
+-│   delete before the cursor       ▲ │
+ │                                  │ │
+─│ Context                          │ │─
+ │ Tab                              │ │▲
+ │   show execution context         │ │┃
  │                                  │ ││
  │ Apply                            ┃ ││
  │ Enter                            ┃ ││

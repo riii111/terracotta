@@ -631,6 +631,7 @@ mod tests {
     use crate::app::{
         copy::{CopyResult, CopyTarget},
         environments::{EnvironmentAvailability, EnvironmentIdentity},
+        plan::Plan,
         review::{PlanMetadata, PlanReview, test_support::plan_document},
     };
 
@@ -650,7 +651,8 @@ mod tests {
                 PathBuf::from("/test"),
                 "default".to_owned(),
                 plan_document("No changes.\n".to_owned()),
-                PlanMetadata::new(Vec::new(), Vec::new(), 0, 0, 0, false),
+                Plan::empty(),
+                PlanMetadata::new(Vec::new(), false),
                 Vec::new(),
             )),
             changed: false,
