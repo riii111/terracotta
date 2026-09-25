@@ -449,37 +449,28 @@ mod tests {
         }
     }
 
-    #[test]
-    fn quit_confirmation_uses_the_full_prompt_when_it_fits() {
-        let lines = quit_confirmation_lines(80, None);
-
-        assert_eq!(
-            lines.iter().map(Line::to_string).collect::<Vec<_>>(),
-            vec!["Quit Terracotta?   [Enter] Quit   [Esc] Cancel".to_owned()]
-        );
-    }
-
     #[rstest]
-    #[case::full(80, None)]
-    #[case::compact(32, None)]
-    #[case::with_notice(32, Some("Copied."))]
-    fn quit_confirmation_emphasizes_the_question_and_both_keys(
+    #[case::full(80, None, "Quit Terracotta?   [Enter] Quit   [Esc] Cancel")]
+    #[case::compact(32, None, "Quit? [Enter] quit [Esc] cancel")]
+    #[case::minimal_with_notice(32, Some("Copied."), "Quit? [Enter]/[Esc]")]
+    fn quit_confirmation_fits_the_prompt_and_emphasizes_the_question_and_both_keys(
         #[case] width: u16,
         #[case] notice: Option<&str>,
+        #[case] expected: &str,
     ) {
+        let lines = quit_confirmation_lines(width, notice);
         let backend = ratatui::backend::TestBackend::new(width, 2);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         terminal
             .draw(|frame| {
-                render(
-                    frame,
-                    frame.area(),
-                    &quit_confirmation_lines(width, notice),
-                    None,
-                );
+                render(frame, frame.area(), &lines, None);
             })
             .unwrap();
 
+        assert_eq!(
+            lines.iter().map(Line::to_string).collect::<Vec<_>>(),
+            vec![expected.to_owned()]
+        );
         let buffer = terminal.backend().buffer();
         assert_buffer_text_style(
             buffer,
@@ -499,26 +490,6 @@ mod tests {
                 Modifier::BOLD,
             );
         }
-    }
-
-    #[test]
-    fn quit_confirmation_uses_a_short_prompt_when_the_footer_is_narrow() {
-        let lines = quit_confirmation_lines(32, None);
-
-        assert_eq!(
-            lines.iter().map(Line::to_string).collect::<Vec<_>>(),
-            vec!["Quit? [Enter] quit [Esc] cancel".to_owned()]
-        );
-    }
-
-    #[test]
-    fn quit_confirmation_keeps_a_copy_notice_visible_when_the_footer_is_narrow() {
-        let lines = quit_confirmation_lines(32, Some("Copied."));
-
-        assert_eq!(
-            lines.iter().map(Line::to_string).collect::<Vec<_>>(),
-            vec!["Quit? [Enter]/[Esc]".to_owned()]
-        );
     }
 
     #[rstest]

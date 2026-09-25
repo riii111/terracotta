@@ -180,15 +180,6 @@ mod tests {
     }
 
     #[test]
-    fn no_does_not_cancel_when_yes_is_required() {
-        let mut view = ApplyConfirmationViewState::default();
-        enter(&mut view, "no");
-
-        assert_eq!(view.apply(ApplyConfirmationInput::Confirm, "yes"), None);
-        assert_eq!(view.input(), "no");
-    }
-
-    #[test]
     fn escape_cancels_and_resets_input() {
         let mut view = ApplyConfirmationViewState::default();
         enter(&mut view, "maybe");
@@ -204,6 +195,7 @@ mod tests {
     #[rstest]
     #[case::empty("")]
     #[case::invalid("maybe")]
+    #[case::no_when_yes_is_required("no")]
     fn confirmation_requires_exact_yes_or_no(#[case] value: &str) {
         let mut view = ApplyConfirmationViewState::default();
         enter(&mut view, value);

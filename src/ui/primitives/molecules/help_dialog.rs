@@ -391,59 +391,27 @@ fn render_scrolled_text(frame: &mut Frame<'_>, viewport: Rect, text: ScrolledTex
 
 #[cfg(test)]
 mod tests {
-    use ratatui::layout::Rect;
-
     use crate::ui::test_support::{buffer_text, render_to_buffer};
 
-    use super::{
-        ActionLayout, HelpAction, HelpSection, action_layout, content_height, dialog_width, render,
-        required_dialog_width,
-    };
+    use super::{HelpAction, HelpSection, render};
 
     #[test]
-    fn operation_rows_are_compact_and_sections_remain_separated() {
+    fn help_rows_stack_when_narrow_and_return_to_compact_columns_after_resize() {
+        let long_description =
+            "no differences detected between Ready plans; unknown values may differ";
         let sections = [
             HelpSection::new(
-                "First",
-                vec![HelpAction::new("a", "one"), HelpAction::new("b", "two")],
+                "Overview",
+                vec![
+                    HelpAction::new("Space", "toggle a selected ▸/▾ group row"),
+                    HelpAction::new("Enter", "open plan detail"),
+                ],
             ),
-            HelpSection::new("Second", vec![HelpAction::new("c", "three")]),
+            HelpSection::new(
+                "Comparison",
+                vec![HelpAction::new("Same changes", long_description)],
+            ),
         ];
-
-        let layout = ActionLayout {
-            content_width: 10,
-            key_width: 1,
-            description_x: 2,
-            description_width: 8,
-            stacked: false,
-        };
-        assert_eq!(content_height(&sections, layout), 6);
-    }
-
-    #[test]
-    fn wide_dialogs_expand_to_fit_their_content_without_a_fixed_cap() {
-        let sections = [HelpSection::new(
-            "Comparison",
-            vec![HelpAction::new(
-                "Same changes",
-                "no differences detected between Ready plans; unknown values may differ",
-            )],
-        )];
-
-        let width = dialog_width(Rect::new(0, 0, 160, 60), &sections);
-        let layout = action_layout(&sections, width, 160);
-
-        assert!(width > 76);
-        assert_eq!(width, required_dialog_width(&sections));
-        assert!(!layout.stacked);
-    }
-
-    #[test]
-    fn help_rows_stack_when_narrow_and_return_to_columns_after_resize() {
-        let sections = [HelpSection::new(
-            "Overview",
-            vec![HelpAction::new("Space", "toggle a selected ▸/▾ group row")],
-        )];
 
         let narrow = buffer_text(&render_to_buffer((40, 24), |frame| {
             render(frame, frame.area(), "Help", &sections, 0);
@@ -461,9 +429,32 @@ mod tests {
         let wide = buffer_text(&render_to_buffer((120, 40), |frame| {
             render(frame, frame.area(), "Help", &sections, 0);
         }));
+        let lines = wide.lines().collect::<Vec<_>>();
+        let line_of = |text: &str| {
+            lines
+                .iter()
+                .position(|line| line.contains(text))
+                .unwrap_or_else(|| panic!("{text} should be visible\n{wide}"))
+        };
+        let first_section = line_of("Overview");
         assert!(
-            wide.lines()
-                .any(|line| { line.contains("Space") && line.contains("toggle a selected") })
+            lines[first_section + 1].contains("Space")
+                && lines[first_section + 1].contains("toggle a selected"),
+            "{wide}"
         );
+        assert!(lines[first_section + 2].contains("Enter"), "{wide}");
+        assert!(
+            lines[first_section + 3]
+                .chars()
+                .all(|symbol| symbol == ' ' || symbol == '│'),
+            "{wide}"
+        );
+        assert_eq!(line_of("Comparison"), first_section + 4, "{wide}");
+        assert!(
+            lines[first_section + 5].contains("Same changes")
+                && lines[first_section + 5].contains(long_description),
+            "{wide}"
+        );
+        assert_eq!(line_of("close"), first_section + 6, "{wide}");
     }
 }
