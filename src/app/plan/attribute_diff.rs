@@ -527,6 +527,8 @@ const fn value_array_length(value: Option<&PlanValue>) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use serde_json::{Value, json};
 
     use super::*;
@@ -769,6 +771,60 @@ mod tests {
 
         assert!(!attribute.before.is_sensitive());
         assert!(attribute.after.is_sensitive());
+    }
+
+    #[test]
+    fn compares_numbers_by_value_and_by_text_outside_the_normalizable_range() {
+        let out_of_range = "1e170141183460469231731687303715884105728";
+        let cases = [
+            (
+                "equivalent notation",
+                "1.50",
+                "15e-1",
+                AttributeChangeKind::Unchanged,
+            ),
+            (
+                "integers above 2^53",
+                "9007199254740992",
+                "9007199254740993",
+                AttributeChangeKind::Changed,
+            ),
+            (
+                "identical out-of-range text",
+                out_of_range,
+                out_of_range,
+                AttributeChangeKind::Unchanged,
+            ),
+            (
+                "equivalent out-of-range notation",
+                out_of_range,
+                "10e170141183460469231731687303715884105727",
+                AttributeChangeKind::Changed,
+            ),
+        ];
+
+        for (name, before, after, expected) in cases {
+            let mut change = change(ChangeFixture {
+                before: json!({}),
+                after: json!({}),
+                before_sensitive: json!(false),
+                after_sensitive: json!(false),
+                after_unknown: json!(false),
+            });
+            change.before = Some(PlanValue::Object(BTreeMap::from([(
+                "size".to_owned(),
+                PlanValue::Number(before.to_owned()),
+            )])));
+            change.after = Some(PlanValue::Object(BTreeMap::from([(
+                "size".to_owned(),
+                PlanValue::Number(after.to_owned()),
+            )])));
+
+            let diffs = diff_resource_attributes(&change);
+            let size = attribute(&diffs, &[AttributePathSegment::Key("size".to_owned())]);
+
+            assert_eq!(size.kind, expected, "{name}");
+        }
     }
 
     #[test]
