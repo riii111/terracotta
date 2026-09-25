@@ -65,7 +65,7 @@ pub(super) fn run(invocation: &Invocation, environments: Vec<Environment>) -> io
     let mut apply: Option<EnvironmentApply> = None;
     let mut outcome = None;
     let mut dirty = true;
-    let result = super::run_terminal(|terminal| -> io::Result<()> {
+    let result = ratatui::run(|terminal| -> io::Result<()> {
         loop {
             if let Some(active) = apply.as_mut() {
                 match apply_runtime.step(
