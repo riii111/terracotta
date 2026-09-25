@@ -5,28 +5,27 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent};
-use ratatui::DefaultTerminal;
+use crossterm::event::{self, Event, KeyCode};
+use ratatui::{Terminal, backend::Backend, layout::Rect};
 
 use crate::{
     app::{
-        copy::{CopyResult, CopyTarget},
+        copy::CopyResult,
         environments::{
             Environment, EnvironmentAvailability, EnvironmentIdentity, EnvironmentSession,
             PlanResult,
         },
         execution::{
-            ApplyStatus, EventStream, ExecutionAction, ExecutionContext, ExecutionEvent,
-            ExecutionEventKind, ExecutionLogLine, ExecutionPhase, ExecutionState,
-            ExecutionTargetSpec, ExecutionTargetState, ResourceAction, ResourceEvent,
-            ResourceEventKind, Tool,
+            ApplyStatus, EventStream, ExecutionContext, ExecutionEvent, ExecutionEventKind,
+            ExecutionLogLine, ExecutionPhase, ExecutionState, ExecutionTargetSpec, ResourceAction,
+            ResourceEvent, ResourceEventKind, Tool,
         },
         plan::{
             Plan, PlanAction, PlanSummary, PlanValue, ResourceChange, ResourceChangeKind,
             ResourceMode,
         },
         review::{PlanBlock, PlanBlockKind, PlanDocument, PlanLineKind, PlanMetadata, PlanReview},
-        session::{Action, Effect, ReviewScreen, ReviewSessionState, SessionState},
+        session::{Action, Effect, ReviewSessionState, SessionState},
     },
     ui::{
         QuitConfirmationInput,
@@ -51,19 +50,18 @@ pub(super) fn run_synthetic() -> io::Result<()> {
 
     ratatui::run(|terminal| {
         loop {
-            terminal.draw(|frame| {
-                render_synthetic(
-                    frame,
-                    &state,
-                    &view,
-                    &confirmation_view,
-                    execution_view,
-                    quit_confirmation,
-                );
-            })?;
+            super::event_loop::draw_with_quit_confirmation(
+                &state,
+                terminal,
+                execution_view,
+                &view,
+                &confirmation_view,
+                Instant::now(),
+                quit_confirmation,
+            )?;
 
             if complete_apply_at.is_some_and(|at| Instant::now() >= at) {
-                finish_synthetic_apply(&mut state, &mut execution_view);
+                finish_synthetic_apply(&mut state, &mut execution_view, ApplyStatus::Succeeded);
                 complete_apply_at = None;
                 continue;
             }
@@ -78,7 +76,7 @@ pub(super) fn run_synthetic() -> io::Result<()> {
             let Some(action) = handle_synthetic_event(
                 &event::read()?,
                 terminal,
-                &mut state,
+                &state,
                 &mut view,
                 &mut confirmation_view,
                 &mut execution_view,
@@ -87,59 +85,34 @@ pub(super) fn run_synthetic() -> io::Result<()> {
             else {
                 continue;
             };
-            match super::event_loop::update_session(
+            if apply_synthetic_action(
                 &mut state,
                 action,
                 &mut execution_view,
-                Instant::now(),
+                &mut complete_apply_at,
             ) {
-                Some(Effect::StartApply) => {
-                    record_synthetic_apply_events(&mut state, &mut execution_view);
-                    complete_apply_at = Some(Instant::now() + Duration::from_millis(250));
-                }
-                Some(Effect::WriteClipboard(effect)) => {
-                    let target = effect.target();
-                    let _ = super::event_loop::update_session(
-                        &mut state,
-                        Action::CopyCompleted {
-                            target,
-                            result: CopyResult::Written,
-                        },
-                        &mut execution_view,
-                        Instant::now(),
-                    );
-                }
-                Some(Effect::Finish(_)) => return Ok(()),
-                Some(Effect::PersistHistory(_) | Effect::CancelExecution) | None => {}
+                return Ok(());
             }
         }
     })
 }
 
-fn handle_synthetic_event(
+fn handle_synthetic_event<B: Backend>(
     event: &Event,
-    terminal: &DefaultTerminal,
-    state: &mut SessionState,
+    terminal: &Terminal<B>,
+    state: &SessionState,
     view: &mut plan_review::PlanReviewViewState,
     confirmation_view: &mut plan_review::ApplyConfirmationViewState,
     execution_view: &mut execution::ExecutionViewState,
     quit_confirmation: &mut bool,
-) -> io::Result<Option<Action>> {
+) -> Result<Option<Action>, B::Error> {
     let Event::Key(key) = event else {
-        if let Event::Resize(width, height) = event
-            && let Some(review) = state.review()
-        {
-            let layout = plan_review::layout_with_quit_confirmation(
-                ratatui::layout::Rect::new(0, 0, *width, *height),
-                view.searching(),
-                review,
+        if let Event::Resize(width, height) = *event {
+            reconcile_synthetic_resize(
+                state,
+                view,
+                Rect::new(0, 0, width, height),
                 *quit_confirmation,
-            );
-            view.reconcile(
-                layout.body(),
-                layout.max_vertical(),
-                layout.max_horizontal(),
-                layout.matches(),
             );
         }
         return Ok(None);
@@ -164,23 +137,23 @@ fn handle_synthetic_event(
             QuitConfirmationInput::Consume => None,
             QuitConfirmationInput::Forward(key) => {
                 *quit_confirmation = false;
-                handle_synthetic_key(
+                super::event_loop::handle_key_event(
                     terminal,
                     state,
+                    execution_view,
                     view,
                     confirmation_view,
-                    execution_view,
                     key,
                 )?
             }
         }
     } else {
-        handle_synthetic_key(
+        super::event_loop::handle_key_event(
             terminal,
             state,
+            execution_view,
             view,
             confirmation_view,
-            execution_view,
             key,
         )?
     };
@@ -194,40 +167,61 @@ fn handle_synthetic_event(
     Ok(Some(action))
 }
 
-fn handle_synthetic_key(
-    terminal: &DefaultTerminal,
-    state: &mut SessionState,
+fn reconcile_synthetic_resize(
+    state: &SessionState,
     view: &mut plan_review::PlanReviewViewState,
-    confirmation_view: &mut plan_review::ApplyConfirmationViewState,
+    area: Rect,
+    quit_confirmation: bool,
+) {
+    if let Some(review) = state.review() {
+        let layout = plan_review::layout_with_quit_confirmation(
+            area,
+            view.searching(),
+            review,
+            quit_confirmation,
+        );
+        view.reconcile(
+            layout.body(),
+            layout.max_vertical(),
+            layout.max_horizontal(),
+            layout.matches(),
+        );
+    }
+    if let Some(overview_state) = state.overview() {
+        overview::reconcile_view(area, overview_state, view.overview_mut());
+    }
+}
+
+// Stands in for the runtime effects: the synthetic session never starts Terraform,
+// writes the clipboard, or saves apply history. Returns whether the session finished.
+fn apply_synthetic_action(
+    state: &mut SessionState,
+    action: Action,
     execution_view: &mut execution::ExecutionViewState,
-    key: KeyEvent,
-) -> io::Result<Option<Action>> {
-    match state {
-        SessionState::Review(review) => match review.screen() {
-            ReviewScreen::Raw(_) => synthetic_review_key(terminal, view, review, key),
-            ReviewScreen::Overview => synthetic_overview_key(terminal, review, view, key),
-            ReviewScreen::ApplyConfirmation { .. } => {
-                if confirmation_view.overlay().is_some() {
-                    match key.code {
-                        KeyCode::Esc | KeyCode::Char('?') => confirmation_view.close_overlay(),
-                        KeyCode::Up | KeyCode::Char('k') => confirmation_view.scroll_overlay(-1),
-                        KeyCode::Down | KeyCode::Char('j') => confirmation_view.scroll_overlay(1),
-                        KeyCode::PageUp => confirmation_view.scroll_overlay(-8),
-                        KeyCode::PageDown => confirmation_view.scroll_overlay(8),
-                        KeyCode::Home => confirmation_view.overlay_top(),
-                        KeyCode::End => confirmation_view.overlay_bottom(),
-                        _ => {}
-                    }
-                    Ok(None)
-                } else {
-                    Ok(synthetic_confirmation_key(confirmation_view, review, key))
-                }
-            }
-        },
-        SessionState::Apply(execution) => {
-            synthetic_execution_key(terminal, execution, execution_view, key)
+    complete_apply_at: &mut Option<Instant>,
+) -> bool {
+    match super::event_loop::update_session(state, action, execution_view, Instant::now()) {
+        Some(Effect::StartApply) => {
+            record_synthetic_apply_events(state, execution_view);
+            *complete_apply_at = Some(Instant::now() + Duration::from_millis(250));
+            false
         }
-        SessionState::Execution(_) => Ok(None),
+        Some(Effect::CancelExecution) => {
+            finish_synthetic_apply(state, execution_view, ApplyStatus::Interrupted);
+            *complete_apply_at = None;
+            false
+        }
+        Some(Effect::WriteClipboard(effect)) => apply_synthetic_action(
+            state,
+            Action::CopyCompleted {
+                target: effect.target(),
+                result: CopyResult::Written,
+            },
+            execution_view,
+            complete_apply_at,
+        ),
+        Some(Effect::Finish(_)) => true,
+        Some(Effect::PersistHistory(_)) | None => false,
     }
 }
 
@@ -374,285 +368,18 @@ fn synthetic_change(
     }
 }
 
-fn render_synthetic(
-    frame: &mut ratatui::Frame<'_>,
-    state: &SessionState,
-    view: &plan_review::PlanReviewViewState,
-    confirmation_view: &plan_review::ApplyConfirmationViewState,
-    execution_view: execution::ExecutionViewState,
-    quit_confirmation: bool,
-) {
-    match state {
-        SessionState::Review(review) => match review.screen() {
-            ReviewScreen::Raw(_) => plan_review::render_with_quit_confirmation(
-                frame,
-                review,
-                view,
-                Instant::now(),
-                quit_confirmation,
-            ),
-            ReviewScreen::Overview => {
-                overview::render(frame, review, view.overview(), Instant::now());
-            }
-            ReviewScreen::ApplyConfirmation { .. } => {
-                plan_review::render_apply_confirmation(frame, review, confirmation_view);
-            }
-        },
-        SessionState::Apply(execution) | SessionState::Execution(execution) => {
-            execution::render_execution_with_quit_confirmation(
-                frame,
-                execution,
-                execution_view,
-                Instant::now(),
-                quit_confirmation,
-            );
-        }
-    }
-}
-
-fn synthetic_review_key(
-    terminal: &DefaultTerminal,
-    view: &mut plan_review::PlanReviewViewState,
-    review: &ReviewSessionState,
-    key: KeyEvent,
-) -> io::Result<Option<Action>> {
-    if view.overlay().is_some() {
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('?') => view.close_overlay(),
-            KeyCode::Up | KeyCode::Char('k') => view.scroll_overlay(-1),
-            KeyCode::Down | KeyCode::Char('j') => view.scroll_overlay(1),
-            KeyCode::PageUp => view.scroll_overlay(-8),
-            KeyCode::PageDown => view.scroll_overlay(8),
-            KeyCode::Home => view.overlay_top(),
-            KeyCode::End => view.overlay_bottom(),
-            _ => {}
-        }
-        return Ok(None);
-    }
-    Ok(
-        match plan_review::key_to_input(
-            key,
-            view.searching(),
-            !review.review().search_query().is_empty(),
-        ) {
-            Some(plan_review::PlanReviewInput::Quit) => Some(Action::Quit),
-            Some(plan_review::PlanReviewInput::Apply) => Some(Action::OpenApplyConfirmation),
-            Some(plan_review::PlanReviewInput::OpenOverview) => {
-                let content = overview::OverviewContent::from_review(
-                    review.review(),
-                    view.overview().filter(),
-                    view.overview().expanded(),
-                );
-                view.overview_mut().reconcile(u16::MAX, content.rows.len());
-                Some(Action::OpenOverview)
-            }
-            Some(plan_review::PlanReviewInput::SearchCancel)
-                if !view.searching() && review.is_from_overview() =>
-            {
-                Some(Action::ReturnToOverview)
-            }
-            Some(input) => {
-                let size = terminal.size()?;
-                let layout = plan_review::layout(
-                    ratatui::layout::Rect::new(0, 0, size.width, size.height),
-                    view.searching(),
-                    review,
-                );
-                view.apply_with_matches(
-                    input,
-                    layout.body(),
-                    layout.max_vertical(),
-                    layout.max_horizontal(),
-                    review.review().search_query(),
-                    layout.matches(),
-                )
-                .map(Action::ReviewSearchChanged)
-            }
-            None => None,
-        },
-    )
-}
-
-fn synthetic_overview_key(
-    terminal: &DefaultTerminal,
-    overview_state: &ReviewSessionState,
-    view: &mut plan_review::PlanReviewViewState,
-    key: KeyEvent,
-) -> io::Result<Option<Action>> {
-    if view.overview().overlay().is_some() {
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('?') => view.overview_mut().close_overlay(),
-            KeyCode::Up | KeyCode::Char('k') => view.overview_mut().scroll_overlay(-1),
-            KeyCode::Down | KeyCode::Char('j') => view.overview_mut().scroll_overlay(1),
-            KeyCode::PageUp => view.overview_mut().scroll_overlay(-8),
-            KeyCode::PageDown => view.overview_mut().scroll_overlay(8),
-            KeyCode::Home => view.overview_mut().overlay_top(),
-            KeyCode::End => view.overview_mut().overlay_bottom(),
-            _ => {}
-        }
-        return Ok(None);
-    }
-    let size = terminal.size()?;
-    let content = overview::OverviewContent::from_review(
-        overview_state.review(),
-        view.overview().filter(),
-        view.overview().expanded(),
-    );
-    let layout = overview::layout(
-        ratatui::layout::Rect::new(0, 0, size.width, size.height),
-        overview_state,
-        view.overview(),
-        &content,
-    );
-    let Some(input) = overview::key_to_input(
-        key,
-        view.overview().searching(),
-        !view.overview().filter().is_empty(),
-    ) else {
-        return Ok(None);
-    };
-    let command = view.overview_mut().apply(
-        input,
-        layout.changes_body(),
-        layout.relations(),
-        layout.max_vertical(),
-        &content,
-    );
-    let Some(command) = command else {
-        return Ok(None);
-    };
-    match command {
-        overview::OverviewCommand::Open(address) => {
-            let line = address
-                .as_deref()
-                .and_then(|address| {
-                    overview_state
-                        .review()
-                        .document()
-                        .block_for_address(address)
-                })
-                .map_or(0, |block| block.lines().start);
-            let raw_layout = plan_review::overview_detail_layout(
-                ratatui::layout::Rect::new(0, 0, size.width, size.height),
-                overview_state.review(),
-            );
-            view.jump_to_line(line, raw_layout.max_vertical());
-            Ok(Some(Action::OpenReviewFromOverview { address }))
-        }
-        overview::OverviewCommand::ViewPlan | overview::OverviewCommand::Back => {
-            view.jump_to_line(0, u16::MAX);
-            Ok(Some(Action::OpenReviewFromOverview { address: None }))
-        }
-        overview::OverviewCommand::Copy => Ok(Some(Action::Copy(CopyTarget::Plan))),
-        overview::OverviewCommand::Quit => Ok(Some(Action::Quit)),
-    }
-}
-
-fn synthetic_execution_key(
-    terminal: &DefaultTerminal,
-    state: &ExecutionState,
-    view: &mut execution::ExecutionViewState,
-    key: KeyEvent,
-) -> io::Result<Option<Action>> {
-    match execution::execution_key_to_input(key, state.stage(), view.logs_open()) {
-        Some(execution::ExecutionInput::Quit) => Ok(Some(Action::Quit)),
-        Some(execution::ExecutionInput::OpenLogs) => {
-            view.open_logs();
-            Ok(None)
-        }
-        Some(execution::ExecutionInput::CloseLogs) => {
-            view.close_logs();
-            Ok(None)
-        }
-        Some(execution::ExecutionInput::ToggleFocus) => {
-            view.toggle_focus();
-            Ok(None)
-        }
-        Some(execution::ExecutionInput::SelectTarget(direction)) => {
-            let targets = state
-                .progress()
-                .display_target_indices(state.result().is_some());
-            view.select_target(direction, &targets);
-            let size = terminal.size()?;
-            let layout = execution::execution_layout_with_view(
-                ratatui::layout::Rect::new(0, 0, size.width, size.height),
-                state,
-                *view,
-            );
-            if let Some(position) = view
-                .selected_target()
-                .and_then(|selected| targets.iter().position(|index| *index == selected))
-            {
-                view.ensure_target_visible(
-                    position,
-                    layout.target_body().height,
-                    layout.target_max_vertical(),
-                );
-            }
-            Ok(None)
-        }
-        Some(execution::ExecutionInput::End) => {
-            view.end();
-            Ok(None)
-        }
-        Some(execution::ExecutionInput::Scroll(scroll)) => {
-            let size = terminal.size()?;
-            let layout = execution::execution_layout_with_view(
-                ratatui::layout::Rect::new(0, 0, size.width, size.height),
-                state,
-                *view,
-            );
-            if state.is_apply() && !view.logs_open() {
-                let (current, max) =
-                    execution::execution_target_scroll_position_with_view(*view, &layout);
-                view.apply_target_scroll(scroll, current, max, layout.target_body().height);
-                return Ok(None);
-            }
-            let (current_vertical, _) =
-                execution::execution_scroll_position_with_view(state, *view, &layout);
-            match scroll {
-                execution::ExecutionScroll::Left
-                | execution::ExecutionScroll::Right
-                | execution::ExecutionScroll::LeftEdge
-                | execution::ExecutionScroll::RightEdge => {
-                    let (current, max) =
-                        execution::execution_horizontal_scroll_position_with_view(*view, &layout);
-                    view.apply_horizontal_scroll(scroll, current, max, current_vertical);
-                }
-                _ => {
-                    let (current, max) =
-                        execution::execution_scroll_position_with_view(state, *view, &layout);
-                    view.apply_scroll(scroll, current, max, layout.body().height);
-                }
-            }
-            Ok(None)
-        }
-        Some(execution::ExecutionInput::Copy(target)) => Ok(Some(Action::Copy(target))),
-        Some(execution::ExecutionInput::Action(action)) => Ok(Some(Action::Execution(action))),
-        None => Ok(None),
-    }
-}
-
-fn synthetic_confirmation_key(
-    view: &mut plan_review::ApplyConfirmationViewState,
-    state: &ReviewSessionState,
-    key: KeyEvent,
-) -> Option<Action> {
-    let expected = state.review().confirmation_input();
-    plan_review::apply_confirmation_key_to_input(key).and_then(|input| view.apply(input, &expected))
-}
-
 fn finish_synthetic_apply(
     state: &mut SessionState,
     execution_view: &mut execution::ExecutionViewState,
+    status: ApplyStatus,
 ) {
+    let summary_line = matches!(status, ApplyStatus::Succeeded)
+        .then(|| "Apply complete! Resources: 1 added, 1 changed, 1 destroyed.".to_owned());
     let _ = super::event_loop::update_session(
         state,
         Action::ApplyCompleted {
-            status: ApplyStatus::Succeeded,
-            summary_line: Some(
-                "Apply complete! Resources: 1 added, 1 changed, 1 destroyed.".to_owned(),
-            ),
+            status,
+            summary_line,
         },
         execution_view,
         Instant::now(),
@@ -832,82 +559,71 @@ fn synthetic_environment_review(directory: &Path, count: usize) -> PlanReview {
 
 pub(super) fn run_synthetic_execution() -> io::Result<()> {
     let started = Instant::now();
-    let mut state = ExecutionState::applying_with_targets(
+    let mut execution = ExecutionState::applying_with_targets(
         started,
         ExecutionContext::loading("infra/prod").with_workspace("default"),
         synthetic_apply_targets(),
         Vec::new(),
     );
-    state.record(ExecutionEvent {
+    execution.record(ExecutionEvent {
         received_at: started,
         kind: ExecutionEventKind::Phase(ExecutionPhase::Planning),
     });
     for kind in synthetic_apply_events() {
-        state.record(ExecutionEvent {
+        execution.record(ExecutionEvent {
             received_at: started,
             kind,
         });
     }
-    let mut view = execution::ExecutionViewState::default();
-    view.initialize_target_selection(&state.progress().display_target_indices(false));
+    let mut execution_view = execution::ExecutionViewState::default();
+    execution_view.initialize_target_selection(&execution.progress().display_target_indices(false));
+    let mut state = SessionState::Apply(Box::new(execution));
+    let mut review_view = plan_review::PlanReviewViewState::default();
+    let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
     let mut complete_apply_at = Some(started + Duration::from_millis(750));
     ratatui::run(|terminal| {
         loop {
-            terminal.draw(|frame| {
-                execution::render_execution_with_quit_confirmation(
-                    frame,
-                    &state,
-                    view,
-                    Instant::now(),
-                    false,
-                );
-            })?;
+            super::event_loop::draw_with_quit_confirmation(
+                &state,
+                terminal,
+                execution_view,
+                &review_view,
+                &confirmation_view,
+                Instant::now(),
+                false,
+            )?;
             if complete_apply_at.is_some_and(|at| Instant::now() >= at) {
-                state.finish_apply(
-                    ApplyStatus::Succeeded,
-                    Some("Apply complete! Resources: 1 added, 1 changed, 1 destroyed.".to_owned()),
-                    None,
-                    Instant::now(),
-                );
-                view.select_result_target(
-                    &state.progress().display_target_indices(true),
-                    state.progress().first_bound_failed_index(),
-                    state
-                        .progress()
-                        .first_bound_failed_index()
-                        .and_then(|index| state.progress().targets().get(index))
-                        .and_then(ExecutionTargetState::first_error_line),
-                    true,
-                );
+                finish_synthetic_apply(&mut state, &mut execution_view, ApplyStatus::Succeeded);
                 complete_apply_at = None;
                 continue;
             }
-            if let Event::Key(key) = event::read()? {
-                if !key.is_press() {
-                    continue;
-                }
-                if key.code == KeyCode::Esc {
-                    return Ok(());
-                }
-                match synthetic_execution_key(terminal, &state, &mut view, key)? {
-                    Some(Action::Quit) => return Ok(()),
-                    Some(Action::Execution(ExecutionAction::RequestCancellation)) => {
-                        state.apply(ExecutionAction::RequestCancellation);
-                        state.finish_apply(ApplyStatus::Interrupted, None, None, Instant::now());
-                        view.select_result_target(
-                            &state.progress().display_target_indices(true),
-                            state.progress().first_bound_failed_index(),
-                            state
-                                .progress()
-                                .first_bound_failed_index()
-                                .and_then(|index| state.progress().targets().get(index))
-                                .and_then(ExecutionTargetState::first_error_line),
-                            false,
-                        );
-                        complete_apply_at = None;
-                    }
-                    _ => {}
-                }
+            let Event::Key(key) = event::read()? else {
+                continue;
+            };
+            if !key.is_press() {
+                continue;
+            }
+            if key.code == KeyCode::Esc {
+                return Ok(());
+            }
+            let Some(action) = super::event_loop::handle_key_event(
+                terminal,
+                &state,
+                &mut execution_view,
+                &mut review_view,
+                &mut confirmation_view,
+                key,
+            )?
+            else {
+                continue;
+            };
+            if apply_synthetic_action(
+                &mut state,
+                action,
+                &mut execution_view,
+                &mut complete_apply_at,
+            ) {
+                return Ok(());
             }
         }
     })
@@ -973,4 +689,175 @@ fn synthetic_apply_events() -> Vec<ExecutionEventKind> {
             "terraform_data.old: Destruction complete",
         ),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use crossterm::event::{KeyEvent, KeyModifiers};
+    use ratatui::backend::TestBackend;
+
+    use super::*;
+    use crate::app::execution::ExecutionStage;
+
+    struct SyntheticSession {
+        state: SessionState,
+        view: plan_review::PlanReviewViewState,
+        confirmation_view: plan_review::ApplyConfirmationViewState,
+        execution_view: execution::ExecutionViewState,
+        quit_confirmation: bool,
+        complete_apply_at: Option<Instant>,
+    }
+
+    impl SyntheticSession {
+        fn review() -> Self {
+            Self {
+                state: SessionState::Review(Box::new(synthetic_review())),
+                view: plan_review::PlanReviewViewState::default(),
+                confirmation_view: plan_review::ApplyConfirmationViewState::default(),
+                execution_view: execution::ExecutionViewState::default(),
+                quit_confirmation: false,
+                complete_apply_at: None,
+            }
+        }
+
+        fn send(&mut self, terminal: &Terminal<TestBackend>, key: KeyEvent) -> bool {
+            let action = handle_synthetic_event(
+                &Event::Key(key),
+                terminal,
+                &self.state,
+                &mut self.view,
+                &mut self.confirmation_view,
+                &mut self.execution_view,
+                &mut self.quit_confirmation,
+            )
+            .expect("synthetic input should be handled");
+            action.is_some_and(|action| {
+                apply_synthetic_action(
+                    &mut self.state,
+                    action,
+                    &mut self.execution_view,
+                    &mut self.complete_apply_at,
+                )
+            })
+        }
+
+        fn press(&mut self, terminal: &Terminal<TestBackend>, code: KeyCode) -> bool {
+            self.send(terminal, KeyEvent::new(code, KeyModifiers::NONE))
+        }
+
+        fn type_confirmation(&mut self, terminal: &Terminal<TestBackend>) {
+            let expected = self
+                .state
+                .apply_confirmation()
+                .expect("apply confirmation should be open")
+                .review()
+                .confirmation_input();
+            for character in expected.chars() {
+                assert!(!self.press(terminal, KeyCode::Char(character)));
+            }
+        }
+
+        fn draw(&self, terminal: &mut Terminal<TestBackend>) -> String {
+            super::super::event_loop::draw_with_quit_confirmation(
+                &self.state,
+                terminal,
+                self.execution_view,
+                &self.view,
+                &self.confirmation_view,
+                Instant::now(),
+                self.quit_confirmation,
+            )
+            .expect("synthetic screen should render");
+            let buffer = terminal.backend().buffer();
+            let area = buffer.area();
+            (area.y..area.bottom())
+                .map(|y| {
+                    (area.x..area.right())
+                        .map(|x| buffer.cell((x, y)).expect("test cell").symbol())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+    }
+
+    fn terminal(width: u16, height: u16) -> Terminal<TestBackend> {
+        Terminal::new(TestBackend::new(width, height)).expect("test terminal")
+    }
+
+    #[test]
+    fn raw_copy_shows_the_synthetic_copy_notice() {
+        let mut terminal = terminal(100, 30);
+        let mut session = SyntheticSession::review();
+
+        assert!(!session.press(&terminal, KeyCode::Char('y')));
+
+        let text = session.draw(&mut terminal);
+        assert!(text.contains("Copied."), "{text}");
+    }
+
+    #[test]
+    fn overview_quit_is_confirmed_before_finishing() {
+        let mut terminal = terminal(100, 30);
+        let mut session = SyntheticSession::review();
+        assert!(!session.press(&terminal, KeyCode::Char('s')));
+        assert!(session.state.overview().is_some());
+
+        assert!(!session.press(&terminal, KeyCode::Char('q')));
+
+        let text = session.draw(&mut terminal);
+        assert!(text.contains("Quit Terracotta?"), "{text}");
+        assert!(session.press(&terminal, KeyCode::Enter));
+    }
+
+    #[test]
+    fn narrow_confirmation_does_not_start_the_synthetic_apply() {
+        let wide = terminal(100, 30);
+        let narrow = terminal(20, 5);
+        let mut session = SyntheticSession::review();
+        assert!(!session.press(&wide, KeyCode::Char('a')));
+
+        session.type_confirmation(&narrow);
+        assert!(!session.press(&narrow, KeyCode::Enter));
+
+        assert!(session.state.apply_confirmation().is_some());
+        assert_eq!(session.confirmation_view.input(), "");
+        assert_eq!(session.complete_apply_at, None);
+    }
+
+    #[test]
+    fn confirmed_apply_records_synthetic_events_until_the_timer() {
+        let terminal = terminal(100, 30);
+        let mut session = SyntheticSession::review();
+        assert!(!session.press(&terminal, KeyCode::Char('a')));
+        session.type_confirmation(&terminal);
+
+        assert!(!session.press(&terminal, KeyCode::Enter));
+
+        let apply = session.state.apply().expect("synthetic apply should start");
+        assert_eq!(apply.stage(), ExecutionStage::Applying);
+        assert_eq!(apply.progress().targets().len(), 3);
+        assert!(session.complete_apply_at.is_some());
+    }
+
+    #[test]
+    fn cancelling_the_synthetic_apply_interrupts_it() {
+        let terminal = terminal(100, 30);
+        let mut session = SyntheticSession::review();
+        assert!(!session.press(&terminal, KeyCode::Char('a')));
+        session.type_confirmation(&terminal);
+        assert!(!session.press(&terminal, KeyCode::Enter));
+
+        assert!(!session.send(
+            &terminal,
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+        ));
+
+        let apply = session
+            .state
+            .apply()
+            .expect("synthetic apply should remain");
+        assert_eq!(apply.stage(), ExecutionStage::ApplyInterrupted);
+        assert_eq!(session.complete_apply_at, None);
+    }
 }

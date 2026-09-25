@@ -613,7 +613,7 @@ fn handle_execution_key_event<B: Backend>(
     )
 }
 
-fn draw_with_quit_confirmation<B: Backend>(
+pub(super) fn draw_with_quit_confirmation<B: Backend>(
     state: &SessionState,
     terminal: &mut Terminal<B>,
     execution_view: execution::ExecutionViewState,
