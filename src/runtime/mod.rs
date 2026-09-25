@@ -21,7 +21,7 @@ use crate::{
             ApplyStatus, ExecutionContext, ExecutionEvent, ExecutionEventKind, ExecutionPhase,
             ExecutionStage, ExecutionState, HistoryKey, Tool, VariableSources,
         },
-        review::{PlanMetadata, PlanReviewMessage},
+        review::{PlanMetadata, PlanReview, PlanReviewMessage},
         session::SessionOutcome,
     },
     infra::{CancellationToken, ClipboardExecutor, history::HistoryStore, terraform},
@@ -273,26 +273,9 @@ fn run_saved_plan_review(
             ExitCode::from(EXECUTION_FAILURE)
         }
         Ok(SessionOutcome::Applied {
-            status: ApplyStatus::Succeeded,
+            status,
             summary_line,
-        }) => {
-            report_apply_success(summary_line.as_deref());
-            ExitCode::SUCCESS
-        }
-        Ok(SessionOutcome::Applied {
-            status: ApplyStatus::Failed,
-            ..
-        }) => {
-            report_apply_failure(false);
-            ExitCode::from(EXECUTION_FAILURE)
-        }
-        Ok(SessionOutcome::Applied {
-            status: ApplyStatus::Interrupted,
-            ..
-        }) => {
-            report_apply_failure(true);
-            ExitCode::from(INTERRUPTED)
-        }
+        }) => report_applied(status, summary_line.as_deref()),
         Ok(SessionOutcome::Interrupted(phase)) => {
             report_interrupted(phase);
             ExitCode::from(INTERRUPTED)
@@ -384,6 +367,23 @@ fn report_no_changes() {
 
 fn report_apply_canceled() {
     let _ = writeln!(io::stdout(), "Apply canceled.");
+}
+
+fn report_applied(status: ApplyStatus, summary_line: Option<&str>) -> ExitCode {
+    match status {
+        ApplyStatus::Succeeded => {
+            report_apply_success(summary_line);
+            ExitCode::SUCCESS
+        }
+        ApplyStatus::Failed => {
+            report_apply_failure(false);
+            ExitCode::from(EXECUTION_FAILURE)
+        }
+        ApplyStatus::Interrupted => {
+            report_apply_failure(true);
+            ExitCode::from(INTERRUPTED)
+        }
+    }
 }
 
 fn report_apply_success(summary_line: Option<&str>) {
@@ -515,18 +515,7 @@ fn spawn_review_worker(
                 &mut phase_sink,
             ) {
                 Ok(review) => {
-                    let review = if let Some(history) = worker_history.as_ref() {
-                        let keys: Vec<_> = review
-                            .metadata()
-                            .apply_targets()
-                            .iter()
-                            .map(|target| HistoryKey::for_target(review.context(), target))
-                            .collect();
-                        let previous_durations = history.load_many(&keys);
-                        review.with_previous_durations(previous_durations)
-                    } else {
-                        review
-                    };
+                    let review = with_previous_durations(review, worker_history.as_ref());
                     if !worker_cancellation.is_cancelled() {
                         let _ = sender.send(PlanReviewMessage::Completed(review));
                     }
@@ -539,6 +528,20 @@ fn spawn_review_worker(
                 }
             }
         })
+}
+
+fn with_previous_durations(review: PlanReview, history: Option<&HistoryStore>) -> PlanReview {
+    let Some(history) = history else {
+        return review;
+    };
+    let keys: Vec<_> = review
+        .metadata()
+        .apply_targets()
+        .iter()
+        .map(|target| HistoryKey::for_target(review.context(), target))
+        .collect();
+    let previous_durations = history.load_many(&keys);
+    review.with_previous_durations(previous_durations)
 }
 
 fn take_saved_plan(

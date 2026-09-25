@@ -41,4 +41,4 @@ Plan: 2 to add, 2 to change, 1 to destroy.                                      
                                                                                                                        │
 Synthetic review text continues below so the viewport and scrollbar remain meaningful.                                 ▼
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-s overview | / filter | ? help | q quit                                                                        Line 3/43
+s overview | / filter | a apply | ? help | q quit                                                              Line 3/43

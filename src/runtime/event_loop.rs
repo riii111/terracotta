@@ -307,7 +307,7 @@ fn clear_expired_copy_feedback(state: &mut SessionState, now: Instant) {
     clippy::too_many_lines,
     reason = "the key dispatcher keeps the existing review and apply paths together"
 )]
-fn handle_key_event<B: Backend>(
+pub(super) fn handle_key_event<B: Backend>(
     terminal: &Terminal<B>,
     state: &SessionState,
     execution_view: &mut execution::ExecutionViewState,
@@ -849,22 +849,36 @@ fn verify_apply_context(
     apply: &ExecutionState,
     effects: &RuntimeEffects<'_, impl ClipboardWriter>,
 ) -> Result<(), String> {
-    verify_apply_directory(
-        apply.context().cwd_path(),
-        effects.display_root,
-        effects.tool,
-    )?;
-    let workspace = terraform::read_workspace_with_arguments(
+    verify_apply_target(
+        apply,
         effects.tool,
         effects.root,
+        effects.display_root,
         effects.global_arguments,
         effects.cancellation,
+    )
+}
+
+pub(super) fn verify_apply_target(
+    apply: &ExecutionState,
+    tool: Tool,
+    root: &Path,
+    display_root: &Path,
+    global_arguments: &[std::ffi::OsString],
+    cancellation: &CancellationToken,
+) -> Result<(), String> {
+    verify_apply_directory(apply.context().cwd_path(), display_root, tool)?;
+    let workspace = terraform::read_workspace_with_arguments(
+        tool,
+        root,
+        global_arguments,
+        cancellation,
         &terraform::SystemProcessRunner,
     )
     .map_err(|error| {
         format!(
             "Could not re-confirm the {} workspace: {error}",
-            effects.tool.display_name()
+            tool.display_name()
         )
     })?;
     let expected = match apply.context().workspace() {
@@ -872,14 +886,14 @@ fn verify_apply_context(
         ExecutionContextValue::Loading => {
             return Err(format!(
                 "The {} workspace is not available for apply.",
-                effects.tool.display_name()
+                tool.display_name()
             ));
         }
     };
     if workspace != *expected {
         return Err(format!(
             "The {} workspace changed from {expected} to {workspace}. Re-run plan and review it again before applying.",
-            effects.tool.display_name()
+            tool.display_name()
         ));
     }
     Ok(())

@@ -25,4 +25,4 @@ Cmain [PROD]  ws:default  terraform 1.9.0  ./environments/production/main
       id = "o└───────────────────────────────────────────────────┘             │
 ◀︎═══════════════════════════════════════════════════════════════════───────────▶︎
 ────────────────────────────────────────────────────────────────────────────────
-s overview | / filter | ? help | q quit                                Line 3/43
+s overview | / filter | a apply | ? help | q quit                      Line 3/43

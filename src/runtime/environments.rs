@@ -1,25 +1,42 @@
-use std::{ffi::OsString, io, path::Path, process::ExitCode, sync::mpsc, thread, time::Duration};
+use std::{
+    ffi::OsString,
+    io,
+    path::Path,
+    process::ExitCode,
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant},
+};
 
-use crossterm::event::{self, Event, KeyEventKind};
+use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
 use ratatui::{Terminal, backend::Backend};
 
 use crate::{
     app::{
         environments::{Environment, EnvironmentSession, PlanResult},
         execution::{Diagnostic, ExecutionContext, Tool},
-        session::{Action, Effect},
+        review::PlanReviewMessage,
+        session::{Action, Effect, SessionOutcome, SessionState},
     },
     infra::{
         CancellationToken, ClipboardExecutor,
+        history::HistoryStore,
         terraform::{
             self,
             configuration::{self, ExecutionLocation},
         },
     },
-    ui::features::environments::{EnvironmentInput, EnvironmentView},
+    ui::{
+        QuitConfirmationInput,
+        features::{
+            environments::{EnvironmentInput, EnvironmentView},
+            execution, plan_review,
+        },
+        quit_confirmation_key_to_input,
+    },
 };
 
-use super::{WorkerGuard, invocation::Invocation};
+use super::{WorkerGuard, event_loop, invocation::Invocation};
 
 struct Completion {
     index: usize,
@@ -27,6 +44,10 @@ struct Completion {
     diagnostics: Vec<Diagnostic>,
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "the environment loop owns plan acquisition, review input, and the apply hand-off"
+)]
 pub(super) fn run(invocation: &Invocation, environments: Vec<Environment>) -> io::Result<ExitCode> {
     let mut state = EnvironmentSession::new(environments, invocation.detailed_exitcode())
         .with_exploration_root(invocation.directory().to_owned());
@@ -40,9 +61,30 @@ pub(super) fn run(invocation: &Invocation, environments: Vec<Environment>) -> io
     };
     let mut view = EnvironmentView::default();
     let mut clipboard = ClipboardExecutor::new();
+    let mut apply_runtime = ApplyRuntime::new(invocation);
+    let mut apply: Option<EnvironmentApply> = None;
+    let mut outcome = None;
     let mut dirty = true;
     let result = super::run_terminal(|terminal| -> io::Result<()> {
         loop {
+            if let Some(active) = apply.as_mut() {
+                match apply_runtime.step(
+                    terminal,
+                    &mut state,
+                    active,
+                    &plans,
+                    &mut clipboard,
+                    &mut dirty,
+                )? {
+                    ApplyStep::Continue => {}
+                    ApplyStep::Closed => apply = None,
+                    ApplyStep::Finished(finished) => {
+                        outcome = Some(finished);
+                        break;
+                    }
+                }
+                continue;
+            }
             if let Ok(completion) = receiver.try_recv() {
                 worker
                     .join()
@@ -63,9 +105,15 @@ pub(super) fn run(invocation: &Invocation, environments: Vec<Environment>) -> io
             }
             if let Some(index) = state.start_next() {
                 dirty = true;
-                if let Err(error) =
-                    start_worker(invocation, &state, index, &mut plans, &mut worker, &sender)
-                {
+                if let Err(error) = start_worker(
+                    invocation,
+                    &state,
+                    index,
+                    &mut plans,
+                    &mut worker,
+                    &sender,
+                    apply_runtime.history.as_ref(),
+                ) {
                     state.complete(index, PlanResult::Error(error.to_string()), Vec::new());
                 }
             }
@@ -107,6 +155,12 @@ pub(super) fn run(invocation: &Invocation, environments: Vec<Environment>) -> io
                                 std::time::Instant::now(),
                             );
                         }
+                        if matches!(
+                            state.plans()[index].session(),
+                            Some(SessionState::ApplyConfirmation(_))
+                        ) {
+                            apply = Some(EnvironmentApply::new(index));
+                        }
                     }
                 }
             }
@@ -114,12 +168,303 @@ pub(super) fn run(invocation: &Invocation, environments: Vec<Environment>) -> io
         Ok(())
     });
     cancellation.cancel();
+    if result.is_err() {
+        apply_runtime.cancellation.cancel();
+    }
     let joined = worker.join();
+    let apply_joined = apply_runtime.worker.join();
     let cleanup = cleanup_plans(plans);
     result?;
     joined.map_err(|_| io::Error::other("environment worker panicked"))?;
+    apply_joined.map_err(|_| super::worker_panic_error(super::WorkerKind::Apply))?;
     cleanup?;
-    Ok(ExitCode::from(state.exit_code()))
+    Ok(match outcome {
+        Some(SessionOutcome::Applied {
+            status,
+            summary_line,
+        }) => super::report_applied(status, summary_line.as_deref()),
+        _ => ExitCode::from(state.exit_code()),
+    })
+}
+
+struct EnvironmentApply {
+    index: usize,
+    execution_view: execution::ExecutionViewState,
+    review_view: plan_review::PlanReviewViewState,
+    confirmation_view: plan_review::ApplyConfirmationViewState,
+    quit_confirmation: bool,
+}
+
+impl EnvironmentApply {
+    fn new(index: usize) -> Self {
+        Self {
+            index,
+            execution_view: execution::ExecutionViewState::default(),
+            review_view: plan_review::PlanReviewViewState::default(),
+            confirmation_view: plan_review::ApplyConfirmationViewState::default(),
+            quit_confirmation: false,
+        }
+    }
+
+    fn running(&self, state: &EnvironmentSession) -> bool {
+        state.plans()[self.index]
+            .session()
+            .and_then(SessionState::apply)
+            .is_some_and(|apply| apply.result().is_none())
+    }
+
+    fn handle_key<B: Backend<Error = io::Error>>(
+        &mut self,
+        terminal: &Terminal<B>,
+        state: &EnvironmentSession,
+        key: KeyEvent,
+    ) -> io::Result<Option<Action>> {
+        let Some(session) = state.plans()[self.index].session() else {
+            return Ok(None);
+        };
+        let key = if self.quit_confirmation {
+            self.quit_confirmation = false;
+            match quit_confirmation_key_to_input(key) {
+                QuitConfirmationInput::Confirm => return Ok(Some(Action::Quit)),
+                QuitConfirmationInput::Cancel => return Ok(None),
+                QuitConfirmationInput::Consume => {
+                    self.quit_confirmation = true;
+                    return Ok(None);
+                }
+                QuitConfirmationInput::Forward(key) => key,
+            }
+        } else {
+            key
+        };
+        let action = event_loop::handle_key_event(
+            terminal,
+            session,
+            &mut self.execution_view,
+            &mut self.review_view,
+            &mut self.confirmation_view,
+            key,
+        )?;
+        if matches!(action, Some(Action::Quit)) {
+            self.quit_confirmation = true;
+            return Ok(None);
+        }
+        Ok(action)
+    }
+}
+
+fn draw_apply<B: Backend<Error = io::Error>>(
+    terminal: &mut Terminal<B>,
+    state: &EnvironmentSession,
+    apply: &EnvironmentApply,
+) -> io::Result<()> {
+    match state.plans()[apply.index].session() {
+        Some(SessionState::ApplyConfirmation(confirmation)) => {
+            terminal.draw(|frame| {
+                plan_review::render_apply_confirmation(
+                    frame,
+                    confirmation,
+                    &apply.confirmation_view,
+                );
+            })?;
+        }
+        Some(SessionState::Apply(execution)) => {
+            terminal.draw(|frame| {
+                execution::render_execution_with_quit_confirmation(
+                    frame,
+                    execution,
+                    apply.execution_view,
+                    Instant::now(),
+                    apply.quit_confirmation,
+                );
+            })?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+struct ApplyRuntime {
+    apply_arguments: Vec<OsString>,
+    cancellation: CancellationToken,
+    sender: mpsc::Sender<PlanReviewMessage>,
+    receiver: mpsc::Receiver<PlanReviewMessage>,
+    worker: WorkerGuard,
+    history: Option<HistoryStore>,
+}
+
+enum ApplyStep {
+    Continue,
+    Closed,
+    Finished(SessionOutcome),
+}
+
+impl ApplyRuntime {
+    fn step<B: Backend<Error = io::Error>>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+        state: &mut EnvironmentSession,
+        apply: &mut EnvironmentApply,
+        plans: &[Option<terraform::SavedPlan>],
+        clipboard: &mut ClipboardExecutor,
+        dirty: &mut bool,
+    ) -> io::Result<ApplyStep> {
+        let (finished, messages) = self.receive(state, apply, plans, clipboard)?;
+        *dirty |= messages;
+        if let Some(outcome) = finished {
+            return Ok(ApplyStep::Finished(outcome));
+        }
+        *dirty |= state.clear_expired_copy_feedback(Instant::now());
+        if *dirty || apply.running(state) {
+            draw_apply(terminal, state, apply)?;
+            *dirty = false;
+        }
+        if !event::poll(Duration::from_millis(50))? {
+            return Ok(ApplyStep::Continue);
+        }
+        let input_event = event::read()?;
+        if !event_requires_draw(&input_event) {
+            return Ok(ApplyStep::Continue);
+        }
+        *dirty = true;
+        if let Event::Key(key) = input_event
+            && let Some(action) = apply.handle_key(terminal, state, key)?
+            && let Some(outcome) = self.dispatch(state, apply, action, plans, clipboard)
+        {
+            return Ok(ApplyStep::Finished(outcome));
+        }
+        Ok(if state.plans()[apply.index].review().is_some() {
+            ApplyStep::Closed
+        } else {
+            ApplyStep::Continue
+        })
+    }
+
+    fn new(invocation: &Invocation) -> Self {
+        let cancellation = CancellationToken::new();
+        let (sender, receiver) = mpsc::channel();
+        Self {
+            apply_arguments: invocation.apply_arguments(),
+            worker: WorkerGuard {
+                cancellation: cancellation.clone(),
+                handle: None,
+            },
+            cancellation,
+            sender,
+            receiver,
+            history: HistoryStore::platform(),
+        }
+    }
+
+    fn receive(
+        &mut self,
+        state: &mut EnvironmentSession,
+        apply: &mut EnvironmentApply,
+        plans: &[Option<terraform::SavedPlan>],
+        clipboard: &mut ClipboardExecutor,
+    ) -> io::Result<(Option<SessionOutcome>, bool)> {
+        let finished = self.worker.poll_finished();
+        if finished.as_ref().is_some_and(Result::is_err) {
+            return Err(super::worker_panic_error(super::WorkerKind::Apply));
+        }
+        let mut received = false;
+        while let Ok(message) = self.receiver.try_recv() {
+            received = true;
+            if let Some(outcome) = self.dispatch(
+                state,
+                apply,
+                SessionState::from_message(message),
+                plans,
+                clipboard,
+            ) {
+                return Ok((Some(outcome), received));
+            }
+        }
+        if finished.is_some() && apply.running(state) {
+            received = true;
+            let outcome = self.dispatch(state, apply, Action::WorkerDisconnected, plans, clipboard);
+            return Ok((outcome, received));
+        }
+        Ok((None, received))
+    }
+
+    fn dispatch(
+        &mut self,
+        state: &mut EnvironmentSession,
+        apply: &mut EnvironmentApply,
+        action: Action,
+        plans: &[Option<terraform::SavedPlan>],
+        clipboard: &mut ClipboardExecutor,
+    ) -> Option<SessionOutcome> {
+        let mut next = Some(action);
+        while let Some(action) = next.take() {
+            let session = state.session_mut(apply.index)?;
+            match event_loop::update_session(
+                session,
+                action,
+                &mut apply.execution_view,
+                Instant::now(),
+            ) {
+                None => {}
+                Some(Effect::CancelExecution) => self.cancellation.cancel(),
+                Some(Effect::StartApply) => {
+                    next = self
+                        .start(state, apply.index, plans)
+                        .err()
+                        .map(|message| Action::ApplyFailed { message });
+                }
+                Some(Effect::PersistHistory(successes)) => {
+                    if let Some(history) = &self.history
+                        && let Err(error) = history.record(&successes)
+                    {
+                        super::report_error(&format!("failed to save apply history: {error}"));
+                    }
+                }
+                Some(Effect::WriteClipboard(effect)) => {
+                    let result = clipboard.execute(&effect);
+                    next = Some(Action::CopyCompleted {
+                        target: effect.target(),
+                        result,
+                    });
+                }
+                Some(Effect::Finish(outcome)) => return Some(outcome),
+            }
+        }
+        None
+    }
+
+    // Apply runs only the saved plan acquired and reviewed for this environment, in its own
+    // directory; it never re-plans and never touches another environment's plan.
+    fn start(
+        &mut self,
+        state: &EnvironmentSession,
+        index: usize,
+        plans: &[Option<terraform::SavedPlan>],
+    ) -> Result<(), String> {
+        let plan = &state.plans()[index];
+        let execution = plan
+            .session()
+            .and_then(SessionState::apply)
+            .ok_or_else(|| "The environment is not ready to apply.".to_owned())?;
+        let root = plan.directory();
+        event_loop::verify_apply_target(execution, plan.tool, root, root, &[], &self.cancellation)?;
+        let plan_path = plans
+            .get(index)
+            .and_then(Option::as_ref)
+            .map(|saved| saved.path().to_owned())
+            .ok_or_else(|| "The reviewed plan is no longer available.".to_owned())?;
+        let handle = super::spawn_apply_worker(
+            plan.tool,
+            root,
+            &[],
+            &self.apply_arguments,
+            &plan_path,
+            &self.cancellation,
+            &self.sender,
+        )
+        .map_err(|error| format!("failed to start the apply worker: {error}"))?;
+        self.worker.set_handle(handle);
+        Ok(())
+    }
 }
 
 fn should_draw(state: &EnvironmentSession, dirty: bool) -> bool {
@@ -159,6 +504,7 @@ fn start_worker(
     plans: &mut [Option<terraform::SavedPlan>],
     worker: &mut WorkerGuard,
     sender: &mpsc::Sender<Completion>,
+    history: Option<&HistoryStore>,
 ) -> io::Result<()> {
     if let Some(old_plan) = plans[index].take() {
         old_plan.cleanup()?;
@@ -173,6 +519,7 @@ fn start_worker(
     let cancellation = worker.cancellation.clone();
     let sender = sender.clone();
     let launch_root = invocation.directory().to_owned();
+    let history = history.cloned();
     worker.set_handle(
         thread::Builder::new()
             .name("terracotta-environment".to_owned())
@@ -187,7 +534,13 @@ fn start_worker(
                     &cancellation,
                     &mut diagnostics,
                 )
-                .unwrap_or_else(PlanResult::Error);
+                .map_or_else(PlanResult::Error, |result| match result {
+                    PlanResult::Ready { review, changed } => PlanResult::Ready {
+                        review: Box::new(super::with_previous_durations(*review, history.as_ref())),
+                        changed,
+                    },
+                    result => result,
+                });
                 let _ = sender.send(Completion {
                     index,
                     result,
@@ -273,9 +626,9 @@ fn cleanup_plans(plans: Vec<Option<terraform::SavedPlan>>) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, time::Instant};
+    use std::path::PathBuf;
 
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::{KeyCode, KeyModifiers};
     use ratatui::backend::TestBackend;
 
     use super::*;

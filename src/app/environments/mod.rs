@@ -203,14 +203,38 @@ impl EnvironmentSession {
     ) -> Option<Effect> {
         if !matches!(
             action,
-            Action::ReviewSearchChanged(_) | Action::Copy(_) | Action::CopyCompleted { .. }
+            Action::ReviewSearchChanged(_)
+                | Action::Copy(_)
+                | Action::CopyCompleted { .. }
+                | Action::OpenApplyConfirmation
         ) {
+            return None;
+        }
+        if matches!(action, Action::OpenApplyConfirmation) && !self.can_start_apply() {
             return None;
         }
         let EnvironmentState::Ready { session, .. } = &mut self.plans.get_mut(index)?.state else {
             return None;
         };
         session::update(session, action, now)
+    }
+
+    // One environment applies at a time, and only after every plan has been acquired, so an
+    // apply never runs beside another Terraform process started by this session.
+    pub(crate) fn can_start_apply(&self) -> bool {
+        !self.interrupted
+            && !self.acquiring()
+            && !self.plans.iter().any(|plan| {
+                plan.session()
+                    .is_some_and(|session| session.review().is_none())
+            })
+    }
+
+    pub(crate) fn session_mut(&mut self, index: usize) -> Option<&mut SessionState> {
+        match &mut self.plans.get_mut(index)?.state {
+            EnvironmentState::Ready { session, .. } => Some(session),
+            _ => None,
+        }
     }
 
     pub(crate) fn acquiring(&self) -> bool {
@@ -334,8 +358,12 @@ impl EnvironmentPlan {
     }
 
     pub(crate) fn review(&self) -> Option<&ReviewSessionState> {
+        self.session().and_then(SessionState::review)
+    }
+
+    pub(crate) fn session(&self) -> Option<&SessionState> {
         match &self.state {
-            EnvironmentState::Ready { session, .. } => session.review(),
+            EnvironmentState::Ready { session, .. } => Some(session),
             _ => None,
         }
     }
@@ -739,17 +767,69 @@ mod tests {
         assert!(state.plans()[0].failure.is_none());
     }
 
+    fn is_confirming(state: &EnvironmentSession, index: usize) -> bool {
+        matches!(
+            state.plans()[index].session(),
+            Some(SessionState::ApplyConfirmation(_))
+        )
+    }
+
     #[test]
-    fn ready_environment_rejects_apply_even_if_given_an_applyable_review() {
-        let mut state = EnvironmentSession::new(vec![available("a")], false);
-        let run = state.start_next().unwrap();
-        state.complete(run, ready(true), Vec::new());
+    fn apply_confirmation_opens_only_for_the_selected_ready_environment() {
+        let mut state = EnvironmentSession::new(vec![available("a"), available("b")], false);
+        for _ in 0..2 {
+            let index = state.start_next().unwrap();
+            assert!(state.complete(index, ready(true), Vec::new()));
+        }
 
         assert!(
             state
-                .update_review(0, Action::OpenApplyConfirmation, std::time::Instant::now())
+                .update_review(1, Action::OpenApplyConfirmation, std::time::Instant::now())
                 .is_none()
         );
+
+        assert!(is_confirming(&state, 1));
+        assert!(state.plans()[0].review().is_some());
+        assert!(!state.can_start_apply());
+        state.update_review(0, Action::OpenApplyConfirmation, std::time::Instant::now());
+        assert!(state.plans()[0].review().is_some());
+
+        let session = state.session_mut(1).unwrap();
+        session::update(session, Action::CancelApply, std::time::Instant::now());
+        assert!(state.plans()[1].review().is_some());
+        assert!(state.can_start_apply());
+    }
+
+    #[test]
+    fn apply_waits_until_every_environment_plan_is_acquired() {
+        let mut state = EnvironmentSession::new(vec![available("a"), available("b")], false);
+        let first = state.start_next().unwrap();
+        assert!(state.complete(first, ready(true), Vec::new()));
+
+        state.update_review(
+            first,
+            Action::OpenApplyConfirmation,
+            std::time::Instant::now(),
+        );
+        assert!(state.plans()[first].review().is_some());
+
+        let second = state.start_next().unwrap();
+        assert!(state.complete(second, ready(false), Vec::new()));
+        state.update_review(
+            first,
+            Action::OpenApplyConfirmation,
+            std::time::Instant::now(),
+        );
+        assert!(is_confirming(&state, first));
+    }
+
+    #[test]
+    fn environment_without_changes_does_not_open_apply_confirmation() {
+        let mut state = EnvironmentSession::new(vec![available("a")], false);
+        let run = state.start_next().unwrap();
+        state.complete(run, ready(false), Vec::new());
+
+        state.update_review(0, Action::OpenApplyConfirmation, std::time::Instant::now());
         assert!(state.plans()[0].review().is_some());
     }
 

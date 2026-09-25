@@ -27,7 +27,7 @@ Run in an interactive terminal with Terraform or OpenTofu initialized and creden
 # Open the change overview
 terracotta
 
-# Review a plan without applying
+# Review a plan, then optionally apply it
 terracotta plan
 
 # Review and apply
@@ -38,7 +38,7 @@ terracotta tofu plan
 terracotta tofu apply
 ```
 
-Run from your configuration directory, or its parent to compare environments. Environment comparison supports review only.
+Run from your configuration directory, or its parent to compare environments. In a plan review, press `a` to apply that environment's reviewed plan without re-planning.
 
 To use Terracotta with your usual commands:
 

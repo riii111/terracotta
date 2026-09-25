@@ -119,12 +119,35 @@ impl OverviewSessionState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ApplyConfirmationState {
     review: PlanReview,
+    from_overview: bool,
+    restored_search_query: Option<String>,
 }
 
 impl ApplyConfirmationState {
     #[must_use]
     pub(crate) const fn new(review: PlanReview) -> Self {
-        Self { review }
+        Self {
+            review,
+            from_overview: false,
+            restored_search_query: None,
+        }
+    }
+
+    fn from_review(review: &ReviewSessionState) -> Self {
+        Self {
+            from_overview: review.from_overview,
+            restored_search_query: review.restored_search_query.clone(),
+            ..Self::new(review.review.clone())
+        }
+    }
+
+    fn into_review(self) -> ReviewSessionState {
+        ReviewSessionState {
+            review: self.review,
+            from_overview: self.from_overview,
+            restored_search_query: self.restored_search_query,
+            copy_feedback: CopyFeedback::default(),
+        }
     }
 
     #[must_use]
@@ -405,9 +428,9 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
                 return None;
             };
             if review.review.apply_allowed() && review.review.metadata().applyable() {
-                let review = review.review.clone();
-                *state =
-                    SessionState::ApplyConfirmation(Box::new(ApplyConfirmationState::new(review)));
+                *state = SessionState::ApplyConfirmation(Box::new(
+                    ApplyConfirmationState::from_review(review),
+                ));
             }
             None
         }
@@ -431,8 +454,8 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
             let SessionState::ApplyConfirmation(confirmation) = state else {
                 return None;
             };
-            let review = confirmation.review.clone();
-            *state = SessionState::Review(Box::new(ReviewSessionState::new(review)));
+            let review = confirmation.as_ref().clone().into_review();
+            *state = SessionState::Review(Box::new(review));
             None
         }
         Action::ApplyCompleted {
@@ -526,9 +549,12 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
             SessionState::Overview(overview) => Some(Effect::Finish(SessionOutcome::Reviewed(
                 overview.review.metadata().clone(),
             ))),
-            SessionState::ApplyConfirmation(_) => {
+            SessionState::ApplyConfirmation(confirmation) if confirmation.review.apply_entry() => {
                 Some(Effect::Finish(SessionOutcome::ApplyCanceled))
             }
+            SessionState::ApplyConfirmation(confirmation) => Some(Effect::Finish(
+                SessionOutcome::Reviewed(confirmation.review.metadata().clone()),
+            )),
             SessionState::Apply(execution) => execution.result().map(|result| {
                 Effect::Finish(SessionOutcome::Applied {
                     status: match execution.stage() {
@@ -828,6 +854,66 @@ mod tests {
             review.review().document().text(),
             "Terraform will perform actions.\n"
         );
+    }
+
+    #[test]
+    fn plan_entry_opens_apply_from_the_overview_detail_and_cancel_returns_there() {
+        let now = Instant::now();
+        let mut state = SessionState::new(ExecutionState::with_context(
+            now,
+            ExecutionContext::loading("/project"),
+        ));
+        let review = applyable_review();
+        assert!(!review.apply_entry());
+        update(&mut state, Action::ReviewCompleted(review), now);
+        update(&mut state, Action::OpenOverview, now);
+        update(
+            &mut state,
+            Action::OpenReviewFromOverview { address: None },
+            now,
+        );
+
+        assert!(update(&mut state, Action::OpenApplyConfirmation, now).is_none());
+        assert!(state.apply_confirmation().is_some());
+        assert!(update(&mut state, Action::CancelApply, now).is_none());
+        assert!(
+            state
+                .review()
+                .is_some_and(ReviewSessionState::is_from_overview)
+        );
+        assert!(update(&mut state, Action::ReturnToOverview, now).is_none());
+        assert!(state.overview().is_some());
+    }
+
+    #[test]
+    fn quitting_a_plan_entry_confirmation_reports_the_review_without_apply() {
+        let now = Instant::now();
+        let mut state = SessionState::new(ExecutionState::with_context(
+            now,
+            ExecutionContext::loading("/project"),
+        ));
+        update(&mut state, Action::ReviewCompleted(applyable_review()), now);
+        update(&mut state, Action::OpenApplyConfirmation, now);
+
+        assert!(matches!(
+            update(&mut state, Action::Quit, now),
+            Some(Effect::Finish(SessionOutcome::Reviewed(_)))
+        ));
+
+        let mut state = SessionState::new(ExecutionState::with_context(
+            now,
+            ExecutionContext::loading("/project"),
+        ));
+        update(
+            &mut state,
+            Action::ReviewCompleted(applyable_review().with_apply_entry(true)),
+            now,
+        );
+        update(&mut state, Action::OpenApplyConfirmation, now);
+        assert!(matches!(
+            update(&mut state, Action::Quit, now),
+            Some(Effect::Finish(SessionOutcome::ApplyCanceled))
+        ));
     }
 
     #[test]

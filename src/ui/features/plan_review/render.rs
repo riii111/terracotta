@@ -269,9 +269,7 @@ fn layout_with_content(
 ) -> PlanReviewLayout {
     let panel_width = area.width;
     let content_metrics = content.metrics();
-    let applyable = state.review().apply_entry()
-        && state.review().apply_allowed()
-        && state.review().metadata().applyable();
+    let applyable = state.review().apply_allowed() && state.review().metadata().applyable();
     let filter_visible = filter_active(searching, state);
     let showing = filter_footer_status(
         state.review().search_query(),
@@ -332,7 +330,7 @@ fn layout_with_content(
     };
     let footer_message = footer_status.as_ref().map(|(message, _)| message.as_str());
     let available_footer_width = footer::available_width(panel_width, footer_message);
-    let normal_footer_lines = footer::layout_with_notice(
+    let normal_footer_lines = footer::layout_prioritized(
         footer_items(
             searching,
             applyable,
@@ -341,13 +339,11 @@ fn layout_with_content(
             navigation,
             available_footer_width,
         ),
-        panel_width,
-        footer_message,
+        available_footer_width,
     );
-    let normal_required = footer::layout_with_notice(
+    let normal_required = footer::layout_prioritized(
         required_footer_items(searching, content.matches.len(), filter_visible, navigation),
-        panel_width,
-        footer_message,
+        available_footer_width,
     );
     let footer_height = common_footer_height(
         applyable,
@@ -470,7 +466,9 @@ fn common_footer_height(
                 required_footer_items(false, match_count.max(2), true, navigation),
             ]
             .into_iter()
-            .map(move |items| footer::layout_with_notice(items, width, notice).len())
+            .map(move |items| {
+                footer::layout_prioritized(items, footer::available_width(width, notice)).len()
+            })
         })
         .max()
         .unwrap_or(1)
@@ -989,7 +987,7 @@ fn plan_help_sections(
         help_dialog::HelpAction::new("c", "show execution context"),
         help_dialog::HelpAction::new("y", "copy the full plan"),
     ];
-    if review.apply_entry() && review.apply_allowed() && review.metadata().applyable() {
+    if review.apply_allowed() && review.metadata().applyable() {
         action_items.push(help_dialog::HelpAction::new("a", "apply the full plan"));
     }
     vec![
@@ -1691,6 +1689,7 @@ fn horizontal_offset(start: usize, end: usize, line_width: usize, width: u16) ->
     u16::try_from(offset.min(line_width.saturating_sub(width))).unwrap_or(u16::MAX)
 }
 
+// Narrow footers drop apply first; outside a filter they also keep quit and help ahead of other hints.
 fn footer_items(
     searching: bool,
     applyable: bool,
@@ -1698,39 +1697,46 @@ fn footer_items(
     filtered: bool,
     navigation: ReviewNavigation,
     width: u16,
-) -> Vec<Line<'static>> {
+) -> Vec<(u8, Line<'static>)> {
+    let apply = |description| applyable.then(|| (0, footer::hint(&["a"], description)));
     let mut items = if searching {
         vec![
             footer::hint(&["Enter"], "confirm"),
             footer::hint(&["Esc"], "cancel"),
         ]
+        .into_iter()
+        .map(|item| (1, item))
+        .collect()
     } else if filtered {
-        let mut items = vec![
+        let mut items = [
             footer::hint(&["Esc"], "clear / edit"),
             footer::hint(&["y"], "copy all"),
-        ];
-        if applyable {
-            items.push(footer::hint(&["a"], "apply all"));
-        }
-        items.extend([footer::hint(&["?"], "help"), footer::hint(&["q"], "quit")]);
+            footer::hint(&["?"], "help"),
+            footer::hint(&["q"], "quit"),
+        ]
+        .into_iter()
+        .map(|item| (1, item))
+        .collect::<Vec<_>>();
+        items.extend(apply("apply all"));
         items
     } else {
         let mut items = if navigation == ReviewNavigation::Standalone && width >= 29 {
             vec![
-                footer::hint(&["s"], "overview"),
-                footer::hint(&["/"], "filter"),
+                (1, footer::hint(&["s"], "overview")),
+                (1, footer::hint(&["/"], "filter")),
             ]
         } else {
-            vec![footer::hint(&["/"], "filter")]
+            vec![(1, footer::hint(&["/"], "filter"))]
         };
-        if applyable {
-            items.push(footer::hint(&["a"], "apply"));
-        }
-        items.extend([footer::hint(&["?"], "help"), footer::hint(&["q"], "quit")]);
+        items.extend(apply("apply"));
+        items.extend([
+            (3, footer::hint(&["?"], "help")),
+            (4, footer::hint(&["q"], "quit")),
+        ]);
         items
     };
     if navigation == ReviewNavigation::Environments && !searching && !filtered {
-        items.insert(0, footer::hint(&["Esc"], "overview"));
+        items.insert(0, (2, footer::hint(&["Esc"], "overview")));
     }
     items
 }
@@ -1740,32 +1746,32 @@ fn required_footer_items(
     match_count: usize,
     filtered: bool,
     navigation: ReviewNavigation,
-) -> Vec<Line<'static>> {
+) -> Vec<(u8, Line<'static>)> {
     let mut items = if searching {
         vec![
-            footer::hint(&["Enter"], "confirm"),
-            footer::hint(&["Esc"], "cancel"),
+            (1, footer::hint(&["Enter"], "confirm")),
+            (1, footer::hint(&["Esc"], "cancel")),
         ]
     } else if filtered {
         let mut items = vec![
-            footer::hint(&["Esc"], "clear / edit"),
-            footer::hint(&["y"], "copy all"),
-            footer::hint(&["?"], "help"),
-            footer::hint(&["q"], "quit"),
+            (1, footer::hint(&["Esc"], "clear / edit")),
+            (1, footer::hint(&["y"], "copy all")),
+            (1, footer::hint(&["?"], "help")),
+            (1, footer::hint(&["q"], "quit")),
         ];
         if match_count >= 2 {
-            items.insert(1, footer::hint(&["n/N"], "next/prev"));
+            items.insert(1, (1, footer::hint(&["n/N"], "next/prev")));
         }
         items
     } else {
         vec![
-            footer::hint(&["/"], "filter"),
-            footer::hint(&["?"], "help"),
-            footer::hint(&["q"], "quit"),
+            (1, footer::hint(&["/"], "filter")),
+            (3, footer::hint(&["?"], "help")),
+            (4, footer::hint(&["q"], "quit")),
         ]
     };
     if navigation == ReviewNavigation::Environments && !searching && !filtered {
-        items.insert(0, footer::hint(&["Esc"], "overview"));
+        items.insert(0, (2, footer::hint(&["Esc"], "overview")));
     }
     items
 }
@@ -3360,34 +3366,36 @@ End of synthetic plan body."#;
                 assert!(text.contains("/ edit"), "case: {}", case.name);
                 assert!(text.contains("y copy all"), "case: {}", case.name);
                 assert!(text.contains("? help"), "case: {}", case.name);
-                assert!(!text.contains("a apply"), "case: {}", case.name);
+                assert!(text.contains("a apply all"), "case: {}", case.name);
                 assert!(text.contains("q quit"), "case: {}", case.name);
             }
         }
 
         #[test]
         fn confirmed_filter_narrow_footer_keeps_required_actions_before_match_navigation() {
-            for (query, plan) in [
-                ("not-present", zero_match_review()),
-                ("endpoint", review()),
-                (SEARCH_TERM, review()),
-            ] {
-                let mut plan = plan;
-                plan.set_search_query(query.to_owned());
-                let state = review_state(plan);
-                let buffer = render_to_buffer((24, 24), |frame| {
-                    render(
-                        frame,
-                        &state,
-                        &PlanReviewViewState::default(),
-                        Instant::now(),
-                    );
-                });
-                let text = buffer_text(&buffer);
-                assert!(text.contains("Esc clear"), "query: {query}");
-                assert!(text.contains("/ edit"), "query: {query}");
-                assert!(text.contains("copy all"), "query: {query}");
-                assert!(text.contains("? help"), "query: {query}");
+            for (width, apply_allowed) in [(24, false), (40, true)] {
+                for (query, plan) in [
+                    ("not-present", zero_match_review()),
+                    ("endpoint", review()),
+                    (SEARCH_TERM, review()),
+                ] {
+                    let mut plan = plan.with_apply_allowed(apply_allowed);
+                    plan.set_search_query(query.to_owned());
+                    let state = review_state(plan);
+                    let buffer = render_to_buffer((width, 24), |frame| {
+                        render(
+                            frame,
+                            &state,
+                            &PlanReviewViewState::default(),
+                            Instant::now(),
+                        );
+                    });
+                    let text = buffer_text(&buffer);
+                    assert!(text.contains("Esc clear"), "{width}: {query}");
+                    assert!(text.contains("/ edit"), "{width}: {query}");
+                    assert!(text.contains("copy all"), "{width}: {query}");
+                    assert!(text.contains("? help"), "{width}: {query}\n{text}");
+                }
             }
         }
 
@@ -4376,8 +4384,22 @@ End of synthetic plan body."#;
         }
 
         #[test]
+        fn narrow_environment_footer_keeps_help_and_quit() {
+            let state = review_state(review_with_applyable(true));
+            for width in 24..=28 {
+                let mut view = PlanReviewViewState::default();
+                let text = buffer_text(&render_to_buffer((width, 24), |frame| {
+                    render_environment(frame, frame.area(), &state, &mut view, Instant::now());
+                }));
+
+                assert!(text.contains("q quit"), "width {width}:\n{text}");
+                assert!(text.contains("? help"), "width {width}:\n{text}");
+            }
+        }
+
+        #[test]
         fn single_environment_footer_shows_overview_when_it_fits() {
-            let wide = footer::layout_with_notice(
+            let wide = footer::layout_prioritized(
                 footer_items(
                     false,
                     true,
@@ -4386,8 +4408,7 @@ End of synthetic plan body."#;
                     ReviewNavigation::Standalone,
                     footer::available_width(80, Some("Line 1/43")),
                 ),
-                80,
-                Some("Line 1/43"),
+                footer::available_width(80, Some("Line 1/43")),
             );
             let wide_text = wide
                 .iter()
@@ -4399,7 +4420,7 @@ End of synthetic plan body."#;
             assert!(wide_text.starts_with("s overview"), "{wide_text}");
             assert!(!wide_text.contains("y copy plan"), "{wide_text}");
 
-            let narrow = footer::layout_with_notice(
+            let narrow = footer::layout_prioritized(
                 footer_items(
                     false,
                     true,
@@ -4408,8 +4429,7 @@ End of synthetic plan body."#;
                     ReviewNavigation::Standalone,
                     footer::available_width(24, Some("L1/43")),
                 ),
-                24,
-                Some("L1/43"),
+                footer::available_width(24, Some("L1/43")),
             );
             let narrow_text = narrow
                 .iter()
@@ -4500,14 +4520,12 @@ End of synthetic plan body."#;
             assert_eq!(position_status(10, 47, 40), "L11/47");
         }
 
-        #[test]
-        fn plan_entry_footer_hides_apply_even_when_plan_is_applyable() {
-            let state = review_state(review_with_apply_allowed(true, false));
+        fn footer_text(state: &ReviewSessionState) -> String {
             let view = PlanReviewViewState::default();
             let area = Rect::new(0, 0, 120, 40);
-            let layout = layout(area, false, &state);
+            let layout = layout(area, false, state);
             let buffer = render_to_buffer((area.width, area.height), |frame| {
-                render(frame, &state, &view, Instant::now());
+                render(frame, state, &view, Instant::now());
             });
             let footer = layout.shell.footer();
             let mut footer_text = String::new();
@@ -4516,8 +4534,27 @@ End of synthetic plan body."#;
                     footer_text.push_str(buffer.cell((x, y)).expect("footer cell").symbol());
                 }
             }
+            footer_text
+        }
 
-            assert!(!footer_text.contains("a apply"), "{footer_text}");
+        #[test]
+        fn plan_entry_footer_and_help_offer_apply_for_an_applyable_saved_plan() {
+            let plan = review_with_applyable(true);
+            assert!(!plan.apply_entry());
+            let footer = footer_text(&review_state(plan.clone()));
+            assert!(footer.contains("a apply"), "{footer}");
+
+            let sections = plan_help_sections(&plan, ReviewNavigation::Standalone, false);
+            let help = buffer_text(&render_to_buffer((120, 40), |frame| {
+                help_dialog::render(frame, frame.area(), "Help", &sections, 0);
+            }));
+            assert!(help.contains("apply the full plan"), "{help}");
+        }
+
+        #[test]
+        fn footer_hides_apply_when_the_review_cannot_apply() {
+            let footer = footer_text(&review_state(review_with_apply_allowed(true, false)));
+            assert!(!footer.contains("a apply"), "{footer}");
         }
     }
 }

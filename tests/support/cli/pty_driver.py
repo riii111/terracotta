@@ -1,6 +1,7 @@
 
 import os
 import pty
+import re
 import select
 import signal
 import fcntl
@@ -433,6 +434,18 @@ try:
             send_key(b"0")
             wait_new("Address", "real_complete_comparison")
             exit_code = quit_with_enter()
+        elif scenario == "env_apply":
+            for name in ("a-dev", "b-stg"):
+                wait_environment(name, "Ready")
+            send_key(b"]")
+            send_key(b"v")
+            wait_parts(["Plan:", "a apply"], "env_plan_detail")
+            send_key(b"a")
+            wait_new("Apply this reviewed plan?", "env_apply_confirmation")
+            send_text("yes")
+            send_key(b"\r")
+            wait_parts(["Apply complete", "terraform_data.api"], "env_apply_success", timeout=60)
+            exit_code = quit_with_enter()
         elif scenario == "env_default_matrix":
             for name in ("a-dev", "b-stg", "c-prod"):
                 wait_environment(name, "Ready")
@@ -565,7 +578,14 @@ try:
             "copy notice after filtering",
         )
         send_key(b"a")
-        assert_screen_unchanged("plan_entry_apply_blocked")
+        wait_new("Apply this reviewed plan?", "filter_apply_confirmation")
+        send_key(b"\x1b")
+        wait_screen(
+            lambda current: "Apply this reviewed plan?" not in current
+            and "y copy all" in current,
+            "filter_apply_cancelled",
+            "filtered review after closing apply confirmation",
+        )
         send_key(b"q")
         wait_new("Quit Terracotta?", "filter_quit_confirmation")
         send_key(b"\x1b")
@@ -651,6 +671,17 @@ try:
         send_key(b"q")
         send_key(b"\r")
         exit_code = wait_exit()
+    elif scenario in ("plan_apply", "default_apply"):
+        if scenario == "default_apply":
+            wait_parts(["[2] Changes", "[3] Relations"], "default_overview")
+            send_key(b"v")
+        wait_parts(["terraform_data.api", "a apply"], "plan_apply_offered", timeout=30)
+        send_key(b"a")
+        wait_new("Apply this reviewed plan?", "apply_confirmation")
+        send_text("yes")
+        send_key(b"\r")
+        wait_parts(["Apply complete", "terraform_data.api"], "apply_success", timeout=60)
+        exit_code = quit_with_enter()
     elif scenario == "default_ci":
         wait_new("Usage: terracotta", "default_help")
         exit_code = wait_exit()
@@ -663,6 +694,22 @@ try:
         send_key(b"q")
         send_key(b"\r")
         exit_code = wait_exit()
+    elif scenario == "demo_apply":
+        wait_new("Opening the", "demo_tui", timeout=300)
+        if "multi" in command:
+            for name in ("dev", "stg", "prod"):
+                wait_environment(name, "Ready", timeout=300)
+            send_key(b"]")
+        else:
+            wait_parts(["Change Address", "terraform_data.api"], "demo_overview", timeout=300)
+        send_key(b"v")
+        wait_new("a apply", "demo_plan_detail")
+        send_key(b"a")
+        wait_parts(["Apply this reviewed plan?", "to apply"], "demo_apply_confirmation")
+        send_text(re.search(r"Type (\S+) to apply", screen.text()).group(1))
+        send_key(b"\r")
+        wait_new("Apply complete", "demo_apply_success", timeout=300)
+        exit_code = quit_with_enter()
     elif scenario == "basic_workflow":
         wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
         wait_new("a apply", "plan_ready")

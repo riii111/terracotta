@@ -294,7 +294,6 @@ pub(crate) fn read_saved_plan_review(
     .with_relations(relations)
     .with_provider_schemas(provider_schemas)
     .with_context(context)
-    .with_apply_allowed(apply_entry)
     .with_apply_entry(apply_entry);
     Ok(review)
 }
