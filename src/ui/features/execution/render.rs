@@ -23,7 +23,6 @@ use super::ExecutionViewState;
 const MIN_HEIGHT: u16 = 9;
 const MIN_WIDTH: u16 = 32;
 const STATUS_HEIGHT: u16 = 3;
-const COMPACT_STATUS_HEIGHT: u16 = 4;
 const APPLY_STATUS_HEIGHT: u16 = 2;
 const TARGET_ADDRESS_WIDTH: usize = 24;
 struct PreparedContent<'a> {
@@ -44,30 +43,22 @@ pub(crate) fn render_execution_with_quit_confirmation(
         return;
     }
     let content = prepare_content(state);
-    let status = status_lines(state, view, now);
     let notice = state.copy_feedback().notice_at(now);
-    let layout = execution_layout_with_content(
+    let layout = log_view_layout(
         area,
         state,
-        view,
         &content,
-        &status,
         notice.map(CopyNotice::message),
         quit_confirmation,
     );
     if area.width < MIN_WIDTH
         || area.height < MIN_HEIGHT
-        || (!compact_apply(state, view) && (layout.body().width == 0 || layout.body().height == 0))
+        || layout.body().width == 0
+        || layout.body().height == 0
     {
-        let finished_apply = matches!(
-            state.stage(),
-            ExecutionStage::ApplySucceeded
-                | ExecutionStage::ApplyFailed
-                | ExecutionStage::ApplyInterrupted
-        );
         let message = if quit_confirmation {
             "Quit? Enter exit / Esc cancel"
-        } else if state.stage() == ExecutionStage::Failed || finished_apply {
+        } else if state.stage() == ExecutionStage::Failed {
             "Terminal too small. Resize or press q to quit."
         } else {
             "Terminal too small. Resize or press Ctrl-C to cancel."
@@ -77,17 +68,9 @@ pub(crate) fn render_execution_with_quit_confirmation(
     }
 
     header::render_execution(frame, layout.shell.header(), state.context());
-    let title = if finished_apply(state) {
-        "Apply result"
-    } else {
-        state.stage().title()
-    };
-    let content_area = shell_layout::render_content_block(frame, layout.shell.content(), title);
+    let content_area =
+        shell_layout::render_content_block(frame, layout.shell.content(), state.stage().title());
     debug_assert_eq!(content_area, layout.shell.content_inner());
-    if compact_apply(state, view) {
-        render_compact_execution(frame, &layout, status, notice);
-        return;
-    }
     render_log_view(frame, &layout, state, view, now, content, notice);
 }
 
@@ -102,10 +85,9 @@ fn render_apply_execution(
     let content = prepare_selected_content(state, view);
     let status = apply_status_lines(state, now);
     let notice = state.copy_feedback().notice_at(now);
-    let layout = execution_layout_with_content(
+    let layout = applying_layout(
         area,
         state,
-        view,
         &content,
         &status,
         notice.map(CopyNotice::message),
@@ -394,21 +376,6 @@ fn render_footer(
     );
 }
 
-fn render_compact_execution(
-    frame: &mut Frame<'_>,
-    layout: &ExecutionLayout,
-    status: Vec<Line<'static>>,
-    notice: Option<CopyNotice>,
-) {
-    frame.render_widget(status_paragraph(status, true), layout.status());
-    render_footer(
-        frame,
-        layout.shell.footer(),
-        layout.shell.footer_lines(),
-        notice,
-    );
-}
-
 pub(crate) struct ExecutionLayout {
     shell: shell_layout::ShellLayout,
     status: Rect,
@@ -489,61 +456,38 @@ fn execution_layout_with_quit_confirmation_and_view(
     view: ExecutionViewState,
     quit_confirmation: bool,
 ) -> ExecutionLayout {
-    let content = if state.is_apply() {
-        prepare_selected_content(state, view)
-    } else {
-        prepare_content(state)
-    };
-    let status = if state.is_apply() {
-        apply_status_lines(state, Instant::now())
-    } else {
-        status_lines(state, view, Instant::now())
-    };
-    execution_layout_with_content(
+    let notice = state.copy_feedback().notice().map(CopyNotice::message);
+    if state.is_apply() {
+        let content = prepare_selected_content(state, view);
+        let status = apply_status_lines(state, Instant::now());
+        return applying_layout(area, state, &content, &status, notice, quit_confirmation);
+    }
+    log_view_layout(
         area,
         state,
-        view,
-        &content,
-        &status,
-        state.copy_feedback().notice().map(CopyNotice::message),
+        &prepare_content(state),
+        notice,
         quit_confirmation,
     )
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "the non-apply and apply layout branches share one public layout entry point"
-)]
-fn execution_layout_with_content(
+fn log_view_layout(
     area: Rect,
     state: &ExecutionState,
-    view: ExecutionViewState,
     content: &PreparedContent<'_>,
-    status: &[Line<'static>],
     notice: Option<&str>,
     quit_confirmation: bool,
 ) -> ExecutionLayout {
-    if state.is_apply() {
-        return applying_layout(area, state, content, status, notice, quit_confirmation);
-    }
     let panel_width = shell_layout::centered_width(area);
-    let compact = compact_apply(state, view);
-    let normal_footer_lines = footer_lines(state, view, panel_width, notice);
+    let normal_footer_lines = footer_lines(state, panel_width, notice);
     let normal_required_footer_lines = required_footer_lines(state, panel_width, notice);
-    let status_height = status_height(state, status, panel_width.saturating_sub(2), compact);
-    let requested_height = execution_requested_height(
+    let requested_height = log_view_requested_height(
         area,
         state,
         content,
-        status_height,
-        compact,
         (&normal_footer_lines, &normal_required_footer_lines),
     );
-    let shell_area = if compact {
-        compact_shell_area(area, requested_height)
-    } else {
-        shell_layout::centered_area(area, requested_height)
-    };
+    let shell_area = shell_layout::centered_area(area, requested_height);
     let footer_lines = if quit_confirmation {
         footer::pad_lines(
             footer::quit_confirmation_lines(panel_width, notice),
@@ -561,47 +505,16 @@ fn execution_layout_with_content(
         normal_required_footer_lines
     };
     let shell = shell_layout::layout(shell_area, footer_lines, required_footer_lines, 1);
-    if compact {
-        let status = shell.content_inner();
-        return ExecutionLayout {
-            shell,
-            status,
-            target_panel: Rect::default(),
-            target_body: Rect::default(),
-            log_area: Rect::default(),
-            log_panel: Rect::default(),
-            separator: Rect::default(),
-            body: Rect::default(),
-            target_max_vertical: 0,
-            vertical_scrollbar: false,
-            horizontal_scrollbar: false,
-            max_vertical: 0,
-            max_horizontal: 0,
-        };
-    }
-    let constraints = if finished_apply(state) {
-        [
-            Constraint::Length(status_height),
-            Constraint::Length(1),
-            Constraint::Min(1),
-        ]
-    } else {
-        [
-            Constraint::Length(status_height),
-            Constraint::Min(1),
-            Constraint::Length(1),
-        ]
-    };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints(constraints)
+        .constraints([
+            Constraint::Length(STATUS_HEIGHT),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
         .split(shell.content_inner())
         .to_vec();
-    let (status_area, separator_area, available) = if finished_apply(state) {
-        (chunks[0], chunks[1], chunks[2])
-    } else {
-        (chunks[0], chunks[2], chunks[1])
-    };
+    let (status_area, available, separator_area) = (chunks[0], chunks[1], chunks[2]);
     let (vertical_scrollbar, horizontal_scrollbar) =
         scrollbar_reservations(content.lines.len(), content.max_width, available);
     let body = Rect::new(
@@ -721,62 +634,25 @@ fn applying_layout(
     }
 }
 
-fn execution_requested_height(
+fn log_view_requested_height(
     area: Rect,
     state: &ExecutionState,
     content: &PreparedContent<'_>,
-    status_height: u16,
-    compact: bool,
     footer_lines: (&[Line<'static>], &[Line<'static>]),
 ) -> u16 {
-    if compact {
-        return shell_layout::required_height(
-            status_height.saturating_add(2),
-            footer_lines.0,
-            footer_lines.1,
-        );
+    if state.stage() != ExecutionStage::Failed {
+        return shell_layout::max_centered_height(area);
     }
-    if result_screen(state) {
-        let body_height = shell_layout::required_body_height(
-            content.lines.len(),
-            content.max_width,
-            shell_layout::centered_width(area).saturating_sub(2),
-        );
-        let content_height = status_height
-            .saturating_add(1)
-            .saturating_add(body_height)
-            .saturating_add(2);
-        return shell_layout::required_height(content_height, footer_lines.0, footer_lines.1);
-    }
-    shell_layout::max_centered_height(area)
-}
-
-fn compact_shell_area(area: Rect, requested_height: u16) -> Rect {
-    let width = shell_layout::centered_width(area);
-    let height = requested_height.min(area.height);
-    Rect::new(
-        area.x + area.width.saturating_sub(width) / 2,
-        area.y + area.height.saturating_sub(height) / 2,
-        width,
-        height,
-    )
-}
-
-fn status_height(
-    state: &ExecutionState,
-    status: &[Line<'static>],
-    width: u16,
-    compact: bool,
-) -> u16 {
-    if finished_apply(state) {
-        status_line_count(status, width)
-    } else if compact {
-        COMPACT_STATUS_HEIGHT
-    } else if state.stage() == ExecutionStage::Applying && !state.is_cancelling() {
-        u16::try_from(status.len()).unwrap_or(u16::MAX).max(1)
-    } else {
-        STATUS_HEIGHT
-    }
+    let body_height = shell_layout::required_body_height(
+        content.lines.len(),
+        content.max_width,
+        shell_layout::centered_width(area).saturating_sub(2),
+    );
+    let content_height = STATUS_HEIGHT
+        .saturating_add(1)
+        .saturating_add(body_height)
+        .saturating_add(2);
+    shell_layout::required_height(content_height, footer_lines.0, footer_lines.1)
 }
 
 pub(crate) fn execution_scroll_position_with_view(
@@ -808,14 +684,7 @@ pub(crate) fn execution_horizontal_scroll_position_with_view(
 fn prepare_content(state: &ExecutionState) -> PreparedContent<'_> {
     let mut lines = log_lines(state.progress().log());
     if lines.is_empty() {
-        if finished_apply(state) {
-            lines.push(Line::from(Span::styled(
-                "No execution output.",
-                theme::secondary_style(),
-            )));
-        } else {
-            lines.push(Line::from("Waiting for Terraform output..."));
-        }
+        lines.push(Line::from("Waiting for Terraform output..."));
     }
     let max_width = max_line_width(&lines);
     PreparedContent { lines, max_width }
@@ -1053,10 +922,6 @@ const fn finished_apply(state: &ExecutionState) -> bool {
     )
 }
 
-fn result_screen(state: &ExecutionState) -> bool {
-    state.stage() == ExecutionStage::Failed || finished_apply(state)
-}
-
 fn status_paragraph(status: Vec<Line<'static>>, wrap: bool) -> Paragraph<'static> {
     let paragraph = Paragraph::new(status).style(theme::body_style());
     if wrap {
@@ -1074,34 +939,11 @@ fn status_line_count(status: &[Line<'static>], width: u16) -> u16 {
         .max(1)
 }
 
-fn footer_lines(
-    state: &ExecutionState,
-    view: ExecutionViewState,
-    width: u16,
-    notice: Option<&str>,
-) -> Vec<Line<'static>> {
-    let items = if compact_apply(state, view) {
-        vec![
-            footer::hint(&["Ctrl-C"], "cancel"),
-            footer::hint(&["v"], "logs"),
-        ]
-    } else if state.stage() == ExecutionStage::Failed || finished_apply(state) {
+fn footer_lines(state: &ExecutionState, width: u16, notice: Option<&str>) -> Vec<Line<'static>> {
+    let items = if state.stage() == ExecutionStage::Failed {
         vec![
             footer::hint(&["q", "Ctrl-C"], "quit"),
-            footer::hint(
-                &["y"],
-                if finished_apply(state) {
-                    "yank result"
-                } else {
-                    "copy diagnostic"
-                },
-            ),
-        ]
-    } else if state.stage() == ExecutionStage::Applying && view.logs_open() {
-        vec![
-            footer::hint(&["Ctrl-C"], "cancel"),
-            footer::hint(&["Esc"], "close"),
-            footer::hint(&["End"], "follow latest"),
+            footer::hint(&["y"], "copy diagnostic"),
         ]
     } else {
         vec![
@@ -1151,16 +993,12 @@ fn required_footer_lines(
     width: u16,
     notice: Option<&str>,
 ) -> Vec<Line<'static>> {
-    let item = if state.stage() == ExecutionStage::Failed || finished_apply(state) {
+    let item = if state.stage() == ExecutionStage::Failed {
         footer::hint(&["q", "Ctrl-C"], "quit")
     } else {
         footer::hint(&["Ctrl-C"], "cancel")
     };
     footer::layout_with_notice(vec![item], width, notice)
-}
-
-fn compact_apply(state: &ExecutionState, view: ExecutionViewState) -> bool {
-    state.stage() == ExecutionStage::Applying && !view.logs_open()
 }
 
 fn layout_target_max(target_count: usize, height: u16) -> u16 {
@@ -2515,7 +2353,8 @@ mod tests {
             let (state, now) = plan_state(Some(ExecutionPhase::Planning), &lines);
             let layout = execution_layout(Rect::new(0, 0, 80, 24), &state);
 
-            let following = render_text((80, 24), &state, ExecutionViewState::default(), now, false);
+            let following =
+                render_text((80, 24), &state, ExecutionViewState::default(), now, false);
             let mut view = ExecutionViewState::default();
             view.apply_scroll(
                 ExecutionScroll::Up,
@@ -2617,7 +2456,8 @@ mod tests {
                 true,
             );
 
-            let confirmation = render_text((80, 24), &state, ExecutionViewState::default(), now, true);
+            let confirmation =
+                render_text((80, 24), &state, ExecutionViewState::default(), now, true);
             let mut session = SessionState::new(state);
             session::update(
                 &mut session,
@@ -2883,13 +2723,29 @@ mod tests {
                     });
                 }
                 state.finish_apply(case.status, None, None, now + Duration::from_secs(1));
+                let area = Rect::new(0, 0, 80, 24);
+                let body = execution_layout(area, &state).body();
+                let buffer = render_to_buffer((area.width, area.height), |frame| {
+                    render_execution_with_view(
+                        frame,
+                        &state,
+                        ExecutionViewState::default(),
+                        now + Duration::from_secs(1),
+                    );
+                });
 
+                let rendered_log = (body.y..body.bottom())
+                    .map(|y| {
+                        (body.x..body.right())
+                            .map(|x| buffer[(x, y)].symbol())
+                            .collect::<String>()
+                            .trim_end()
+                            .to_owned()
+                    })
+                    .filter(|line| !line.is_empty())
+                    .collect::<Vec<_>>();
                 assert_eq!(
-                    prepare_content(&state)
-                        .lines
-                        .iter()
-                        .map(Line::to_string)
-                        .collect::<Vec<_>>(),
+                    rendered_log,
                     ["first", "second", "third"],
                     "case: {}",
                     case.name
