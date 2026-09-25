@@ -12,10 +12,10 @@ use super::{
 };
 use crate::app::{
     plan::{
-        RelationGraph, RelationNodeId, RelationNodeInput, ResourceChange, ResourceChangeKind,
-        build_relation_graph,
+        PlanAction, RelationGraph, RelationNodeId, RelationNodeInput, ResourceChange,
+        ResourceChangeKind, build_relation_graph,
         comparison::resource_has_unknown,
-        grouping::{GroupingCandidate, GroupingKey, grouping_candidate},
+        grouping::{GroupingCandidate, GroupingKey, PlanGrouping, grouping_candidate},
         path::{module_breadcrumbs, normalize_resource_addresses, resource_display_address},
     },
     review::PlanReview,
@@ -38,6 +38,32 @@ pub(crate) struct EnvironmentOverviewWithRelations {
 pub(crate) struct EnvironmentRelationGraph {
     pub(crate) graph: Option<RelationGraph>,
     pub(crate) row_node_ids: BTreeMap<OverviewRowId, Option<RelationNodeId>>,
+}
+
+/// Grouping, relation node mapping, and relation graph of one reviewed plan.
+/// The review session prepares it once, so the single-environment Overview only projects rows
+/// from it while the user filters, selects, expands, or resizes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SingleEnvironmentOverview {
+    groups: Vec<SingleOverviewGroup>,
+    repeated: usize,
+    relations: RelationGraph,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SingleOverviewGroup {
+    pub(crate) display_address: String,
+    pub(crate) has_unknown: bool,
+    pub(crate) members: Vec<SingleOverviewMember>,
+    /// The node every changed member maps to; expanded or filtered member rows keep it.
+    pub(crate) node_id: Option<RelationNodeId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SingleOverviewMember {
+    pub(crate) address: String,
+    pub(crate) kind: ResourceChangeKind,
+    pub(crate) actions: Vec<PlanAction>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,7 +190,10 @@ pub(crate) fn environment_overview_with_relations_for_selection(
             };
 
             let node_inputs = selected_columns.get(&environment).map_or_else(
-                || grouped_plan_node_inputs(review).0,
+                || {
+                    let grouping = review.plan().grouped_changes(review.provider_schemas());
+                    grouped_plan_node_inputs(review, &grouping).0
+                },
                 |column| comparison_node_inputs(&overview, *column, review, &mut row_node_ids),
             );
             (
@@ -183,11 +212,53 @@ pub(crate) fn environment_overview_with_relations_for_selection(
     }
 }
 
-pub(crate) fn single_environment_relations(review: &PlanReview) -> EnvironmentRelationGraph {
-    let (node_inputs, row_node_ids) = grouped_plan_node_inputs(review);
-    EnvironmentRelationGraph {
-        graph: Some(build_relation_graph(review.relations(), &node_inputs)),
-        row_node_ids,
+impl SingleEnvironmentOverview {
+    // Only the review session builds it, once per review, so screens cannot rebuild it per frame.
+    pub(in crate::app) fn new(review: &PlanReview) -> Self {
+        let grouping = review.plan().grouped_changes(review.provider_schemas());
+        let (node_inputs, group_node_ids) = grouped_plan_node_inputs(review, &grouping);
+        let groups = grouping
+            .groups
+            .into_iter()
+            .zip(group_node_ids)
+            .map(|(group, node_id)| SingleOverviewGroup {
+                display_address: group.display_address,
+                has_unknown: group.has_unknown,
+                members: group
+                    .members
+                    .into_iter()
+                    .map(|change| SingleOverviewMember {
+                        address: change.address,
+                        kind: change.kind,
+                        actions: change.actions,
+                    })
+                    .collect(),
+                node_id,
+            })
+            .collect();
+        Self {
+            groups,
+            repeated: grouping.repeated,
+            relations: build_relation_graph(review.relations(), &node_inputs),
+        }
+    }
+
+    pub(crate) fn groups(&self) -> &[SingleOverviewGroup] {
+        &self.groups
+    }
+
+    pub(crate) const fn repeated(&self) -> usize {
+        self.repeated
+    }
+
+    pub(crate) const fn relations(&self) -> &RelationGraph {
+        &self.relations
+    }
+}
+
+impl SingleOverviewGroup {
+    pub(crate) const fn is_repeated(&self) -> bool {
+        self.members.len() >= 2
     }
 }
 
@@ -271,13 +342,11 @@ fn comparison_node_inputs(
     node_inputs
 }
 
+/// Returns the node inputs and, for each group, the node its changed members map to.
 fn grouped_plan_node_inputs(
     review: &PlanReview,
-) -> (
-    Vec<RelationNodeInput>,
-    BTreeMap<OverviewRowId, Option<RelationNodeId>>,
-) {
-    let grouping = review.plan().grouped_changes(review.provider_schemas());
+    grouping: &PlanGrouping,
+) -> (Vec<RelationNodeInput>, Vec<Option<RelationNodeId>>) {
     let changes: BTreeMap<_, _> = review
         .plan()
         .resource_changes
@@ -285,22 +354,17 @@ fn grouped_plan_node_inputs(
         .map(|change| (change.address.as_str(), change))
         .collect();
     let mut node_inputs = Vec::new();
-    let mut row_node_ids = BTreeMap::new();
+    let mut group_node_ids = Vec::with_capacity(grouping.groups.len());
 
-    for group in grouping.groups {
+    for group in &grouping.groups {
         let addresses: Vec<_> = group
             .members
             .iter()
             .filter(|change| change.kind != ResourceChangeKind::NoOp)
             .map(|change| change.address.clone())
             .collect();
-        if addresses.is_empty() {
-            continue;
-        }
 
-        if group.is_repeated() && addresses.len() > 1 {
-            let candidate = grouping_candidate(&group.members[0], review.provider_schemas())
-                .expect("repeated changes should retain their grouping candidate");
+        let node_id = if group.is_repeated() && addresses.len() > 1 {
             let input = relation_node_input(
                 &changes,
                 &addresses,
@@ -308,32 +372,30 @@ fn grouped_plan_node_inputs(
                 false,
                 group.has_unknown,
             );
-            let row_ids = std::iter::once(OverviewRowId::Group(GroupId(candidate.key))).chain(
-                addresses
-                    .iter()
-                    .map(|address| OverviewRowId::Individual(address.clone())),
-            );
-            record_node(input, row_ids, &mut node_inputs, &mut row_node_ids);
+            push_node(input, &mut node_inputs)
         } else {
-            for address in addresses {
-                let input = relation_node_input(
-                    &changes,
-                    std::slice::from_ref(&address),
-                    &address,
-                    false,
-                    false,
-                );
-                record_node(
-                    input,
-                    [OverviewRowId::Individual(address)],
-                    &mut node_inputs,
-                    &mut row_node_ids,
-                );
+            let member_node_ids = addresses
+                .iter()
+                .map(|address| {
+                    let input = relation_node_input(
+                        &changes,
+                        std::slice::from_ref(address),
+                        address,
+                        false,
+                        false,
+                    );
+                    push_node(input, &mut node_inputs)
+                })
+                .collect::<Vec<_>>();
+            match member_node_ids.as_slice() {
+                [node_id] => node_id.clone(),
+                _ => None,
             }
-        }
+        };
+        group_node_ids.push(node_id);
     }
 
-    (node_inputs, row_node_ids)
+    (node_inputs, group_node_ids)
 }
 
 fn relation_node_input(
@@ -404,14 +466,22 @@ fn record_node(
     node_inputs: &mut Vec<RelationNodeInput>,
     row_node_ids: &mut BTreeMap<OverviewRowId, Option<RelationNodeId>>,
 ) {
-    let Some(input) = input else {
+    let Some(node_id) = push_node(input, node_inputs) else {
         return;
     };
-    let node_id = input.id.clone();
-    node_inputs.push(input);
     for row_id in row_ids {
         row_node_ids.insert(row_id, Some(node_id.clone()));
     }
+}
+
+fn push_node(
+    input: Option<RelationNodeInput>,
+    node_inputs: &mut Vec<RelationNodeInput>,
+) -> Option<RelationNodeId> {
+    let input = input?;
+    let node_id = input.id.clone();
+    node_inputs.push(input);
+    Some(node_id)
 }
 
 fn shared_candidate<'a>(
@@ -487,8 +557,8 @@ mod tests {
         },
         execution::Tool,
         plan::{
-            AttributeType, Plan, PlanAction, PlanValue, ProviderSchema, ProviderSchemas,
-            ResourceMode, ResourceSchema,
+            AttributeType, Plan, PlanValue, ProviderSchema, ProviderSchemas, ResourceMode,
+            ResourceSchema,
         },
         review::{PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata},
     };
@@ -1078,38 +1148,32 @@ mod tests {
     }
 
     #[test]
-    fn single_environment_expansion_maps_children_to_the_original_group_node() {
+    fn single_environment_group_maps_every_member_to_one_complete_node() {
         let changes = changes(3, "new");
         let review = review(changes.clone());
 
-        let relation = single_environment_relations(&review);
+        let overview = SingleEnvironmentOverview::new(&review);
 
-        let graph = relation.graph.as_ref().expect("a ready plan has a graph");
+        let graph = overview.relations();
         assert_eq!(graph.nodes.len(), 1);
         let node = &graph.nodes[0];
         assert_eq!(node.id.addresses().len(), 3);
-        let filtered_address = "test_resource.item[1]";
+        assert_eq!(overview.repeated(), 3);
+        let [group] = overview.groups() else {
+            panic!("repeated changes form one group");
+        };
+        assert_eq!(group.node_id.as_ref(), Some(&node.id));
         assert_eq!(
-            relation
-                .row_node_ids
-                .get(&OverviewRowId::Individual(filtered_address.to_owned())),
-            Some(&Some(node.id.clone()))
+            group
+                .members
+                .iter()
+                .map(|member| member.address.as_str())
+                .collect::<Vec<_>>(),
+            changes
+                .iter()
+                .map(|change| change.address.as_str())
+                .collect::<Vec<_>>()
         );
-        let candidate = grouping_candidate(&changes[0], None).expect("changes are groupable");
-        assert_eq!(
-            relation
-                .row_node_ids
-                .get(&OverviewRowId::Group(GroupId(candidate.key))),
-            Some(&Some(node.id.clone()))
-        );
-        for change in changes {
-            assert_eq!(
-                relation
-                    .row_node_ids
-                    .get(&OverviewRowId::Individual(change.address)),
-                Some(&Some(node.id.clone()))
-            );
-        }
     }
 
     fn only_group(overview: &EnvironmentOverview) -> &OverviewGroup {

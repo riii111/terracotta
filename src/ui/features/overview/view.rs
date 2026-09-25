@@ -3,11 +3,9 @@ use std::{cell::Cell, collections::BTreeSet};
 use ratatui::layout::Rect;
 
 use crate::app::{
-    environments::overview::{
-        EnvironmentRelationGraph, OverviewRowId, single_environment_relations,
-    },
-    plan::{PlanAction, RelationGraph, RelationNodeId, ResourceChange, ResourceChangeKind},
-    review::PlanReview,
+    environments::overview::SingleOverviewMember,
+    plan::{PlanAction, RelationNodeId, ResourceChangeKind},
+    session::ReviewSessionState,
 };
 use crate::ui::text_input;
 
@@ -32,31 +30,21 @@ pub(crate) struct OverviewRow {
     pub(crate) node_id: Option<RelationNodeId>,
 }
 
+/// Rows projected from the review's prepared Overview model for one filter and expansion state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OverviewContent {
     pub(crate) rows: Vec<OverviewRow>,
-    pub(crate) repeated: usize,
     pub(crate) unsupported: usize,
-    pub(crate) relations: Option<RelationGraph>,
 }
 
 impl OverviewContent {
-    pub(crate) fn from_review(
-        review: &PlanReview,
+    pub(crate) fn project(
+        state: &ReviewSessionState,
         query: &str,
         expanded: &BTreeSet<usize>,
     ) -> Self {
-        let grouping = review.plan().grouped_changes(review.provider_schemas());
-        let relation = single_environment_relations(review);
         let mut rows = Vec::new();
-        for (group_index, group) in grouping.groups.iter().enumerate() {
-            let node_addresses = group
-                .members
-                .iter()
-                .filter(|member| member.kind != ResourceChangeKind::NoOp)
-                .map(|member| member.address.clone())
-                .collect::<Vec<_>>();
-            let node_id = row_node_id(&node_addresses, &relation);
+        for (group_index, group) in state.prepared_overview().groups().iter().enumerate() {
             let matching = group
                 .members
                 .iter()
@@ -81,7 +69,7 @@ impl OverviewContent {
                     action: action_text(&group.members[0]),
                     count: matching.len(),
                     has_unknown: group.has_unknown,
-                    node_id: node_id.clone(),
+                    node_id: group.node_id.clone(),
                 });
                 if expanded.contains(&group_index) {
                     rows.extend(matching.into_iter().map(|member_index| OverviewRow {
@@ -93,7 +81,7 @@ impl OverviewContent {
                         action: action_text(&group.members[member_index]),
                         count: 1,
                         has_unknown: false,
-                        node_id: node_id.clone(),
+                        node_id: group.node_id.clone(),
                     }));
                 }
             } else {
@@ -106,37 +94,15 @@ impl OverviewContent {
                     action: action_text(&group.members[member_index]),
                     count: 1,
                     has_unknown: false,
-                    node_id: node_id.clone(),
+                    node_id: group.node_id.clone(),
                 }));
             }
         }
         Self {
             rows,
-            repeated: grouping.repeated,
-            unsupported: review.nonstandard_changes(),
-            relations: relation.graph,
+            unsupported: state.review().nonstandard_changes(),
         }
     }
-}
-
-fn row_node_id(
-    addresses: &[String],
-    relation: &EnvironmentRelationGraph,
-) -> Option<RelationNodeId> {
-    let node_ids = addresses
-        .iter()
-        .map(|address| {
-            relation
-                .row_node_ids
-                .get(&OverviewRowId::Individual(address.clone()))?
-                .as_ref()
-        })
-        .collect::<Option<Vec<_>>>()?;
-    let first = node_ids.first()?;
-    node_ids
-        .iter()
-        .all(|node_id| *node_id == *first)
-        .then(|| (*first).clone())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -598,7 +564,7 @@ impl OverviewViewState {
     }
 }
 
-fn action_text(change: &ResourceChange) -> String {
+fn action_text(change: &SingleOverviewMember) -> String {
     let symbol = match change.kind {
         ResourceChangeKind::Create => "+",
         ResourceChangeKind::Update => "~",
@@ -629,8 +595,8 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::app::plan::{Plan, PlanValue, ResourceMode};
-    use crate::app::review::{PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata};
+    use crate::app::plan::{Plan, PlanValue, ResourceChange, ResourceMode};
+    use crate::app::review::{PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata, PlanReview};
     use crate::ui::features::overview::key_to_input;
 
     fn apply_search(view: &mut OverviewViewState, input: OverviewInput, content: &OverviewContent) {
@@ -638,7 +604,33 @@ mod tests {
     }
 
     fn review() -> PlanReview {
-        let change = |address: &str| ResourceChange {
+        let no_op = ResourceChange {
+            address: "terraform_data.unchanged".to_owned(),
+            provider: None,
+            resource_type: None,
+            resource_name: None,
+            mode: ResourceMode::Managed,
+            actions: vec![PlanAction::NoOp],
+            kind: ResourceChangeKind::NoOp,
+            before: None,
+            after: None,
+            before_sensitive: None,
+            after_sensitive: None,
+            after_unknown: None,
+            replace_paths: None,
+            action_reason: None,
+            previous_address: None,
+            importing: None,
+        };
+        review_with_changes(vec![
+            update_change("aws_instance.web[0]"),
+            update_change("aws_instance.web[1]"),
+            no_op,
+        ])
+    }
+
+    fn update_change(address: &str) -> ResourceChange {
+        ResourceChange {
             address: address.to_owned(),
             provider: None,
             resource_type: None,
@@ -661,25 +653,10 @@ mod tests {
             action_reason: None,
             previous_address: None,
             importing: None,
-        };
-        let no_op = ResourceChange {
-            address: "terraform_data.unchanged".to_owned(),
-            provider: None,
-            resource_type: None,
-            resource_name: None,
-            mode: ResourceMode::Managed,
-            actions: vec![PlanAction::NoOp],
-            kind: ResourceChangeKind::NoOp,
-            before: None,
-            after: None,
-            before_sensitive: None,
-            after_sensitive: None,
-            after_unknown: None,
-            replace_paths: None,
-            action_reason: None,
-            previous_address: None,
-            importing: None,
-        };
+        }
+    }
+
+    fn review_with_changes(resource_changes: Vec<ResourceChange>) -> PlanReview {
         PlanReview::new(
             PathBuf::from("/project"),
             "default".to_owned(),
@@ -689,11 +666,7 @@ mod tests {
                 vec![],
             ),
             Plan {
-                resource_changes: vec![
-                    change("aws_instance.web[0]"),
-                    change("aws_instance.web[1]"),
-                    no_op,
-                ],
+                resource_changes,
                 ..Plan::empty()
             },
             PlanMetadata::new(Vec::new(), true),
@@ -702,17 +675,39 @@ mod tests {
     }
 
     #[test]
+    fn expanded_group_index_projects_only_the_given_review() {
+        let grouped = ReviewSessionState::new(review());
+        let single = ReviewSessionState::new(review_with_changes(vec![update_change(
+            "aws_s3_bucket.logs",
+        )]));
+        let expanded = BTreeSet::from([0]);
+
+        let grouped_rows = OverviewContent::project(&grouped, "", &expanded).rows;
+        let single_rows = OverviewContent::project(&single, "", &expanded).rows;
+
+        assert_eq!(grouped_rows.len(), 3);
+        assert_eq!(single_rows.len(), 1);
+        assert_eq!(single_rows[0].address, "aws_s3_bucket.logs");
+        assert!(!single_rows[0].child);
+        assert_eq!(
+            single_rows[0].node_id,
+            RelationNodeId::from_addresses(["aws_s3_bucket.logs".to_owned()])
+        );
+        assert_eq!(single.prepared_overview().repeated(), 0);
+    }
+
+    #[test]
     fn filtered_repeated_member_keeps_the_group_total_and_complete_node_identity() {
-        let review = review();
-        let all = OverviewContent::from_review(&review, "", &BTreeSet::new());
-        let filtered = OverviewContent::from_review(&review, "[1]", &BTreeSet::new());
+        let state = ReviewSessionState::new(review());
+        let all = OverviewContent::project(&state, "", &BTreeSet::new());
+        let filtered = OverviewContent::project(&state, "[1]", &BTreeSet::new());
 
         let expected_node_id = RelationNodeId::from_addresses([
             "aws_instance.web[0]".to_owned(),
             "aws_instance.web[1]".to_owned(),
         ]);
         assert_eq!(all.rows[0].node_id, expected_node_id);
-        assert_eq!(filtered.repeated, 2);
+        assert_eq!(state.prepared_overview().repeated(), 2);
         assert_eq!(filtered.rows.len(), 1);
         assert_eq!(filtered.rows[0].count, 1);
         assert_eq!(filtered.rows[0].address, "aws_instance.web[1]");
@@ -721,7 +716,8 @@ mod tests {
 
     #[test]
     fn panes_focus_maximize_scroll_and_restore_independently() {
-        let content = OverviewContent::from_review(&review(), "", &BTreeSet::new());
+        let content =
+            OverviewContent::project(&ReviewSessionState::new(review()), "", &BTreeSet::new());
         let mut view = OverviewViewState::default();
         let changes = Rect::new(0, 0, 40, 4);
         let relations = Rect::new(0, 0, 40, 8);
@@ -760,7 +756,8 @@ mod tests {
 
     #[test]
     fn arrows_scroll_changes_and_relations_independently() {
-        let content = OverviewContent::from_review(&review(), "", &BTreeSet::new());
+        let content =
+            OverviewContent::project(&ReviewSessionState::new(review()), "", &BTreeSet::new());
         let mut view = OverviewViewState::default();
 
         view.apply(
@@ -795,7 +792,8 @@ mod tests {
     fn escape_restores_maximized_filtered_pane_before_clearing_filter() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-        let content = OverviewContent::from_review(&review(), "", &BTreeSet::new());
+        let content =
+            OverviewContent::project(&ReviewSessionState::new(review()), "", &BTreeSet::new());
         let mut view = OverviewViewState {
             filter: "web".to_owned(),
             ..OverviewViewState::default()
@@ -822,7 +820,8 @@ mod tests {
 
     #[test]
     fn relations_enter_opens_the_raw_plan_from_the_top() {
-        let content = OverviewContent::from_review(&review(), "", &BTreeSet::new());
+        let content =
+            OverviewContent::project(&ReviewSessionState::new(review()), "", &BTreeSet::new());
         let mut view = OverviewViewState::default();
         view.apply(
             OverviewInput::FocusRelations,
@@ -860,9 +859,7 @@ mod tests {
                     node_id: None,
                 })
                 .collect(),
-            repeated: 0,
             unsupported: 1,
-            relations: None,
         };
         let mut view = OverviewViewState::default();
         let body = Rect::new(0, 0, 40, 5);
@@ -879,9 +876,7 @@ mod tests {
     fn search_cursor_edits_graphemes_and_cancel_restores_the_confirmed_filter() {
         let content = OverviewContent {
             rows: Vec::new(),
-            repeated: 0,
             unsupported: 0,
-            relations: None,
         };
         let mut view = OverviewViewState::default();
 
