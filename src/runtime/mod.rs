@@ -530,6 +530,20 @@ fn spawn_review_worker(
         })
 }
 
+fn with_previous_durations(review: PlanReview, history: Option<&HistoryStore>) -> PlanReview {
+    let Some(history) = history else {
+        return review;
+    };
+    let keys: Vec<_> = review
+        .metadata()
+        .apply_targets()
+        .iter()
+        .map(|target| HistoryKey::for_target(review.context(), target))
+        .collect();
+    let previous_durations = history.load_many(&keys);
+    review.with_previous_durations(previous_durations)
+}
+
 fn take_saved_plan(
     slot: &Arc<Mutex<Option<terraform::SavedPlan>>>,
 ) -> Option<terraform::SavedPlan> {
@@ -584,20 +598,6 @@ pub(super) fn spawn_apply_worker(
 
 fn report_error(message: &str) {
     let _ = writeln!(io::stderr(), "{message}");
-}
-
-fn with_previous_durations(review: PlanReview, history: Option<&HistoryStore>) -> PlanReview {
-    let Some(history) = history else {
-        return review;
-    };
-    let keys: Vec<_> = review
-        .metadata()
-        .apply_targets()
-        .iter()
-        .map(|target| HistoryKey::for_target(review.context(), target))
-        .collect();
-    let previous_durations = history.load_many(&keys);
-    review.with_previous_durations(previous_durations)
 }
 
 pub(super) struct WorkerGuard {
