@@ -800,6 +800,30 @@ mod tests {
     }
 
     #[test]
+    fn previous_address_keeps_delete_and_replace_actions_out_of_the_summary() {
+        let mut moved_delete = resource("aws_instance.moved_delete", "managed", json!(["delete"]));
+        moved_delete["previous_address"] = json!("aws_instance.old_delete");
+        let mut moved_replace = resource(
+            "aws_instance.moved_replace",
+            "managed",
+            json!(["create", "delete"]),
+        );
+        moved_replace["previous_address"] = json!("aws_instance.old_replace");
+
+        let plan = parse_plan_json(&plan_with_resources(json!([moved_delete, moved_replace])))
+            .expect("plan should parse");
+
+        assert_eq!(
+            plan.resource_changes
+                .iter()
+                .map(|change| change.kind)
+                .collect::<Vec<_>>(),
+            [ResourceChangeKind::Move, ResourceChangeKind::Move]
+        );
+        assert_eq!(plan.summary().total(), 0);
+    }
+
+    #[test]
     fn retains_move_and_import_markers_as_unsupported_changes() {
         let mut moved = resource("aws_instance.renamed", "managed", json!(["no-op"]));
         moved["previous_address"] = json!("aws_instance.old_name");

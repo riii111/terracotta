@@ -3063,7 +3063,7 @@ End of synthetic plan body."#;
                         PlanLineKind::Body,
                     ],
                 ),
-Plan {
+                Plan {
                     resource_changes: vec![resource_change(
                         "terraform_data.api",
                         ResourceChangeKind::Create,

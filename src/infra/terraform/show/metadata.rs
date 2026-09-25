@@ -131,9 +131,6 @@ mod tests {
     fn extracts_output_names_without_values() {
         let document = json!({
             "format_version": "1.2",
-            "resource_changes": [
-                {"address": "terraform_data.replace", "change": {"actions": ["delete", "create"], "after": "secret"}}
-            ],
             "output_changes": {"endpoint": {"after": "secret-output"}}
         });
 
