@@ -631,13 +631,13 @@ mod tests {
         saved_plan
     }
 
-    // Reports whether the saved plan still existed when the worker was about to exit, which
-    // fails if cleanup ran before the worker was joined.
+    // Reports whether cancellation was seen and the saved plan still existed when the worker was
+    // about to exit, which fails if cleanup ran before the worker was joined.
     fn plan_reading_worker(
         plan_path: PathBuf,
         cancellation: &CancellationToken,
         wait_for_cancellation: bool,
-    ) -> (WorkerGuard, mpsc::Receiver<bool>) {
+    ) -> (WorkerGuard, mpsc::Receiver<(bool, bool)>) {
         let (observed, observations) = mpsc::channel();
         let worker_cancellation = cancellation.clone();
         let handle = thread::spawn(move || {
@@ -649,7 +649,7 @@ mod tests {
                 thread::sleep(Duration::from_millis(1));
             }
             thread::sleep(Duration::from_millis(20));
-            let _ = observed.send(plan_path.exists());
+            let _ = observed.send((worker_cancellation.is_cancelled(), plan_path.exists()));
         });
         let guard = WorkerGuard {
             cancellation: cancellation.clone(),
@@ -674,7 +674,7 @@ mod tests {
             plan_reading_worker(plan_path.clone(), &cancellation, false);
         let (mut apply_worker, apply_observed) =
             plan_reading_worker(plan_path.clone(), &cancellation, false);
-        let outcome = SessionOutcome::Interrupted(ExecutionStage::Initializing);
+        let outcome = SessionOutcome::NoChanges;
 
         let (ui_result, cleanup) = finish_review(
             Ok(outcome.clone()),
@@ -687,8 +687,8 @@ mod tests {
         assert_eq!(ui_result.expect("the UI outcome should be kept"), outcome);
         cleanup.expect("the saved plan should be removed");
         assert!(!cancellation.is_cancelled());
-        assert_eq!(plan_observed.try_recv(), Ok(true));
-        assert_eq!(apply_observed.try_recv(), Ok(true));
+        assert_eq!(plan_observed.try_recv(), Ok((false, true)));
+        assert_eq!(apply_observed.try_recv(), Ok((false, true)));
         assert!(!plan_path.exists());
     }
 
@@ -712,8 +712,7 @@ mod tests {
         let error = ui_result.expect_err("the UI error should be kept");
         assert_eq!(error.to_string(), "terminal failed");
         cleanup.expect("the saved plan should be removed");
-        assert!(cancellation.is_cancelled());
-        assert_eq!(plan_observed.try_recv(), Ok(true));
+        assert_eq!(plan_observed.try_recv(), Ok((true, true)));
         assert!(!plan_path.exists());
     }
 
