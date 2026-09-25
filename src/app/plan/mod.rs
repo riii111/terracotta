@@ -11,7 +11,7 @@ mod relations_graph;
     unused_imports,
     reason = "grouping result types are the app contract for the Overview SBI"
 )]
-pub(crate) use grouping::{ChangeGroup, PlanGrouping, group_resource_changes};
+pub(crate) use grouping::{ChangeGroup, PlanGrouping};
 pub(crate) mod path;
 pub(crate) use relations::{
     ConfigurationRelationStatus, PlanRelations, RelationEndpoint, RelationEvidence, RelationSource,
@@ -19,8 +19,10 @@ pub(crate) use relations::{
 };
 pub(crate) use relations_graph::{
     RelationGraph, RelationGraphGroup, RelationGraphLink, RelationGraphLinkKind, RelationNode,
-    RelationNodeId, RelationNodeInput, build_relation_graph,
+    RelationNodeId, RelationNodeInput,
 };
+// Screens read prepared graphs; only app builds them, once per review or comparison selection.
+pub(in crate::app) use relations_graph::build_relation_graph;
 
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum PlanValue {
@@ -265,8 +267,11 @@ impl Plan {
     }
 
     #[must_use]
-    pub(crate) fn grouped_changes(&self, schemas: Option<&ProviderSchemas>) -> PlanGrouping {
-        group_resource_changes(&self.resource_changes, schemas)
+    pub(in crate::app) fn grouped_changes(
+        &self,
+        schemas: Option<&ProviderSchemas>,
+    ) -> PlanGrouping {
+        grouping::group_resource_changes(&self.resource_changes, schemas)
     }
 }
 

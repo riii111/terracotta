@@ -97,7 +97,7 @@ pub(crate) struct RelationGraph {
     pub(crate) no_links_shown: Vec<RelationNodeId>,
 }
 
-pub(crate) fn build_relation_graph(
+pub(in crate::app) fn build_relation_graph(
     relations: &PlanRelations,
     node_inputs: &[RelationNodeInput],
 ) -> RelationGraph {

@@ -76,7 +76,7 @@ pub(crate) fn layout(
 }
 
 pub(crate) fn reconcile_view(area: Rect, state: &ReviewSessionState, view: &mut OverviewViewState) {
-    let content = OverviewContent::from_review(state.review(), view.filter(), view.expanded());
+    let content = OverviewContent::project(state, view.filter(), view.expanded());
     let max_vertical = layout(area, state, view, &content).max_vertical();
     view.reconcile(max_vertical, content.rows.len());
 }
@@ -145,7 +145,7 @@ pub(crate) fn render_with_quit_confirmation(
         render_terminal_size_notice(frame, area, quit_confirmation);
         return;
     }
-    let content = OverviewContent::from_review(state.review(), view.filter(), view.expanded());
+    let content = OverviewContent::project(state, view.filter(), view.expanded());
     let PreparedOverview {
         layout,
         lines: prepared_lines,
@@ -162,7 +162,7 @@ pub(crate) fn render_with_quit_confirmation(
         layout.shell.content(),
     );
     frame.render_widget(
-        Paragraph::new(status_line(state.review(), view)).style(theme::overview_text_style()),
+        Paragraph::new(status_line(state, view)).style(theme::overview_text_style()),
         layout.status(),
     );
     frame.render_widget(
@@ -185,14 +185,11 @@ pub(crate) fn render_with_quit_confirmation(
             state.review(),
         );
     }
-    if layout.relations.width > 0
-        && layout.relations.height > 0
-        && let Some(graph) = &content.relations
-    {
+    if layout.relations.width > 0 && layout.relations.height > 0 {
         let scroll = relations::render(
             frame,
             layout.relations,
-            graph,
+            state.prepared_overview().relations(),
             &RelationGraphView {
                 title: RelationGraphTitle {
                     environment: None,
@@ -241,8 +238,8 @@ fn render_terminal_size_notice(frame: &mut Frame<'_>, area: Rect, quit_confirmat
     );
 }
 
-fn status_line(review: &PlanReview, view: &OverviewViewState) -> Line<'static> {
-    let counts = review.summary();
+fn status_line(state: &ReviewSessionState, view: &OverviewViewState) -> Line<'static> {
+    let counts = state.review().summary();
     let mut spans = vec![
         environments::ready_status_marker(),
         Span::styled("Ready", theme::overview_text_style()),
@@ -276,13 +273,7 @@ fn status_line(review: &PlanReview, view: &OverviewViewState) -> Line<'static> {
         theme::overview_total_destroy_style(),
     );
     spans.push(Span::styled(
-        format!(
-            "  Repeated: {}",
-            review
-                .plan()
-                .grouped_changes(review.provider_schemas())
-                .repeated
-        ),
+        format!("  Repeated: {}", state.prepared_overview().repeated()),
         theme::overview_muted_style(),
     ));
     if view.searching() {
@@ -1001,7 +992,7 @@ mod tests {
     fn quit_confirmation_replaces_overview_actions_at_supported_sizes() {
         let state = overview_session(review());
         let view = OverviewViewState::default();
-        let content = OverviewContent::from_review(state.review(), view.filter(), view.expanded());
+        let content = OverviewContent::project(&state, view.filter(), view.expanded());
 
         for (width, height) in [(40, 16), (80, 24), (120, 40)] {
             let area = Rect::new(0, 0, width, height);
@@ -1032,15 +1023,14 @@ mod tests {
     fn narrow_mixed_relations_keep_legend_entries_complete() {
         let state = overview_session(related_review());
         let view = OverviewViewState::default();
-        let mut content =
-            OverviewContent::from_review(state.review(), view.filter(), view.expanded());
-        content.relations = Some(mixed_relation_graph());
+        let content = OverviewContent::project(&state, view.filter(), view.expanded());
+        let graph = mixed_relation_graph();
         let relations_area = layout(Rect::new(0, 0, 40, 16), &state, &view, &content).relations();
         let output = render_to_buffer((40, 16), |frame| {
             relations::render(
                 frame,
                 relations_area,
-                content.relations.as_ref().unwrap(),
+                &graph,
                 &RelationGraphView {
                     title: RelationGraphTitle {
                         environment: None,
@@ -1096,7 +1086,7 @@ mod tests {
     fn selected_group_highlights_its_complete_relation_node() {
         let state = overview_session(related_review());
         let mut view = OverviewViewState::default();
-        let content = OverviewContent::from_review(state.review(), "", view.expanded());
+        let content = OverviewContent::project(&state, "", view.expanded());
         view.apply(
             OverviewInput::Down,
             Rect::default(),
@@ -1114,15 +1104,7 @@ mod tests {
                 .len(),
             2
         );
-        assert_eq!(
-            content
-                .relations
-                .as_ref()
-                .expect("relation graph")
-                .links
-                .len(),
-            1
-        );
+        assert_eq!(state.prepared_overview().relations().links.len(), 1);
         let buffer = render_to_buffer((120, 40), |frame| {
             render(frame, &state, &view, Instant::now());
         });
@@ -1136,7 +1118,7 @@ mod tests {
     #[test]
     fn split_and_maximized_layouts_keep_both_panes_available_at_target_sizes() {
         let state = overview_session(related_review());
-        let content = OverviewContent::from_review(state.review(), "", &BTreeSet::new());
+        let content = OverviewContent::project(&state, "", &BTreeSet::new());
         let mut view = OverviewViewState::default();
 
         for (width, height) in [(40, 16), (80, 24), (120, 40), (165, 50)] {
@@ -1183,7 +1165,7 @@ mod tests {
         let address = format!("terraform_data.{}tail-marker", "long_segment_".repeat(7));
         let state = overview_session(review());
         let mut view = OverviewViewState::default();
-        let mut content = OverviewContent::from_review(state.review(), "", view.expanded());
+        let mut content = OverviewContent::project(&state, "", view.expanded());
         content.rows[0].display_address = address.clone();
         let lines = overview_lines(&content, state.review(), &view);
         assert!(lines.iter().any(|line| line.to_string().contains(&address)));
@@ -1254,7 +1236,7 @@ mod tests {
 
     #[test]
     fn relations_footer_omits_basic_arrow_navigation() {
-        let content = OverviewContent::from_review(&review(), "", &BTreeSet::new());
+        let content = OverviewContent::project(&overview_session(review()), "", &BTreeSet::new());
         let mut view = OverviewViewState::default();
         view.apply(
             OverviewInput::FocusRelations,
@@ -1282,7 +1264,7 @@ mod tests {
         let mut view = OverviewViewState::default();
         let changes_body = Rect::new(0, 0, 80, 4);
         let relations_body = Rect::new(0, 0, 80, 8);
-        let content = OverviewContent::from_review(state.review(), "", view.expanded());
+        let content = OverviewContent::project(&state, "", view.expanded());
 
         view.apply(
             OverviewInput::Down,
@@ -1309,7 +1291,7 @@ mod tests {
             0,
             &content,
         );
-        let expanded_content = OverviewContent::from_review(state.review(), "", view.expanded());
+        let expanded_content = OverviewContent::project(&state, "", view.expanded());
         let expanded = render_to_buffer((100, 24), |frame| {
             render(frame, &state, &view, Instant::now());
         });
@@ -1369,8 +1351,7 @@ mod tests {
             0,
             &expanded_content,
         );
-        let filtered_content =
-            OverviewContent::from_review(state.review(), view.filter(), view.expanded());
+        let filtered_content = OverviewContent::project(&state, view.filter(), view.expanded());
         assert_eq!(filtered_content.rows.len(), 1);
         assert_eq!(view.selected_group_expanded(&filtered_content), None);
         scroll_filtered_row_into_view(&state, &mut view, &filtered_content);
@@ -1388,7 +1369,7 @@ mod tests {
     fn renders_help_as_a_grouped_modal_that_scrolls_on_small_terminals() {
         let state = overview_session(review());
         let mut view = OverviewViewState::default();
-        let content = OverviewContent::from_review(state.review(), "", view.expanded());
+        let content = OverviewContent::project(&state, "", view.expanded());
         view.apply(
             OverviewInput::OpenHelp,
             Rect::new(0, 0, 80, 24),
@@ -1453,7 +1434,7 @@ mod tests {
 
     fn context_view(state: &ReviewSessionState) -> OverviewViewState {
         let mut view = OverviewViewState::default();
-        let content = OverviewContent::from_review(state.review(), "", view.expanded());
+        let content = OverviewContent::project(state, "", view.expanded());
         view.apply(
             OverviewInput::OpenContext,
             Rect::new(0, 0, 80, 24),

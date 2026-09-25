@@ -3,6 +3,7 @@ use std::time::Instant;
 
 use super::{
     copy::{self, CopyEffect, CopyFeedback, CopyResult, CopyTarget},
+    environments::overview::SingleEnvironmentOverview,
     execution::{
         ApplyStatus, ExecutionAction, ExecutionEvent, ExecutionStage, ExecutionState,
         SuccessfulTarget,
@@ -38,6 +39,9 @@ pub(crate) enum SessionState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ReviewSessionState {
     review: PlanReview,
+    // The review's plan, relations, and provider schemas do not change while it is reviewed,
+    // so the Overview model lives exactly as long as the review and needs no invalidation.
+    prepared_overview: SingleEnvironmentOverview,
     screen: ReviewScreen,
     copy_feedback: CopyFeedback,
 }
@@ -59,6 +63,7 @@ impl ReviewSessionState {
     #[must_use]
     pub(crate) fn new(review: PlanReview) -> Self {
         Self {
+            prepared_overview: SingleEnvironmentOverview::new(&review),
             review,
             screen: ReviewScreen::Raw(RawReviewScreen::default()),
             copy_feedback: CopyFeedback::default(),
@@ -68,6 +73,11 @@ impl ReviewSessionState {
     #[must_use]
     pub(crate) const fn review(&self) -> &PlanReview {
         &self.review
+    }
+
+    #[must_use]
+    pub(crate) const fn prepared_overview(&self) -> &SingleEnvironmentOverview {
+        &self.prepared_overview
     }
 
     #[must_use]

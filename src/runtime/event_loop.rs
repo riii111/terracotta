@@ -388,8 +388,8 @@ pub(super) fn handle_key_event<B: Backend>(
             Some(plan_review::PlanReviewInput::Apply) => Some(Action::OpenApplyConfirmation),
             Some(plan_review::PlanReviewInput::Copy) => Some(Action::Copy(CopyTarget::Plan)),
             Some(plan_review::PlanReviewInput::OpenOverview) => {
-                let content = overview::OverviewContent::from_review(
-                    review.review(),
+                let content = overview::OverviewContent::project(
+                    review,
                     review_view.overview().filter(),
                     review_view.overview().expanded(),
                 );
@@ -446,8 +446,8 @@ fn handle_overview_key_event<B: Backend>(
         return Ok(None);
     }
     let size = terminal.size()?;
-    let content = overview::OverviewContent::from_review(
-        overview_state.review(),
+    let content = overview::OverviewContent::project(
+        overview_state,
         review_view.overview().filter(),
         review_view.overview().expanded(),
     );

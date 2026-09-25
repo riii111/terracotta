@@ -43,7 +43,7 @@ pub(crate) struct GroupingKey {
     attributes: Vec<AttributeSignature>,
 }
 
-pub(crate) fn group_resource_changes(
+pub(in crate::app) fn group_resource_changes(
     changes: &[ResourceChange],
     schemas: Option<&ProviderSchemas>,
 ) -> PlanGrouping {
