@@ -13,7 +13,10 @@ use crate::{
         RelationGraph, RelationGraphGroup, RelationGraphLink, RelationGraphLinkKind, RelationNode,
         RelationNodeId, RelationSource, RelationUnresolvedReason, ResourceChangeKind,
     },
-    ui::{primitives::molecules::help_dialog, theme},
+    ui::{
+        primitives::{atoms::scrollbar, molecules::help_dialog},
+        theme,
+    },
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -62,35 +65,58 @@ pub(crate) fn render(
         inner.width,
         inner.height.saturating_sub(1),
     );
-    let content_height = inner.height.saturating_sub(legend_height);
+    let lines = graph_lines(graph, view.selected_node, view.maximized, inner.width);
+    // The legend position depends only on the content, never on the scroll offset.
+    let short_height = u16::try_from(lines.len())
+        .unwrap_or(u16::MAX)
+        .saturating_add(1);
+    let content_height =
+        if legend_height > 0 && short_height.saturating_add(legend_height) <= inner.height {
+            short_height
+        } else {
+            inner.height.saturating_sub(legend_height)
+        };
     let content_area = Rect::new(inner.x, inner.y, inner.width, content_height);
+    // An overflowing graph gives its last column to the scrollbar so no text sits under it.
+    let text_area = if lines.len() > usize::from(content_height) {
+        Rect::new(
+            inner.x,
+            inner.y,
+            inner.width.saturating_sub(1),
+            content_height,
+        )
+    } else {
+        content_area
+    };
     let legend_area = Rect::new(
         inner.x,
         inner.y.saturating_add(content_height),
         inner.width,
         legend_height,
     );
-    let lines = graph_lines(
-        graph,
-        view.selected_node,
-        view.maximized,
-        content_area.width,
-    );
     let max_vertical = offset_limit(lines.len(), usize::from(content_area.height));
     let max_horizontal = offset_limit(
         lines.iter().map(Line::width).max().unwrap_or_default(),
-        usize::from(content_area.width),
+        usize::from(text_area.width),
     );
     let scroll = RelationGraphScroll {
         vertical: view.scroll.vertical.min(max_vertical),
         horizontal: view.scroll.horizontal.min(max_horizontal),
     };
 
+    let content_length = lines.len();
     frame.render_widget(
         Paragraph::new(lines)
             .style(theme::relation_text_style())
             .scroll((scroll.vertical, scroll.horizontal)),
+        text_area,
+    );
+    scrollbar::render_vertical(
+        frame,
         content_area,
+        content_length,
+        usize::from(content_area.height),
+        usize::from(scroll.vertical),
     );
     if legend_height > 0 {
         frame.render_widget(
@@ -185,7 +211,7 @@ fn legend_lines(graph: &RelationGraph) -> Vec<Line<'static>> {
             .any(|link| link.kind == RelationGraphLinkKind::Dotted)
         {
             lines.push(Line::from(Span::styled(
-                "block-level, may not apply",
+                "A ┄┄> B  block-level, may not apply",
                 theme::relation_text_style(),
             )));
         }
@@ -201,10 +227,16 @@ fn legend_lines(graph: &RelationGraph) -> Vec<Line<'static>> {
             .any(|link| link.sources.contains(&RelationSource::State))
         {
             lines.push(Line::from(Span::styled(
-                "(state) from state",
+                "(state) from state; unmarked from configuration",
                 theme::relation_text_style(),
             )));
         }
+    }
+    if graph.nodes.iter().any(|node| node.differs) {
+        lines.push(Line::from(Span::styled(
+            "! differs across envs",
+            theme::relation_text_style(),
+        )));
     }
     if graph.nodes.iter().any(|node| !node.unresolved.is_empty()) {
         lines.push(Line::from(Span::styled(
@@ -250,6 +282,12 @@ fn compact_legend_lines(graph: &RelationGraph) -> Vec<Line<'static>> {
             )));
         }
     }
+    if graph.nodes.iter().any(|node| node.differs) {
+        lines.push(Line::from(Span::styled(
+            "! differs across envs",
+            theme::relation_text_style(),
+        )));
+    }
     if graph.nodes.iter().any(|node| !node.unresolved.is_empty()) {
         lines.push(Line::from(Span::styled(
             "? unresolved: relationship unknown",
@@ -265,7 +303,11 @@ pub(crate) fn help_section() -> help_dialog::HelpSection {
         vec![
             help_dialog::HelpAction::new("A ──> B", "B uses A"),
             help_dialog::HelpAction::new("block-level", "may not apply to this instance"),
-            help_dialog::HelpAction::new("(state)", "recorded in state at review start"),
+            help_dialog::HelpAction::new(
+                "(state)",
+                "recorded in state at review start; unmarked links come from configuration",
+            ),
+            help_dialog::HelpAction::new("!", "the row is listed under Differs across envs in [2]"),
             help_dialog::HelpAction::new("? unresolved", "a relationship could not be determined"),
             help_dialog::HelpAction::new("Grouped links", "may apply to only some members"),
             help_dialog::HelpAction::new(
@@ -317,18 +359,22 @@ fn graph_lines(
             }
         }
         let links = group_links.into_values().collect::<Vec<_>>();
-        let diagram = diagram_lines(group, &links, &node_index, selected_node, maximized);
-        if let Some(diagram) = diagram
-            && diagram
-                .iter()
-                .all(|line| line.width() <= usize::from(width))
-        {
-            push_section_lines(&mut output_lines, diagram);
-        } else {
-            let fallback =
-                fallback_group_lines(group, &links, &node_index, selected_node, maximized);
-            push_section_lines(&mut output_lines, fallback);
-        }
+        let fits = |lines: &Vec<Line<'static>>| {
+            lines.iter().all(|line| line.width() <= usize::from(width))
+        };
+        let diagram = tree_lines(
+            group,
+            &links,
+            &node_index,
+            selected_node,
+            maximized,
+            usize::from(width),
+        )
+        .or_else(|| merge_lines(group, &links, &node_index, selected_node, maximized).filter(fits));
+        let section = diagram.unwrap_or_else(|| {
+            fallback_group_lines(group, &links, &node_index, selected_node, maximized)
+        });
+        push_section_lines(&mut output_lines, section);
     }
 
     let unknown = graph
@@ -371,108 +417,18 @@ fn graph_lines(
     output_lines
 }
 
-fn diagram_lines(
+fn merge_lines(
     group: &RelationGraphGroup,
     links: &[&RelationGraphLink],
     node_index: &BTreeMap<RelationNodeId, &RelationNode>,
     selected_node: Option<&RelationNodeId>,
     maximized: bool,
 ) -> Option<Vec<Line<'static>>> {
-    match (group.nodes.len(), links.len()) {
-        (2, 1) => {
-            let link = links[0];
-            Some(vec![link_line(link, node_index, selected_node, maximized)])
-        }
-        (3, 2) => {
-            if let Some((source, dependents)) = branch_links(links) {
-                branch_lines(source, dependents, node_index, selected_node, maximized)
-            } else if let Some((sources, target)) = merge_links(links) {
-                merge_diagram_lines(sources, target, node_index, selected_node, maximized)
-            } else if let Some(ordered) = chain_links(links) {
-                let mut spans = node_line(
-                    node(node_index, &ordered[0].from)?,
-                    selected_node,
-                    maximized,
-                )
-                .spans;
-                spans.push(Span::raw(" "));
-                spans.push(Span::styled(
-                    edge_segment(ordered[0]),
-                    theme::relation_muted_style(),
-                ));
-                spans.extend(
-                    node_line(node(node_index, &ordered[0].to)?, selected_node, maximized).spans,
-                );
-                spans.push(Span::raw(" "));
-                spans.push(Span::styled(
-                    edge_segment(ordered[1]),
-                    theme::relation_muted_style(),
-                ));
-                spans.extend(
-                    node_line(node(node_index, &ordered[1].to)?, selected_node, maximized).spans,
-                );
-                Some(vec![Line::from(spans)])
-            } else {
-                None
-            }
-        }
-        _ => None,
+    if group.nodes.len() != 3 || links.len() != 2 {
+        return None;
     }
-}
-
-fn branch_lines(
-    source: &RelationNodeId,
-    dependents: [&RelationGraphLink; 2],
-    node_index: &BTreeMap<RelationNodeId, &RelationNode>,
-    selected_node: Option<&RelationNodeId>,
-    maximized: bool,
-) -> Option<Vec<Line<'static>>> {
-    let source_line = node_line(node(node_index, source)?, selected_node, maximized);
-    let source_width = source_line.width();
-    let edge_prefixes = dependents.map(edge_prefix);
-    let max_prefix_width = edge_prefixes
-        .iter()
-        .map(|prefix| text_width(prefix))
-        .max()
-        .unwrap_or_default();
-    let mut first = source_line.spans;
-    first.push(Span::raw(" "));
-    first.push(Span::styled(
-        edge_prefixes[0].clone(),
-        theme::relation_muted_style(),
-    ));
-    first.push(Span::styled(
-        edge_padding(
-            dependents[0],
-            max_prefix_width - text_width(&edge_prefixes[0]),
-        ),
-        theme::relation_muted_style(),
-    ));
-    first.push(Span::styled("┬─>", theme::relation_muted_style()));
-    first.extend(
-        node_line(
-            node(node_index, &dependents[0].to)?,
-            selected_node,
-            maximized,
-        )
-        .spans,
-    );
-
-    let mut second = vec![Span::raw(" ".repeat(source_width + 1 + max_prefix_width))];
-    second.push(Span::styled("└", theme::relation_muted_style()));
-    second.push(Span::styled(
-        edge_segment(dependents[1]),
-        theme::relation_muted_style(),
-    ));
-    second.extend(
-        node_line(
-            node(node_index, &dependents[1].to)?,
-            selected_node,
-            maximized,
-        )
-        .spans,
-    );
-    Some(vec![Line::from(first), Line::from(second)])
+    let (sources, target) = merge_links(links)?;
+    merge_diagram_lines(sources, target, node_index, selected_node, maximized)
 }
 
 fn merge_diagram_lines(
@@ -506,13 +462,13 @@ fn merge_diagram_lines(
     ));
     first.push(Span::styled(
         edge_prefixes[0].clone(),
-        theme::relation_muted_style(),
+        theme::relation_text_style(),
     ));
     first.push(Span::styled(
         edge_padding(sources[0], max_prefix_width - text_width(&edge_prefixes[0])),
-        theme::relation_muted_style(),
+        theme::relation_text_style(),
     ));
-    first.push(Span::styled("┐", theme::relation_muted_style()));
+    first.push(Span::styled("┐", theme::relation_text_style()));
 
     let mut second = source_lines[1].spans.clone();
     second.push(Span::raw(
@@ -520,28 +476,15 @@ fn merge_diagram_lines(
     ));
     second.push(Span::styled(
         edge_prefixes[1].clone(),
-        theme::relation_muted_style(),
+        theme::relation_text_style(),
     ));
     second.push(Span::styled(
         edge_padding(sources[1], max_prefix_width - text_width(&edge_prefixes[1])),
-        theme::relation_muted_style(),
+        theme::relation_text_style(),
     ));
-    second.push(Span::styled("┴─>", theme::relation_muted_style()));
+    second.push(Span::styled("┴─>", theme::relation_text_style()));
     second.extend(node_line(node(node_index, target)?, selected_node, maximized).spans);
     Some(vec![Line::from(first), Line::from(second)])
-}
-
-fn branch_links<'a>(
-    links: &[&'a RelationGraphLink],
-) -> Option<(&'a RelationNodeId, [&'a RelationGraphLink; 2])> {
-    let source = &links.first()?.from;
-    if links.iter().all(|link| &link.from == source) && links[0].to != links[1].to {
-        let mut dependents = [links[0], links[1]];
-        dependents.sort_by(|left, right| left.to.cmp(&right.to));
-        Some((source, dependents))
-    } else {
-        None
-    }
 }
 
 fn merge_links<'a>(
@@ -557,43 +500,93 @@ fn merge_links<'a>(
     }
 }
 
-fn chain_links<'a>(links: &[&'a RelationGraphLink]) -> Option<[&'a RelationGraphLink; 2]> {
-    let (first, second) = if links[0].to == links[1].from {
-        (links[0], links[1])
-    } else if links[1].to == links[0].from {
-        (links[1], links[0])
-    } else {
-        return None;
-    };
-    (first.from != second.to).then_some([first, second])
+struct TreeContext<'a> {
+    children: BTreeMap<&'a RelationNodeId, Vec<&'a RelationGraphLink>>,
+    node_index: &'a BTreeMap<RelationNodeId, &'a RelationNode>,
+    selected_node: Option<&'a RelationNodeId>,
+    maximized: bool,
+    width: usize,
 }
 
-fn link_line(
-    link: &RelationGraphLink,
-    node_index: &BTreeMap<RelationNodeId, &RelationNode>,
-    selected_node: Option<&RelationNodeId>,
+// Stops at the first line wider than the pane, so deep chains never build indentation they discard.
+fn tree_lines<'a>(
+    group: &'a RelationGraphGroup,
+    links: &[&'a RelationGraphLink],
+    node_index: &'a BTreeMap<RelationNodeId, &'a RelationNode>,
+    selected_node: Option<&'a RelationNodeId>,
     maximized: bool,
-) -> Line<'static> {
-    let mut spans = node_line(
-        node(node_index, &link.from).expect("graph link source exists"),
+    width: usize,
+) -> Option<Vec<Line<'static>>> {
+    if links.len() + 1 != group.nodes.len() {
+        return None;
+    }
+    let mut children = BTreeMap::<&RelationNodeId, Vec<&RelationGraphLink>>::new();
+    let mut targets = BTreeSet::new();
+    for link in links {
+        if !targets.insert(&link.to) {
+            return None;
+        }
+        children.entry(&link.from).or_default().push(*link);
+    }
+    let mut roots = group.nodes.iter().filter(|id| !targets.contains(id));
+    let root = roots.next()?;
+    if roots.next().is_some() {
+        return None;
+    }
+
+    let context = TreeContext {
+        children,
+        node_index,
         selected_node,
         maximized,
-    )
-    .spans;
-    spans.push(Span::raw(" "));
-    spans.push(Span::styled(
-        edge_segment(link),
-        theme::relation_muted_style(),
-    ));
-    spans.extend(
-        node_line(
-            node(node_index, &link.to).expect("graph link target exists"),
-            selected_node,
-            maximized,
-        )
-        .spans,
-    );
-    Line::from(spans)
+        width,
+    };
+    let root_line = node_line(node(node_index, root)?, selected_node, maximized);
+    if root_line.width() > width {
+        return None;
+    }
+    let mut tree = vec![root_line];
+    push_tree_children(&context, root, "", &mut tree)?;
+    (tree.len() == group.nodes.len() * 2 - 1).then_some(tree)
+}
+
+fn push_tree_children(
+    context: &TreeContext<'_>,
+    parent: &RelationNodeId,
+    prefix: &str,
+    lines: &mut Vec<Line<'static>>,
+) -> Option<()> {
+    let child_links = context.children.get(parent).map_or(&[][..], Vec::as_slice);
+    for (index, link) in child_links.iter().enumerate() {
+        let last = index + 1 == child_links.len();
+        let child = node(context.node_index, &link.to)?;
+        let selected = context.selected_node == Some(&child.id);
+        let connector = format!("{}{}", if last { "└" } else { "├" }, edge_segment(link));
+        let mut spans = vec![
+            Span::styled(selection_marker(selected), theme::relation_text_style()),
+            Span::styled(prefix.to_owned(), theme::relation_text_style()),
+            Span::styled(connector.clone(), theme::relation_text_style()),
+            Span::raw(" "),
+        ];
+        spans.extend(node_spans(child, selected, context.maximized));
+        let child_line = Line::from(spans);
+        if child_line.width() > context.width {
+            return None;
+        }
+        lines.push(Line::from(vec![
+            Span::raw(selection_marker(false)),
+            Span::styled(format!("{prefix}│"), theme::relation_text_style()),
+        ]));
+        lines.push(child_line);
+
+        let child_prefix = format!(
+            "{prefix}{}{}",
+            if last { " " } else { "│" },
+            " ".repeat(text_width(&connector)),
+        );
+        push_tree_children(context, &link.to, &child_prefix, lines)?;
+    }
+    Some(())
 }
 
 fn fallback_group_lines(
@@ -607,9 +600,8 @@ fn fallback_group_lines(
     for link in links {
         incoming.entry(link.to.clone()).or_default().push(link);
     }
-    group
-        .nodes
-        .iter()
+    dependency_order(&group.nodes, links)
+        .into_iter()
         .filter_map(|id| {
             let mut row = node_line(node(node_index, id)?, selected_node, maximized);
             let incoming_links = incoming.get(id);
@@ -628,7 +620,7 @@ fn fallback_group_lines(
             if !uses.is_empty() {
                 row.spans.push(Span::styled(
                     format!("  uses: {}", uses.join(", ")),
-                    theme::relation_muted_style(),
+                    theme::relation_text_style(),
                 ));
             }
             let has_grouped_link = incoming_links.into_iter().flatten().any(|link| {
@@ -647,17 +639,67 @@ fn fallback_group_lines(
         .collect()
 }
 
+// Nodes on a cycle keep their group order.
+fn dependency_order<'a>(
+    nodes: &'a [RelationNodeId],
+    links: &[&RelationGraphLink],
+) -> Vec<&'a RelationNodeId> {
+    let index = nodes
+        .iter()
+        .enumerate()
+        .map(|(position, id)| (id, position))
+        .collect::<BTreeMap<_, _>>();
+    let mut dependents = vec![Vec::new(); nodes.len()];
+    let mut incoming = vec![0_usize; nodes.len()];
+    for link in links {
+        if let (Some(&from), Some(&to)) = (index.get(&link.from), index.get(&link.to))
+            && from != to
+        {
+            dependents[from].push(to);
+            incoming[to] += 1;
+        }
+    }
+
+    let mut remaining = (0..nodes.len()).collect::<BTreeSet<_>>();
+    let mut ready = (0..nodes.len())
+        .filter(|&position| incoming[position] == 0)
+        .collect::<BTreeSet<_>>();
+    let mut ordered = Vec::with_capacity(nodes.len());
+    while let Some(next) = ready.pop_first().or_else(|| remaining.first().copied()) {
+        remaining.remove(&next);
+        ordered.push(&nodes[next]);
+        for &dependent in &dependents[next] {
+            if remaining.contains(&dependent) {
+                incoming[dependent] -= 1;
+                if incoming[dependent] == 0 {
+                    ready.insert(dependent);
+                }
+            }
+        }
+    }
+    ordered
+}
+
 fn node_line(
     node: &RelationNode,
     selected_node: Option<&RelationNodeId>,
     maximized: bool,
 ) -> Line<'static> {
     let selected = selected_node == Some(&node.id);
+    let mut spans = vec![Span::styled(
+        selection_marker(selected),
+        theme::relation_text_style(),
+    )];
+    spans.extend(node_spans(node, selected, maximized));
+    Line::from(spans)
+}
+
+const fn selection_marker(selected: bool) -> &'static str {
+    if selected { "> " } else { "  " }
+}
+
+fn node_spans(node: &RelationNode, selected: bool, maximized: bool) -> Vec<Span<'static>> {
     let mut spans = vec![
-        Span::styled(
-            if selected { "> " } else { "  " },
-            theme::relation_text_style(),
-        ),
         Span::styled(
             operation_symbol(node.operation),
             operation_style(node.operation),
@@ -683,13 +725,13 @@ fn node_line(
     if node.display_address.contains("[*]") && node.change_count > 0 {
         spans.push(Span::styled(
             format!(" ×{}", node.change_count),
-            theme::relation_muted_style(),
+            theme::relation_text_style(),
         ));
     }
     if node.has_unknown {
         spans.push(Span::styled(
             " [unknown values]",
-            theme::relation_muted_style(),
+            theme::relation_text_style(),
         ));
     }
     if node.differs {
@@ -698,7 +740,7 @@ fn node_line(
     if !node.unresolved.is_empty() {
         spans.push(Span::styled(" ?", theme::relation_muted_style()));
     }
-    Line::from(spans)
+    spans
 }
 
 fn has_grouped_links(graph: &RelationGraph) -> bool {
@@ -781,12 +823,17 @@ fn operation_style(operation: ResourceChangeKind) -> ratatui::style::Style {
     }
 }
 
+// Configuration is the unmarked default; a line names its sources only when state is involved.
 fn edge_segment(link: &RelationGraphLink) -> String {
     let glyph = match link.kind {
         RelationGraphLinkKind::Solid => "─",
         RelationGraphLinkKind::Dotted => "┄",
     };
-    let evidence = source_label(link);
+    let evidence = if link.sources.contains(&RelationSource::State) {
+        source_label(link)
+    } else {
+        String::new()
+    };
     if evidence.is_empty() {
         format!("{glyph}{glyph}>")
     } else {
@@ -800,7 +847,7 @@ fn evidence_label(link: &RelationGraphLink) -> String {
         if !labels.is_empty() {
             labels.push_str(", ");
         }
-        labels.push_str("block candidate");
+        labels.push_str("block-level");
     }
     labels
 }
@@ -874,7 +921,7 @@ mod tests {
 
     use super::{
         RelationGraphScroll, RelationGraphTitle, RelationGraphView, compact_legend_lines,
-        graph_lines, legend_lines, node_line, render, title_line,
+        dependency_order, graph_lines, legend_lines, node_line, render, title_line,
     };
 
     #[test]
@@ -912,9 +959,92 @@ mod tests {
     }
 
     #[test]
+    fn fallback_order_puts_used_nodes_first_and_keeps_group_order_on_cycles() {
+        let nodes = (0..1_000)
+            .map(|index| {
+                node(
+                    &format!("aws_service.n{index:04}"),
+                    ResourceChangeKind::Update,
+                )
+            })
+            .collect::<Vec<_>>();
+        let reversed_chain = nodes
+            .windows(2)
+            .map(|pair| {
+                link(
+                    &pair[1],
+                    &pair[0],
+                    RelationGraphLinkKind::Solid,
+                    &[RelationSource::Configuration],
+                )
+            })
+            .collect::<Vec<_>>();
+        let ids = nodes.iter().map(|node| node.id.clone()).collect::<Vec<_>>();
+        let cycle = [
+            link(
+                &nodes[0],
+                &nodes[1],
+                RelationGraphLinkKind::Solid,
+                &[RelationSource::Configuration],
+            ),
+            link(
+                &nodes[1],
+                &nodes[0],
+                RelationGraphLinkKind::Solid,
+                &[RelationSource::Configuration],
+            ),
+        ];
+
+        let chain = dependency_order(&ids, &reversed_chain.iter().collect::<Vec<_>>());
+        let cycle = dependency_order(&ids[..2], &cycle.iter().collect::<Vec<_>>());
+
+        assert!(chain.iter().copied().eq(ids.iter().rev()));
+        assert!(cycle.iter().copied().eq(ids[..2].iter()));
+    }
+
+    #[test]
+    fn chain_deeper_than_the_pane_falls_back_to_uses_rows() {
+        let nodes = (0..5_000)
+            .map(|index| {
+                node(
+                    &format!("aws_service.n{index:04}"),
+                    ResourceChangeKind::Update,
+                )
+            })
+            .collect::<Vec<_>>();
+        let links = nodes
+            .windows(2)
+            .map(|pair| {
+                link(
+                    &pair[0],
+                    &pair[1],
+                    RelationGraphLinkKind::Solid,
+                    &[RelationSource::Configuration],
+                )
+            })
+            .collect::<Vec<_>>();
+        let graph = graph(nodes, links);
+
+        let rendered = graph_lines(&graph, None, false, 80)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(rendered.iter().all(|line| !line.contains("└──>")));
+        assert_eq!(rendered.len(), 5_000);
+        assert_eq!(
+            rendered[1],
+            "  ~ aws_service.n0001  uses: aws_service.n0000 (config)"
+        );
+    }
+
+    #[test]
     fn relation_legend_shows_only_applicable_explanations() {
-        let no_links = legend_lines(&single_node_graph());
-        assert!(no_links.is_empty());
+        let no_links = legend_lines(&single_node_graph())
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(no_links, ["! differs across envs"]);
 
         let unresolved = legend_lines(&isolated_graph());
         let unresolved = unresolved
@@ -950,8 +1080,8 @@ mod tests {
             annotated,
             [
                 "A ──> B  B uses A",
-                "block-level, may not apply",
-                "(state) from state",
+                "A ┄┄> B  block-level, may not apply",
+                "(state) from state; unmarked from configuration",
             ]
         );
     }
@@ -1036,6 +1166,96 @@ mod tests {
     }
 
     #[test]
+    fn branch_draws_each_dependent_on_its_own_rail() {
+        let graph = branch_graph();
+
+        let text = buffer_text(&render_to_buffer((75, 20), |frame| {
+            render(
+                frame,
+                Rect::new(0, 0, 75, 20),
+                &graph,
+                &view(Some("prod"), "whole env", None, false, 0, 0),
+            );
+        }));
+
+        let rows = text.lines().collect::<Vec<_>>();
+        let root = rows
+            .iter()
+            .position(|row| row.contains("-/+ app › terraform_data.db"))
+            .expect("tree root is drawn");
+        assert!(rows[root + 1].ends_with("  │"), "{text}");
+        assert!(
+            rows[root + 2].contains("├─(state)─> ~ app › aws_ecs_service.api"),
+            "{text}"
+        );
+        assert!(
+            rows[root + 4].contains("└┄(config,state)┄> ~ app › dns › aws_route53_record.db"),
+            "{text}"
+        );
+        assert!(!text.contains("uses:"), "{text}");
+    }
+
+    #[test]
+    fn tree_keeps_sibling_rails_beside_nested_dependents() {
+        let source = node("terraform_data.source", ResourceChangeKind::Update);
+        let left = node("aws_service.left", ResourceChangeKind::Update);
+        let right = node("aws_service.right", ResourceChangeKind::Update);
+        let nested = node("aws_listener.nested", ResourceChangeKind::Create);
+        let graph = graph(
+            vec![source.clone(), left.clone(), right.clone(), nested.clone()],
+            vec![
+                link(
+                    &source,
+                    &left,
+                    RelationGraphLinkKind::Solid,
+                    &[RelationSource::Configuration],
+                ),
+                link(
+                    &source,
+                    &right,
+                    RelationGraphLinkKind::Solid,
+                    &[RelationSource::Configuration],
+                ),
+                link(
+                    &left,
+                    &nested,
+                    RelationGraphLinkKind::Solid,
+                    &[RelationSource::Configuration],
+                ),
+            ],
+        );
+
+        let text = buffer_text(&render_to_buffer((165, 50), |frame| {
+            render(
+                frame,
+                Rect::new(0, 0, 165, 50),
+                &graph,
+                &view(Some("prod"), "whole env", None, false, 0, 0),
+            );
+        }));
+
+        let rows = text
+            .lines()
+            .skip_while(|row| !row.contains("~ terraform_data.source"))
+            .take(7)
+            .map(|row| row.trim_start_matches('│').trim_end_matches('│').trim_end())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rows,
+            [
+                "  ~ terraform_data.source",
+                "  │",
+                "  ├──> ~ aws_service.left",
+                "  │    │",
+                "  │    └──> + aws_listener.nested",
+                "  │",
+                "  └──> ~ aws_service.right",
+            ],
+            "{text}"
+        );
+    }
+
+    #[test]
     fn branch_keeps_all_nodes_and_evidence_visible() {
         let graph = branch_graph();
         let output = render_to_buffer((165, 50), |frame| {
@@ -1067,20 +1287,26 @@ mod tests {
         assert!(text.contains("terraform_data.db"), "{text}");
         assert!(text.contains("aws_ecs_service.api"));
         assert!(text.contains("aws_route53_record.db"));
-        assert!(text.contains("┬─>"));
-        assert!(text.contains("(state)"));
-        assert!(text.contains("(config,state)"));
+        assert!(text.contains("├─(state)─>"), "{text}");
+        assert!(text.contains("└┄(config,state)┄>"), "{text}");
         assert!(text.contains("A ──> B  B uses A"));
-        assert!(text.contains("block-level, may not apply"));
-        assert!(text.contains("(state) from state"));
+        assert!(text.contains("A ┄┄> B  block-level, may not apply"));
+        assert!(text.contains("(state) from state; unmarked from configuration"));
 
         let rows = text.lines().collect::<Vec<_>>();
-        let top = rows.iter().position(|row| row.contains('┬')).unwrap();
+        let first = rows.iter().position(|row| row.contains('├')).unwrap();
+        let last = rows.iter().position(|row| row.contains('└')).unwrap();
         assert_eq!(
-            glyph_column(rows[top], '┬'),
-            glyph_column(rows[top + 1], '└')
+            glyph_column(rows[first], '├'),
+            glyph_column(rows[last], '└')
         );
-        assert_edge_annotation_trails(rows[top], '┬');
+        let rail = glyph_column(rows[first], '├');
+        assert!(
+            rows[first + 1..last]
+                .iter()
+                .all(|row| row.chars().nth(rail) == Some('│')),
+            "{text}"
+        );
     }
 
     #[test]
@@ -1104,11 +1330,19 @@ mod tests {
             );
         }));
 
+        let chain_rows = chain_text.lines().collect::<Vec<_>>();
+        let root = chain_rows
+            .iter()
+            .position(|row| row.contains("+ aws_vpc.main"))
+            .expect("chain root is drawn");
         assert!(
-            chain_text.contains("aws_vpc.main ─(config)─>"),
+            chain_rows[root + 2].contains("└──> ~ aws_subnet.web"),
             "{chain_text}"
         );
-        assert!(chain_text.contains("aws_subnet.web ─(state)─>"));
+        assert!(
+            chain_rows[root + 4].contains("└─(state)─> + aws_instance.api"),
+            "{chain_text}"
+        );
         assert!(merge_text.contains("┴─>"));
         assert!(merge_text.contains("(config,state)"));
         assert!(merge_text.contains("┐"), "{merge_text}");
@@ -1122,8 +1356,9 @@ mod tests {
             glyph_column(merge_rows[top], '┐'),
             glyph_column(merge_rows[top + 1], '┴')
         );
-        assert_edge_annotation_trails(merge_rows[top], '┐');
-        assert_edge_annotation_trails(merge_rows[top + 1], '┴');
+        let annotated = merge_rows[top + 1];
+        assert!(annotated.contains("(config,state)"), "{merge_text}");
+        assert_edge_annotation_trails(annotated, '┴');
     }
 
     #[test]
@@ -1169,9 +1404,7 @@ mod tests {
         );
         assert!(text.contains("aws_service.left  uses: terraform_data.source (config)"));
         assert!(
-            text.contains(
-                "aws_service.right  uses: terraform_data.source (config, block candidate)"
-            )
+            text.contains("aws_service.right  uses: terraform_data.source (config, block-level)")
         );
         assert!(text.contains("aws_route53_record.tail  uses: aws_listener.target (config)"));
     }
@@ -1189,7 +1422,7 @@ mod tests {
         }));
 
         assert!(text.contains("uses: aws_db.main (config)"), "{text}");
-        assert!(text.contains("uses: aws_service.api (state, block candidate)"));
+        assert!(text.contains("uses: aws_service.api (state, block-level)"));
         assert!(!text.contains("aws_db.main ──>"));
         assert!(!text.contains("aws_service.api ──>"));
     }

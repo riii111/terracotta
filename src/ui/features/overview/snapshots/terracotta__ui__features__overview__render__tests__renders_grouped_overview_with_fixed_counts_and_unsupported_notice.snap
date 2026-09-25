@@ -8,7 +8,7 @@ infra  ws:default  terraform loading...  /repo/infra
 ┌* [2] Changes · infra─────────────────────────────────────────────────────────────────────────────┐
 │  Change Address                                                                                  │
 │Other changes: 1 output/import/move or unsupported change(s). Press v for the full plan.          │
-│  ~ x2   [+] terraform_data.server[*]                                                             │
+│  ~ x2   ▸ terraform_data.server[*]                                                               │
 │                                                                                                  │
 │                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
@@ -16,13 +16,13 @@ infra  ws:default  terraform loading...  /repo/infra
 │Links unknown                                                                                     │
 │  ~ terraform_data.server[*] ×2 ?  configuration not collected, state not collected               │
 │                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
 │? unresolved means a relationship could not be determined                                         │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 / filter | Enter open raw | v full plan | 2/3 focus | f maximize | ? help | q quit

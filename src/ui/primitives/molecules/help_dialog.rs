@@ -426,7 +426,7 @@ mod tests {
             "Navigation",
             vec![HelpAction::new(
                 "Space",
-                "expand or collapse a selected [+]/[-] group row",
+                "expand or collapse a selected ▸/▾ group row",
             )],
         )];
 
@@ -458,10 +458,7 @@ mod tests {
     fn help_rows_stack_when_narrow_and_return_to_columns_after_resize() {
         let sections = [HelpSection::new(
             "Overview",
-            vec![HelpAction::new(
-                "Space",
-                "toggle a selected [+]/[-] group row",
-            )],
+            vec![HelpAction::new("Space", "toggle a selected ▸/▾ group row")],
         )];
 
         let narrow = buffer_text(&render_to_buffer((40, 24), |frame| {

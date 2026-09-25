@@ -436,7 +436,7 @@ try:
         elif scenario == "env_default_matrix":
             for name in ("a-dev", "b-stg", "c-prod"):
                 wait_environment(name, "Ready")
-            observe_current_or_wait("Same change across envs: 2 changes", "default_matrix_summary")
+            observe_current_or_wait("Same change across envs: 2 patterns", "default_matrix_summary")
             send_key(b"2")
             send_key(b" ")
             observe_current_or_wait("terraform_data.server[*]", "default_matrix")
@@ -510,9 +510,14 @@ try:
             wait_environment("b-error", "Error")
             send_key(b"]")
             send_key(b"\r")
-            wait_new("Missing required variable", "error_diagnostic")
+            # The Overview also shows the diagnostic, so wait for the dialog's own key hint.
+            wait_parts(["Missing required variable", "Esc close"], "error_diagnostic")
             send_key(b"\x1b")
-            wait_new("a-ready", "error_dialog_closed")
+            wait_screen(
+                lambda current: "a-ready" in current and "Esc close" not in current,
+                "error_dialog_closed",
+                "dialog closed",
+            )
             send_key(b"r")
             wait_environment("b-error", "Ready")
             exit_code = quit_with_enter()

@@ -69,6 +69,21 @@ enum EnvironmentDialog {
     Message(String),
 }
 
+#[derive(Clone, Copy)]
+enum SelectedRowState {
+    Absent,
+    Unchanged,
+}
+
+impl SelectedRowState {
+    fn scope_note(self, environment: &str) -> String {
+        match self {
+            Self::Absent => format!("selected row not in {environment}"),
+            Self::Unchanged => format!("selected row unchanged in {environment}"),
+        }
+    }
+}
+
 fn overview_navigation_alias(key: KeyEvent, pane: EnvironmentPane) -> KeyEvent {
     let code = match (key.code, key.modifiers) {
         (KeyCode::Char('h'), KeyModifiers::NONE) if pane != EnvironmentPane::Environments => {
@@ -262,6 +277,9 @@ impl EnvironmentView {
         {
             return None;
         }
+        if self.selected_row_state_in_environment().is_some() {
+            return None;
+        }
         let (row_id, _) = self.matrix.relation_selection()?;
         self.environment_relations
             .as_ref()?
@@ -270,6 +288,22 @@ impl EnvironmentView {
             .row_node_ids
             .get(row_id)?
             .as_ref()
+    }
+
+    // A selected row that has no change in the shown environment must not highlight a node there,
+    // or a prod-only instance would read as present in dev through its group.
+    fn selected_row_state_in_environment(&self) -> Option<SelectedRowState> {
+        let Some(MatrixSelectedItem::Resource {
+            cell: Some(cell), ..
+        }) = self.matrix.selected_item(self.selection.column)
+        else {
+            return None;
+        };
+        match cell.state {
+            CellState::Missing => Some(SelectedRowState::Absent),
+            CellState::NoOp => Some(SelectedRowState::Unchanged),
+            CellState::Change { .. } | CellState::Unavailable => None,
+        }
     }
 
     fn is_editing(&self) -> bool {
@@ -537,7 +571,7 @@ impl EnvironmentView {
         self.notice = None;
         match input {
             OverviewInput::Quit => self.quit(),
-            OverviewInput::Open => self.open_selected_matrix_row(state, matrix_page),
+            OverviewInput::Open => self.open_selected_matrix_row(state),
             OverviewInput::ViewPlan => self.open(state, self.selection.column),
             OverviewInput::Copy => Some(EnvironmentInput::Review(
                 self.selection.column,
@@ -726,16 +760,9 @@ impl EnvironmentView {
         EnvironmentInput::Review(index, Box::new(Action::ReviewSearchChanged(String::new())))
     }
 
-    fn open_selected_matrix_row(
-        &mut self,
-        state: &EnvironmentSession,
-        matrix_page: usize,
-    ) -> Option<EnvironmentInput> {
+    fn open_selected_matrix_row(&mut self, state: &EnvironmentSession) -> Option<EnvironmentInput> {
         match self.matrix.selected_item(self.selection.column)? {
-            MatrixSelectedItem::SameChanges => {
-                self.matrix.apply(OverviewInput::ToggleExpand, matrix_page);
-                None
-            }
+            MatrixSelectedItem::SameChanges => None,
             MatrixSelectedItem::Resource {
                 addresses,
                 cell,

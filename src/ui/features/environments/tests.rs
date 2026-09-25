@@ -559,7 +559,7 @@ fn help_explains_matrix_symbols_and_missing_rows() {
         ".",
         "resource present, with no change",
         "action unknown",
-        "why: missing",
+        "why: only in / not in",
         "some Ready plans",
         "not retried",
     ] {
@@ -1091,7 +1091,7 @@ fn selecting_visible_environments_preserves_matrix_columns_across_layout_changes
         assert!(matrix_header(&returned).contains(environment), "{returned}");
     }
 
-    let narrowed = buffer_text(&render_to_buffer((55, 24), |frame| {
+    let narrowed = buffer_text(&render_to_buffer((59, 24), |frame| {
         view.render(frame, &state);
     }));
     assert!(matrix_header(&narrowed).contains("stg"), "{narrowed}");
@@ -1103,7 +1103,7 @@ fn selecting_visible_environments_preserves_matrix_columns_across_layout_changes
 fn narrow_selection_keeps_the_previous_column_and_manual_scroll_position() {
     let state = overview_plan_session(&["dev", "stg", "prod"]);
     let mut view = EnvironmentView::default();
-    let narrow = Size::new(55, 24);
+    let narrow = Size::new(59, 24);
 
     for _ in 0..2 {
         view.handle_key(
@@ -1113,7 +1113,7 @@ fn narrow_selection_keeps_the_previous_column_and_manual_scroll_position() {
         );
     }
 
-    let selected = buffer_text(&render_to_buffer((55, 24), |frame| {
+    let selected = buffer_text(&render_to_buffer((59, 24), |frame| {
         view.render(frame, &state);
     }));
     assert!(matrix_header(&selected).contains("stg"), "{selected}");
@@ -1125,7 +1125,7 @@ fn narrow_selection_keeps_the_previous_column_and_manual_scroll_position() {
         narrow,
         &state,
     );
-    let manually_scrolled = buffer_text(&render_to_buffer((55, 24), |frame| {
+    let manually_scrolled = buffer_text(&render_to_buffer((59, 24), |frame| {
         view.render(frame, &state);
     }));
     assert!(
@@ -1142,7 +1142,7 @@ fn narrow_selection_keeps_the_previous_column_and_manual_scroll_position() {
         narrow,
         &state,
     );
-    let raw = buffer_text(&render_to_buffer((55, 24), |frame| {
+    let raw = buffer_text(&render_to_buffer((59, 24), |frame| {
         view.render(frame, &state);
     }));
     assert!(raw.contains("PLAN LINE 00"), "{raw}");
@@ -1151,7 +1151,7 @@ fn narrow_selection_keeps_the_previous_column_and_manual_scroll_position() {
         narrow,
         &state,
     );
-    let returned = buffer_text(&render_to_buffer((55, 24), |frame| {
+    let returned = buffer_text(&render_to_buffer((59, 24), |frame| {
         view.render(frame, &state);
     }));
     assert!(matrix_header(&returned).contains("prod"), "{returned}");
@@ -1164,7 +1164,7 @@ fn narrow_selection_keeps_the_previous_column_and_manual_scroll_position() {
             &state,
         );
     }
-    let manually_scrolled = buffer_text(&render_to_buffer((55, 24), |frame| {
+    let manually_scrolled = buffer_text(&render_to_buffer((59, 24), |frame| {
         view.render(frame, &state);
     }));
     assert!(

@@ -14,11 +14,11 @@ infra  ws:default  terraform loading...  /repo/infra
 └│                    Relations                                             ┃ │┘
 ┌│                                                                          ┃ │┐
 ││ Review                                                                   ┃ ││
-││ ✓ Ready            plan acquisition completed; review and apply safety   ┃ ││
+││ ✓ Ready            plan acquisition completed; review and apply safety   │ ││
 ││                    are separate                                          │ ││
 ││ Enter              open the selected raw block                           │ ││
 ││ /                  filter Changes full addresses                         │ ││
-││ Space              expand or collapse only on [+]/[-] group rows         │ ││
+││ Space              expand or collapse only on ▸/▾ group rows             │ ││
 ││ [unknown values]   known changes and unknown paths match; final values   │ ││
 ││                    may differ                                            │ ││
 ││ v                  show the full plan from the top                       │ ││

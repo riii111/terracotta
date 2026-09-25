@@ -6,8 +6,8 @@ terracotta ▸ prod                                                           to
 staging ✗ Error  │  staging ✗ Error
 ┌* [2] Compare · Ready 0/2─────────────────────────────────────────────────────┐
 │                                                                              │
-│Address     staging     staging      why                                      │
-│                                                                              │
+│Address     │ staging     staging     │ why                                   │
+│────────────┼─────────────────────────┼───────────────────────────────────────│
 │Waiting for environment plans.                                                │
 │                                                                              │
 │blank: absent   .: unchanged   ?: plan unavailable                            │

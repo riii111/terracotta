@@ -159,11 +159,8 @@ impl EnvironmentView {
         };
         let focus = self.active_pane(layout.header.width);
         let matrix_selection = self.matrix.selected_item(self.selection.column);
-        let enter_action = match matrix_selection {
-            None => None,
-            Some(MatrixSelectedItem::SameChanges) => Some(MatrixEnterAction::ToggleSameChanges),
-            Some(MatrixSelectedItem::Resource { .. }) => Some(MatrixEnterAction::OpenRow),
-        };
+        let enter_action = matches!(matrix_selection, Some(MatrixSelectedItem::Resource { .. }))
+            .then_some(MatrixEnterAction::OpenRow);
         let footer_lines = if self.confirming_quit {
             if state.acquiring() {
                 vec![Line::default()]
@@ -273,18 +270,23 @@ impl EnvironmentView {
             .get(self.selection.column)
             .map(environments::name);
         let scope = if environment.is_none() {
-            "environment unavailable"
+            "environment unavailable".to_owned()
         } else if self
             .compared_environments(state.plans().len())
             .contains(&self.selection.column)
         {
-            "whole env"
+            self.selected_row_state_in_environment()
+                .zip(environment.as_deref())
+                .map_or_else(
+                    || "whole env".to_owned(),
+                    |(row, environment)| format!("whole env · {}", row.scope_note(environment)),
+                )
         } else {
-            "not compared"
+            "not compared".to_owned()
         };
         let title = RelationGraphTitle {
             environment: environment.as_deref(),
-            scope,
+            scope: &scope,
         };
         let relation = self
             .environment_relations
@@ -774,12 +776,16 @@ fn comparison_help() -> help_dialog::HelpSection {
                 "no differences found in Ready plans; unknown values may differ",
             ),
             help_dialog::HelpAction::new(
+                "N patterns",
+                "counts collapsed [2] rows, not resources; instance counts differ when a group's size varies",
+            ),
+            help_dialog::HelpAction::new(
                 "Excluded",
                 "environments remain selectable and are not retried",
             ),
             help_dialog::HelpAction::new("Scope", "only Ready plans are compared"),
             help_dialog::HelpAction::new(
-                "why: missing",
+                "why: only in / not in",
                 "resource is present in only some Ready plans",
             ),
         ],
@@ -793,10 +799,10 @@ enum MatrixFooterState {
     Unfiltered,
 }
 
+// The Same change summary has no Enter action; Space alone expands it, keeping one key per action.
 #[derive(Clone, Copy)]
 enum MatrixEnterAction {
     OpenRow,
-    ToggleSameChanges,
 }
 
 impl MatrixEnterAction {
@@ -804,8 +810,6 @@ impl MatrixEnterAction {
         match (self, compact) {
             (Self::OpenRow, true) => "open row",
             (Self::OpenRow, false) => "open selected row",
-            (Self::ToggleSameChanges, true) => "toggle",
-            (Self::ToggleSameChanges, false) => "toggle same changes",
         }
     }
 }
@@ -914,8 +918,8 @@ fn overview_footer(context: OverviewFooterContext<'_>) -> Vec<Line<'static>> {
             ));
         }
     } else {
+        // In [3] Enter and v both open the plan from the top, so only Enter is listed.
         items.push((100, overview_footer_hint(&["Enter"], "open plan")));
-        items.push((75, overview_footer_hint(&["v"], "full plan")));
     }
     if selected.is_some_and(|plan| matches!(plan.state(), EnvironmentState::Error)) {
         items.push((95, overview_footer_hint(&["r"], "retry")));
