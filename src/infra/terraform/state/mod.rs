@@ -58,36 +58,23 @@ pub(super) fn read_state_with_arguments(
             output,
         )));
     }
-    parse_state(&output.output.stdout).map_err(|_| StateReadError::InvalidFormat)
+    parse_state(&output.output.stdout).ok_or(StateReadError::InvalidFormat)
 }
 
-#[derive(Debug, Clone, Copy)]
-enum StateParseError {
-    Invalid,
-}
-
-type StateParseResult<T> = Result<T, StateParseError>;
-
-fn parse_state(input: &[u8]) -> StateParseResult<Vec<RelationEvidence>> {
-    let state = serde_json::from_slice::<Value>(input).map_err(|_| StateParseError::Invalid)?;
-    let root = state.as_object().ok_or(StateParseError::Invalid)?;
-    let resources = root
-        .get("resources")
-        .and_then(Value::as_array)
-        .ok_or(StateParseError::Invalid)?;
+fn parse_state(input: &[u8]) -> Option<Vec<RelationEvidence>> {
+    let state = serde_json::from_slice::<Value>(input).ok()?;
+    let resources = state.as_object()?.get("resources")?.as_array()?;
     let mut instances = Vec::new();
     for resource in resources {
-        let resource = resource.as_object().ok_or(StateParseError::Invalid)?;
+        let resource = resource.as_object()?;
         let module = match resource.get("module") {
-            Some(Value::String(module)) => {
-                parse_module_address(module).ok_or(StateParseError::Invalid)?
-            }
+            Some(Value::String(module)) => parse_module_address(module)?,
             Some(Value::Null) | None => Vec::new(),
-            _ => return Err(StateParseError::Invalid),
+            _ => return None,
         };
         let mode = required_string(resource, "mode")?;
         if !matches!(mode, "managed" | "data") {
-            return Err(StateParseError::Invalid);
+            return None;
         }
         let resource_type = required_string(resource, "type")?;
         let name = required_string(resource, "name")?;
@@ -98,19 +85,15 @@ fn parse_state(input: &[u8]) -> StateParseResult<Vec<RelationEvidence>> {
             name,
             None,
         );
-        let state_instances = resource
-            .get("instances")
-            .and_then(Value::as_array)
-            .ok_or(StateParseError::Invalid)?;
-        for instance in state_instances {
-            let instance = instance.as_object().ok_or(StateParseError::Invalid)?;
+        for instance in resource.get("instances")?.as_array()? {
+            let instance = instance.as_object()?;
             let index = match instance.get("index_key") {
                 Some(Value::String(value)) => Some(AddressIndex::String(value.clone())),
-                Some(Value::Number(value)) => Some(AddressIndex::Number(
-                    value.as_u64().ok_or(StateParseError::Invalid)?.to_string(),
-                )),
+                Some(Value::Number(value)) => {
+                    Some(AddressIndex::Number(value.as_u64()?.to_string()))
+                }
                 Some(Value::Null) | None => None,
-                _ => return Err(StateParseError::Invalid),
+                _ => return None,
             };
             let dependencies = parse_dependencies(instance)?;
             let address =
@@ -124,29 +107,21 @@ fn parse_state(input: &[u8]) -> StateParseResult<Vec<RelationEvidence>> {
             });
         }
     }
-    Ok(relations_for_state(&instances))
+    Some(relations_for_state(&instances))
 }
 
-fn required_string<'a>(object: &'a Map<String, Value>, field: &str) -> StateParseResult<&'a str> {
-    object
-        .get(field)
-        .and_then(Value::as_str)
-        .ok_or(StateParseError::Invalid)
+fn required_string<'a>(object: &'a Map<String, Value>, field: &str) -> Option<&'a str> {
+    object.get(field)?.as_str()
 }
 
-fn parse_dependencies(instance: &Map<String, Value>) -> StateParseResult<Vec<String>> {
+fn parse_dependencies(instance: &Map<String, Value>) -> Option<Vec<String>> {
     match instance.get("dependencies") {
-        None | Some(Value::Null) => Ok(Vec::new()),
+        None | Some(Value::Null) => Some(Vec::new()),
         Some(Value::Array(dependencies)) => dependencies
             .iter()
-            .map(|dependency| {
-                dependency
-                    .as_str()
-                    .map(str::to_owned)
-                    .ok_or(StateParseError::Invalid)
-            })
+            .map(|dependency| dependency.as_str().map(str::to_owned))
             .collect(),
-        _ => Err(StateParseError::Invalid),
+        _ => None,
     }
 }
 
@@ -303,7 +278,7 @@ mod tests {
         clippy::needless_pass_by_value,
         reason = "JSON fixture values are serialized directly into the parser input"
     )]
-    fn parse(value: Value) -> StateParseResult<Vec<RelationEvidence>> {
+    fn parse(value: Value) -> Option<Vec<RelationEvidence>> {
         parse_state(value.to_string().as_bytes())
     }
 
@@ -494,15 +469,15 @@ mod tests {
                     && target.is_instance()
             })
         }));
-        assert!(parse(json!({"resources": [{"instances": "bad"}]})).is_err());
+        assert!(parse(json!({"resources": [{"instances": "bad"}]})).is_none());
         for index in [json!(1.0), json!(1.5), json!(-1)] {
             assert!(parse(json!({
                 "resources": [resource(None, "invalid_index", vec![instance(Some(index), json!([]))])]
-            })).is_err());
+            })).is_none());
         }
         let mut unknown_mode = resource(None, "unknown_mode", vec![instance(None, json!([]))]);
         unknown_mode["mode"] = json!("future");
-        assert!(parse(json!({"resources": [unknown_mode]})).is_err());
+        assert!(parse(json!({"resources": [unknown_mode]})).is_none());
         assert!(
             parse(json!({"resources": []}))
                 .expect("empty state is valid")
@@ -583,6 +558,21 @@ mod tests {
         };
 
         assert!(!format!("{error}").contains("synthetic-secret"));
+    }
+
+    #[test]
+    fn successful_state_pull_with_malformed_output_is_invalid_format() {
+        let runner = runner(br#"{"resources":"synthetic"}"#, ProcessStatus::Exited(0));
+
+        let result = read_state_with_arguments(
+            Tool::Terraform,
+            Path::new("/workspace"),
+            &[],
+            &CancellationToken::new(),
+            &runner,
+        );
+
+        assert!(matches!(result, Err(StateReadError::InvalidFormat)));
     }
 
     #[test]

@@ -10,7 +10,6 @@ use super::super::command::{
     ProcessRunner, ProcessStatus, TerraformCommand, TerraformExecutionError, interrupted_error,
     run_command,
 };
-use super::super::show::PlanParseError;
 
 const SUPPORTED_FORMAT_MAJOR: u64 = 1;
 
@@ -49,221 +48,145 @@ pub(crate) fn read_provider_schema_with_arguments(
     if !output.status.is_some_and(ProcessStatus::is_success) {
         return Ok(None);
     }
-    Ok(parse_provider_schemas(&output.output.stdout).ok())
+    Ok(parse_provider_schemas(&output.output.stdout))
 }
 
-fn parse_provider_schemas(input: &[u8]) -> Result<ProviderSchemas, PlanParseError> {
-    let document =
-        serde_json::from_slice::<Value>(input).map_err(|_| PlanParseError::InvalidJson)?;
-    let root = document
-        .as_object()
-        .ok_or(PlanParseError::RootMustBeObject)?;
-    parse_format_version(root)?;
+fn parse_provider_schemas(input: &[u8]) -> Option<ProviderSchemas> {
+    let document = serde_json::from_slice::<Value>(input).ok()?;
+    let root = document.as_object()?;
+    if format_major(root)? != SUPPORTED_FORMAT_MAJOR {
+        return None;
+    }
     let providers = root
-        .get("provider_schemas")
-        .ok_or(PlanParseError::MissingField("provider_schemas"))?
-        .as_object()
-        .ok_or(PlanParseError::InvalidField("provider_schemas"))?;
-    let providers = providers
+        .get("provider_schemas")?
+        .as_object()?
         .iter()
         .map(|(name, value)| parse_provider_schema(value).map(|schema| (name.clone(), schema)))
-        .collect::<Result<BTreeMap<_, _>, _>>()?;
-    Ok(ProviderSchemas { providers })
+        .collect::<Option<BTreeMap<_, _>>>()?;
+    Some(ProviderSchemas { providers })
 }
 
-fn parse_provider_schema(value: &Value) -> Result<ProviderSchema, PlanParseError> {
-    let provider = value
-        .as_object()
-        .ok_or(PlanParseError::InvalidField("provider schema"))?;
-    let resources = provider
-        .get("resource_schemas")
-        .map(|value| {
-            value
-                .as_object()
-                .ok_or(PlanParseError::InvalidField("resource_schemas"))?
-                .iter()
-                .map(|(name, value)| {
-                    parse_resource_schema(value).map(|schema| (name.clone(), schema))
-                })
-                .collect::<Result<BTreeMap<_, _>, _>>()
-        })
-        .transpose()?
-        .unwrap_or_default();
-    Ok(ProviderSchema { resources })
+fn parse_provider_schema(value: &Value) -> Option<ProviderSchema> {
+    let provider = value.as_object()?;
+    let resources = match provider.get("resource_schemas") {
+        Some(value) => value
+            .as_object()?
+            .iter()
+            .map(|(name, value)| parse_resource_schema(value).map(|schema| (name.clone(), schema)))
+            .collect::<Option<BTreeMap<_, _>>>()?,
+        None => BTreeMap::new(),
+    };
+    Some(ProviderSchema { resources })
 }
 
-fn parse_resource_schema(value: &Value) -> Result<ResourceSchema, PlanParseError> {
-    let resource = value
-        .as_object()
-        .ok_or(PlanParseError::InvalidField("resource schema"))?;
-    let block = resource
-        .get("block")
-        .ok_or(PlanParseError::MissingField("resource schema block"))?
-        .as_object()
-        .ok_or(PlanParseError::InvalidField("resource schema block"))?;
+fn parse_resource_schema(value: &Value) -> Option<ResourceSchema> {
+    let block = value.as_object()?.get("block")?.as_object()?;
     let attributes = parse_attributes(block.get("attributes"))?;
     let block_types = parse_block_types(block.get("block_types"))?;
-    Ok(ResourceSchema {
+    Some(ResourceSchema {
         attributes,
         block_types,
     })
 }
 
-fn parse_attributes(
-    value: Option<&Value>,
-) -> Result<BTreeMap<String, AttributeType>, PlanParseError> {
+fn parse_attributes(value: Option<&Value>) -> Option<BTreeMap<String, AttributeType>> {
     let Some(value) = value else {
-        return Ok(BTreeMap::new());
+        return Some(BTreeMap::new());
     };
-    let attributes = value
-        .as_object()
-        .ok_or(PlanParseError::InvalidField("schema attributes"))?;
-    attributes
+    value
+        .as_object()?
         .iter()
         .map(|(name, value)| {
-            let attribute = value
-                .as_object()
-                .ok_or(PlanParseError::InvalidField("schema attribute"))?;
-            parse_attribute_type(attribute).map(|kind| (name.clone(), kind))
+            parse_attribute_type(value.as_object()?).map(|kind| (name.clone(), kind))
         })
         .collect()
 }
 
-fn parse_attribute_type(attribute: &Map<String, Value>) -> Result<AttributeType, PlanParseError> {
+fn parse_attribute_type(attribute: &Map<String, Value>) -> Option<AttributeType> {
     if let Some(kind) = attribute.get("type") {
         return parse_type(kind);
     }
-    if let Some(nested_type) = attribute.get("nested_type") {
-        return parse_nested_type(nested_type);
-    }
-    Err(PlanParseError::MissingField("schema attribute type"))
+    parse_nested_type(attribute.get("nested_type")?)
 }
 
-fn parse_nested_type(value: &Value) -> Result<AttributeType, PlanParseError> {
-    let nested_type = value
-        .as_object()
-        .ok_or(PlanParseError::InvalidField("schema nested type"))?;
-    let attributes = parse_attributes(nested_type.get("attributes"))?;
-    let object = AttributeType::Object(attributes);
-    match nested_type
-        .get("nesting_mode")
-        .ok_or(PlanParseError::MissingField(
-            "schema nested type nesting_mode",
-        ))?
-        .as_str()
-        .ok_or(PlanParseError::InvalidField(
-            "schema nested type nesting_mode",
-        ))? {
-        "single" | "group" => Ok(object),
-        "list" => Ok(AttributeType::List(Box::new(object))),
-        "set" => Ok(AttributeType::Set(Box::new(object))),
-        "map" => Ok(AttributeType::Map(Box::new(object))),
-        _ => Err(PlanParseError::InvalidField(
-            "schema nested type nesting_mode",
-        )),
+fn parse_nested_type(value: &Value) -> Option<AttributeType> {
+    let nested_type = value.as_object()?;
+    let object = AttributeType::Object(parse_attributes(nested_type.get("attributes"))?);
+    match nested_type.get("nesting_mode")?.as_str()? {
+        "single" | "group" => Some(object),
+        "list" => Some(AttributeType::List(Box::new(object))),
+        "set" => Some(AttributeType::Set(Box::new(object))),
+        "map" => Some(AttributeType::Map(Box::new(object))),
+        _ => None,
     }
 }
 
-fn parse_block_types(
-    value: Option<&Value>,
-) -> Result<BTreeMap<String, AttributeType>, PlanParseError> {
+fn parse_block_types(value: Option<&Value>) -> Option<BTreeMap<String, AttributeType>> {
     let Some(value) = value else {
-        return Ok(BTreeMap::new());
+        return Some(BTreeMap::new());
     };
-    let blocks = value
-        .as_object()
-        .ok_or(PlanParseError::InvalidField("schema block_types"))?;
-    blocks
+    value
+        .as_object()?
         .iter()
         .map(|(name, value)| {
-            let block = value
-                .as_object()
-                .ok_or(PlanParseError::InvalidField("schema block type"))?;
-            let nested = block
-                .get("block")
-                .ok_or(PlanParseError::MissingField("schema nested block"))?;
-            let nested = nested
-                .as_object()
-                .ok_or(PlanParseError::InvalidField("schema nested block"))?;
-            let object = parse_attributes(nested.get("attributes"))?
-                .into_iter()
-                .collect::<BTreeMap<_, _>>();
-            Ok((name.clone(), AttributeType::Object(object)))
+            let nested = value.as_object()?.get("block")?.as_object()?;
+            let object = parse_attributes(nested.get("attributes"))?;
+            Some((name.clone(), AttributeType::Object(object)))
         })
         .collect()
 }
 
-fn parse_type(value: &Value) -> Result<AttributeType, PlanParseError> {
+fn parse_type(value: &Value) -> Option<AttributeType> {
     match value {
         Value::String(kind) => match kind.as_str() {
-            "bool" => Ok(AttributeType::Bool),
-            "number" => Ok(AttributeType::Number),
-            "string" => Ok(AttributeType::String),
-            "dynamic" => Ok(AttributeType::Dynamic),
-            _ => Err(PlanParseError::InvalidField("schema attribute type")),
+            "bool" => Some(AttributeType::Bool),
+            "number" => Some(AttributeType::Number),
+            "string" => Some(AttributeType::String),
+            "dynamic" => Some(AttributeType::Dynamic),
+            _ => None,
         },
         Value::Array(parts) => {
-            let Some(kind) = parts.first().and_then(Value::as_str) else {
-                return Err(PlanParseError::InvalidField("schema attribute type"));
-            };
-            let nested = |index| {
-                parts
-                    .get(index)
-                    .ok_or(PlanParseError::MissingField("schema nested type"))
-                    .and_then(parse_type)
-            };
-            match kind {
-                "list" => Ok(AttributeType::List(Box::new(nested(1)?))),
-                "set" => Ok(AttributeType::Set(Box::new(nested(1)?))),
-                "map" => Ok(AttributeType::Map(Box::new(nested(1)?))),
+            let nested = || parts.get(1).and_then(parse_type).map(Box::new);
+            match parts.first()?.as_str()? {
+                "list" => Some(AttributeType::List(nested()?)),
+                "set" => Some(AttributeType::Set(nested()?)),
+                "map" => Some(AttributeType::Map(nested()?)),
                 "tuple" => parts
-                    .get(1)
-                    .and_then(Value::as_array)
-                    .ok_or(PlanParseError::InvalidField("schema tuple type"))?
+                    .get(1)?
+                    .as_array()?
                     .iter()
                     .map(parse_type)
-                    .collect::<Result<Vec<_>, _>>()
+                    .collect::<Option<Vec<_>>>()
                     .map(AttributeType::Tuple),
                 "object" => parts
-                    .get(1)
-                    .and_then(Value::as_object)
-                    .ok_or(PlanParseError::InvalidField("schema object type"))?
+                    .get(1)?
+                    .as_object()?
                     .iter()
                     .map(|(name, value)| parse_type(value).map(|value| (name.clone(), value)))
-                    .collect::<Result<BTreeMap<_, _>, _>>()
+                    .collect::<Option<BTreeMap<_, _>>>()
                     .map(AttributeType::Object),
-                _ => Err(PlanParseError::InvalidField("schema attribute type")),
+                _ => None,
             }
         }
-        _ => Err(PlanParseError::InvalidField("schema attribute type")),
+        _ => None,
     }
 }
 
-fn parse_format_version(root: &Map<String, Value>) -> Result<(), PlanParseError> {
-    let version = root
-        .get("format_version")
-        .ok_or(PlanParseError::MissingField("format_version"))?
-        .as_str()
-        .ok_or(PlanParseError::InvalidField("format_version"))?;
-    let major = version
-        .split('.')
-        .next()
-        .and_then(|major| major.parse::<u64>().ok())
-        .ok_or(PlanParseError::InvalidField("format_version"))?;
-    if major == SUPPORTED_FORMAT_MAJOR {
-        Ok(())
-    } else {
-        Err(PlanParseError::UnsupportedFormatMajor(major))
-    }
+fn format_major(root: &Map<String, Value>) -> Option<u64> {
+    let version = root.get("format_version")?.as_str()?;
+    version.split('.').next()?.parse().ok()
 }
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+    use serde_json::json;
+
     use super::*;
 
     #[test]
     fn parses_provider_resource_types_without_treating_objects_as_maps() {
-        let document = serde_json::json!({
+        let document = json!({
             "format_version": "1.0",
             "provider_schemas": {
                 "registry.terraform.io/hashicorp/example": {
@@ -317,7 +240,94 @@ mod tests {
     }
 
     #[test]
-    fn malformed_provider_schema_is_a_recoverable_read_failure() {
-        assert!(parse_provider_schemas(br#"{"format_version":"1.0"}"#).is_err());
+    fn parses_set_tuple_and_nested_set_types_structurally() {
+        let document = json!({
+            "format_version": "1.0",
+            "provider_schemas": {
+                "example": {
+                    "resource_schemas": {
+                        "example_resource": {
+                            "block": {
+                                "attributes": {
+                                    "tags": {"type": ["set", "string"]},
+                                    "pair": {"type": ["tuple", ["string", "bool"]]},
+                                    "rules": {
+                                        "nested_type": {
+                                            "nesting_mode": "set",
+                                            "attributes": {"port": {"type": "number"}}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        let schemas = parse_provider_schemas(document.to_string().as_bytes())
+            .expect("provider schema should parse");
+
+        let attributes = &schemas.providers["example"].resources["example_resource"].attributes;
+        assert_eq!(
+            attributes["tags"],
+            AttributeType::Set(Box::new(AttributeType::String))
+        );
+        assert_eq!(
+            attributes["pair"],
+            AttributeType::Tuple(vec![AttributeType::String, AttributeType::Bool])
+        );
+        assert_eq!(
+            attributes["rules"],
+            AttributeType::Set(Box::new(AttributeType::Object(BTreeMap::from([(
+                "port".to_owned(),
+                AttributeType::Number
+            )]))))
+        );
+    }
+
+    #[test]
+    fn omitted_optional_sections_parse_as_empty() {
+        let document = json!({
+            "format_version": "1.0",
+            "provider_schemas": {
+                "without_resources": {},
+                "with_resource": {"resource_schemas": {"example_resource": {"block": {}}}}
+            }
+        });
+
+        let schemas = parse_provider_schemas(document.to_string().as_bytes())
+            .expect("omitted optional sections should parse");
+
+        assert!(schemas.providers["without_resources"].resources.is_empty());
+        let resource = &schemas.providers["with_resource"].resources["example_resource"];
+        assert!(resource.attributes.is_empty());
+        assert!(resource.block_types.is_empty());
+    }
+
+    #[rstest]
+    #[case::invalid_json("{")]
+    #[case::missing_provider_schemas(r#"{"format_version":"1.0"}"#)]
+    #[case::unsupported_format_major(r#"{"format_version":"2.0","provider_schemas":{}}"#)]
+    #[case::invalid_format_version(r#"{"format_version":"one","provider_schemas":{}}"#)]
+    fn malformed_or_unsupported_document_is_unavailable(#[case] input: &str) {
+        assert!(parse_provider_schemas(input.as_bytes()).is_none());
+    }
+
+    #[rstest]
+    #[case::missing_block(json!({}))]
+    #[case::missing_attribute_type(json!({"block": {"attributes": {"name": {}}}}))]
+    #[case::unknown_attribute_type(json!({"block": {"attributes": {"name": {"type": "text"}}}}))]
+    #[case::unknown_nesting_mode(json!({"block": {"attributes": {"name": {
+        "nested_type": {"nesting_mode": "tree", "attributes": {}}
+    }}}}))]
+    #[case::missing_nested_block(json!({"block": {"block_types": {"settings": {}}}}))]
+    fn malformed_resource_schema_makes_schema_unavailable(#[case] resource: Value) {
+        let document = json!({
+            "format_version": "1.0",
+            "provider_schemas": {"example": {"resource_schemas": {"example_resource": resource}}}
+        });
+
+        assert!(parse_provider_schemas(document.to_string().as_bytes()).is_none());
     }
 }
