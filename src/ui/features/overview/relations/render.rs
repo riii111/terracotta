@@ -362,9 +362,15 @@ fn graph_lines(
         let fits = |lines: &Vec<Line<'static>>| {
             lines.iter().all(|line| line.width() <= usize::from(width))
         };
-        let diagram = tree_lines(group, &links, &node_index, selected_node, maximized)
-            .or_else(|| merge_lines(group, &links, &node_index, selected_node, maximized))
-            .filter(fits);
+        let diagram = tree_lines(
+            group,
+            &links,
+            &node_index,
+            selected_node,
+            maximized,
+            usize::from(width),
+        )
+        .or_else(|| merge_lines(group, &links, &node_index, selected_node, maximized).filter(fits));
         let section = diagram.unwrap_or_else(|| {
             fallback_group_lines(group, &links, &node_index, selected_node, maximized)
         });
@@ -494,12 +500,22 @@ fn merge_links<'a>(
     }
 }
 
-fn tree_lines(
-    group: &RelationGraphGroup,
-    links: &[&RelationGraphLink],
-    node_index: &BTreeMap<RelationNodeId, &RelationNode>,
-    selected_node: Option<&RelationNodeId>,
+struct TreeContext<'a> {
+    children: BTreeMap<&'a RelationNodeId, Vec<&'a RelationGraphLink>>,
+    node_index: &'a BTreeMap<RelationNodeId, &'a RelationNode>,
+    selected_node: Option<&'a RelationNodeId>,
     maximized: bool,
+    width: usize,
+}
+
+// Stops at the first line wider than the pane, so deep chains never build indentation they discard.
+fn tree_lines<'a>(
+    group: &'a RelationGraphGroup,
+    links: &[&'a RelationGraphLink],
+    node_index: &'a BTreeMap<RelationNodeId, &'a RelationNode>,
+    selected_node: Option<&'a RelationNodeId>,
+    maximized: bool,
+    width: usize,
 ) -> Option<Vec<Line<'static>>> {
     if links.len() + 1 != group.nodes.len() {
         return None;
@@ -518,38 +534,33 @@ fn tree_lines(
         return None;
     }
 
-    let root_node = node(node_index, root)?;
-    let mut tree = vec![node_line(root_node, selected_node, maximized)];
-    push_tree_children(
-        root,
-        "",
-        &children,
+    let context = TreeContext {
+        children,
         node_index,
         selected_node,
         maximized,
-        &mut tree,
-    )?;
+        width,
+    };
+    let root_line = node_line(node(node_index, root)?, selected_node, maximized);
+    if root_line.width() > width {
+        return None;
+    }
+    let mut tree = vec![root_line];
+    push_tree_children(&context, root, "", &mut tree)?;
     (tree.len() == group.nodes.len() * 2 - 1).then_some(tree)
 }
 
 fn push_tree_children(
+    context: &TreeContext<'_>,
     parent: &RelationNodeId,
     prefix: &str,
-    children: &BTreeMap<&RelationNodeId, Vec<&RelationGraphLink>>,
-    node_index: &BTreeMap<RelationNodeId, &RelationNode>,
-    selected_node: Option<&RelationNodeId>,
-    maximized: bool,
     lines: &mut Vec<Line<'static>>,
 ) -> Option<()> {
-    let child_links = children.get(parent).map_or(&[][..], Vec::as_slice);
+    let child_links = context.children.get(parent).map_or(&[][..], Vec::as_slice);
     for (index, link) in child_links.iter().enumerate() {
         let last = index + 1 == child_links.len();
-        let child = node(node_index, &link.to)?;
-        let selected = selected_node == Some(&child.id);
-        lines.push(Line::from(vec![
-            Span::raw(selection_marker(false)),
-            Span::styled(format!("{prefix}│"), theme::relation_text_style()),
-        ]));
+        let child = node(context.node_index, &link.to)?;
+        let selected = context.selected_node == Some(&child.id);
         let connector = format!("{}{}", if last { "└" } else { "├" }, edge_segment(link));
         let mut spans = vec![
             Span::styled(selection_marker(selected), theme::relation_text_style()),
@@ -557,23 +568,23 @@ fn push_tree_children(
             Span::styled(connector.clone(), theme::relation_text_style()),
             Span::raw(" "),
         ];
-        spans.extend(node_spans(child, selected, maximized));
-        lines.push(Line::from(spans));
+        spans.extend(node_spans(child, selected, context.maximized));
+        let child_line = Line::from(spans);
+        if child_line.width() > context.width {
+            return None;
+        }
+        lines.push(Line::from(vec![
+            Span::raw(selection_marker(false)),
+            Span::styled(format!("{prefix}│"), theme::relation_text_style()),
+        ]));
+        lines.push(child_line);
 
         let child_prefix = format!(
             "{prefix}{}{}",
             if last { " " } else { "│" },
             " ".repeat(text_width(&connector)),
         );
-        push_tree_children(
-            &link.to,
-            &child_prefix,
-            children,
-            node_index,
-            selected_node,
-            maximized,
-            lines,
-        )?;
+        push_tree_children(context, &link.to, &child_prefix, lines)?;
     }
     Some(())
 }
@@ -989,6 +1000,42 @@ mod tests {
 
         assert!(chain.iter().copied().eq(ids.iter().rev()));
         assert!(cycle.iter().copied().eq(ids[..2].iter()));
+    }
+
+    #[test]
+    fn chain_deeper_than_the_pane_falls_back_to_uses_rows() {
+        let nodes = (0..5_000)
+            .map(|index| {
+                node(
+                    &format!("aws_service.n{index:04}"),
+                    ResourceChangeKind::Update,
+                )
+            })
+            .collect::<Vec<_>>();
+        let links = nodes
+            .windows(2)
+            .map(|pair| {
+                link(
+                    &pair[0],
+                    &pair[1],
+                    RelationGraphLinkKind::Solid,
+                    &[RelationSource::Configuration],
+                )
+            })
+            .collect::<Vec<_>>();
+        let graph = graph(nodes, links);
+
+        let rendered = graph_lines(&graph, None, false, 80)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(rendered.iter().all(|line| !line.contains("└──>")));
+        assert_eq!(rendered.len(), 5_000);
+        assert_eq!(
+            rendered[1],
+            "  ~ aws_service.n0001  uses: aws_service.n0000 (config)"
+        );
     }
 
     #[test]

@@ -437,6 +437,55 @@ fn relations_pane_shows_the_selected_environment_at_supported_sizes(
 }
 
 #[test]
+fn row_unchanged_in_the_shown_environment_is_named_and_not_highlighted() {
+    let mut state = session(&["dev", "prod"]);
+    complete(
+        &mut state,
+        vec![
+            change("terraform_data.api", ResourceChangeKind::Update),
+            change("terraform_data.worker", ResourceChangeKind::Update),
+        ],
+    );
+    complete(
+        &mut state,
+        vec![
+            change("terraform_data.api", ResourceChangeKind::NoOp),
+            change("terraform_data.worker", ResourceChangeKind::Update),
+        ],
+    );
+    let size = Size::new(165, 50);
+    let mut view = EnvironmentView::default();
+    press_at(&mut view, &mut state, KeyCode::Char('2'), size);
+    press_at(&mut view, &mut state, KeyCode::Home, size);
+    let relations = |text: &str| {
+        text.lines()
+            .skip_while(|line| !line.contains("[3] Relations"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+
+    let dev = text(&mut view, &state, (size.width, size.height));
+    press_at(&mut view, &mut state, KeyCode::Char(']'), size);
+    let prod = text(&mut view, &state, (size.width, size.height));
+
+    assert!(dev.contains("> terraform_data.api"), "{dev}");
+    assert!(
+        relations(&dev)
+            .iter()
+            .any(|line| line.contains("> ~ terraform_data.api")),
+        "{dev}"
+    );
+    assert!(
+        prod.contains("prod · whole env · selected row unchanged in prod"),
+        "{prod}"
+    );
+    assert!(
+        relations(&prod).iter().all(|line| !line.contains("│> ")),
+        "{prod}"
+    );
+}
+
+#[test]
 fn multi_demo_member_missing_from_the_shown_environment_is_not_highlighted_there() {
     let mut state = multi_demo_session();
     let wide = Size::new(165, 50);
