@@ -3,7 +3,7 @@ source: src/ui/features/environments/tests/matrix.rs
 expression: rendered
 ---
 terracotta ▸ dev                                                       terraform
-dev Ready ~21  │  stg Ready ~200 1 replace  │  prod Ready ~20 -1
+dev ✓ Ready ~21  │  stg ✓ Ready ~200 1 replace  │  prod ✓ Ready ~20 -1
 ┌* [2] Compare─────────────────────────────────────────────────────────────────┐
 │                                                                              │
 │Address                       dev         stg         prod         why        │

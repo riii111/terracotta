@@ -3,7 +3,7 @@ source: src/ui/features/overview/render.rs
 expression: bottom_text
 ---
 infra  ws:default  ...ng...  /repo/infra
-R┌Help────────────────────────────────┐
+✓┌Help────────────────────────────────┐
 ─│ Grouped links                    ▲ │─
 ┌│   may apply to only some members │ │┐
 ││ Scope                            │ ││
@@ -12,7 +12,7 @@ R┌Help────────────────────────
 ┌│   cause, impact, or execution    │ │┐
 ││   order                          │ ││
 ││                                  │ ││
-││ Exit                             ┃ ││
+││ Exit                             │ ││
 ││ q                                ┃ ││
 └│   quit                           ▼ │┘
 ─│ ?/Esc close                        │─

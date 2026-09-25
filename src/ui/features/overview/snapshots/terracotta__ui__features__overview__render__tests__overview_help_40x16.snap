@@ -3,10 +3,10 @@ source: src/ui/features/overview/render.rs
 expression: text
 ---
 infra  ws:default  ...ng...  /repo/infra
-R┌Help────────────────────────────────┐
+✓┌Help────────────────────────────────┐
 ─│ Navigation                       ▲ │─
 ┌│ 2 / 3                            ┃ │┐
-││   focus Changes · infra /        ┃ ││
+││   focus Changes · infra /        │ ││
 ││   Relations                      │ ││
 └│ ↑ / ↓ / j / k                    │ │┘
 ┌│   select a Changes row or scroll │ │┐

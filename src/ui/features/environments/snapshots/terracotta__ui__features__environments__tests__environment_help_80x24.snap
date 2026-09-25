@@ -11,7 +11,7 @@ a┌Help────────────────────────
 ││ [ / ]              select the previous or next environment               ┃ ││
 ││ 2 / 3              focus Compare / Relations                             ┃ ││
 ││ f                  maximize or restore [2] Compare / [3] Relations       ┃ ││
-└│ Enter              [3] opens the plan from the top; [2] opens the        ┃ │┘
+└│ Enter              [3] opens the plan from the top; [2] opens the        │ │┘
 ┌│                    selected source                                       │ │┐
 ││ /                  filter [2] addresses; [3] always shows the whole      │ ││
 ││                    environment                                           │ ││

@@ -3,13 +3,12 @@ source: src/ui/features/overview/render.rs
 expression: text
 ---
 infra  ws:default  terraform loading...  /repo/infra
-Ready  ~2 update  Repeated: 2
+✓ Ready  ~2 update  Repeated: 2
 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ┌* [2] Changes · infra──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │  Change Address                                                                                                                                                   │
 │Other changes: 1 output/import/move or unsupported change(s). Press v for the full plan.                                                                           │
 │  ~ x2   [+] terraform_data.server[*]                                                                                                                              │
-│                                                                                                                                                                   │
 │                                                                                                                                                                   │
 │                        ┌Help────────────────────────────────────────────────────────────────────────────────────────────────────────────┐                         │
 │                        │ Navigation                                                                                                     │                         │
@@ -21,6 +20,7 @@ Ready  ~2 update  Repeated: 2
 │                        │ f                  maximize or restore [2] Changes · infra / [3] Relations                                     │                         │
 │                        │                                                                                                                │                         │
 │                        │ Review                                                                                                         │                         │
+│                        │ ✓ Ready            plan acquisition completed; review and apply safety are separate                            │                         │
 │                        │ Enter              open the selected raw block                                                                 │                         │
 └────────────────────────│ /                  filter Changes full addresses                                                               │─────────────────────────┘
 ┌  [3] Relations · whole │ Space              expand or collapse only on [+]/[-] group rows                                               │─────────────────────────┐

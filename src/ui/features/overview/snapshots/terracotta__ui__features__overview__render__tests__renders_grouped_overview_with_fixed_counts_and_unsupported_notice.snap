@@ -3,7 +3,7 @@ source: src/ui/features/overview/render.rs
 expression: text
 ---
 infra  ws:default  terraform loading...  /repo/infra
-Ready  ~2 update  Repeated: 2
+✓ Ready  ~2 update  Repeated: 2
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 ┌* [2] Changes · infra─────────────────────────────────────────────────────────────────────────────┐
 │  Change Address                                                                                  │

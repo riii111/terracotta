@@ -11,7 +11,7 @@ terracotta ▸ dev               terraform
 │Differs across envs                   │
 │> terraform_data.api~          action │
 │                                      │
-│  Same: 1 changes ~1  Space expand    │
+│  ▸ Same: 1 changes ~1                │
 │                                      │
 │blank: absent   .: unchanged          │
 │?: plan unavailable                   │

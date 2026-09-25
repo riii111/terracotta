@@ -3,12 +3,11 @@ source: src/ui/features/overview/render.rs
 expression: text
 ---
 infra  ws:default  terraform loading...  /repo/infra
-Ready  ~2 update  Repeated: 2
+✓ Ready  ~2 update  Repeated: 2
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-┌* [2] Changes · infra─────────────────────────────────────────────────────────────────────────────────────────────────┐
-│  ┌Help────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │
-│Ot│ Navigation                                                                                                     │  │
-│  │ 2 / 3              focus Changes · infra / Relations                                                           │  │
+┌* ┌Help────────────────────────────────────────────────────────────────────────────────────────────────────────────┐──┐
+│  │ Navigation                                                                                                     │  │
+│Ot│ 2 / 3              focus Changes · infra / Relations                                                           │  │
 │  │ ↑ / ↓ / j / k      select a Changes row or scroll Relations                                                    │  │
 │  │ ← / → / h / l      scroll Changes or Relations horizontally                                                    │  │
 │  │ PgUp / PgDn        move one page                                                                               │  │
@@ -16,6 +15,7 @@ Ready  ~2 update  Repeated: 2
 │  │ f                  maximize or restore [2] Changes · infra / [3] Relations                                     │  │
 │  │                                                                                                                │  │
 │  │ Review                                                                                                         │  │
+│  │ ✓ Ready            plan acquisition completed; review and apply safety are separate                            │  │
 │  │ Enter              open the selected raw block                                                                 │  │
 │  │ /                  filter Changes full addresses                                                               │  │
 └──│ Space              expand or collapse only on [+]/[-] group rows                                               │──┘

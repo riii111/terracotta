@@ -1136,6 +1136,96 @@ fn same_change_summary_and_group_rows_expand_independently() {
 }
 
 #[test]
+fn same_change_row_shows_space_only_while_the_matrix_can_expand_it() {
+    let mut state = session(&["dev", "prod"]);
+    for _ in 0..2 {
+        complete(
+            &mut state,
+            vec![change("terraform_data.server", ResourceChangeKind::Update)],
+        );
+    }
+    let mut view = EnvironmentView::default();
+    let wide = Size::new(165, 50);
+    let _ = text(&mut view, &state, (wide.width, wide.height));
+    press_at(&mut view, &mut state, KeyCode::Char('2'), wide);
+    let _ = text(&mut view, &state, (165, 50));
+    press(&mut view, &mut state, KeyCode::End);
+
+    let matrix = text(&mut view, &state, (165, 50));
+    assert!(matrix.contains("> ▸ Same change across envs"), "{matrix}");
+    assert!(matrix.contains("Space expand"), "{matrix}");
+
+    press_at(&mut view, &mut state, KeyCode::Char('f'), wide);
+    let maximized = text(&mut view, &state, (165, 50));
+    assert!(maximized.contains("Space expand"), "{maximized}");
+    press_at(&mut view, &mut state, KeyCode::Char('f'), wide);
+
+    press_at(&mut view, &mut state, KeyCode::Char('1'), wide);
+    let environments = text(&mut view, &state, (165, 50));
+    assert!(
+        environments.contains("> ▸ Same change across envs"),
+        "{environments}"
+    );
+    assert!(!environments.contains("Space expand"), "{environments}");
+    assert!(
+        environments.contains("Space include/exclude"),
+        "{environments}"
+    );
+
+    press_at(&mut view, &mut state, KeyCode::Char('?'), wide);
+    let environment_help = text(&mut view, &state, (165, 50));
+    assert!(
+        !environment_help.contains("Space include/exclude"),
+        "{environment_help}"
+    );
+    press_at(&mut view, &mut state, KeyCode::Esc, wide);
+
+    press_at(&mut view, &mut state, KeyCode::Char('c'), wide);
+    let environment_context = text(&mut view, &state, (165, 50));
+    assert!(
+        !environment_context.contains("Space include/exclude"),
+        "{environment_context}"
+    );
+    press_at(&mut view, &mut state, KeyCode::Esc, wide);
+
+    press_at(&mut view, &mut state, KeyCode::Char('2'), wide);
+    press_at(&mut view, &mut state, KeyCode::Char('b'), wide);
+    let sidebar_closed = text(&mut view, &state, (165, 50));
+    assert!(sidebar_closed.contains("Space expand"), "{sidebar_closed}");
+
+    press_at(&mut view, &mut state, KeyCode::Char('c'), wide);
+    let context = text(&mut view, &state, (165, 50));
+    assert!(!context.contains("Space expand"), "{context}");
+    press_at(&mut view, &mut state, KeyCode::Esc, wide);
+
+    press_at(&mut view, &mut state, KeyCode::Char('3'), wide);
+    let relations = text(&mut view, &state, (165, 50));
+    assert!(
+        relations.contains("> ▸ Same change across envs"),
+        "{relations}"
+    );
+    assert!(!relations.contains("Space expand"), "{relations}");
+
+    press_at(&mut view, &mut state, KeyCode::Char('2'), wide);
+    press_at(&mut view, &mut state, KeyCode::Char('/'), wide);
+    let searching = text(&mut view, &state, (165, 50));
+    assert!(!searching.contains("Space expand"), "{searching}");
+
+    press_at(&mut view, &mut state, KeyCode::Esc, wide);
+    press_at(&mut view, &mut state, KeyCode::Char('?'), wide);
+    let help = text(&mut view, &state, (165, 50));
+    assert!(!help.contains("Space expand"), "{help}");
+
+    press_at(&mut view, &mut state, KeyCode::Esc, wide);
+    press_at(&mut view, &mut state, KeyCode::Char('q'), wide);
+    let quit_confirmation = text(&mut view, &state, (165, 50));
+    assert!(
+        !quit_confirmation.contains("Space expand"),
+        "{quit_confirmation}"
+    );
+}
+
+#[test]
 fn unknown_same_change_summary_and_group_row_keep_the_annotation_visible() {
     let provider = "registry.example/provider".to_owned();
     let schemas = ProviderSchemas {

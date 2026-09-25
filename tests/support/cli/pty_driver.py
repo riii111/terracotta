@@ -383,7 +383,7 @@ try:
                 send_key(b"q")
                 wait_new("Stop acquiring", "cancel_confirmation")
                 send_key(b"\x1b")
-                wait_new("a-ready Ready", "acquisition_continues_after_cancel")
+                wait_new("a-ready ✓ Ready", "acquisition_continues_after_cancel")
                 with open(os.environ["TERRACOTTA_FAKE_PID_PATH"]) as pid_file:
                     active_pid = int(pid_file.read().strip())
                 os.kill(active_pid, 0)

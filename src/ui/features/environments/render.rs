@@ -5,7 +5,7 @@ use crate::{
         features::{
             overview::{
                 matrix,
-                relations::{self, RelationGraphView},
+                relations::{self, RelationGraphTitle, RelationGraphView},
             },
             plan_review,
         },
@@ -175,7 +175,12 @@ impl EnvironmentView {
                 width: layout.footer.width,
                 focus,
                 matrix: matrix_state,
-                expanded: self.matrix.selected_expanded(),
+                expanded: self
+                    .dialog
+                    .is_none()
+                    .then(|| self.matrix.selected_expanded())
+                    .flatten(),
+                comparison_toggle_available: self.dialog.is_none(),
                 enter_action,
                 selected: state.plans().get(self.selection.column),
                 maximized: self.maximized.is_some(),
@@ -239,7 +244,21 @@ impl EnvironmentView {
                 ),
             );
         }
-        matrix::render(frame, layout.matrix, state, &mut self.matrix);
+        let show_same_change_toggle = focused
+            && !self.confirming_quit
+            && self.dialog.is_none()
+            && !self.matrix.searching()
+            && matches!(
+                self.matrix.selected_item(self.selection.column),
+                Some(MatrixSelectedItem::SameChanges)
+            );
+        matrix::render(
+            frame,
+            layout.matrix,
+            state,
+            &mut self.matrix,
+            show_same_change_toggle,
+        );
     }
 
     fn render_relations_panel(
@@ -249,23 +268,24 @@ impl EnvironmentView {
         state: &EnvironmentSession,
         focused: bool,
     ) {
-        let title = state.plans().get(self.selection.column).map_or_else(
-            || "environment unavailable".to_owned(),
-            |plan| {
-                let compared = self
-                    .compared_environments(state.plans().len())
-                    .contains(&self.selection.column);
-                format!(
-                    "{} · {}",
-                    environments::name(plan),
-                    if compared {
-                        "whole env"
-                    } else {
-                        "not compared"
-                    }
-                )
-            },
-        );
+        let environment = state
+            .plans()
+            .get(self.selection.column)
+            .map(environments::name);
+        let scope = if environment.is_none() {
+            "environment unavailable"
+        } else if self
+            .compared_environments(state.plans().len())
+            .contains(&self.selection.column)
+        {
+            "whole env"
+        } else {
+            "not compared"
+        };
+        let title = RelationGraphTitle {
+            environment: environment.as_deref(),
+            scope,
+        };
         let relation = self
             .environment_relations
             .as_ref()
@@ -277,7 +297,7 @@ impl EnvironmentView {
                 area,
                 graph,
                 &RelationGraphView {
-                    title: &title,
+                    title,
                     selected_node: self.selected_relation_node(state),
                     focused,
                     maximized: self.maximized_for_width(area.width)
@@ -291,7 +311,7 @@ impl EnvironmentView {
                 || "No environment is selected.".to_owned(),
                 relations_status,
             );
-            render_relations_status(frame, area, &title, focused, &status);
+            render_relations_status(frame, area, title, focused, &status);
         }
     }
 
@@ -362,16 +382,14 @@ fn render_environment_summary(
 }
 
 fn environment_summary_line(plan: &EnvironmentPlan) -> Line<'static> {
-    let status_style = match plan.state() {
-        EnvironmentState::Pending | EnvironmentState::Running => theme::overview_muted_style(),
-        EnvironmentState::Ready { .. } => theme::overview_text_style(),
-        EnvironmentState::Error => theme::overview_total_destroy_style(),
-        EnvironmentState::ExcludedHcp => theme::overview_warning_style(),
-    };
     let mut line = Line::from(vec![
         Span::styled(environments::name(plan), theme::overview_text_style()),
         Span::styled(" ", theme::overview_muted_style()),
-        Span::styled(environments::status(plan), status_style),
+        environments::status_marker(plan.state()),
+        Span::styled(
+            environments::status(plan),
+            environments::status_style(plan.state()),
+        ),
     ]);
     if let Some(review) = plan.review() {
         let counts = review.review().metadata();
@@ -420,15 +438,15 @@ fn relations_status(plan: &EnvironmentPlan) -> String {
 fn render_relations_status(
     frame: &mut Frame<'_>,
     area: Rect,
-    title: &str,
+    title: RelationGraphTitle<'_>,
     focused: bool,
     status: &str,
 ) {
-    let block = pane_block(
-        focused,
-        &format!("[3] Relations · {title}"),
-        overview_pane_border_style(focused),
-    );
+    let block = Block::new()
+        .borders(Borders::ALL)
+        .title(relations::title_line(title, focused))
+        .border_style(overview_pane_border_style(focused))
+        .style(theme::overview_background_style());
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.width > 0 && inner.height > 0 {
@@ -687,8 +705,24 @@ fn overview_help_sections(
         other_overview_help(sidebar_available),
         matrix_legend_help(),
         comparison_help(),
+        environment_status_help(sidebar_enabled),
         relations::help_section(),
     ]
+}
+
+fn environment_status_help(multiple: bool) -> help_dialog::HelpSection {
+    let mut actions = vec![help_dialog::HelpAction::new(
+        "✓ Ready",
+        "plan acquisition completed; review and apply safety are separate",
+    )];
+    if multiple {
+        actions.extend([
+            help_dialog::HelpAction::new("✗ Error", "acquisition failed; r retries the plan"),
+            help_dialog::HelpAction::new("Pending / Running", "plan acquisition is incomplete"),
+            help_dialog::HelpAction::new("Excluded", "HCP performs the plan execution"),
+        ]);
+    }
+    help_dialog::HelpSection::new("Plan status", actions)
 }
 
 fn other_overview_help(sidebar_available: bool) -> help_dialog::HelpSection {
@@ -803,6 +837,7 @@ struct OverviewFooterContext<'a> {
     focus: environments::EnvironmentPane,
     matrix: MatrixFooterState,
     expanded: Option<bool>,
+    comparison_toggle_available: bool,
     enter_action: Option<MatrixEnterAction>,
     selected: Option<&'a EnvironmentPlan>,
     maximized: bool,
@@ -816,6 +851,7 @@ fn overview_footer(context: OverviewFooterContext<'_>) -> Vec<Line<'static>> {
         focus,
         matrix,
         expanded,
+        comparison_toggle_available,
         enter_action,
         selected,
         maximized,
@@ -848,20 +884,14 @@ fn overview_footer(context: OverviewFooterContext<'_>) -> Vec<Line<'static>> {
         );
     }
     if width < 45 {
-        return compact_overview_footer(
-            width,
-            focus,
-            expanded,
-            enter_action,
-            selected,
-            maximized,
-            environment_navigation,
-        );
+        return compact_overview_footer(context);
     }
     let mut items = Vec::new();
     if focus == environments::EnvironmentPane::Environments {
         items.push((100, overview_footer_hint(&["Enter"], "open plan")));
-        items.push((90, overview_footer_hint(&["Space"], "include/exclude")));
+        if comparison_toggle_available {
+            items.push((90, overview_footer_hint(&["Space"], "include/exclude")));
+        }
         items.push((55, overview_footer_hint(&["o"], "only")));
         items.push((55, overview_footer_hint(&["a"], "all")));
     } else if focus == environments::EnvironmentPane::Matrix {
@@ -934,19 +964,24 @@ fn overview_common_footer_items(
     items
 }
 
-fn compact_overview_footer(
-    width: u16,
-    focus: environments::EnvironmentPane,
-    expanded: Option<bool>,
-    enter_action: Option<MatrixEnterAction>,
-    selected: Option<&EnvironmentPlan>,
-    maximized: bool,
-    environment_navigation: EnvironmentNavigation,
-) -> Vec<Line<'static>> {
+fn compact_overview_footer(context: OverviewFooterContext<'_>) -> Vec<Line<'static>> {
+    let OverviewFooterContext {
+        width,
+        focus,
+        expanded,
+        comparison_toggle_available,
+        enter_action,
+        selected,
+        maximized,
+        environment_navigation,
+        ..
+    } = context;
     let mut items = Vec::new();
     if focus == environments::EnvironmentPane::Environments {
         items.push((100, overview_footer_hint(&["Enter"], "open plan")));
-        items.push((90, overview_footer_hint(&["Space"], "include/exclude")));
+        if comparison_toggle_available {
+            items.push((90, overview_footer_hint(&["Space"], "include/exclude")));
+        }
     } else if focus == environments::EnvironmentPane::Matrix {
         if let Some(action) = enter_action {
             items.push((100, overview_footer_hint(&["Enter"], action.label(true))));

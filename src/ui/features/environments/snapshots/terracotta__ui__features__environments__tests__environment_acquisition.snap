@@ -3,7 +3,7 @@ source: src/ui/features/environments/tests.rs
 expression: text
 ---
 terracotta ▸ b-error                                                   terraform
-b-error Error
+b-error ✗ Error
 ┌* [2] Compare · Ready 1/5─────────────────────────────────────────────────────┐
 │                                                                              │
 │Address     a-ready     b-error     c-running     d-pending      why          │
