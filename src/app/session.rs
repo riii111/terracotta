@@ -87,11 +87,9 @@ impl ReviewSessionState {
         &self.copy_feedback
     }
 
-    const fn copy_feedback_mut(&mut self) -> Option<&mut CopyFeedback> {
-        match self.screen {
-            ReviewScreen::Raw(_) | ReviewScreen::Overview => Some(&mut self.copy_feedback),
-            ReviewScreen::ApplyConfirmation { .. } => None,
-        }
+    // The apply confirmation offers no copy, so it keeps no copy notice either.
+    const fn shows_copy_feedback(&self) -> bool {
+        !matches!(self.screen, ReviewScreen::ApplyConfirmation { .. })
     }
 
     // Each screen starts without the previous screen's copy notice.
@@ -111,9 +109,9 @@ impl ReviewSessionState {
     }
 
     fn open_raw_from_overview(&mut self) {
-        if self.screen != ReviewScreen::Overview {
+        let ReviewScreen::Overview = self.screen else {
             return;
-        }
+        };
         let restored_search_query = self.review.search_query().to_owned();
         self.review.set_search_query(String::new());
         self.show(ReviewScreen::Raw(RawReviewScreen {
@@ -123,17 +121,19 @@ impl ReviewSessionState {
     }
 
     fn open_apply_confirmation(&mut self) {
-        if let ReviewScreen::Raw(raw) = &mut self.screen {
-            let return_to = std::mem::take(raw);
-            self.show(ReviewScreen::ApplyConfirmation { return_to });
-        }
+        let ReviewScreen::Raw(raw) = &mut self.screen else {
+            return;
+        };
+        let return_to = std::mem::take(raw);
+        self.show(ReviewScreen::ApplyConfirmation { return_to });
     }
 
     fn cancel_apply_confirmation(&mut self) {
-        if let ReviewScreen::ApplyConfirmation { return_to } = &mut self.screen {
-            let raw = std::mem::take(return_to);
-            self.show(ReviewScreen::Raw(raw));
-        }
+        let ReviewScreen::ApplyConfirmation { return_to } = &mut self.screen else {
+            return;
+        };
+        let raw = std::mem::take(return_to);
+        self.show(ReviewScreen::Raw(raw));
     }
 }
 
@@ -210,17 +210,16 @@ impl SessionState {
     pub(crate) const fn copy_feedback(&self) -> Option<&CopyFeedback> {
         match self {
             Self::Execution(state) | Self::Apply(state) => Some(state.copy_feedback()),
-            Self::Review(state) => match state.screen {
-                ReviewScreen::Raw(_) | ReviewScreen::Overview => Some(state.copy_feedback()),
-                ReviewScreen::ApplyConfirmation { .. } => None,
-            },
+            Self::Review(state) if state.shows_copy_feedback() => Some(state.copy_feedback()),
+            Self::Review(_) => None,
         }
     }
 
     pub(crate) fn copy_feedback_mut(&mut self) -> Option<&mut CopyFeedback> {
         match self {
             Self::Execution(state) | Self::Apply(state) => Some(state.copy_feedback_mut()),
-            Self::Review(state) => state.copy_feedback_mut(),
+            Self::Review(state) if state.shows_copy_feedback() => Some(&mut state.copy_feedback),
+            Self::Review(_) => None,
         }
     }
 
@@ -459,8 +458,7 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
                 execution.copy_effect(target)
             }
             SessionState::Review(review)
-                if target == CopyTarget::Plan
-                    && !matches!(review.screen, ReviewScreen::ApplyConfirmation { .. }) =>
+                if target == CopyTarget::Plan && review.shows_copy_feedback() =>
             {
                 Some(copy::plan_effect(&review.review))
             }
@@ -542,7 +540,9 @@ mod tests {
         PlanBlock, PlanBlockKind,
         test_support::{plan_document, plan_document_with_blocks},
     };
+    use super::test_support::{apply_confirmation_session, overview_session};
     use super::*;
+    use rstest::rstest;
 
     fn review() -> PlanReview {
         PlanReview::new(
@@ -591,7 +591,7 @@ mod tests {
             )
             .is_none()
         );
-        let SessionState::Review(review) = &state else {
+        let Some(review) = state.review() else {
             panic!("raw review should be visible");
         };
         assert!(review.is_from_overview());
@@ -697,6 +697,66 @@ mod tests {
                 .search_query(),
             "api"
         );
+    }
+
+    #[rstest]
+    #[case::confirm_from_raw(ReviewSessionState::new, Action::ConfirmApply("yes".to_owned()))]
+    #[case::cancel_from_raw(ReviewSessionState::new, Action::CancelApply)]
+    #[case::raw_from_raw(
+        ReviewSessionState::new,
+        Action::OpenReviewFromOverview { address: None }
+    )]
+    #[case::return_from_plan_raw(ReviewSessionState::new, Action::ReturnToOverview)]
+    #[case::confirm_from_overview(overview_session, Action::ConfirmApply("yes".to_owned()))]
+    #[case::overview_from_overview(overview_session, Action::OpenOverview)]
+    #[case::return_from_overview(overview_session, Action::ReturnToOverview)]
+    #[case::apply_from_overview(overview_session, Action::OpenApplyConfirmation)]
+    #[case::cancel_from_overview(overview_session, Action::CancelApply)]
+    #[case::search_from_overview(overview_session, Action::ReviewSearchChanged("x".to_owned()))]
+    #[case::overview_from_confirmation(apply_confirmation_session, Action::OpenOverview)]
+    #[case::raw_from_confirmation(
+        apply_confirmation_session,
+        Action::OpenReviewFromOverview { address: None }
+    )]
+    #[case::return_from_confirmation(apply_confirmation_session, Action::ReturnToOverview)]
+    #[case::apply_from_confirmation(apply_confirmation_session, Action::OpenApplyConfirmation)]
+    #[case::search_from_confirmation(
+        apply_confirmation_session,
+        Action::ReviewSearchChanged("x".to_owned())
+    )]
+    fn review_actions_for_another_screen_change_nothing(
+        #[case] screen: fn(PlanReview) -> ReviewSessionState,
+        #[case] action: Action,
+    ) {
+        let mut review = applyable_review();
+        review.set_search_query("api".to_owned());
+        let mut state = SessionState::Review(Box::new(screen(review)));
+        let before = state.clone();
+
+        assert!(update(&mut state, action, Instant::now()).is_none());
+        assert_eq!(state, before);
+    }
+
+    #[rstest]
+    #[case::raw(ReviewSessionState::new)]
+    #[case::overview(overview_session)]
+    #[case::confirmation(apply_confirmation_session)]
+    fn quitting_any_review_screen_reports_the_entry_outcome(
+        #[case] screen: fn(PlanReview) -> ReviewSessionState,
+    ) {
+        let now = Instant::now();
+        let mut state = SessionState::Review(Box::new(screen(applyable_review())));
+        assert!(matches!(
+            update(&mut state, Action::Quit, now),
+            Some(Effect::Finish(SessionOutcome::Reviewed(_)))
+        ));
+
+        let mut state =
+            SessionState::Review(Box::new(screen(applyable_review().with_apply_entry(true))));
+        assert!(matches!(
+            update(&mut state, Action::Quit, now),
+            Some(Effect::Finish(SessionOutcome::ApplyCanceled))
+        ));
     }
 
     #[test]
@@ -879,8 +939,8 @@ mod tests {
         assert!(state.apply_confirmation().is_some());
 
         assert!(update(&mut state, Action::CancelApply, now).is_none());
-        let SessionState::Review(review) = &state else {
-            panic!("cancel should restore review");
+        let Some(review) = state.review() else {
+            panic!("cancel should restore the raw review");
         };
         assert_eq!(
             review.review().document().text(),
