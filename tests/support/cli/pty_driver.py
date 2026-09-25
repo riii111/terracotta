@@ -310,20 +310,23 @@ def assert_screen_unchanged(name, timeout=1):
     observed.append(name)
 
 
-def pane_line(current, title, text):
+def stacked_overview_panes(current):
     lines = current.splitlines()
-    start = next((index for index, line in enumerate(lines) if title in line), None)
-    if start is None:
-        return None
-    return next((line for line in lines[start + 1:] if text in line), None)
+    changes = next((index for index, line in enumerate(lines) if "[2] Changes" in line), None)
+    relations = next((index for index, line in enumerate(lines) if "[3] Relations" in line), None)
+    # Side-by-side panes share heading rows, so row ranges below would mix the two panes.
+    if changes is None or relations is None or changes >= relations:
+        raise RuntimeError(f"Overview panes are not stacked vertically; screen={current!r}")
+    return lines[changes + 1:relations], lines[relations + 1:]
 
 
 def assert_first_overview_row_selected(name):
     current = screen.text()
-    changes = pane_line(current, "[2] Changes", "terraform_data.api")
-    relations = pane_line(current, "[3] Relations", "terraform_data.api")
-    if not (changes or "").startswith("│> ") or not (relations or "").startswith("│> "):
-        raise RuntimeError(f"first Overview row or its relation is not selected; screen={current!r}")
+    changes, relations = stacked_overview_panes(current)
+    if not any(line.startswith("│> ") and "terraform_data.api" in line for line in changes):
+        raise RuntimeError(f"first Changes row is not selected; screen={current!r}")
+    if not any(line.startswith("│> ") and "terraform_data.api" in line for line in relations):
+        raise RuntimeError(f"relation of the first row is not selected; screen={current!r}")
     observed.append(name)
 
 
