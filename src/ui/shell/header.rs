@@ -187,7 +187,7 @@ fn plan_review_changes_line(review: &PlanReview) -> Line<'static> {
     if drift > 0 {
         line.push_span(Span::styled(
             format!("  Drift detected: {drift}"),
-            theme::warning_style(),
+            theme::secondary_style(),
         ));
     }
     line

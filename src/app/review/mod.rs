@@ -420,7 +420,6 @@ impl PlanReview {
         self.has_changes_besides_drift() || self.drift_is_planned()
     }
 
-    /// Drift that is shown beside the planned changes instead of counting as one of them.
     #[must_use]
     pub(crate) fn noted_drift(&self) -> usize {
         if self.drift_is_planned() {
