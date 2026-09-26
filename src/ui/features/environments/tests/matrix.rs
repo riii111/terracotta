@@ -170,7 +170,7 @@ fn complete_with_plan_document_and_relations_and_schemas(
             resource_changes: changes,
             ..Plan::empty()
         },
-        PlanMetadata::new(Vec::new(), applyable).with_sensitive_values(sensitive_values),
+        PlanMetadata::new(applyable).with_sensitive_values(sensitive_values),
         Vec::new(),
     )
     .with_relations(relations)

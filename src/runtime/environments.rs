@@ -652,7 +652,7 @@ mod tests {
                 "default".to_owned(),
                 plan_document("No changes.\n".to_owned()),
                 Plan::empty(),
-                PlanMetadata::new(Vec::new(), false),
+                PlanMetadata::new(false),
                 Vec::new(),
             )),
             changed: false,

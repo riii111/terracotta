@@ -79,7 +79,7 @@ pub(super) fn parse_plan_document(document: &Value) -> Result<Plan, PlanParseErr
     }
 
     let output_changes = if let Some(output_changes) = root.get("output_changes") {
-        parse_output_changes(output_changes, &mut unsupported_changes)?
+        parse_output_changes(output_changes)?
     } else {
         Vec::new()
     };
@@ -344,10 +344,7 @@ fn parse_resource_drift(
     Ok(())
 }
 
-fn parse_output_changes(
-    output_changes: &Value,
-    unsupported_changes: &mut Vec<UnsupportedChange>,
-) -> Result<Vec<OutputChange>, PlanParseError> {
+fn parse_output_changes(output_changes: &Value) -> Result<Vec<OutputChange>, PlanParseError> {
     if output_changes.is_null() {
         return Ok(Vec::new());
     }
@@ -371,24 +368,13 @@ fn parse_output_changes(
         };
         changes.push(OutputChange {
             address: address.clone(),
-            actions: actions.clone(),
+            actions,
             before: optional_plan_value(change, "before"),
             after: optional_plan_value(change, "after"),
             before_sensitive: optional_plan_value(change, "before_sensitive"),
             after_sensitive: optional_plan_value(change, "after_sensitive"),
             after_unknown: optional_plan_value(change, "after_unknown"),
         });
-
-        if !matches!(classify_actions(&actions), ActionClassification::NoOp) {
-            unsupported_changes.push(UnsupportedChange {
-                scope: UnsupportedChangeScope::Output,
-                address: address.clone(),
-                actions,
-                kind: UnsupportedChangeKind::Output,
-                reason: None,
-                action_type: None,
-            });
-        }
     }
 
     Ok(changes)
@@ -948,7 +934,7 @@ mod tests {
     }
 
     #[test]
-    fn retains_unsupported_resource_and_output_changes_without_listing_them() {
+    fn retains_unsupported_resource_changes_apart_from_output_changes() {
         let mut document = json!({
             "format_version": "1.0",
             "resource_changes": [
@@ -983,7 +969,7 @@ mod tests {
             ]
         );
         assert!(plan.has_changes());
-        assert_eq!(plan.unsupported_change_count(), 5);
+        assert_eq!(plan.unsupported_change_count(), 4);
         assert_eq!(
             plan.unsupported_changes[0].kind,
             UnsupportedChangeKind::Read
@@ -1000,11 +986,8 @@ mod tests {
             plan.unsupported_changes[3].kind,
             UnsupportedChangeKind::UnknownAction
         );
-        assert_eq!(
-            plan.unsupported_changes[4].scope,
-            UnsupportedChangeScope::Output
-        );
-        assert_eq!(plan.unsupported_changes[4].address, "public_ip");
+        assert_eq!(plan.output_changes.len(), 1);
+        assert_eq!(plan.output_changes[0].address, "public_ip");
     }
 
     #[test]
@@ -1077,12 +1060,10 @@ mod tests {
 
         let plan = parse_plan_json(&input.to_string()).expect("output-only plan should parse");
 
-        assert!(plan.has_changes());
-        assert_eq!(plan.unsupported_change_count(), 1);
-        assert_eq!(
-            plan.unsupported_changes[0].scope,
-            UnsupportedChangeScope::Output
-        );
+        assert!(plan.resource_changes.is_empty());
+        assert!(plan.unsupported_changes.is_empty());
+        assert_eq!(plan.output_changes.len(), 1);
+        assert_eq!(plan.output_changes[0].actions, vec![PlanAction::Update]);
     }
 
     #[test]

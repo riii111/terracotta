@@ -176,7 +176,7 @@ fn plan_review_changes_line(review: &PlanReview) -> Line<'static> {
     if counts == PlanSummary::default() {
         let text = if review.nonstandard_changes() > 0 {
             "  Other changes"
-        } else if review.has_changes() {
+        } else if review.changed_outputs() > 0 {
             "  Outputs changed"
         } else {
             "  No changes"
@@ -461,12 +461,19 @@ mod tests {
     use super::*;
     use crate::app::plan::{
         Plan, PlanAction, ResourceChangeKind, UnsupportedChange, UnsupportedChangeKind,
-        UnsupportedChangeScope, test_support::resource_change,
+        UnsupportedChangeScope,
+        test_support::{output_change, resource_change},
     };
     use crate::app::review::{PlanDocument, PlanMetadata};
 
     #[test]
     fn zero_resource_counts_preserve_output_and_nonstandard_change_status() {
+        struct StatusCase {
+            name: &'static str,
+            plan: Plan,
+            expected: &'static str,
+        }
+
         let read = Plan {
             resource_changes: vec![resource_change(
                 "data.terraform_data.read",
@@ -482,26 +489,55 @@ mod tests {
             }],
             ..Plan::empty()
         };
-        for (plan, outputs, expected) in [
-            (Plan::empty(), Vec::new(), "No changes"),
-            (
-                Plan::empty(),
-                vec!["endpoint".to_owned()],
-                "Outputs changed",
-            ),
-            (read, Vec::new(), "Other changes"),
+        let outputs = |actions: [PlanAction; 2]| {
+            actions
+                .into_iter()
+                .zip(["endpoint", "secret"])
+                .map(|(action, name)| output_change(name, action))
+                .collect()
+        };
+        for case in [
+            StatusCase {
+                name: "empty",
+                plan: Plan::empty(),
+                expected: "No changes",
+            },
+            StatusCase {
+                name: "no_op_outputs",
+                plan: Plan {
+                    output_changes: outputs([PlanAction::NoOp, PlanAction::NoOp]),
+                    ..Plan::empty()
+                },
+                expected: "No changes",
+            },
+            StatusCase {
+                name: "changed_output",
+                plan: Plan {
+                    output_changes: outputs([PlanAction::Update, PlanAction::NoOp]),
+                    ..Plan::empty()
+                },
+                expected: "Outputs changed",
+            },
+            StatusCase {
+                name: "read_and_changed_output",
+                plan: Plan {
+                    output_changes: outputs([PlanAction::Create, PlanAction::NoOp]),
+                    ..read
+                },
+                expected: "Other changes",
+            },
         ] {
             let review = PlanReview::new(
                 "/dev".into(),
                 "default".to_owned(),
                 PlanDocument::with_blocks_and_line_kinds(String::new(), Vec::new(), Vec::new()),
-                plan,
-                PlanMetadata::new(outputs, false),
+                case.plan,
+                PlanMetadata::new(false),
                 Vec::new(),
             );
 
             let line = plan_review_changes_line(&review).to_string();
-            assert!(line.contains(expected), "{expected}: {line}");
+            assert!(line.contains(case.expected), "case {}: {line}", case.name);
         }
     }
 
@@ -527,7 +563,7 @@ mod tests {
                 .collect(),
                 ..Plan::empty()
             },
-            PlanMetadata::new(Vec::new(), false),
+            PlanMetadata::new(false),
             Vec::new(),
         );
         assert_eq!(plan_review_height(&review, 240), 1);

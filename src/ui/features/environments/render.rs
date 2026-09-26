@@ -414,7 +414,7 @@ fn environment_summary_line(plan: &EnvironmentPlan) -> Line<'static> {
                 theme::overview_total_replace_style(),
             ));
         }
-        if !review.has_changes() && review.nonstandard_changes() == 0 {
+        if !review.has_changes() {
             line.push_span(Span::styled(" No changes", theme::overview_muted_style()));
         }
     }
@@ -579,12 +579,10 @@ fn overview_detail(plan: &EnvironmentPlan) -> String {
     } else if let Some(review) = plan
         .review()
         .map(ReviewSessionState::review)
-        .filter(|review| {
-            review.nonstandard_changes() > 0 || !review.metadata().output_names().is_empty()
-        })
+        .filter(|review| review.nonstandard_changes() > 0 || review.changed_outputs() > 0)
     {
         let count = review.nonstandard_changes();
-        let outputs = !review.metadata().output_names().is_empty();
+        let outputs = review.changed_outputs() > 0;
         let detail = if count > 0 && outputs {
             format!("{count} other change(s) and output changes")
         } else if count > 0 {

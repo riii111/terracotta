@@ -11,7 +11,7 @@ use super::{
         ApplyStatus, Diagnostic, ExecutionContext, ExecutionContextValue, ExecutionEvent,
         ExecutionTargetSpec, SensitiveValue,
     },
-    plan::{Plan, PlanRelations, PlanSummary, ProviderSchemas, ResourceChangeKind},
+    plan::{Plan, PlanAction, PlanRelations, PlanSummary, ProviderSchemas, ResourceChangeKind},
 };
 
 #[cfg(test)]
@@ -207,7 +207,6 @@ impl Debug for PlanDocument {
 /// Plan facts that the resource changes cannot reproduce.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct PlanMetadata {
-    output_names: Vec<String>,
     applyable: bool,
     sensitive_values: Vec<SensitiveValue>,
 }
@@ -216,7 +215,6 @@ impl Debug for PlanMetadata {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("PlanMetadata")
-            .field("output_names", &self.output_names)
             .field("applyable", &self.applyable)
             .field("sensitive_values", &"<redacted>")
             .finish()
@@ -225,9 +223,8 @@ impl Debug for PlanMetadata {
 
 impl PlanMetadata {
     #[must_use]
-    pub(crate) const fn new(output_names: Vec<String>, applyable: bool) -> Self {
+    pub(crate) const fn new(applyable: bool) -> Self {
         Self {
-            output_names,
             applyable,
             sensitive_values: Vec::new(),
         }
@@ -237,11 +234,6 @@ impl PlanMetadata {
     pub(crate) fn with_sensitive_values(mut self, sensitive_values: Vec<SensitiveValue>) -> Self {
         self.sensitive_values = sensitive_values;
         self
-    }
-
-    #[must_use]
-    pub(crate) fn output_names(&self) -> &[String] {
-        &self.output_names
     }
 
     #[must_use]
@@ -402,9 +394,20 @@ impl PlanReview {
         self.plan.summary()
     }
 
+    /// Changes outside the resource counts, excluding outputs.
     #[must_use]
     pub(crate) const fn nonstandard_changes(&self) -> usize {
         self.plan.unsupported_changes.len()
+    }
+
+    /// Terraform lists every output in a plan, including unchanged ones.
+    #[must_use]
+    pub(crate) fn changed_outputs(&self) -> usize {
+        self.plan
+            .output_changes
+            .iter()
+            .filter(|output| output.actions != [PlanAction::NoOp])
+            .count()
     }
 
     #[must_use]
@@ -414,7 +417,7 @@ impl PlanReview {
             .iter()
             .any(|change| change.kind.is_standard_change())
             || self.nonstandard_changes() > 0
-            || !self.metadata.output_names().is_empty()
+            || self.changed_outputs() > 0
     }
 
     /// Previous durations are looked up and paired with targets by this order.
@@ -643,8 +646,9 @@ mod tests {
     mod projection {
         use super::*;
         use crate::app::plan::{
-            PlanAction, PlanValue, ResourceChange, UnsupportedChange, UnsupportedChangeKind,
-            UnsupportedChangeScope, test_support::resource_change,
+            OutputChange, PlanValue, ResourceChange, UnsupportedChange, UnsupportedChangeKind,
+            UnsupportedChangeScope,
+            test_support::{output_change, resource_change},
         };
 
         fn review(plan: Plan, metadata: PlanMetadata) -> PlanReview {
@@ -669,12 +673,21 @@ mod tests {
             }
         }
 
+        fn sensitive_no_op_output() -> OutputChange {
+            OutputChange {
+                before: Some(PlanValue::String("synthetic-secret".to_owned())),
+                after: Some(PlanValue::String("synthetic-secret".to_owned())),
+                before_sensitive: Some(PlanValue::Bool(true)),
+                after_sensitive: Some(PlanValue::Bool(true)),
+                ..output_change("secret", PlanAction::NoOp)
+            }
+        }
+
         #[test]
-        fn has_changes_counts_nonstandard_and_output_changes_but_not_no_op_resources() {
+        fn has_changes_counts_nonstandard_and_changed_outputs_but_not_no_ops() {
             struct ChangesCase {
                 name: &'static str,
                 plan: Plan,
-                output_names: Vec<String>,
                 expected: bool,
             }
 
@@ -688,7 +701,6 @@ mod tests {
                         )],
                         ..Plan::empty()
                     },
-                    output_names: Vec::new(),
                     expected: false,
                 },
                 ChangesCase {
@@ -704,7 +716,6 @@ mod tests {
                         )],
                         ..Plan::empty()
                     },
-                    output_names: Vec::new(),
                     expected: true,
                 },
                 ChangesCase {
@@ -720,7 +731,6 @@ mod tests {
                         )],
                         ..Plan::empty()
                     },
-                    output_names: Vec::new(),
                     expected: true,
                 },
                 ChangesCase {
@@ -736,17 +746,32 @@ mod tests {
                         )],
                         ..Plan::empty()
                     },
-                    output_names: Vec::new(),
                     expected: true,
                 },
                 ChangesCase {
-                    name: "output_only",
-                    plan: Plan::empty(),
-                    output_names: vec!["endpoint".to_owned()],
+                    name: "no_op_outputs",
+                    plan: Plan {
+                        output_changes: vec![
+                            output_change("endpoint", PlanAction::NoOp),
+                            sensitive_no_op_output(),
+                        ],
+                        ..Plan::empty()
+                    },
+                    expected: false,
+                },
+                ChangesCase {
+                    name: "changed_output",
+                    plan: Plan {
+                        output_changes: vec![
+                            output_change("endpoint", PlanAction::Update),
+                            sensitive_no_op_output(),
+                        ],
+                        ..Plan::empty()
+                    },
                     expected: true,
                 },
             ] {
-                let review = review(case.plan, PlanMetadata::new(case.output_names, true));
+                let review = review(case.plan, PlanMetadata::new(true));
 
                 assert_eq!(review.has_changes(), case.expected, "case: {}", case.name);
                 assert_eq!(
@@ -756,6 +781,26 @@ mod tests {
                     case.name
                 );
             }
+        }
+
+        #[test]
+        fn changed_outputs_count_created_updated_and_deleted_outputs_only() {
+            let review = review(
+                Plan {
+                    output_changes: vec![
+                        output_change("created", PlanAction::Create),
+                        output_change("updated", PlanAction::Update),
+                        output_change("deleted", PlanAction::Delete),
+                        output_change("unchanged", PlanAction::NoOp),
+                        sensitive_no_op_output(),
+                    ],
+                    ..Plan::empty()
+                },
+                PlanMetadata::new(true),
+            );
+
+            assert_eq!(review.changed_outputs(), 3);
+            assert_eq!(review.nonstandard_changes(), 0);
         }
 
         #[test]
@@ -779,7 +824,7 @@ mod tests {
                     ],
                     ..Plan::empty()
                 },
-                PlanMetadata::new(Vec::new(), true),
+                PlanMetadata::new(true),
             );
 
             assert_eq!(
@@ -816,7 +861,7 @@ mod tests {
                     ],
                     ..Plan::empty()
                 },
-                PlanMetadata::new(Vec::new(), true),
+                PlanMetadata::new(true),
             );
 
             assert_eq!(
@@ -840,7 +885,7 @@ mod tests {
                     ],
                     ..Plan::empty()
                 },
-                PlanMetadata::new(Vec::new(), true),
+                PlanMetadata::new(true),
             );
 
             assert_eq!(review.confirmation_input(), "yes");

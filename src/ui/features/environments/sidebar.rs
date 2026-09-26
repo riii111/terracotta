@@ -112,7 +112,7 @@ fn environment_lines(
                 .review()
                 .expect("ready environment has a review")
                 .review();
-            if !review.has_changes() && review.nonstandard_changes() == 0 {
+            if !review.has_changes() {
                 let mut line = status;
                 line.push_span(Span::styled("  No changes", theme::overview_muted_style()));
                 lines.push(line);

@@ -507,7 +507,7 @@ mod tests {
                 "chosen".to_owned(),
                 plan_document("No changes.\n".to_owned()),
                 Plan::empty(),
-                PlanMetadata::new(Vec::new(), changed),
+                PlanMetadata::new(changed),
                 Vec::new(),
             )),
             changed,

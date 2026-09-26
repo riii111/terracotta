@@ -298,7 +298,7 @@ fn synthetic_review() -> ReviewSessionState {
             unsupported_changes: Vec::new(),
             output_changes: Vec::new(),
         },
-        PlanMetadata::new(Vec::new(), true),
+        PlanMetadata::new(true),
         Vec::new(),
     )
     .with_context(
@@ -502,7 +502,7 @@ fn synthetic_environment_review(directory: &Path, count: usize) -> PlanReview {
             resource_changes: changes,
             ..Plan::empty()
         },
-        PlanMetadata::new(Vec::new(), true),
+        PlanMetadata::new(true),
         Vec::new(),
     )
     .with_apply_allowed(false)
