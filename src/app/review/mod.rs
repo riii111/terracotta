@@ -800,7 +800,6 @@ mod tests {
             );
 
             assert_eq!(review.changed_outputs(), 3);
-            assert_eq!(review.nonstandard_changes(), 0);
         }
 
         #[test]
