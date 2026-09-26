@@ -429,10 +429,8 @@ impl PlanReview {
         }
     }
 
-    /// The plan JSON does not record the planning mode. Terraform makes drift alone applyable
-    /// only in refresh-only mode, where writing the drift to state is what apply does; a normal
-    /// plan with only drift is not applyable and reports no changes. When other changes exist,
-    /// both modes are applyable, so the drift stays a note there.
+    /// The plan JSON carries no planning mode, so drift is judged from applyability only when
+    /// nothing else is planned.
     fn drift_is_planned(&self) -> bool {
         !self.plan.drifted_resources.is_empty()
             && self.metadata.applyable()
@@ -812,7 +810,7 @@ mod tests {
         }
 
         #[test]
-        fn drift_is_a_change_only_when_it_alone_makes_the_plan_applyable() {
+        fn drift_counts_only_when_alone_applyable() {
             struct DriftCase {
                 name: &'static str,
                 plan: Plan,

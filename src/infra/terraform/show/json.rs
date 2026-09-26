@@ -1046,7 +1046,7 @@ mod tests {
     }
 
     #[test]
-    fn records_changed_resource_drift_apart_from_unsupported_changes() {
+    fn separates_changed_drift_from_unsupported_changes() {
         let input = json!({
             "format_version": "1.2",
             "resource_changes": [],

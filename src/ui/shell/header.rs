@@ -549,7 +549,7 @@ mod tests {
     }
 
     #[test]
-    fn drift_is_a_note_beside_the_status_unless_the_plan_applies_only_the_drift() {
+    fn drift_status_distinguishes_notes_from_changes() {
         struct DriftCase {
             name: &'static str,
             plan: Plan,

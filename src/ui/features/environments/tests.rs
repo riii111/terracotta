@@ -1624,7 +1624,7 @@ fn ready_environments_ignore_no_op_outputs_and_count_output_changes_once() {
 }
 
 #[test]
-fn ready_environment_with_only_normal_plan_drift_shows_no_changes_and_a_drift_note() {
+fn normal_drift_only_shows_no_changes_with_a_note() {
     use crate::app::plan::{ResourceChangeKind, test_support::resource_change};
 
     let state = ready_session(vec![

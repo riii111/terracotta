@@ -1017,7 +1017,7 @@ mod tests {
     }
 
     #[test]
-    fn quitting_a_drift_only_review_reports_changes_only_when_the_drift_is_applyable() {
+    fn quit_reports_only_applyable_drift() {
         struct DriftCase {
             name: &'static str,
             applyable: bool,

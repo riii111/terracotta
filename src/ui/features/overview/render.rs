@@ -1006,7 +1006,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_changes_notices_ignore_no_op_outputs_and_note_unapplied_drift() {
+    fn empty_changes_notices_cover_outputs_and_drift() {
         struct EmptyCase {
             name: &'static str,
             plan: Plan,
