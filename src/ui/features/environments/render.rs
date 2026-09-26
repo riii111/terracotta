@@ -577,14 +577,15 @@ fn matrix_pane_name(view: &EnvironmentView, state: &EnvironmentSession) -> Strin
 
 fn overview_detail(plan: &EnvironmentPlan) -> String {
     if matches!(plan.state(), EnvironmentState::Error) {
-        plan.diagnostic().text().to_owned()
-    } else if let Some(review) = plan
-        .review()
-        .map(ReviewSessionState::review)
-        .filter(|review| review.nonstandard_changes() > 0 || review.changed_outputs() > 0)
-    {
-        let count = review.nonstandard_changes();
-        let outputs = review.changed_outputs() > 0;
+        return plan.diagnostic().text().to_owned();
+    }
+    let Some(review) = plan.review().map(ReviewSessionState::review) else {
+        return String::new();
+    };
+    let mut notes = Vec::new();
+    let count = review.nonstandard_changes();
+    let outputs = review.changed_outputs() > 0;
+    if count > 0 || outputs {
         let detail = if count > 0 && outputs {
             format!("{count} other change(s) and output changes")
         } else if count > 0 {
@@ -592,10 +593,13 @@ fn overview_detail(plan: &EnvironmentPlan) -> String {
         } else {
             "output changes".to_owned()
         };
-        format!("Other changes: {detail}. v opens the full plan.")
-    } else {
-        String::new()
+        notes.push(format!("Other changes: {detail}. v opens the full plan."));
     }
+    let drift = review.noted_drift();
+    if drift > 0 {
+        notes.push(format!("Drift detected in {drift} resource(s)."));
+    }
+    notes.join(" ")
 }
 
 fn section_heights(area: Rect, context: &str, detail: &str) -> (u16, u16) {

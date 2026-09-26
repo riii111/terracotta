@@ -396,8 +396,13 @@ impl PlanReview {
 
     /// Outputs are counted separately, so callers can add both counts without double counting.
     #[must_use]
-    pub(crate) const fn nonstandard_changes(&self) -> usize {
-        self.plan.unsupported_changes.len()
+    pub(crate) fn nonstandard_changes(&self) -> usize {
+        let planned_drift = if self.drift_is_planned() {
+            self.plan.drifted_resources.len()
+        } else {
+            0
+        };
+        self.plan.unsupported_changes.len() + planned_drift
     }
 
     /// Terraform lists every output in a plan, including unchanged ones.
@@ -412,11 +417,32 @@ impl PlanReview {
 
     #[must_use]
     pub(crate) fn has_changes(&self) -> bool {
+        self.has_changes_besides_drift() || self.drift_is_planned()
+    }
+
+    #[must_use]
+    pub(crate) fn noted_drift(&self) -> usize {
+        if self.drift_is_planned() {
+            0
+        } else {
+            self.plan.drifted_resources.len()
+        }
+    }
+
+    /// The plan JSON carries no planning mode, so drift is judged from applyability only when
+    /// nothing else is planned.
+    fn drift_is_planned(&self) -> bool {
+        !self.plan.drifted_resources.is_empty()
+            && self.metadata.applyable()
+            && !self.has_changes_besides_drift()
+    }
+
+    fn has_changes_besides_drift(&self) -> bool {
         self.plan
             .resource_changes
             .iter()
             .any(|change| change.kind.is_standard_change())
-            || self.nonstandard_changes() > 0
+            || !self.plan.unsupported_changes.is_empty()
             || self.changed_outputs() > 0
     }
 
@@ -777,6 +803,87 @@ mod tests {
                 assert_eq!(
                     review.summary(),
                     PlanSummary::default(),
+                    "case: {}",
+                    case.name
+                );
+            }
+        }
+
+        #[test]
+        fn drift_counts_only_when_alone_applyable() {
+            struct DriftCase {
+                name: &'static str,
+                plan: Plan,
+                applyable: bool,
+                has_changes: bool,
+                nonstandard_changes: usize,
+                noted_drift: usize,
+            }
+
+            let drift = |plan| Plan {
+                drifted_resources: vec!["terraform_data.drifted".to_owned()],
+                ..plan
+            };
+            for case in [
+                DriftCase {
+                    name: "normal_drift_only",
+                    plan: drift(Plan::empty()),
+                    applyable: false,
+                    has_changes: false,
+                    nonstandard_changes: 0,
+                    noted_drift: 1,
+                },
+                DriftCase {
+                    name: "refresh_only_drift_only",
+                    plan: drift(Plan::empty()),
+                    applyable: true,
+                    has_changes: true,
+                    nonstandard_changes: 1,
+                    noted_drift: 0,
+                },
+                DriftCase {
+                    name: "drift_and_resource_update",
+                    plan: drift(Plan {
+                        resource_changes: vec![resource_change(
+                            "terraform_data.drifted",
+                            ResourceChangeKind::Update,
+                        )],
+                        ..Plan::empty()
+                    }),
+                    applyable: true,
+                    has_changes: true,
+                    nonstandard_changes: 0,
+                    noted_drift: 1,
+                },
+                DriftCase {
+                    name: "drift_and_changed_output",
+                    plan: drift(Plan {
+                        output_changes: vec![output_change("endpoint", PlanAction::Update)],
+                        ..Plan::empty()
+                    }),
+                    applyable: true,
+                    has_changes: true,
+                    nonstandard_changes: 0,
+                    noted_drift: 1,
+                },
+            ] {
+                let review = review(case.plan, PlanMetadata::new(case.applyable));
+
+                assert_eq!(
+                    review.has_changes(),
+                    case.has_changes,
+                    "case: {}",
+                    case.name
+                );
+                assert_eq!(
+                    review.nonstandard_changes(),
+                    case.nonstandard_changes,
+                    "case: {}",
+                    case.name
+                );
+                assert_eq!(
+                    review.noted_drift(),
+                    case.noted_drift,
                     "case: {}",
                     case.name
                 );

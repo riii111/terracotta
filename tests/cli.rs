@@ -1275,7 +1275,9 @@ Plan: 0 to add, 3 to change, 0 to destroy.
 
         assert_eq!(result.exit_code, 0);
         result.assert_restored();
+        result.observed("apply_input_yes");
         result.observed("apply_confirmation_narrow");
+        result.observed("apply_narrow_enter_redrawn");
         result.observed("apply_confirmation_resized");
         result.observed("apply_started");
         result.observed("apply_second_enter");
