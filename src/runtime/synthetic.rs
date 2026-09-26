@@ -65,8 +65,7 @@ fn run_synthetic_session(mut session: SyntheticSession) -> io::Result<()> {
     })
 }
 
-// Mirrors one pass of the connected loop with the synthetic effects: the session never starts
-// Terraform, writes the clipboard, or saves apply history, and a timer stands in for the worker.
+// Each step mirrors one pass of the connected loop; a timer stands in for the apply worker.
 struct SyntheticSession {
     state: SessionState,
     review_view: plan_review::PlanReviewViewState,
@@ -94,7 +93,6 @@ impl SyntheticSession {
         }
     }
 
-    // Returns whether the session finished.
     fn step<B: Backend>(
         &mut self,
         terminal: &mut Terminal<B>,
@@ -212,7 +210,8 @@ impl SyntheticSession {
     }
 }
 
-// Stands in for the runtime effects. Returns whether the session finished.
+// Stands in for the runtime effects: the synthetic session never starts Terraform, writes the
+// clipboard, or saves apply history.
 fn apply_synthetic_action(
     state: &mut SessionState,
     action: Action,
