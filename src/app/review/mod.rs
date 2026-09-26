@@ -394,7 +394,7 @@ impl PlanReview {
         self.plan.summary()
     }
 
-    /// Changes outside the resource counts, excluding outputs.
+    /// Outputs are counted separately, so callers can add both counts without double counting.
     #[must_use]
     pub(crate) const fn nonstandard_changes(&self) -> usize {
         self.plan.unsupported_changes.len()

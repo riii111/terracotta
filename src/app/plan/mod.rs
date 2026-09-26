@@ -318,7 +318,6 @@ pub(crate) struct ProviderSchemas {
 pub(crate) mod test_support {
     use super::{OutputChange, PlanAction, ResourceChange, ResourceChangeKind, ResourceMode};
 
-    /// An output change with `action` and without values.
     pub(crate) fn output_change(address: &str, action: PlanAction) -> OutputChange {
         OutputChange {
             address: address.to_owned(),

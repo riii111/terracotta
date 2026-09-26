@@ -1623,7 +1623,6 @@ fn ready_environments_ignore_no_op_outputs_and_count_output_changes_once() {
     }
 }
 
-/// Every plan becomes a ready review whose exit status and applyability follow its changes.
 fn ready_session(plans: Vec<(&str, Plan)>) -> EnvironmentSession {
     let environments = plans
         .iter()
@@ -1661,7 +1660,6 @@ fn ready_session(plans: Vec<(&str, Plan)>) -> EnvironmentSession {
     state
 }
 
-/// The sidebar status of `name`, with its wrapped lines joined.
 fn sidebar_status(text: &str, name: &str) -> String {
     let sidebar = text
         .lines()
