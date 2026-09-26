@@ -7,7 +7,9 @@ mod event;
 pub(crate) mod history;
 mod progress;
 
-pub(crate) use context::{ExecutionContext, ExecutionContextValue, Tool, VariableSources};
+pub(crate) use context::{
+    ExecutionContext, ExecutionContextValue, Tool, VariableSources, directory_display_name,
+};
 pub(crate) use event::{
     Diagnostic, DiagnosticPoint, DiagnosticPosition, DiagnosticSeverity, DiagnosticSource,
     EventStream, ExecutionEvent, ExecutionEventKind, ExecutionLogLine, ExecutionPhase,
