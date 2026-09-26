@@ -36,7 +36,7 @@ Changes to Outputs:                     │ Tool: terraform loading...          
                                         │ Destroy:                                                                     │
 Warning: Value for "pending" is not know│   terraform_data.old                                                         │
                                         │ Replace:                                                                     │
-Plan: 2 to add, 2 to change, 1 to destro│   terraform_data.worker                                                      │
+Plan: 2 to add, 1 to change, 2 to destro│   terraform_data.worker                                                      │
                                         │                                                                              │
 Synthetic review text continues below so│ Type main to apply (exact match).                                            │
 The same long body is intentionally reus│ > |                                                                          │
