@@ -409,6 +409,12 @@ fn overview_lines(
             theme::overview_warning_style(),
         )));
     }
+    if content.drift > 0 {
+        lines.push(Line::from(Span::styled(
+            format!("Drift detected in {} resource(s).", content.drift),
+            theme::overview_muted_style(),
+        )));
+    }
     if content.rows.is_empty() {
         lines.push(Line::from(Span::styled(
             if review.has_changes() {
@@ -1000,35 +1006,68 @@ mod tests {
     }
 
     #[test]
-    fn empty_changes_notice_ignores_no_op_outputs() {
+    fn empty_changes_notices_cover_outputs_and_drift() {
         struct EmptyCase {
             name: &'static str,
-            action: PlanAction,
+            plan: Plan,
+            applyable: bool,
             expected: &'static [&'static str],
         }
 
+        let outputs = |action| Plan {
+            output_changes: vec![
+                output_change("endpoint", action),
+                output_change("unchanged", PlanAction::NoOp),
+            ],
+            ..Plan::empty()
+        };
+        let drift = Plan {
+            drifted_resources: vec!["terraform_data.drifted".to_owned()],
+            ..Plan::empty()
+        };
         for case in [
             EmptyCase {
                 name: "no_op_outputs",
-                action: PlanAction::NoOp,
+                plan: outputs(PlanAction::NoOp),
+                applyable: false,
                 expected: &["No resource changes to summarize."],
             },
             EmptyCase {
                 name: "changed_output",
-                action: PlanAction::Delete,
+                plan: outputs(PlanAction::Delete),
+                applyable: true,
+                expected: &[
+                    "Other changes: 1 output/import/move or unsupported change(s).",
+                    "No matching resource changes.",
+                ],
+            },
+            EmptyCase {
+                name: "normal_drift_only",
+                plan: drift.clone(),
+                applyable: false,
+                expected: &[
+                    "Drift detected in 1 resource(s).",
+                    "No resource changes to summarize.",
+                ],
+            },
+            EmptyCase {
+                name: "refresh_only_drift_only",
+                plan: drift,
+                applyable: true,
                 expected: &[
                     "Other changes: 1 output/import/move or unsupported change(s).",
                     "No matching resource changes.",
                 ],
             },
         ] {
-            let review = review_with_plan(Plan {
-                output_changes: vec![
-                    output_change("endpoint", case.action),
-                    output_change("unchanged", PlanAction::NoOp),
-                ],
-                ..Plan::empty()
-            });
+            let review = PlanReview::new(
+                PathBuf::from("/repo/infra"),
+                "default".to_owned(),
+                PlanDocument::with_blocks_and_line_kinds(String::new(), Vec::new(), Vec::new()),
+                case.plan,
+                PlanMetadata::new(case.applyable),
+                Vec::new(),
+            );
             let state = overview_session(review.clone());
             let content = OverviewContent::project(&state, "", &BTreeSet::new());
 

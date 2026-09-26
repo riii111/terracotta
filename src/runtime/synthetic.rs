@@ -320,6 +320,7 @@ fn synthetic_review() -> ReviewSessionState {
             ],
             unsupported_changes: Vec::new(),
             output_changes: Vec::new(),
+            drifted_resources: Vec::new(),
         },
         PlanMetadata::new(true),
         Vec::new(),

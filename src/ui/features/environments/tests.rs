@@ -1623,6 +1623,38 @@ fn ready_environments_ignore_no_op_outputs_and_count_output_changes_once() {
     }
 }
 
+#[test]
+fn normal_drift_only_shows_no_changes_with_a_note() {
+    use crate::app::plan::{ResourceChangeKind, test_support::resource_change};
+
+    let state = ready_session(vec![
+        (
+            "a-drift",
+            Plan {
+                drifted_resources: vec!["terraform_data.drifted".to_owned()],
+                ..Plan::empty()
+            },
+        ),
+        (
+            "b-create",
+            Plan {
+                resource_changes: vec![resource_change(
+                    "terraform_data.created",
+                    ResourceChangeKind::Create,
+                )],
+                ..Plan::empty()
+            },
+        ),
+    ]);
+    let mut view = EnvironmentView::default();
+
+    let text = render_text(&mut view, &state, (160, 60));
+
+    assert_eq!(sidebar_status(&text, "a-drift"), "✓ Ready No changes");
+    assert!(text.contains("Drift detected in 1 resource(s)."), "{text}");
+    assert!(!text.contains("Other changes"), "{text}");
+}
+
 fn ready_session(plans: Vec<(&str, Plan)>) -> EnvironmentSession {
     let environments = plans
         .iter()

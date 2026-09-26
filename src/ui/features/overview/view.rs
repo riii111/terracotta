@@ -34,6 +34,7 @@ pub(crate) struct OverviewRow {
 pub(crate) struct OverviewContent {
     pub(crate) rows: Vec<OverviewRow>,
     pub(crate) unsupported: usize,
+    pub(crate) drift: usize,
 }
 
 impl OverviewContent {
@@ -100,6 +101,7 @@ impl OverviewContent {
         Self {
             rows,
             unsupported: state.review().nonstandard_changes() + state.review().changed_outputs(),
+            drift: state.review().noted_drift(),
         }
     }
 }
@@ -421,7 +423,8 @@ impl OverviewViewState {
             (None, true) => row_count - 1,
         };
         self.selected = Some(next);
-        let row_line = 1 + usize::from(content.unsupported > 0) + next;
+        let row_line =
+            1 + usize::from(content.unsupported > 0) + usize::from(content.drift > 0) + next;
         let bottom = usize::from(self.vertical) + usize::from(body.height.max(1));
         if row_line < usize::from(self.vertical) {
             self.vertical = u16::try_from(row_line).unwrap_or(u16::MAX);
@@ -846,32 +849,58 @@ mod tests {
     }
 
     #[test]
-    fn selection_scroll_accounts_for_overview_header_and_notice() {
-        let content = OverviewContent {
-            rows: (0..6)
-                .map(|index| OverviewRow {
-                    group_index: index,
-                    member_index: Some(index),
-                    child: false,
-                    address: format!("resource.{index}"),
-                    display_address: format!("resource.{index}"),
-                    action: "~".to_owned(),
-                    count: 1,
-                    has_unknown: false,
-                    node_id: None,
-                })
-                .collect(),
-            unsupported: 1,
-        };
-        let mut view = OverviewViewState::default();
-        let body = Rect::new(0, 0, 40, 5);
-
-        for _ in 0..6 {
-            view.apply(OverviewInput::Down, body, Rect::default(), 3, &content);
+    fn selection_scroll_accounts_for_overview_header_and_notices() {
+        struct NoticeCase {
+            name: &'static str,
+            drift: usize,
+            expected_scroll: u16,
         }
 
-        assert_eq!(view.selected(), Some(5));
-        assert_eq!(view.scroll(), 3);
+        for case in [
+            NoticeCase {
+                name: "other_changes",
+                drift: 0,
+                expected_scroll: 3,
+            },
+            NoticeCase {
+                name: "other_changes_and_drift",
+                drift: 1,
+                expected_scroll: 4,
+            },
+        ] {
+            let content = OverviewContent {
+                rows: (0..6)
+                    .map(|index| OverviewRow {
+                        group_index: index,
+                        member_index: Some(index),
+                        child: false,
+                        address: format!("resource.{index}"),
+                        display_address: format!("resource.{index}"),
+                        action: "~".to_owned(),
+                        count: 1,
+                        has_unknown: false,
+                        node_id: None,
+                    })
+                    .collect(),
+                unsupported: 1,
+                drift: case.drift,
+            };
+            let mut view = OverviewViewState::default();
+            let body = Rect::new(0, 0, 40, 5);
+
+            for _ in 0..6 {
+                view.apply(
+                    OverviewInput::Down,
+                    body,
+                    Rect::default(),
+                    u16::MAX,
+                    &content,
+                );
+            }
+
+            assert_eq!(view.selected(), Some(5), "case: {}", case.name);
+            assert_eq!(view.scroll(), case.expected_scroll, "case: {}", case.name);
+        }
     }
 
     #[test]
@@ -879,6 +908,7 @@ mod tests {
         let content = OverviewContent {
             rows: Vec::new(),
             unsupported: 0,
+            drift: 0,
         };
         let mut view = OverviewViewState::default();
 
