@@ -16,7 +16,7 @@ use crate::app::{
 };
 use crate::ui::primitives::{
     atoms::{scrollbar, separator},
-    molecules::{help_dialog, terminal_notice},
+    molecules::{context_dialog, dialog_scroll::DialogScroll, help_dialog, terminal_notice},
 };
 use crate::ui::shell::{context, footer, header, layout as shell_layout};
 use crate::ui::theme;
@@ -875,7 +875,7 @@ fn render_overlay(
         PlanReviewOverlay::Help => help_dialog::render(
             frame,
             area,
-            overlay_title(overlay),
+            "Help",
             &plan_help_sections(
                 review,
                 navigation,
@@ -883,13 +883,9 @@ fn render_overlay(
             ),
             view.overlay_scroll(),
         ),
-        PlanReviewOverlay::Context => render_dialog(
-            frame,
-            area,
-            overlay_title(overlay),
-            context::context_lines(review.context()),
-            view.overlay_scroll(),
-        ),
+        PlanReviewOverlay::Context => {
+            context_dialog::render(frame, area, review.context(), view.overlay_scroll());
+        }
     }
 }
 
@@ -898,13 +894,13 @@ fn render_confirmation_overlay(
     area: Rect,
     review: &PlanReview,
     overlay: ConfirmationOverlay,
-    scroll: u16,
+    scroll: &DialogScroll,
 ) {
     match overlay {
         ConfirmationOverlay::Help => help_dialog::render(
             frame,
             area,
-            confirmation_overlay_title(overlay),
+            "Apply help",
             &[
                 help_dialog::HelpSection::new(
                     "Navigation",
@@ -938,13 +934,9 @@ fn render_confirmation_overlay(
             ],
             scroll,
         ),
-        ConfirmationOverlay::Context => render_dialog(
-            frame,
-            area,
-            confirmation_overlay_title(overlay),
-            context::context_lines(review.context()),
-            scroll,
-        ),
+        ConfirmationOverlay::Context => {
+            context_dialog::render(frame, area, review.context(), scroll);
+        }
     }
 }
 
@@ -1007,80 +999,6 @@ fn plan_help_sections(
     ]
 }
 
-const fn overlay_title(overlay: PlanReviewOverlay) -> &'static str {
-    match overlay {
-        PlanReviewOverlay::Help => "Help",
-        PlanReviewOverlay::Context => "Context",
-    }
-}
-
-const fn confirmation_overlay_title(overlay: ConfirmationOverlay) -> &'static str {
-    match overlay {
-        ConfirmationOverlay::Help => "Apply help",
-        ConfirmationOverlay::Context => "Context",
-    }
-}
-
-fn render_dialog(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    title: &'static str,
-    lines: Vec<Line<'static>>,
-    scroll: u16,
-) {
-    let width = area.width.saturating_sub(4).min(96);
-    let inner_width = width.saturating_sub(2);
-    let body = Paragraph::new(lines).wrap(Wrap { trim: false });
-    let height = u16::try_from(body.line_count(inner_width))
-        .unwrap_or(u16::MAX)
-        .saturating_add(3)
-        .min(area.height.saturating_sub(2));
-    if width < 12 || height < 4 {
-        terminal_notice::render_wrapped(frame, area, "Terminal too small. Resize or press Esc.");
-        return;
-    }
-    let dialog = Rect::new(
-        area.x + area.width.saturating_sub(width) / 2,
-        area.y + area.height.saturating_sub(height) / 2,
-        width,
-        height,
-    );
-    frame.render_widget(Clear, dialog);
-    let block = Block::new()
-        .borders(Borders::ALL)
-        .border_style(theme::frame_style())
-        .style(theme::body_style())
-        .title(title);
-    let inner = block.inner(dialog);
-    frame.render_widget(block, dialog);
-    let footer_area = Rect::new(
-        inner.x,
-        inner.bottom().saturating_sub(1),
-        inner.width,
-        u16::from(inner.height > 0),
-    );
-    let content_area = Rect::new(
-        inner.x,
-        inner.y,
-        inner.width,
-        inner.height.saturating_sub(1),
-    );
-    let max_scroll = body
-        .line_count(content_area.width)
-        .saturating_sub(usize::from(content_area.height));
-    let scroll = u16::try_from(usize::from(scroll).min(max_scroll)).unwrap_or(u16::MAX);
-    frame.render_widget(
-        body.style(theme::body_style()).scroll((scroll, 0)),
-        content_area,
-    );
-    footer::render(
-        frame,
-        footer_area,
-        &[footer::hint(&["?", "Esc"], "close")],
-        None,
-    );
-}
-
 pub(crate) fn render_environment(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -1088,7 +1006,7 @@ pub(crate) fn render_environment(
     view: &mut PlanReviewViewState,
     now: Instant,
 ) {
-    render_for_navigation(
+    if render_for_navigation(
         frame,
         state,
         view,
@@ -1096,7 +1014,15 @@ pub(crate) fn render_environment(
         FooterMode::Actions,
         ReviewNavigation::Environments,
         area,
-    );
+    ) {
+        render_overlay(
+            frame,
+            area,
+            state.review(),
+            view,
+            ReviewNavigation::Environments,
+        );
+    }
 }
 
 pub(crate) fn render_environment_with_quit_confirmation(
@@ -1107,7 +1033,7 @@ pub(crate) fn render_environment_with_quit_confirmation(
     now: Instant,
     acquiring: bool,
 ) {
-    render_for_navigation(
+    if render_for_navigation(
         frame,
         state,
         view,
@@ -1119,7 +1045,15 @@ pub(crate) fn render_environment_with_quit_confirmation(
         },
         ReviewNavigation::Environments,
         area,
-    );
+    ) {
+        render_overlay(
+            frame,
+            area,
+            state.review(),
+            view,
+            ReviewNavigation::Environments,
+        );
+    }
 }
 
 pub(crate) fn render_with_quit_confirmation(
@@ -1129,11 +1063,13 @@ pub(crate) fn render_with_quit_confirmation(
     now: Instant,
     quit_confirmation: bool,
 ) {
-    let mut view = view.clone();
-    render_for_navigation(
+    // The clone only keeps body scroll reconciliation local; the overlay records its scroll
+    // limit on the caller's view so the next key starts from the rendered offset.
+    let mut reconciled = view.clone();
+    if render_for_navigation(
         frame,
         state,
-        &mut view,
+        &mut reconciled,
         now,
         if quit_confirmation {
             FooterMode::QuitConfirmation
@@ -1142,9 +1078,19 @@ pub(crate) fn render_with_quit_confirmation(
         },
         ReviewNavigation::Standalone,
         frame.area(),
-    );
+    ) {
+        render_overlay(
+            frame,
+            frame.area(),
+            state.review(),
+            view,
+            ReviewNavigation::Standalone,
+        );
+    }
 }
 
+// Returns false when only the size notice was drawn; overlays are drawn by the callers so the
+// scroll limit is recorded on the view that receives the next key.
 #[expect(
     clippy::too_many_lines,
     reason = "the plan renderer keeps the feature layout and content projection in one path"
@@ -1157,7 +1103,7 @@ fn render_for_navigation(
     footer_mode: FooterMode,
     navigation: ReviewNavigation,
     area: Rect,
-) {
+) -> bool {
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         terminal_notice::render_wrapped(
             frame,
@@ -1168,7 +1114,7 @@ fn render_for_navigation(
                 footer_mode,
             ),
         );
-        return;
+        return false;
     }
 
     let filtered_view = filter_active(view.searching(), state);
@@ -1192,7 +1138,7 @@ fn render_for_navigation(
                 footer_mode,
             ),
         );
-        return;
+        return false;
     }
     view.reconcile_scroll(layout.max_vertical(), layout.max_horizontal());
     header::render_plan_review(frame, layout.shell.header(), state.review());
@@ -1274,7 +1220,7 @@ fn render_for_navigation(
         separator::render(layout.shell.footer_separator().width),
         layout.shell.footer_separator(),
     );
-    render_overlay(frame, area, state.review(), view, navigation);
+    true
 }
 
 fn prepare_content<'a>(
@@ -1820,7 +1766,10 @@ mod tests {
     };
     use crate::ui::{
         features::plan_review::{ApplyConfirmationInput, PlanReviewInput, key_to_input},
-        test_support::{buffer_text, render_to_buffer, write_buffer_captures},
+        test_support::{
+            assert_dialog_scrolled_up, buffer_text, dialog_body_rows, render_to_buffer,
+            write_buffer_captures,
+        },
     };
 
     use super::*;
@@ -2432,7 +2381,10 @@ End of synthetic plan body."#;
         let state = confirmation_state(plan);
         for (width, height) in [(40, 16), (40, 24), (80, 24)] {
             let mut view = ApplyConfirmationViewState::default();
-            assert_eq!(view.apply(ApplyConfirmationInput::OpenHelp, "main"), None);
+            assert_eq!(
+                view.apply(ApplyConfirmationInput::OpenHelp, "main", 0),
+                None
+            );
             let help = render_to_buffer((width, height), |frame| {
                 render_apply_confirmation(frame, &state, &view);
             });
@@ -2489,7 +2441,7 @@ End of synthetic plan body."#;
 
         let mut view = ApplyConfirmationViewState::default();
         assert_eq!(
-            view.apply(ApplyConfirmationInput::OpenContext, "main"),
+            view.apply(ApplyConfirmationInput::OpenContext, "main", 0),
             None
         );
         let context = render_to_buffer((120, 40), |frame| {
@@ -3939,7 +3891,7 @@ End of synthetic plan body."#;
             let state = confirmation_state(review());
             let mut view = ApplyConfirmationViewState::default();
             for character in "yes".chars() {
-                view.apply(ApplyConfirmationInput::Character(character), "yes");
+                view.apply(ApplyConfirmationInput::Character(character), "yes", 0);
             }
             let buffer = render_to_buffer((120, 40), |frame| {
                 render_apply_confirmation(frame, &state, &view);
@@ -4104,7 +4056,7 @@ End of synthetic plan body."#;
                 .repeat(3)
                 .chars()
             {
-                view.apply(ApplyConfirmationInput::Character(character), "yes");
+                view.apply(ApplyConfirmationInput::Character(character), "yes", 0);
             }
             let layout = apply_confirmation_layout(Rect::new(0, 0, 80, 24), &state);
             assert!(confirmation_input_scroll(&view, layout.input().width) > 0);
@@ -4118,6 +4070,79 @@ End of synthetic plan body."#;
 
     mod overlay {
         use super::*;
+
+        const SCROLL_CASES: [(&str, i16, usize); 2] = [("up", -1, 1), ("page_up", -8, 8)];
+
+        fn long_context_review() -> PlanReview {
+            review().with_context(
+                ExecutionContext::loading("/repo/environments/production").with_variable_sources(
+                    VariableSources::new(
+                        Vec::new(),
+                        Vec::new(),
+                        false,
+                        (0..32).map(|index| format!("TF_VAR_{index:02}")).collect(),
+                    ),
+                ),
+            )
+        }
+
+        #[test]
+        fn review_overlays_scroll_up_from_the_end_by_one_line_and_one_page() {
+            let state = review_state(long_context_review());
+            for (overlay, input, title) in [
+                ("help", PlanReviewInput::OpenHelp, "Help"),
+                ("context", PlanReviewInput::OpenContext, "Context"),
+            ] {
+                for (name, delta, lines) in SCROLL_CASES {
+                    let rows = |view: &PlanReviewViewState| {
+                        dialog_body_rows(
+                            &render_to_buffer((40, 16), |frame| {
+                                render(frame, &state, view, Instant::now());
+                            }),
+                            title,
+                        )
+                    };
+                    let mut view = PlanReviewViewState::default();
+                    view.apply_with_matches(input, Rect::default(), 0, 0, "", &[]);
+                    view.overlay_bottom();
+                    let end = rows(&view);
+
+                    view.scroll_overlay(delta);
+                    let scrolled = rows(&view);
+
+                    assert_dialog_scrolled_up(&format!("{overlay} {name}"), &end, &scrolled, lines);
+                }
+            }
+        }
+
+        #[test]
+        fn confirmation_overlays_scroll_up_from_the_end_by_one_line_and_one_page() {
+            let state = confirmation_state(long_context_review());
+            for (overlay, input, title) in [
+                ("help", ApplyConfirmationInput::OpenHelp, "Apply help"),
+                ("context", ApplyConfirmationInput::OpenContext, "Context"),
+            ] {
+                for (name, delta, lines) in SCROLL_CASES {
+                    let rows = |view: &ApplyConfirmationViewState| {
+                        dialog_body_rows(
+                            &render_to_buffer((40, 16), |frame| {
+                                render_apply_confirmation(frame, &state, view);
+                            }),
+                            title,
+                        )
+                    };
+                    let mut view = ApplyConfirmationViewState::default();
+                    view.apply(input, "yes", 0);
+                    view.overlay_bottom();
+                    let end = rows(&view);
+
+                    view.scroll_overlay(delta);
+                    let scrolled = rows(&view);
+
+                    assert_dialog_scrolled_up(&format!("{overlay} {name}"), &end, &scrolled, lines);
+                }
+            }
+        }
 
         fn diagnostic_review() -> PlanReview {
             PlanReview::new(
@@ -4608,7 +4633,13 @@ End of synthetic plan body."#;
             let sections = plan_help_sections(&review(), ReviewNavigation::Environments, false);
             for size in [(40, 16), (40, 24), (80, 24), (120, 40), (160, 60)] {
                 let text = buffer_text(&render_to_buffer(size, |frame| {
-                    help_dialog::render(frame, frame.area(), "Help", &sections, 0);
+                    help_dialog::render(
+                        frame,
+                        frame.area(),
+                        "Help",
+                        &sections,
+                        &DialogScroll::default(),
+                    );
                 }));
                 let compact = text
                     .chars()
@@ -4654,7 +4685,13 @@ End of synthetic plan body."#;
 
             let sections = plan_help_sections(&plan, ReviewNavigation::Standalone, false);
             let help = buffer_text(&render_to_buffer((120, 40), |frame| {
-                help_dialog::render(frame, frame.area(), "Help", &sections, 0);
+                help_dialog::render(
+                    frame,
+                    frame.area(),
+                    "Help",
+                    &sections,
+                    &DialogScroll::default(),
+                );
             }));
             assert!(help.contains("apply the full plan"), "{help}");
         }

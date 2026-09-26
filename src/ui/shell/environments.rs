@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use ratatui::{
     Frame,
     layout::Rect,
@@ -11,7 +9,7 @@ use super::context::truncate_middle;
 use crate::{
     app::{
         environments::{EnvironmentPlan, EnvironmentSession, EnvironmentState},
-        execution::ExecutionContextValue,
+        execution::{ExecutionContextValue, directory_display_name},
     },
     ui::theme,
 };
@@ -177,9 +175,7 @@ pub(crate) fn render_header(
     };
     let title = format!(
         "terracotta ▸ {}",
-        state
-            .exploration_root()
-            .map_or_else(|| directory_name(plan), path_directory_name)
+        directory_display_name(state.exploration_root().unwrap_or_else(|| plan.directory()))
     );
     let tool = plan.review().map_or_else(
         || plan.tool.display_name().to_owned(),
@@ -213,17 +209,6 @@ pub(crate) fn render_header(
 
 pub(crate) fn name(plan: &EnvironmentPlan) -> String {
     plan.display_name()
-}
-
-fn directory_name(plan: &EnvironmentPlan) -> String {
-    path_directory_name(plan.directory())
-}
-
-fn path_directory_name(path: &Path) -> String {
-    path.file_name()
-        .unwrap_or(path.as_os_str())
-        .to_string_lossy()
-        .into_owned()
 }
 
 pub(crate) fn context(plan: &EnvironmentPlan) -> String {

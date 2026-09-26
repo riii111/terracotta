@@ -8,7 +8,10 @@ use crate::{
         review::{PlanMetadata, PlanReview, test_support::plan_document},
         session::Effect,
     },
-    ui::test_support::{buffer_text, buffer_visual_snapshot, render_to_buffer},
+    ui::test_support::{
+        assert_dialog_scrolled_up, buffer_text, buffer_visual_snapshot, dialog_body_rows,
+        render_to_buffer,
+    },
 };
 use ratatui::style::{Color, Modifier};
 use std::path::PathBuf;
@@ -358,7 +361,7 @@ fn multi_environment_help_groups_actions_and_scrolls_on_small_terminals() {
         assert!(wide.contains(explanation), "{explanation}: {wide}");
     }
 
-    view.dialog_scroll = u16::MAX;
+    view.dialog_scroll.bottom();
     let bottom = render_to_buffer((40, 16), |frame| view.render(frame, &state));
     let bottom_text = buffer_text(&bottom);
     assert!(bottom_text.contains("Scope"));
@@ -448,20 +451,20 @@ fn help_scroll_keys_do_not_reach_the_environment_overview() {
         handle_key_code(&mut view, KeyCode::Char(character), size, &state);
     }
     assert!(view.dialog.is_some());
-    assert_eq!(view.dialog_scroll, 0);
+    assert_eq!(view.dialog_scroll.offset_for_test(), 0);
     assert_eq!(view.focus, EnvironmentPane::Matrix);
     handle_key_code(&mut view, KeyCode::Down, size, &state);
-    assert_eq!(view.dialog_scroll, 1);
+    assert_eq!(view.dialog_scroll.offset_for_test(), 1);
     handle_key_code(&mut view, KeyCode::Char('j'), size, &state);
-    assert_eq!(view.dialog_scroll, 2);
+    assert_eq!(view.dialog_scroll.offset_for_test(), 2);
     handle_key_code(&mut view, KeyCode::PageDown, size, &state);
-    assert_eq!(view.dialog_scroll, 6);
+    assert_eq!(view.dialog_scroll.offset_for_test(), 6);
     handle_key_code(&mut view, KeyCode::Up, size, &state);
-    assert_eq!(view.dialog_scroll, 5);
+    assert_eq!(view.dialog_scroll.offset_for_test(), 5);
     handle_key_code(&mut view, KeyCode::Char('k'), size, &state);
-    assert_eq!(view.dialog_scroll, 4);
+    assert_eq!(view.dialog_scroll.offset_for_test(), 4);
     handle_key_code(&mut view, KeyCode::PageUp, size, &state);
-    assert_eq!(view.dialog_scroll, 0);
+    assert_eq!(view.dialog_scroll.offset_for_test(), 0);
 
     handle_key_code(&mut view, KeyCode::Char('2'), size, &state);
     handle_key_code(&mut view, KeyCode::Char('/'), size, &state);
@@ -481,7 +484,7 @@ fn help_explains_matrix_symbols_and_missing_rows() {
     let state = partial_session();
     let mut view = EnvironmentView::default();
     view.help();
-    view.dialog_scroll = u16::MAX;
+    view.dialog_scroll.bottom();
 
     let text = render_text(&mut view, &state, (120, 60));
     let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -980,7 +983,11 @@ fn raw_environment_help_scrolls_by_line_and_page_without_moving_the_plan() {
         (KeyCode::PageUp, 0),
     ] {
         handle_key_code(&mut view, key, size, &state);
-        assert_eq!(view.reviews[0].overlay_scroll(), expected, "{key:?}");
+        assert_eq!(
+            view.reviews[0].overlay_scroll().offset_for_test(),
+            expected,
+            "{key:?}"
+        );
     }
 
     assert_eq!(view.selection.raw, Some(0));
@@ -1241,6 +1248,70 @@ fn message_dialog_scrolls_through_long_error_details() {
     let scrolled = render_text(&mut view, &state, (40, 16));
     assert!(!scrolled.contains("Diagnostic line 00"), "{scrolled}");
     assert!(scrolled.contains("Diagnostic line 04"), "{scrolled}");
+}
+
+#[test]
+fn help_dialog_down_stops_at_the_end_so_up_moves_immediately() {
+    let state = partial_session();
+    let size = Size::new(40, 16);
+    let mut view = EnvironmentView::default();
+    let help_rows = |view: &mut EnvironmentView| {
+        dialog_body_rows(
+            &render_to_buffer((40, 16), |frame| view.render(frame, &state)),
+            "Help",
+        )
+    };
+    handle_key_code(&mut view, KeyCode::Char('?'), size, &state);
+    help_rows(&mut view);
+    for _ in 0..500 {
+        handle_key_code(&mut view, KeyCode::Down, size, &state);
+    }
+    let end = help_rows(&mut view);
+
+    handle_key_code(&mut view, KeyCode::Up, size, &state);
+    let scrolled = help_rows(&mut view);
+
+    assert_dialog_scrolled_up("help up", &end, &scrolled, 1);
+}
+
+#[test]
+fn message_dialog_page_down_stops_at_the_end_so_up_moves_immediately() {
+    let mut state = EnvironmentSession::new(
+        vec![Environment {
+            tool: Tool::Terraform,
+            availability: EnvironmentAvailability::Available(EnvironmentIdentity {
+                directory: PathBuf::from("/synthetic/error"),
+                workspace: "default".to_owned(),
+            }),
+        }],
+        false,
+    );
+    let index = state.start_next().unwrap();
+    let detail = (0..30)
+        .map(|line| format!("Diagnostic line {line:02}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    state.complete(index, PlanResult::Error(detail), Vec::new());
+    let size = Size::new(40, 16);
+    let mut view = EnvironmentView::default();
+    let message_rows = |view: &mut EnvironmentView| {
+        render_text(view, &state, (40, 16))
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let _ = view.open(&state, index);
+    message_rows(&mut view);
+    for _ in 0..20 {
+        handle_key_code(&mut view, KeyCode::PageDown, size, &state);
+    }
+    let end = message_rows(&mut view);
+
+    handle_key_code(&mut view, KeyCode::Up, size, &state);
+    let scrolled = message_rows(&mut view);
+
+    assert!(end.iter().any(|row| row.contains("Diagnostic line 29")));
+    assert_dialog_scrolled_up("message up", &end, &scrolled, 1);
 }
 
 #[test]

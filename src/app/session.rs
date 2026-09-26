@@ -1124,6 +1124,52 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
+    #[rstest]
+    #[case::destructive(b"/repo/infra-\xff", ResourceChangeKind::Delete)]
+    #[case::production(b"/repo/prod/infra-\xff", ResourceChangeKind::Create)]
+    fn non_utf8_target_confirms_only_with_its_escaped_name(
+        #[case] directory: &[u8],
+        #[case] kind: ResourceChangeKind,
+    ) {
+        use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+        let now = Instant::now();
+        let directory = PathBuf::from(OsString::from_vec(directory.to_vec()));
+        let review = PlanReview::new(
+            directory.clone(),
+            "default".to_owned(),
+            plan_document("Terraform will perform actions.\n".to_owned()),
+            Plan {
+                resource_changes: vec![resource_change("terraform_data.target", kind)],
+                ..Plan::empty()
+            },
+            PlanMetadata::new(Vec::new(), true),
+            Vec::new(),
+        );
+        let mut state = SessionState::new(ExecutionState::with_context(
+            now,
+            ExecutionContext::loading(directory),
+        ));
+        update(&mut state, Action::ReviewCompleted(review), now);
+        update(&mut state, Action::OpenApplyConfirmation, now);
+
+        for rejected in ["yes", "infra-\u{fffd}", r"infra-\xfe", r"infra-\\xff"] {
+            assert!(
+                update(&mut state, Action::ConfirmApply(rejected.to_owned()), now).is_none(),
+                "input: {rejected}"
+            );
+        }
+        assert!(state.apply_confirmation().is_some());
+        assert!(matches!(
+            update(
+                &mut state,
+                Action::ConfirmApply(r"infra-\xff".to_owned()),
+                now
+            ),
+            Some(Effect::StartApply)
+        ));
+    }
+
     #[test]
     fn quitting_a_review_without_changes_reports_no_changes() {
         let now = Instant::now();

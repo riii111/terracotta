@@ -88,6 +88,9 @@ jobs:
       - name: Check Windows delegation
         if: runner.os == 'Windows'
         run: cargo test --locked --release --test delegation_windows
+      - name: Check Windows display name escaping
+        if: runner.os == 'Windows'
+        run: cargo test --locked --release --lib app::execution::context::tests::windows_
 
   scenario-acceptance:
     name: Scenario acceptance (${{ matrix.tool }})
