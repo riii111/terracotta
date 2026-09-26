@@ -231,7 +231,6 @@ fn push_escaped_units(escaped: &mut String, name: &OsStr) {
     }
 }
 
-// Outside Windows the encoded bytes are the raw bytes of the name.
 #[cfg(not(windows))]
 fn push_escaped_units(escaped: &mut String, name: &OsStr) {
     for chunk in name.as_encoded_bytes().utf8_chunks() {
@@ -450,6 +449,41 @@ mod tests {
     fn non_utf8_path(bytes: &[u8]) -> PathBuf {
         use std::{ffi::OsString, os::unix::ffi::OsStringExt};
         PathBuf::from(OsString::from_vec(bytes.to_vec()))
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_display_name_escapes_unpaired_surrogates_and_keeps_valid_pairs() {
+        use std::{ffi::OsString, os::windows::ffi::OsStringExt};
+        struct Case {
+            name: &'static str,
+            file_name: &'static [u16],
+            expected: &'static str,
+        }
+
+        for case in [
+            Case {
+                name: "unpaired_high_surrogate",
+                file_name: &[0x69, 0x6e, 0x66, 0x72, 0x61, 0x2d, 0xd800],
+                expected: r"infra-\u{d800}",
+            },
+            Case {
+                name: "valid_pair_beside_unpaired_low_surrogate",
+                file_name: &[0x61, 0xd83d, 0xde00, 0xdc00],
+                expected: "a\u{1f600}\\u{dc00}",
+            },
+        ] {
+            let cwd = PathBuf::from(r"C:\repo").join(OsString::from_wide(case.file_name));
+
+            let context = ExecutionContext::loading(cwd).with_workspace("default");
+
+            assert_eq!(
+                context.display_name(),
+                &ExecutionContextValue::Known(case.expected.to_owned()),
+                "case: {}",
+                case.name
+            );
+        }
     }
 
     #[test]
