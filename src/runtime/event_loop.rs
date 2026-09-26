@@ -1677,7 +1677,7 @@ mod tests {
                         .collect(),
                     ..Plan::empty()
                 },
-                PlanMetadata::new(Vec::new(), true),
+                PlanMetadata::new(true),
                 Vec::new(),
             )),
         ));

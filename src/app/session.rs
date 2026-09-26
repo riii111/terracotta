@@ -1143,7 +1143,7 @@ mod tests {
                 resource_changes: vec![resource_change("terraform_data.target", kind)],
                 ..Plan::empty()
             },
-            PlanMetadata::new(Vec::new(), true),
+            PlanMetadata::new(true),
             Vec::new(),
         );
         let mut state = SessionState::new(ExecutionState::with_context(
