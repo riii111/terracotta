@@ -12,7 +12,7 @@ use crate::{
             },
             plan_review,
         },
-        primitives::molecules::help_dialog,
+        primitives::molecules::{dialog_scroll::DialogScroll, help_dialog},
         shell::{environments, environments::EnvironmentPane, footer},
         theme,
     },
@@ -96,10 +96,11 @@ impl EnvironmentView {
             self.render_overview(frame, &layout, state);
         }
         if self.confirming_quit && state.acquiring() {
-            self.render_dialog(
+            render_message_dialog(
                 frame,
                 area,
                 "Stop acquiring environment plans?\nEnter stop and quit   Esc continue",
+                &DialogScroll::default(),
             );
         } else if !self.confirming_quit
             && let Some(dialog) = &self.dialog
@@ -108,12 +109,14 @@ impl EnvironmentView {
                 EnvironmentDialog::Help => render_help_dialog(
                     frame,
                     area,
-                    self.dialog_scroll,
+                    &self.dialog_scroll,
                     self.sidebar_enabled,
                     self.sidebar_enabled && area.width >= 90,
                     &matrix_pane_name(self, state),
                 ),
-                EnvironmentDialog::Message(text) => self.render_dialog(frame, area, text),
+                EnvironmentDialog::Message(text) => {
+                    render_message_dialog(frame, area, text, &self.dialog_scroll);
+                }
             }
         }
     }
@@ -338,22 +341,21 @@ impl EnvironmentView {
             matrix,
         }
     }
+}
 
-    fn render_dialog(&self, frame: &mut Frame<'_>, area: Rect, text: &str) {
-        let widget = Paragraph::new(text).wrap(Wrap { trim: false });
-        let max = widget
-            .line_count(area.width.max(1))
-            .saturating_sub(usize::from(area.height));
-        frame.render_widget(Clear, area);
-        frame.render_widget(
-            widget.scroll((
-                self.dialog_scroll
-                    .min(u16::try_from(max).unwrap_or(u16::MAX)),
-                0,
-            )),
-            area,
-        );
-    }
+fn render_message_dialog(frame: &mut Frame<'_>, area: Rect, text: &str, scroll: &DialogScroll) {
+    let widget = Paragraph::new(text).wrap(Wrap { trim: false });
+    let max = widget
+        .line_count(area.width.max(1))
+        .saturating_sub(usize::from(area.height));
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        widget.scroll((
+            scroll.clamp_for_render(u16::try_from(max).unwrap_or(u16::MAX)),
+            0,
+        )),
+        area,
+    );
 }
 
 fn render_environment_summary(
@@ -620,7 +622,7 @@ fn section_heights(area: Rect, context: &str, detail: &str) -> (u16, u16) {
 fn render_help_dialog(
     frame: &mut Frame<'_>,
     area: Rect,
-    scroll: u16,
+    scroll: &DialogScroll,
     sidebar_enabled: bool,
     sidebar_available: bool,
     matrix_name: &str,

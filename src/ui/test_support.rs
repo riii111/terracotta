@@ -31,6 +31,62 @@ pub(super) fn buffer_text(buffer: &Buffer) -> String {
         .join("\n")
 }
 
+// Rows inside the dialog frame whose top border starts with `┌{title}`, up to its footer.
+// Scrollbar thumbs and arrows read as the track so rows compare by content only.
+pub(super) fn dialog_body_rows(buffer: &Buffer, title: &str) -> Vec<String> {
+    let area = buffer.area();
+    let symbol = |x: u16, y: u16| buffer.cell((x, y)).expect("dialog cell").symbol();
+    let marker = format!("┌{title}");
+    let (top, left) = (area.y..area.bottom())
+        .find_map(|y| {
+            let symbols = (area.x..area.right())
+                .map(|x| symbol(x, y))
+                .collect::<Vec<_>>();
+            (0..symbols.len())
+                .find(|&start| symbols[start..].concat().starts_with(&marker))
+                .map(|start| (y, area.x + u16::try_from(start).expect("dialog column")))
+        })
+        .unwrap_or_else(|| panic!("{marker} should be visible\n{}", buffer_text(buffer)));
+    let right = (left + 1..area.right())
+        .find(|&x| symbol(x, top) == "┐")
+        .expect("dialog top-right corner");
+    (top + 1..area.bottom())
+        .map(|y| {
+            (left + 1..right)
+                .map(|x| match symbol(x, y) {
+                    "┃" | "▲" | "▼" => "│",
+                    other => other,
+                })
+                .collect::<String>()
+        })
+        .take_while(|row| !row.contains("close"))
+        .collect()
+}
+
+pub(super) fn assert_dialog_scrolled_up(
+    case: &str,
+    before: &[String],
+    after: &[String],
+    lines: usize,
+) {
+    assert_eq!(
+        before.len(),
+        after.len(),
+        "case: {case}: dialog height changed"
+    );
+    assert!(
+        before.len() > lines,
+        "case: {case}: dialog body should be taller than {lines} rows"
+    );
+    assert_eq!(
+        after[lines..],
+        before[..before.len() - lines],
+        "case: {case}: dialog should scroll up by {lines} rows\nbefore:\n{}\nafter:\n{}",
+        before.join("\n"),
+        after.join("\n"),
+    );
+}
+
 pub(super) fn buffer_visual_snapshot(buffer: &Buffer) -> String {
     let area = buffer.area();
     let mut snapshot = format!("{}x{}\n", area.width, area.height);
