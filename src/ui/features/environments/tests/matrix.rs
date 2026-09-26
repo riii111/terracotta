@@ -309,31 +309,13 @@ mod raw_plan {
         blocks: Vec<PlanBlock>,
         sensitive_values: Vec<SensitiveValue>,
     ) {
-        complete_with_plan_document_and_relations(
-            state,
-            changes,
-            text,
-            blocks,
-            sensitive_values,
-            PlanRelations::not_collected(),
-        );
-    }
-
-    fn complete_with_plan_document_and_relations(
-        state: &mut EnvironmentSession,
-        changes: Vec<ResourceChange>,
-        text: String,
-        blocks: Vec<PlanBlock>,
-        sensitive_values: Vec<SensitiveValue>,
-        relations: PlanRelations,
-    ) {
         complete_with_plan_document_and_relations_and_schemas(
             state,
             changes,
             text,
             blocks,
             sensitive_values,
-            relations,
+            PlanRelations::not_collected(),
             None,
         );
     }
