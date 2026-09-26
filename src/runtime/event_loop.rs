@@ -351,7 +351,8 @@ pub(super) fn handle_key_event<B: Backend>(
             _ => None,
         };
         let expected = confirmation.review().confirmation_input();
-        return Ok(input.and_then(|input| confirmation_view.apply(input, &expected)));
+        return Ok(input
+            .and_then(|input| confirmation_view.apply(input, &expected, layout.max_vertical())));
     }
 
     if let Some(apply) = state.apply() {
@@ -1652,6 +1653,48 @@ mod tests {
         let text = terminal_text(&terminal);
         assert!(text.contains("Type yes to apply (exact match)."));
         assert!(text.contains("│ > y|"), "{text}");
+    }
+
+    #[test]
+    fn confirmation_body_scrolls_up_right_after_paging_past_the_end() {
+        let now = Instant::now();
+        let mut state = SessionState::Review(Box::new(
+            session::test_support::apply_confirmation_session(PlanReview::new(
+                PathBuf::from("/project"),
+                "default".to_owned(),
+                plan_document("Plan: 0 to add, 0 to change, 20 to destroy.\n".to_owned()),
+                Plan {
+                    resource_changes: (0..20)
+                        .map(|index| {
+                            resource_change(
+                                &format!("terraform_data.old_{index:02}"),
+                                ResourceChangeKind::Delete,
+                            )
+                        })
+                        .collect(),
+                    ..Plan::empty()
+                },
+                PlanMetadata::new(Vec::new(), true),
+                Vec::new(),
+            )),
+        ));
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+        let mut views = ScreenViews::default();
+        for _ in 0..10 {
+            views
+                .handle_key(&terminal, &state, KeyCode::PageDown, KeyModifiers::NONE)
+                .expect("confirmation page down should be handled");
+        }
+        let end = render_apply_to_text(&mut state, &mut terminal, &views, now);
+
+        views
+            .handle_key(&terminal, &state, KeyCode::Up, KeyModifiers::NONE)
+            .expect("confirmation scroll up should be handled");
+        let scrolled = render_apply_to_text(&mut state, &mut terminal, &views, now);
+
+        assert!(end.contains("terraform_data.old_19"), "{end}");
+        assert!(!scrolled.contains("terraform_data.old_19"), "{scrolled}");
+        assert!(scrolled.contains("terraform_data.old_18"), "{scrolled}");
     }
 
     #[test]

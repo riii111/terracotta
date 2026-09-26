@@ -30,6 +30,7 @@ use crate::{
         QuitConfirmationInput,
         features::overview::relations::RelationGraphScroll,
         input::normalize_key,
+        primitives::molecules::dialog_scroll::DialogScroll,
         quit_confirmation_key_to_input,
         shell::environments::{self, EnvironmentPane, EnvironmentSelection},
     },
@@ -55,7 +56,7 @@ pub(crate) struct EnvironmentView {
     reviews: Vec<PlanReviewViewState>,
     notice: Option<String>,
     dialog: Option<EnvironmentDialog>,
-    dialog_scroll: u16,
+    dialog_scroll: DialogScroll,
     focus: EnvironmentPane,
     last_right_focus: EnvironmentPane,
     sidebar_enabled: bool,
@@ -120,7 +121,7 @@ impl Default for EnvironmentView {
             reviews: Vec::new(),
             notice: None,
             dialog: None,
-            dialog_scroll: 0,
+            dialog_scroll: DialogScroll::default(),
             focus: EnvironmentPane::Matrix,
             last_right_focus: EnvironmentPane::Matrix,
             sidebar_enabled: false,
@@ -891,20 +892,12 @@ impl EnvironmentView {
         let is_help = matches!(self.dialog, Some(EnvironmentDialog::Help));
         match key.code {
             KeyCode::Esc | KeyCode::Char('?') => self.dialog = None,
-            KeyCode::Up | KeyCode::Char('k') if is_help => {
-                self.dialog_scroll = self.dialog_scroll.saturating_sub(1);
-            }
-            KeyCode::Down | KeyCode::Char('j') if is_help => {
-                self.dialog_scroll = self.dialog_scroll.saturating_add(1);
-            }
-            KeyCode::Up => self.dialog_scroll = self.dialog_scroll.saturating_sub(1),
-            KeyCode::Down => self.dialog_scroll = self.dialog_scroll.saturating_add(1),
-            KeyCode::PageUp => {
-                self.dialog_scroll = self.dialog_scroll.saturating_sub(4);
-            }
-            KeyCode::PageDown => {
-                self.dialog_scroll = self.dialog_scroll.saturating_add(4);
-            }
+            KeyCode::Up | KeyCode::Char('k') if is_help => self.dialog_scroll.scroll_by(-1),
+            KeyCode::Down | KeyCode::Char('j') if is_help => self.dialog_scroll.scroll_by(1),
+            KeyCode::Up => self.dialog_scroll.scroll_by(-1),
+            KeyCode::Down => self.dialog_scroll.scroll_by(1),
+            KeyCode::PageUp => self.dialog_scroll.scroll_by(-4),
+            KeyCode::PageDown => self.dialog_scroll.scroll_by(4),
             KeyCode::Char('q') => return self.quit(),
             _ => {}
         }
@@ -913,12 +906,12 @@ impl EnvironmentView {
 
     fn show_dialog(&mut self, text: String) {
         self.dialog = Some(EnvironmentDialog::Message(text));
-        self.dialog_scroll = 0;
+        self.dialog_scroll.reset();
     }
 
     fn help(&mut self) {
         self.dialog = Some(EnvironmentDialog::Help);
-        self.dialog_scroll = 0;
+        self.dialog_scroll.reset();
     }
 
     const fn quit(&mut self) -> Option<EnvironmentInput> {
