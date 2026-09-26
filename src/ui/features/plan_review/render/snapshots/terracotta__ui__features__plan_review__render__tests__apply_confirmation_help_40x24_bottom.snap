@@ -1,0 +1,28 @@
+---
+source: src/ui/features/plan_review/render/tests.rs
+expression: buffer_text(buffer)
+---
+Target: main [PROD] Workspace: default
+C┌Apply help──────────────────────────┐
+-│   move in confirmation input     ▲ │
+ │ Home / End                       │ │
+─│   move to input start or end     │ │─
+ │                                  │ │▲
+ │ Input                            ┃ │┃
+ │ Type                             ┃ │┃
+ │   enter the confirmation text    ┃ │┃
+ │ Backspace                        ┃ │┃
+ │   delete before the cursor       ┃ │┃
+ │                                  ┃ ││
+ │ Context                          ┃ ││
+-│ Tab                              ┃ ││
+ │   show execution context         ┃ ││
+ │                                  ┃ ││
+ │ Apply                            ┃ ││
+ │ Enter                            ┃ ││
+ │   confirm apply                  ┃ ││
+ │ Esc                              ┃ ││
+◀︎│   return to plan review          ▼ │▶︎
+─│ ?/Esc close                        │─
+s└────────────────────────────────────┘
+? help | q quit                    L3/43

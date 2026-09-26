@@ -1,0 +1,44 @@
+---
+source: src/ui/features/plan_review/render/tests.rs
+expression: buffer_text(buffer)
+---
+Target: main [PROD] Workspace: default Tool: terraform loading... Dir: /repo/environments/production/main
+Changes  +1 add  ~1 update  1 replace  -1 destroy
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  # terraform_data.api will be updated in-place                                                                        ▲
+  ~ resource "terraform_data" "api" {                                                                                  ┃
+      id       = "api-20260920"                                                                                        ┃
+      ~ input  = "before" -> "after"                                                                                   ┃
+      # (4 unchanged attributes hidden)                                                                                ┃
+    }                                                                                                                  ┃
+                                      ┌Help─────────────────────────────────────┐                                      ┃
+  # terraform_data.worker must be repl│ Navigation                              │                                      ┃
+-/+ resource "terraform_data" "worker"│ ↑ / ↓ / j / k scroll vertically         │                                      ┃
+      ~ input = "worker-before" -> "wo│ ← / → / h / l scroll horizontally       │                                      ┃
+      - old_checksum = "sha256:0123456│ PgUp / PgDn   scroll one page           │                                      ┃
+      + new_checksum = (known after ap│ Home / End    go to the top or bottom   │                                      ┃
+    }                                 │ s             overview                  │                                      ┃
+                                      │                                         │                                      ┃
+  # terraform_data.old will be destroy│ Review                                  │                                      ┃
+  - resource "terraform_data" "old" { │ /             filter the full plan      │                                      ┃
+      id = "old-20260920"             │                                         │                                      ┃
+    }                                 │ Actions                                 │                                      ┃
+                                      │ c             show execution context    │                                      ┃
+  # terraform_data.new will be created│ y             copy the full plan        │                                      ┃
+  + resource "terraform_data" "new" { │ a             apply the full plan       │                                      ┃
+      input = "new-value"             │                                         │                                      ┃
+      note  = "A deliberately long syn│ Exit                                    │ible"                                 ┃
+    }                                 │ q             quit                      │                                      ┃
+                                      │ ?/Esc close                             │                                      ┃
+Changes to Outputs:                   └─────────────────────────────────────────┘                                      ┃
+  + endpoint = (known after apply)                                                                                     ┃
+  ~ summary  = "old summary" -> "new summary with a deliberately long value for review"                                ┃
+                                                                                                                       │
+Warning: Value for "pending" is not known until apply                                                                  │
+                                                                                                                       │
+Plan: 2 to add, 1 to change, 2 to destroy.                                                                             │
+                                                                                                                       │
+Synthetic review text continues below so the viewport and scrollbar remain meaningful.                                 ▼
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+s overview | / filter | a apply | ? help | q quit                                                              Line 3/43
