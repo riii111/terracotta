@@ -111,27 +111,12 @@ pub(crate) fn run_connected(
             match event::read()? {
                 Event::Resize(width, height) => {
                     dirty = true;
-                    if let Some(review) = state.review() {
-                        let layout = plan_review::layout_with_quit_confirmation(
-                            Rect::new(0, 0, width, height),
-                            review_view.searching(),
-                            review,
-                            quit_confirmation,
-                        );
-                        review_view.reconcile(
-                            layout.body(),
-                            layout.max_vertical(),
-                            layout.max_horizontal(),
-                            layout.matches(),
-                        );
-                    }
-                    if let Some(overview_state) = state.overview() {
-                        overview::reconcile_view(
-                            Rect::new(0, 0, width, height),
-                            overview_state,
-                            review_view.overview_mut(),
-                        );
-                    }
+                    reconcile_resize(
+                        &state,
+                        &mut review_view,
+                        Rect::new(0, 0, width, height),
+                        quit_confirmation,
+                    );
                 }
                 Event::Key(key) if key.is_press() => {
                     dirty = true;
@@ -272,7 +257,7 @@ fn should_draw(state: &SessionState, dirty: bool) -> bool {
     clippy::too_many_arguments,
     reason = "the draw step receives the runtime-owned views and rendering state"
 )]
-fn draw_if_needed_with_quit_confirmation<B: Backend>(
+pub(super) fn draw_if_needed_with_quit_confirmation<B: Backend>(
     state: &mut SessionState,
     terminal: &mut Terminal<B>,
     execution_view: execution::ExecutionViewState,
@@ -282,6 +267,9 @@ fn draw_if_needed_with_quit_confirmation<B: Backend>(
     now: Instant,
     quit_confirmation: bool,
 ) -> Result<bool, B::Error> {
+    // Layouts reserve footer width for any stored notice, so an expired notice is cleared
+    // before the frame that would otherwise draw it as blank space.
+    *dirty |= clear_expired_copy_feedback(state, now);
     if !should_draw(state, *dirty) {
         return Ok(false);
     }
@@ -295,14 +283,40 @@ fn draw_if_needed_with_quit_confirmation<B: Backend>(
         now,
         quit_confirmation,
     )?;
-    clear_expired_copy_feedback(state, now);
     *dirty = false;
     Ok(true)
 }
 
-fn clear_expired_copy_feedback(state: &mut SessionState, now: Instant) {
-    if let Some(feedback) = state.copy_feedback_mut() {
-        feedback.clear_expired(now);
+fn clear_expired_copy_feedback(state: &mut SessionState, now: Instant) -> bool {
+    state
+        .copy_feedback_mut()
+        .is_some_and(|feedback| feedback.clear_expired(now))
+}
+
+// The apply confirmation body and the dialogs clamp against the current layout on their next
+// input or render, so only the review and Overview offsets need a resize correction.
+pub(super) fn reconcile_resize(
+    state: &SessionState,
+    review_view: &mut plan_review::PlanReviewViewState,
+    area: Rect,
+    quit_confirmation: bool,
+) {
+    if let Some(review) = state.review() {
+        let layout = plan_review::layout_with_quit_confirmation(
+            area,
+            review_view.searching(),
+            review,
+            quit_confirmation,
+        );
+        review_view.reconcile(
+            layout.body(),
+            layout.max_vertical(),
+            layout.max_horizontal(),
+            layout.matches(),
+        );
+    }
+    if let Some(overview_state) = state.overview() {
+        overview::reconcile_view(area, overview_state, review_view.overview_mut());
     }
 }
 
@@ -610,7 +624,7 @@ fn handle_execution_key_event<B: Backend>(
     )
 }
 
-pub(super) fn draw_with_quit_confirmation<B: Backend>(
+fn draw_with_quit_confirmation<B: Backend>(
     state: &SessionState,
     terminal: &mut Terminal<B>,
     execution_view: execution::ExecutionViewState,
@@ -1003,6 +1017,7 @@ mod tests {
     #[derive(Debug, Clone, Copy)]
     enum CopyFlashTarget {
         Review,
+        Overview,
         Apply,
     }
 
@@ -1698,6 +1713,84 @@ mod tests {
     }
 
     #[test]
+    fn resize_clamps_the_review_offset_after_shrinking_and_growing() {
+        let state = SessionState::Review(Box::new(ReviewSessionState::new(PlanReview::new(
+            PathBuf::from("/project"),
+            "default".to_owned(),
+            plan_document(copy_plan_text()),
+            Plan::empty(),
+            PlanMetadata::new(Vec::new(), false),
+            Vec::new(),
+        ))));
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+        let mut views = ScreenViews::default();
+        let shrunk = resize(&mut terminal, &state, &mut views.review, 60, 16);
+        views
+            .handle_key(&terminal, &state, KeyCode::End, KeyModifiers::NONE)
+            .expect("review end should be handled");
+        let shrunk_max =
+            plan_review::layout(shrunk, false, state.review().expect("review")).max_vertical();
+        assert_eq!(views.review.scroll().0, shrunk_max);
+
+        let grown = resize(&mut terminal, &state, &mut views.review, 80, 24);
+
+        let grown_max =
+            plan_review::layout(grown, false, state.review().expect("review")).max_vertical();
+        assert!(grown_max < shrunk_max);
+        assert_eq!(views.review.scroll().0, grown_max);
+    }
+
+    #[test]
+    fn resize_keeps_the_overview_selection_visible_after_shrinking_and_growing() {
+        let mut state = SessionState::Review(Box::new(session::test_support::overview_session(
+            PlanReview::new(
+                PathBuf::from("/project"),
+                "default".to_owned(),
+                plan_document("Plan: 0 to add, 30 to change, 0 to destroy.\n".to_owned()),
+                Plan {
+                    resource_changes: (0..30)
+                        .map(|index| {
+                            resource_change(
+                                &format!("terraform_data.server_{index:02}"),
+                                ResourceChangeKind::Update,
+                            )
+                        })
+                        .collect(),
+                    ..Plan::empty()
+                },
+                PlanMetadata::new(Vec::new(), true),
+                Vec::new(),
+            ),
+        )));
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test terminal");
+        let mut views = ScreenViews::default();
+        resize(&mut terminal, &state, &mut views.review, 60, 16);
+        views
+            .handle_key(&terminal, &state, KeyCode::End, KeyModifiers::NONE)
+            .expect("overview end should be handled");
+        assert_eq!(views.review.overview().selected(), Some(29));
+        let shrunk_scroll = views.review.overview().scroll();
+
+        resize(&mut terminal, &state, &mut views.review, 100, 30);
+
+        assert_eq!(views.review.overview().selected(), Some(29));
+        assert!(views.review.overview().scroll() < shrunk_scroll);
+        let mut dirty = true;
+        draw_if_needed(
+            &mut state,
+            &mut terminal,
+            views.execution,
+            &views.review,
+            &views.confirmation,
+            &mut dirty,
+            Instant::now(),
+        )
+        .expect("grown overview should render");
+        let text = terminal_text(&terminal);
+        assert!(text.contains("terraform_data.server_29"), "{text}");
+    }
+
+    #[test]
     fn overview_quit_is_visible_before_runtime_dispatch() {
         let now = Instant::now();
         let mut state = overview_state();
@@ -1910,6 +2003,7 @@ mod tests {
 
     #[rstest]
     #[case::review(CopyFlashTarget::Review)]
+    #[case::overview(CopyFlashTarget::Overview)]
     #[case::apply(CopyFlashTarget::Apply)]
     fn successful_copy_flash_lifecycle_draws_through_the_runtime_step(
         #[case] target: CopyFlashTarget,
@@ -1919,6 +2013,7 @@ mod tests {
         let expired_at = started_at + Duration::from_millis(200);
         let (mut state, mut terminal, execution_view, review_view, confirmation_view) =
             copy_runtime_fixture(target, started_at);
+        let never_copied = terminal.backend().buffer().clone();
         let before_copy = copy_target_cells(target, &terminal);
         record_copy(
             &mut state,
@@ -1973,7 +2068,7 @@ mod tests {
         assert!(should_draw(&state, false));
         assert_eq!(copy_target_cells(target, &terminal), before_copy);
         match target {
-            CopyFlashTarget::Review => {
+            CopyFlashTarget::Review | CopyFlashTarget::Overview => {
                 assert!(terminal_text(&terminal).contains("Copied."));
             }
             CopyFlashTarget::Apply => {
@@ -2008,10 +2103,17 @@ mod tests {
             .expect("expired copy notice should render once")
         );
         assert!(!should_draw(&state, false));
+        assert_eq!(
+            terminal.backend().buffer(),
+            &never_copied,
+            "{}",
+            terminal_text(&terminal)
+        );
     }
 
     #[rstest]
     #[case::review(CopyFlashTarget::Review)]
+    #[case::overview(CopyFlashTarget::Overview)]
     #[case::apply(CopyFlashTarget::Apply)]
     fn failed_copy_shows_only_the_notification_through_the_runtime_step(
         #[case] target: CopyFlashTarget,
@@ -2403,6 +2505,19 @@ mod tests {
         }
     }
 
+    fn resize(
+        terminal: &mut Terminal<TestBackend>,
+        state: &SessionState,
+        review_view: &mut plan_review::PlanReviewViewState,
+        width: u16,
+        height: u16,
+    ) -> Rect {
+        terminal.backend_mut().resize(width, height);
+        let area = Rect::new(0, 0, width, height);
+        reconcile_resize(state, review_view, area, false);
+        area
+    }
+
     fn render_apply_to_text(
         state: &mut SessionState,
         terminal: &mut Terminal<TestBackend>,
@@ -2442,6 +2557,7 @@ mod tests {
     fn copy_target_cells(target: CopyFlashTarget, terminal: &Terminal<TestBackend>) -> Vec<Cell> {
         let texts: &[&str] = match target {
             CopyFlashTarget::Review => &["copy body marker", "terraform_data.api"],
+            CopyFlashTarget::Overview => &["terraform_data.api"],
             CopyFlashTarget::Apply => &["flash"],
         };
         texts
@@ -2558,6 +2674,22 @@ mod tests {
                 review.set_search_query("terraform_data".to_owned());
                 SessionState::Review(Box::new(ReviewSessionState::new(review)))
             }
+            CopyFlashTarget::Overview => SessionState::Review(Box::new(
+                session::test_support::overview_session(PlanReview::new(
+                    PathBuf::from("/project"),
+                    "default".to_owned(),
+                    plan_document(copy_plan_text()),
+                    Plan {
+                        resource_changes: vec![resource_change(
+                            "terraform_data.api",
+                            ResourceChangeKind::Update,
+                        )],
+                        ..Plan::empty()
+                    },
+                    PlanMetadata::new(Vec::new(), false),
+                    Vec::new(),
+                )),
+            )),
             CopyFlashTarget::Apply => {
                 let mut state = apply_state(started_at, None);
                 if let SessionState::Apply(execution) = &mut state {
@@ -2586,11 +2718,19 @@ mod tests {
         plan_review::ApplyConfirmationViewState,
     ) {
         let mut state = copy_flash_state(target, started_at);
-        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+        // The narrow Overview has no footer width to spare, so a leftover notice reservation
+        // would hide hints that the never-copied frame shows.
+        let (width, height) = match target {
+            CopyFlashTarget::Overview => (40, 16),
+            CopyFlashTarget::Review | CopyFlashTarget::Apply => (80, 24),
+        };
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test terminal");
         let execution_view = execution::ExecutionViewState::default();
         let review_view = match target {
             CopyFlashTarget::Review => copy_review_view(&state),
-            CopyFlashTarget::Apply => plan_review::PlanReviewViewState::default(),
+            CopyFlashTarget::Overview | CopyFlashTarget::Apply => {
+                plan_review::PlanReviewViewState::default()
+            }
         };
         let confirmation_view = plan_review::ApplyConfirmationViewState::default();
         let mut dirty = true;
@@ -2664,7 +2804,7 @@ mod tests {
     impl CopyFlashTarget {
         fn copy_target(self) -> CopyTarget {
             match self {
-                Self::Review => CopyTarget::Plan,
+                Self::Review | Self::Overview => CopyTarget::Plan,
                 Self::Apply => CopyTarget::Execution,
             }
         }

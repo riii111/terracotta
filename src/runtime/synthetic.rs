@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crossterm::event::{self, Event, KeyCode};
+use crossterm::event::{self, Event, KeyEvent};
 use ratatui::{Terminal, backend::Backend, layout::Rect};
 
 use crate::{
@@ -28,183 +28,206 @@ use crate::{
         QuitConfirmationInput,
         features::{
             environments::{EnvironmentInput, EnvironmentView},
-            execution, overview, plan_review,
+            execution, plan_review,
         },
         quit_confirmation_key_to_input,
     },
 };
 
+const SYNTHETIC_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
 pub(super) fn run_synthetic() -> io::Result<()> {
     if std::env::args().any(|argument| argument == "--environments") {
         return run_synthetic_environments();
     }
-    let mut state = SessionState::Review(Box::new(synthetic_review()));
-    let mut view = plan_review::PlanReviewViewState::default();
-    let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
-    let mut complete_apply_at: Option<Instant> = None;
-    let mut execution_view = execution::ExecutionViewState::default();
-    let mut quit_confirmation = false;
+    run_synthetic_session(SyntheticSession::new(
+        SessionState::Review(Box::new(synthetic_review())),
+        execution::ExecutionViewState::default(),
+        None,
+    ))
+}
 
+pub(super) fn run_synthetic_execution() -> io::Result<()> {
+    run_synthetic_session(synthetic_execution_session(Instant::now()))
+}
+
+fn run_synthetic_session(mut session: SyntheticSession) -> io::Result<()> {
     ratatui::run(|terminal| {
+        let mut event = None;
         loop {
-            super::event_loop::draw_with_quit_confirmation(
-                &state,
-                terminal,
-                execution_view,
-                &view,
-                &confirmation_view,
-                Instant::now(),
-                quit_confirmation,
-            )?;
-
-            if complete_apply_at.is_some_and(|at| Instant::now() >= at) {
-                finish_synthetic_apply(&mut state, &mut execution_view, ApplyStatus::Succeeded);
-                complete_apply_at = None;
-                continue;
-            }
-
-            let timeout = complete_apply_at.map_or(Duration::from_millis(100), |at| {
-                at.saturating_duration_since(Instant::now())
-                    .min(Duration::from_millis(100))
-            });
-            if !event::poll(timeout)? {
-                continue;
-            }
-            let Some(action) = handle_synthetic_event(
-                &event::read()?,
-                terminal,
-                &state,
-                &mut view,
-                &mut confirmation_view,
-                &mut execution_view,
-                &mut quit_confirmation,
-            )?
-            else {
-                continue;
-            };
-            if apply_synthetic_action(
-                &mut state,
-                action,
-                &mut execution_view,
-                &mut complete_apply_at,
-            ) {
+            if session.step(terminal, event.take().as_ref(), Instant::now())? {
                 return Ok(());
+            }
+            if event::poll(session.poll_timeout(Instant::now()))? {
+                event = Some(event::read()?);
             }
         }
     })
 }
 
-fn handle_synthetic_event<B: Backend>(
-    event: &Event,
-    terminal: &Terminal<B>,
-    state: &SessionState,
-    view: &mut plan_review::PlanReviewViewState,
-    confirmation_view: &mut plan_review::ApplyConfirmationViewState,
-    execution_view: &mut execution::ExecutionViewState,
-    quit_confirmation: &mut bool,
-) -> Result<Option<Action>, B::Error> {
-    let Event::Key(key) = event else {
-        if let Event::Resize(width, height) = *event {
-            reconcile_synthetic_resize(
-                state,
-                view,
-                Rect::new(0, 0, width, height),
-                *quit_confirmation,
-            );
+// Mirrors one pass of the connected loop with the synthetic effects: the session never starts
+// Terraform, writes the clipboard, or saves apply history, and a timer stands in for the worker.
+struct SyntheticSession {
+    state: SessionState,
+    review_view: plan_review::PlanReviewViewState,
+    confirmation_view: plan_review::ApplyConfirmationViewState,
+    execution_view: execution::ExecutionViewState,
+    quit_confirmation: bool,
+    complete_apply_at: Option<Instant>,
+    dirty: bool,
+}
+
+impl SyntheticSession {
+    fn new(
+        state: SessionState,
+        execution_view: execution::ExecutionViewState,
+        complete_apply_at: Option<Instant>,
+    ) -> Self {
+        Self {
+            state,
+            review_view: plan_review::PlanReviewViewState::default(),
+            confirmation_view: plan_review::ApplyConfirmationViewState::default(),
+            execution_view,
+            quit_confirmation: false,
+            complete_apply_at,
+            dirty: true,
         }
-        return Ok(None);
-    };
-    if !key.is_press() {
-        return Ok(None);
     }
 
-    let key = *key;
-    let mut confirmed_quit = false;
-    let action = if *quit_confirmation {
-        match quit_confirmation_key_to_input(key) {
-            QuitConfirmationInput::Confirm => {
-                *quit_confirmation = false;
-                confirmed_quit = true;
-                Some(Action::Quit)
-            }
-            QuitConfirmationInput::Cancel => {
-                *quit_confirmation = false;
-                None
-            }
-            QuitConfirmationInput::Consume => None,
-            QuitConfirmationInput::Forward(key) => {
-                *quit_confirmation = false;
-                super::event_loop::handle_key_event(
-                    terminal,
-                    state,
-                    execution_view,
-                    view,
-                    confirmation_view,
-                    key,
-                )?
-            }
+    // Returns whether the session finished.
+    fn step<B: Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+        event: Option<&Event>,
+        now: Instant,
+    ) -> Result<bool, B::Error> {
+        if let Some(event) = event
+            && let Some(action) = self.handle_event(event, terminal)?
+            && apply_synthetic_action(
+                &mut self.state,
+                action,
+                &mut self.execution_view,
+                &mut self.complete_apply_at,
+                now,
+            )
+        {
+            return Ok(true);
         }
-    } else {
+        if self.complete_apply_at.is_some_and(|at| now >= at) {
+            finish_synthetic_apply(
+                &mut self.state,
+                &mut self.execution_view,
+                ApplyStatus::Succeeded,
+                now,
+            );
+            self.complete_apply_at = None;
+            self.dirty = true;
+        }
+        super::event_loop::draw_if_needed_with_quit_confirmation(
+            &mut self.state,
+            terminal,
+            self.execution_view,
+            &self.review_view,
+            &self.confirmation_view,
+            &mut self.dirty,
+            now,
+            self.quit_confirmation,
+        )?;
+        Ok(false)
+    }
+
+    fn poll_timeout(&self, now: Instant) -> Duration {
+        self.complete_apply_at
+            .map_or(SYNTHETIC_POLL_INTERVAL, |at| {
+                at.saturating_duration_since(now)
+                    .min(SYNTHETIC_POLL_INTERVAL)
+            })
+    }
+
+    fn handle_event<B: Backend>(
+        &mut self,
+        event: &Event,
+        terminal: &Terminal<B>,
+    ) -> Result<Option<Action>, B::Error> {
+        let key = match *event {
+            Event::Resize(width, height) => {
+                self.dirty = true;
+                super::event_loop::reconcile_resize(
+                    &self.state,
+                    &mut self.review_view,
+                    Rect::new(0, 0, width, height),
+                    self.quit_confirmation,
+                );
+                return Ok(None);
+            }
+            Event::Key(key) if key.is_press() => key,
+            _ => return Ok(None),
+        };
+        self.dirty = true;
+
+        let mut confirmed_quit = false;
+        let action = if self.quit_confirmation {
+            match quit_confirmation_key_to_input(key) {
+                QuitConfirmationInput::Confirm => {
+                    self.quit_confirmation = false;
+                    confirmed_quit = true;
+                    Some(Action::Quit)
+                }
+                QuitConfirmationInput::Cancel => {
+                    self.quit_confirmation = false;
+                    None
+                }
+                QuitConfirmationInput::Consume => None,
+                QuitConfirmationInput::Forward(key) => {
+                    self.quit_confirmation = false;
+                    self.handle_key(terminal, key)?
+                }
+            }
+        } else {
+            self.handle_key(terminal, key)?
+        };
+        let Some(action) = action else {
+            return Ok(None);
+        };
+        if matches!(action, Action::Quit) && !confirmed_quit {
+            self.quit_confirmation = true;
+            return Ok(None);
+        }
+        Ok(Some(action))
+    }
+
+    fn handle_key<B: Backend>(
+        &mut self,
+        terminal: &Terminal<B>,
+        key: KeyEvent,
+    ) -> Result<Option<Action>, B::Error> {
         super::event_loop::handle_key_event(
             terminal,
-            state,
-            execution_view,
-            view,
-            confirmation_view,
+            &self.state,
+            &mut self.execution_view,
+            &mut self.review_view,
+            &mut self.confirmation_view,
             key,
-        )?
-    };
-    let Some(action) = action else {
-        return Ok(None);
-    };
-    if matches!(action, Action::Quit) && !confirmed_quit {
-        *quit_confirmation = true;
-        return Ok(None);
-    }
-    Ok(Some(action))
-}
-
-fn reconcile_synthetic_resize(
-    state: &SessionState,
-    view: &mut plan_review::PlanReviewViewState,
-    area: Rect,
-    quit_confirmation: bool,
-) {
-    if let Some(review) = state.review() {
-        let layout = plan_review::layout_with_quit_confirmation(
-            area,
-            view.searching(),
-            review,
-            quit_confirmation,
-        );
-        view.reconcile(
-            layout.body(),
-            layout.max_vertical(),
-            layout.max_horizontal(),
-            layout.matches(),
-        );
-    }
-    if let Some(overview_state) = state.overview() {
-        overview::reconcile_view(area, overview_state, view.overview_mut());
+        )
     }
 }
 
-// Stands in for the runtime effects: the synthetic session never starts Terraform,
-// writes the clipboard, or saves apply history. Returns whether the session finished.
+// Stands in for the runtime effects. Returns whether the session finished.
 fn apply_synthetic_action(
     state: &mut SessionState,
     action: Action,
     execution_view: &mut execution::ExecutionViewState,
     complete_apply_at: &mut Option<Instant>,
+    now: Instant,
 ) -> bool {
-    match super::event_loop::update_session(state, action, execution_view, Instant::now()) {
+    match super::event_loop::update_session(state, action, execution_view, now) {
         Some(Effect::StartApply) => {
-            record_synthetic_apply_events(state, execution_view);
-            *complete_apply_at = Some(Instant::now() + Duration::from_millis(250));
+            record_synthetic_apply_events(state, execution_view, now);
+            *complete_apply_at = Some(now + Duration::from_millis(250));
             false
         }
         Some(Effect::CancelExecution) => {
-            finish_synthetic_apply(state, execution_view, ApplyStatus::Interrupted);
+            finish_synthetic_apply(state, execution_view, ApplyStatus::Interrupted, now);
             *complete_apply_at = None;
             false
         }
@@ -216,6 +239,7 @@ fn apply_synthetic_action(
             },
             execution_view,
             complete_apply_at,
+            now,
         ),
         Some(Effect::Finish(_)) => true,
         Some(Effect::PersistHistory(_)) | None => false,
@@ -347,6 +371,7 @@ fn finish_synthetic_apply(
     state: &mut SessionState,
     execution_view: &mut execution::ExecutionViewState,
     status: ApplyStatus,
+    now: Instant,
 ) {
     let summary_line = matches!(status, ApplyStatus::Succeeded)
         .then(|| "Apply complete! Resources: 1 added, 1 changed, 1 destroyed.".to_owned());
@@ -357,15 +382,15 @@ fn finish_synthetic_apply(
             summary_line,
         },
         execution_view,
-        Instant::now(),
+        now,
     );
 }
 
 fn record_synthetic_apply_events(
     state: &mut SessionState,
     execution_view: &mut execution::ExecutionViewState,
+    now: Instant,
 ) {
-    let now = Instant::now();
     for kind in synthetic_apply_events() {
         let _ = super::event_loop::update_session(
             state,
@@ -514,8 +539,7 @@ fn synthetic_environment_review(directory: &Path, count: usize) -> PlanReview {
     )
 }
 
-pub(super) fn run_synthetic_execution() -> io::Result<()> {
-    let started = Instant::now();
+fn synthetic_execution_session(started: Instant) -> SyntheticSession {
     let mut execution = ExecutionState::applying_with_targets(
         started,
         ExecutionContext::loading("infra/prod").with_workspace("default"),
@@ -534,56 +558,11 @@ pub(super) fn run_synthetic_execution() -> io::Result<()> {
     }
     let mut execution_view = execution::ExecutionViewState::default();
     execution_view.initialize_target_selection(&execution.progress().display_target_indices(false));
-    let mut state = SessionState::Apply(Box::new(execution));
-    let mut review_view = plan_review::PlanReviewViewState::default();
-    let mut confirmation_view = plan_review::ApplyConfirmationViewState::default();
-    let mut complete_apply_at = Some(started + Duration::from_millis(750));
-    ratatui::run(|terminal| {
-        loop {
-            super::event_loop::draw_with_quit_confirmation(
-                &state,
-                terminal,
-                execution_view,
-                &review_view,
-                &confirmation_view,
-                Instant::now(),
-                false,
-            )?;
-            if complete_apply_at.is_some_and(|at| Instant::now() >= at) {
-                finish_synthetic_apply(&mut state, &mut execution_view, ApplyStatus::Succeeded);
-                complete_apply_at = None;
-                continue;
-            }
-            let Event::Key(key) = event::read()? else {
-                continue;
-            };
-            if !key.is_press() {
-                continue;
-            }
-            if key.code == KeyCode::Esc {
-                return Ok(());
-            }
-            let Some(action) = super::event_loop::handle_key_event(
-                terminal,
-                &state,
-                &mut execution_view,
-                &mut review_view,
-                &mut confirmation_view,
-                key,
-            )?
-            else {
-                continue;
-            };
-            if apply_synthetic_action(
-                &mut state,
-                action,
-                &mut execution_view,
-                &mut complete_apply_at,
-            ) {
-                return Ok(());
-            }
-        }
-    })
+    SyntheticSession::new(
+        SessionState::Apply(Box::new(execution)),
+        execution_view,
+        Some(started + Duration::from_millis(750)),
+    )
 }
 
 fn synthetic_apply_targets() -> Vec<ExecutionTargetSpec> {
@@ -650,59 +629,50 @@ fn synthetic_apply_events() -> Vec<ExecutionEventKind> {
 
 #[cfg(test)]
 mod tests {
-    use crossterm::event::{KeyEvent, KeyModifiers};
+    use crossterm::event::{KeyCode, KeyModifiers};
     use ratatui::backend::TestBackend;
 
     use super::*;
     use crate::{app::execution::ExecutionStage, runtime::event_loop::test_support::terminal_text};
 
-    struct SyntheticSession {
-        state: SessionState,
-        view: plan_review::PlanReviewViewState,
-        confirmation_view: plan_review::ApplyConfirmationViewState,
-        execution_view: execution::ExecutionViewState,
-        quit_confirmation: bool,
-        complete_apply_at: Option<Instant>,
-    }
-
     impl SyntheticSession {
         fn review() -> Self {
-            Self {
-                state: SessionState::Review(Box::new(synthetic_review())),
-                view: plan_review::PlanReviewViewState::default(),
-                confirmation_view: plan_review::ApplyConfirmationViewState::default(),
-                execution_view: execution::ExecutionViewState::default(),
-                quit_confirmation: false,
-                complete_apply_at: None,
-            }
-        }
-
-        fn send(&mut self, terminal: &Terminal<TestBackend>, key: KeyEvent) -> bool {
-            let action = handle_synthetic_event(
-                &Event::Key(key),
-                terminal,
-                &self.state,
-                &mut self.view,
-                &mut self.confirmation_view,
-                &mut self.execution_view,
-                &mut self.quit_confirmation,
+            Self::new(
+                SessionState::Review(Box::new(synthetic_review())),
+                execution::ExecutionViewState::default(),
+                None,
             )
-            .expect("synthetic input should be handled");
-            action.is_some_and(|action| {
-                apply_synthetic_action(
-                    &mut self.state,
-                    action,
-                    &mut self.execution_view,
-                    &mut self.complete_apply_at,
-                )
-            })
         }
 
-        fn press(&mut self, terminal: &Terminal<TestBackend>, code: KeyCode) -> bool {
-            self.send(terminal, KeyEvent::new(code, KeyModifiers::NONE))
+        fn idle(&mut self, terminal: &mut Terminal<TestBackend>, now: Instant) -> String {
+            assert!(
+                !self
+                    .step(terminal, None, now)
+                    .expect("synthetic step should render")
+            );
+            terminal_text(terminal)
         }
 
-        fn type_confirmation(&mut self, terminal: &Terminal<TestBackend>) {
+        fn send(
+            &mut self,
+            terminal: &mut Terminal<TestBackend>,
+            key: KeyEvent,
+            now: Instant,
+        ) -> bool {
+            self.step(terminal, Some(&Event::Key(key)), now)
+                .expect("synthetic input should be handled")
+        }
+
+        fn press(
+            &mut self,
+            terminal: &mut Terminal<TestBackend>,
+            code: KeyCode,
+            now: Instant,
+        ) -> bool {
+            self.send(terminal, KeyEvent::new(code, KeyModifiers::NONE), now)
+        }
+
+        fn type_confirmation(&mut self, terminal: &mut Terminal<TestBackend>, now: Instant) {
             let expected = self
                 .state
                 .apply_confirmation()
@@ -710,22 +680,8 @@ mod tests {
                 .review()
                 .confirmation_input();
             for character in expected.chars() {
-                assert!(!self.press(terminal, KeyCode::Char(character)));
+                assert!(!self.press(terminal, KeyCode::Char(character), now));
             }
-        }
-
-        fn draw(&self, terminal: &mut Terminal<TestBackend>) -> String {
-            super::super::event_loop::draw_with_quit_confirmation(
-                &self.state,
-                terminal,
-                self.execution_view,
-                &self.view,
-                &self.confirmation_view,
-                Instant::now(),
-                self.quit_confirmation,
-            )
-            .expect("synthetic screen should render");
-            terminal_text(terminal)
         }
     }
 
@@ -733,79 +689,149 @@ mod tests {
         Terminal::new(TestBackend::new(width, height)).expect("test terminal")
     }
 
-    #[test]
-    fn raw_copy_shows_the_synthetic_copy_notice() {
-        let mut terminal = terminal(100, 30);
-        let mut session = SyntheticSession::review();
+    mod review {
+        use super::*;
 
-        assert!(!session.press(&terminal, KeyCode::Char('y')));
+        #[test]
+        fn raw_copy_shows_the_synthetic_copy_notice() {
+            let now = Instant::now();
+            let mut terminal = terminal(100, 30);
+            let mut session = SyntheticSession::review();
 
-        let text = session.draw(&mut terminal);
-        assert!(text.contains("Copied."), "{text}");
+            assert!(!session.press(&mut terminal, KeyCode::Char('y'), now));
+
+            let text = terminal_text(&terminal);
+            assert!(text.contains("Copied."), "{text}");
+        }
+
+        #[test]
+        fn overview_footer_hints_return_when_the_copy_notice_expires() {
+            let now = Instant::now();
+            let notice_expired_at = now + Duration::from_secs(3);
+            let mut never_copied_terminal = terminal(40, 16);
+            let mut never_copied = SyntheticSession::review();
+            assert!(!never_copied.press(&mut never_copied_terminal, KeyCode::Char('s'), now));
+            let never_copied_text =
+                never_copied.idle(&mut never_copied_terminal, notice_expired_at);
+            let mut terminal = terminal(40, 16);
+            let mut session = SyntheticSession::review();
+            assert!(!session.press(&mut terminal, KeyCode::Char('s'), now));
+            assert!(!session.press(&mut terminal, KeyCode::Char('y'), now));
+            assert_ne!(terminal_text(&terminal), never_copied_text);
+
+            let expired = session.idle(&mut terminal, notice_expired_at);
+
+            assert_eq!(expired, never_copied_text);
+        }
+
+        #[test]
+        fn overview_quit_is_confirmed_before_finishing() {
+            let now = Instant::now();
+            let mut terminal = terminal(100, 30);
+            let mut session = SyntheticSession::review();
+            assert!(!session.press(&mut terminal, KeyCode::Char('s'), now));
+            assert!(session.state.overview().is_some());
+
+            assert!(!session.press(&mut terminal, KeyCode::Char('q'), now));
+
+            let text = terminal_text(&terminal);
+            assert!(text.contains("Quit Terracotta?"), "{text}");
+            assert!(session.press(&mut terminal, KeyCode::Enter, now));
+        }
+
+        #[test]
+        fn narrow_confirmation_does_not_start_the_synthetic_apply() {
+            let now = Instant::now();
+            let mut wide = terminal(100, 30);
+            let mut narrow = terminal(20, 5);
+            let mut session = SyntheticSession::review();
+            assert!(!session.press(&mut wide, KeyCode::Char('a'), now));
+
+            session.type_confirmation(&mut narrow, now);
+            assert!(!session.press(&mut narrow, KeyCode::Enter, now));
+
+            assert!(session.state.apply_confirmation().is_some());
+            assert_eq!(session.confirmation_view.input(), "");
+            assert_eq!(session.complete_apply_at, None);
+        }
+
+        #[test]
+        fn confirmed_apply_records_synthetic_events_until_the_timer() {
+            let now = Instant::now();
+            let mut terminal = terminal(100, 30);
+            let mut session = SyntheticSession::review();
+            assert!(!session.press(&mut terminal, KeyCode::Char('a'), now));
+            session.type_confirmation(&mut terminal, now);
+
+            assert!(!session.press(&mut terminal, KeyCode::Enter, now));
+
+            let apply = session.state.apply().expect("synthetic apply should start");
+            assert_eq!(apply.stage(), ExecutionStage::Applying);
+            assert_eq!(apply.progress().targets().len(), 3);
+            assert!(session.complete_apply_at.is_some());
+        }
+
+        #[test]
+        fn cancelling_the_synthetic_apply_interrupts_it() {
+            let now = Instant::now();
+            let mut terminal = terminal(100, 30);
+            let mut session = SyntheticSession::review();
+            assert!(!session.press(&mut terminal, KeyCode::Char('a'), now));
+            session.type_confirmation(&mut terminal, now);
+            assert!(!session.press(&mut terminal, KeyCode::Enter, now));
+
+            assert!(!session.send(
+                &mut terminal,
+                KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                now,
+            ));
+
+            let apply = session
+                .state
+                .apply()
+                .expect("synthetic apply should remain");
+            assert_eq!(apply.stage(), ExecutionStage::ApplyInterrupted);
+            assert_eq!(session.complete_apply_at, None);
+        }
     }
 
-    #[test]
-    fn overview_quit_is_confirmed_before_finishing() {
-        let mut terminal = terminal(100, 30);
-        let mut session = SyntheticSession::review();
-        assert!(!session.press(&terminal, KeyCode::Char('s')));
-        assert!(session.state.overview().is_some());
+    mod execution_example {
+        use super::*;
 
-        assert!(!session.press(&terminal, KeyCode::Char('q')));
+        #[test]
+        fn timed_apply_finishes_without_input() {
+            let started = Instant::now();
+            let mut terminal = terminal(100, 30);
+            let mut session = synthetic_execution_session(started);
+            let running = session.idle(&mut terminal, started);
+            assert!(!running.contains("Apply complete"), "{running}");
+            assert_eq!(
+                session.poll_timeout(started + Duration::from_millis(700)),
+                Duration::from_millis(50)
+            );
 
-        let text = session.draw(&mut terminal);
-        assert!(text.contains("Quit Terracotta?"), "{text}");
-        assert!(session.press(&terminal, KeyCode::Enter));
-    }
+            let finished = session.idle(&mut terminal, started + Duration::from_millis(750));
 
-    #[test]
-    fn narrow_confirmation_does_not_start_the_synthetic_apply() {
-        let wide = terminal(100, 30);
-        let narrow = terminal(20, 5);
-        let mut session = SyntheticSession::review();
-        assert!(!session.press(&wide, KeyCode::Char('a')));
+            let apply = session.state.apply().expect("apply should remain");
+            assert_eq!(apply.stage(), ExecutionStage::ApplySucceeded);
+            assert_eq!(session.complete_apply_at, None);
+            assert!(finished.contains("Apply complete"), "{finished}");
+        }
 
-        session.type_confirmation(&narrow);
-        assert!(!session.press(&narrow, KeyCode::Enter));
+        #[test]
+        fn finished_apply_asks_before_quitting() {
+            let started = Instant::now();
+            let finished_at = started + Duration::from_millis(750);
+            let mut terminal = terminal(100, 30);
+            let mut session = synthetic_execution_session(started);
+            session.idle(&mut terminal, finished_at);
+            assert!(!session.press(&mut terminal, KeyCode::Esc, finished_at));
 
-        assert!(session.state.apply_confirmation().is_some());
-        assert_eq!(session.confirmation_view.input(), "");
-        assert_eq!(session.complete_apply_at, None);
-    }
+            assert!(!session.press(&mut terminal, KeyCode::Char('q'), finished_at));
 
-    #[test]
-    fn confirmed_apply_records_synthetic_events_until_the_timer() {
-        let terminal = terminal(100, 30);
-        let mut session = SyntheticSession::review();
-        assert!(!session.press(&terminal, KeyCode::Char('a')));
-        session.type_confirmation(&terminal);
-
-        assert!(!session.press(&terminal, KeyCode::Enter));
-
-        let apply = session.state.apply().expect("synthetic apply should start");
-        assert_eq!(apply.stage(), ExecutionStage::Applying);
-        assert_eq!(apply.progress().targets().len(), 3);
-        assert!(session.complete_apply_at.is_some());
-    }
-
-    #[test]
-    fn cancelling_the_synthetic_apply_interrupts_it() {
-        let terminal = terminal(100, 30);
-        let mut session = SyntheticSession::review();
-        assert!(!session.press(&terminal, KeyCode::Char('a')));
-        session.type_confirmation(&terminal);
-        assert!(!session.press(&terminal, KeyCode::Enter));
-
-        assert!(!session.send(
-            &terminal,
-            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
-        ));
-
-        let apply = session
-            .state
-            .apply()
-            .expect("synthetic apply should remain");
-        assert_eq!(apply.stage(), ExecutionStage::ApplyInterrupted);
-        assert_eq!(session.complete_apply_at, None);
+            let text = terminal_text(&terminal);
+            assert!(text.contains("Quit Terracotta?"), "{text}");
+            assert!(session.press(&mut terminal, KeyCode::Enter, finished_at));
+        }
     }
 }
