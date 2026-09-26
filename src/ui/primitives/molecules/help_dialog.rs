@@ -7,7 +7,10 @@ use ratatui::{
 };
 
 use crate::ui::{
-    primitives::{atoms::scrollbar, molecules::terminal_notice},
+    primitives::{
+        atoms::scrollbar,
+        molecules::{dialog_scroll::DialogScroll, terminal_notice},
+    },
     shell::footer,
     theme,
 };
@@ -68,7 +71,7 @@ pub(crate) fn render(
     area: Rect,
     title: &'static str,
     sections: &[HelpSection],
-    scroll: u16,
+    scroll: &DialogScroll,
 ) {
     let width = dialog_width(area, sections);
     if width < MIN_WIDTH || area.height < MIN_HEIGHT {
@@ -124,7 +127,8 @@ pub(crate) fn render(
         footer_height,
     );
     let max_scroll = content_height.saturating_sub(usize::from(content.height));
-    let scroll = usize::from(scroll).min(max_scroll);
+    let scroll =
+        usize::from(scroll.clamp_for_render(u16::try_from(max_scroll).unwrap_or(u16::MAX)));
     render_sections(frame, content, sections, action_layout, scroll);
     if content.height > 0 {
         scrollbar::render_vertical(
@@ -393,7 +397,7 @@ fn render_scrolled_text(frame: &mut Frame<'_>, viewport: Rect, text: ScrolledTex
 mod tests {
     use crate::ui::test_support::{buffer_text, render_to_buffer};
 
-    use super::{HelpAction, HelpSection, render};
+    use super::{DialogScroll, HelpAction, HelpSection, render};
 
     #[test]
     fn help_rows_stack_when_narrow_and_return_to_compact_columns_after_resize() {
@@ -414,7 +418,13 @@ mod tests {
         ];
 
         let narrow = buffer_text(&render_to_buffer((40, 24), |frame| {
-            render(frame, frame.area(), "Help", &sections, 0);
+            render(
+                frame,
+                frame.area(),
+                "Help",
+                &sections,
+                &DialogScroll::default(),
+            );
         }));
         let key_line = narrow
             .lines()
@@ -427,7 +437,13 @@ mod tests {
         assert!(description_line > key_line);
 
         let wide = buffer_text(&render_to_buffer((120, 40), |frame| {
-            render(frame, frame.area(), "Help", &sections, 0);
+            render(
+                frame,
+                frame.area(),
+                "Help",
+                &sections,
+                &DialogScroll::default(),
+            );
         }));
         let lines = wide.lines().collect::<Vec<_>>();
         let line_of = |text: &str| {

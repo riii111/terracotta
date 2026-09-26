@@ -1,5 +1,5 @@
 use crate::app::session::Action;
-use crate::ui::text_input;
+use crate::ui::{primitives::molecules::dialog_scroll::DialogScroll, text_input};
 
 use super::ApplyConfirmationInput;
 
@@ -9,7 +9,7 @@ pub(crate) struct ApplyConfirmationViewState {
     cursor: usize,
     scroll: u16,
     overlay: Option<ConfirmationOverlay>,
-    overlay_scroll: u16,
+    overlay_scroll: DialogScroll,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,7 +23,9 @@ impl ApplyConfirmationViewState {
         &mut self,
         input: ApplyConfirmationInput,
         expected: &str,
+        max_vertical: u16,
     ) -> Option<Action> {
+        self.scroll = self.scroll.min(max_vertical);
         match input {
             ApplyConfirmationInput::Character(character) => {
                 self.input.insert(self.cursor, character);
@@ -70,7 +72,7 @@ impl ApplyConfirmationViewState {
                 None
             }
             ApplyConfirmationInput::ScrollDown => {
-                self.scroll = self.scroll.saturating_add(1);
+                self.scroll = self.scroll.saturating_add(1).min(max_vertical);
                 None
             }
             ApplyConfirmationInput::PageUp => {
@@ -78,17 +80,17 @@ impl ApplyConfirmationViewState {
                 None
             }
             ApplyConfirmationInput::PageDown => {
-                self.scroll = self.scroll.saturating_add(5);
+                self.scroll = self.scroll.saturating_add(5).min(max_vertical);
                 None
             }
             ApplyConfirmationInput::OpenHelp => {
                 self.overlay = Some(ConfirmationOverlay::Help);
-                self.overlay_scroll = 0;
+                self.overlay_scroll.reset();
                 None
             }
             ApplyConfirmationInput::OpenContext => {
                 self.overlay = Some(ConfirmationOverlay::Context);
-                self.overlay_scroll = 0;
+                self.overlay_scroll.reset();
                 None
             }
             ApplyConfirmationInput::Confirm => None,
@@ -111,29 +113,25 @@ impl ApplyConfirmationViewState {
         self.overlay
     }
 
-    pub(crate) const fn overlay_scroll(&self) -> u16 {
-        self.overlay_scroll
+    pub(crate) const fn overlay_scroll(&self) -> &DialogScroll {
+        &self.overlay_scroll
     }
 
-    pub(crate) const fn scroll_overlay(&mut self, delta: i16) {
-        if delta.is_negative() {
-            self.overlay_scroll = self.overlay_scroll.saturating_sub(delta.unsigned_abs());
-        } else {
-            self.overlay_scroll = self.overlay_scroll.saturating_add(delta.cast_unsigned());
-        }
+    pub(crate) fn scroll_overlay(&mut self, delta: i16) {
+        self.overlay_scroll.scroll_by(delta);
     }
 
     pub(crate) const fn overlay_top(&mut self) {
-        self.overlay_scroll = 0;
+        self.overlay_scroll.top();
     }
 
     pub(crate) const fn overlay_bottom(&mut self) {
-        self.overlay_scroll = u16::MAX;
+        self.overlay_scroll.bottom();
     }
 
-    pub(crate) const fn close_overlay(&mut self) {
+    pub(crate) fn close_overlay(&mut self) {
         self.overlay = None;
-        self.overlay_scroll = 0;
+        self.overlay_scroll.reset();
     }
 
     fn reset(&mut self) {
@@ -153,7 +151,7 @@ mod tests {
     fn enter(view: &mut ApplyConfirmationViewState, value: &str) {
         for character in value.chars() {
             assert_eq!(
-                view.apply(ApplyConfirmationInput::Character(character), "yes"),
+                view.apply(ApplyConfirmationInput::Character(character), "yes", 0),
                 None
             );
         }
@@ -164,7 +162,7 @@ mod tests {
         let mut view = ApplyConfirmationViewState::default();
         enter(&mut view, "yes");
         assert_eq!(
-            view.apply(ApplyConfirmationInput::Confirm, "yes"),
+            view.apply(ApplyConfirmationInput::Confirm, "yes", 0),
             Some(Action::ConfirmApply("yes".to_owned()))
         );
         assert_eq!(view.input(), "");
@@ -172,7 +170,7 @@ mod tests {
 
         enter(&mut view, "no");
         assert_eq!(
-            view.apply(ApplyConfirmationInput::Confirm, "no"),
+            view.apply(ApplyConfirmationInput::Confirm, "no", 0),
             Some(Action::ConfirmApply("no".to_owned()))
         );
         assert_eq!(view.input(), "");
@@ -185,7 +183,7 @@ mod tests {
         enter(&mut view, "maybe");
 
         assert_eq!(
-            view.apply(ApplyConfirmationInput::Cancel, "yes"),
+            view.apply(ApplyConfirmationInput::Cancel, "yes", 0),
             Some(Action::CancelApply)
         );
         assert_eq!(view.input(), "");
@@ -201,7 +199,7 @@ mod tests {
         enter(&mut view, value);
         let cursor = view.cursor();
 
-        assert_eq!(view.apply(ApplyConfirmationInput::Confirm, "yes"), None);
+        assert_eq!(view.apply(ApplyConfirmationInput::Confirm, "yes", 0), None);
         assert_eq!(view.input(), value);
         assert_eq!(view.cursor(), cursor);
     }
@@ -211,31 +209,31 @@ mod tests {
         let mut view = ApplyConfirmationViewState::default();
         enter(&mut view, "aあe\u{301}👩💻");
 
-        view.apply(ApplyConfirmationInput::Home, "yes");
-        view.apply(ApplyConfirmationInput::Right, "yes");
-        view.apply(ApplyConfirmationInput::Right, "yes");
-        view.apply(ApplyConfirmationInput::Backspace, "yes");
+        view.apply(ApplyConfirmationInput::Home, "yes", 0);
+        view.apply(ApplyConfirmationInput::Right, "yes", 0);
+        view.apply(ApplyConfirmationInput::Right, "yes", 0);
+        view.apply(ApplyConfirmationInput::Backspace, "yes", 0);
 
         assert_eq!(view.input(), "ae\u{301}👩💻");
         assert_eq!(view.cursor(), 1);
 
-        view.apply(ApplyConfirmationInput::End, "yes");
-        view.apply(ApplyConfirmationInput::Left, "yes");
-        view.apply(ApplyConfirmationInput::Character('\u{200d}'), "yes");
-        view.apply(ApplyConfirmationInput::Character('x'), "yes");
+        view.apply(ApplyConfirmationInput::End, "yes", 0);
+        view.apply(ApplyConfirmationInput::Left, "yes", 0);
+        view.apply(ApplyConfirmationInput::Character('\u{200d}'), "yes", 0);
+        view.apply(ApplyConfirmationInput::Character('x'), "yes", 0);
 
         assert_eq!(view.input(), "ae\u{301}👩\u{200d}💻x");
         assert_eq!(view.cursor(), view.input().len());
 
-        view.apply(ApplyConfirmationInput::Backspace, "yes");
-        view.apply(ApplyConfirmationInput::Backspace, "yes");
-        view.apply(ApplyConfirmationInput::Backspace, "yes");
+        view.apply(ApplyConfirmationInput::Backspace, "yes", 0);
+        view.apply(ApplyConfirmationInput::Backspace, "yes", 0);
+        view.apply(ApplyConfirmationInput::Backspace, "yes", 0);
 
         assert_eq!(view.input(), "a");
         assert_eq!(view.cursor(), 1);
 
-        view.apply(ApplyConfirmationInput::Home, "yes");
-        view.apply(ApplyConfirmationInput::Character('X'), "yes");
+        view.apply(ApplyConfirmationInput::Home, "yes", 0);
+        view.apply(ApplyConfirmationInput::Character('X'), "yes", 0);
         assert_eq!(view.input(), "Xa");
     }
 
@@ -243,12 +241,12 @@ mod tests {
     fn opening_an_overlay_resets_its_scroll_position() {
         let mut view = ApplyConfirmationViewState::default();
 
-        view.apply(ApplyConfirmationInput::OpenContext, "yes");
+        view.apply(ApplyConfirmationInput::OpenContext, "yes", 0);
         view.scroll_overlay(4);
-        assert_eq!(view.overlay_scroll(), 4);
+        assert_eq!(view.overlay_scroll().offset_for_test(), 4);
 
         view.close_overlay();
-        view.apply(ApplyConfirmationInput::OpenHelp, "yes");
-        assert_eq!(view.overlay_scroll(), 0);
+        view.apply(ApplyConfirmationInput::OpenHelp, "yes", 0);
+        assert_eq!(view.overlay_scroll().offset_for_test(), 0);
     }
 }

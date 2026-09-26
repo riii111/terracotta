@@ -5,7 +5,7 @@ use ratatui::{
     layout::Rect,
     style::Style,
     text::{Line, Span},
-    widgets::{Block, Clear, Paragraph, Wrap},
+    widgets::{Block, Paragraph},
 };
 
 use crate::app::{
@@ -15,7 +15,7 @@ use crate::app::{
 use crate::ui::{
     primitives::{
         atoms::{scrollbar, separator},
-        molecules::{help_dialog, terminal_notice},
+        molecules::{context_dialog, help_dialog, terminal_notice},
     },
     shell::{context, environments, footer, header, layout as shell_layout},
     theme,
@@ -556,7 +556,7 @@ fn render_overlay(
         OverviewOverlay::Help => help_dialog::render(
             frame,
             area,
-            overlay_title(overlay),
+            "Help",
             &[
                 help_dialog::HelpSection::new(
                     "Navigation",
@@ -626,75 +626,8 @@ fn render_overlay(
             view.overlay_scroll(),
         ),
         OverviewOverlay::Context => {
-            if let Some(max_scroll) = render_dialog(
-                frame,
-                area,
-                overlay_title(overlay),
-                context::context_lines(review.context()),
-                view.overlay_scroll(),
-            ) {
-                view.set_max_overlay_scroll(max_scroll);
-            }
+            context_dialog::render(frame, area, review.context(), view.overlay_scroll());
         }
-    }
-}
-
-fn render_dialog(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    title: &'static str,
-    lines: Vec<Line<'static>>,
-    scroll: u16,
-) -> Option<u16> {
-    let width = area.width.saturating_sub(4).min(96);
-    let body = Paragraph::new(lines).wrap(Wrap { trim: false });
-    let height = u16::try_from(body.line_count(width.saturating_sub(2)))
-        .unwrap_or(u16::MAX)
-        .saturating_add(3)
-        .min(area.height.saturating_sub(2));
-    if width < 12 || height < 4 {
-        terminal_notice::render_wrapped(frame, area, "Terminal too small. Resize or press Esc.");
-        return None;
-    }
-    let dialog = Rect::new(
-        area.x + area.width.saturating_sub(width) / 2,
-        area.y + area.height.saturating_sub(height) / 2,
-        width,
-        height,
-    );
-    frame.render_widget(Clear, dialog);
-    let block = Block::bordered()
-        .border_style(theme::frame_style())
-        .style(theme::body_style())
-        .title(title);
-    let inner = block.inner(dialog);
-    frame.render_widget(block, dialog);
-    let content = Rect::new(
-        inner.x,
-        inner.y,
-        inner.width,
-        inner.height.saturating_sub(1),
-    );
-    let max_scroll = u16::try_from(
-        body.line_count(content.width)
-            .saturating_sub(usize::from(content.height)),
-    )
-    .unwrap_or(u16::MAX);
-    let scroll = scroll.min(max_scroll);
-    frame.render_widget(body.style(theme::body_style()).scroll((scroll, 0)), content);
-    footer::render(
-        frame,
-        Rect::new(inner.x, inner.bottom().saturating_sub(1), inner.width, 1),
-        &[footer::hint(&["?", "Esc"], "close")],
-        None,
-    );
-    Some(max_scroll)
-}
-
-const fn overlay_title(overlay: OverviewOverlay) -> &'static str {
-    match overlay {
-        OverviewOverlay::Help => "Help",
-        OverviewOverlay::Context => "Context",
     }
 }
 
@@ -722,7 +655,9 @@ mod tests {
             review::{PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata},
             session::test_support::overview_session,
         },
-        ui::test_support::{buffer_text, render_to_buffer},
+        ui::test_support::{
+            assert_dialog_scrolled_up, buffer_text, dialog_body_rows, render_to_buffer,
+        },
     };
     use ratatui::style::Color;
 
@@ -1502,6 +1437,41 @@ mod tests {
             let (line, text) = last_context_body_line(&state, &view, (80, 24));
 
             assert!(line.contains(expected), "case: {name}\n{text}");
+        }
+    }
+
+    #[test]
+    fn help_dialog_scrolls_up_from_the_end_by_one_line_and_one_page() {
+        let state = overview_session(review());
+        let content = OverviewContent::project(&state, "", &BTreeSet::new());
+        let help_rows = |view: &OverviewViewState| {
+            dialog_body_rows(
+                &render_to_buffer((40, 16), |frame| {
+                    render(frame, &state, view, Instant::now());
+                }),
+                "Help",
+            )
+        };
+        for (name, delta, lines) in [("up", -1, 1), ("page_up", -8, 8)] {
+            let mut view = OverviewViewState::default();
+            view.apply(
+                OverviewInput::OpenHelp,
+                Rect::new(0, 0, 40, 16),
+                Rect::default(),
+                0,
+                &content,
+            );
+            view.overlay_bottom();
+            let end = help_rows(&view);
+
+            view.scroll_overlay(delta);
+            let scrolled = help_rows(&view);
+
+            assert!(
+                end.last().is_some_and(|row| row.contains("quit")),
+                "case: {name}"
+            );
+            assert_dialog_scrolled_up(name, &end, &scrolled, lines);
         }
     }
 }
