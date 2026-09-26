@@ -22,7 +22,7 @@ use crate::{
         },
         plan::PlanSummary,
         review::{PlanReview, PlanReviewMessage},
-        session::SessionOutcome,
+        session::{ReviewedChanges, SessionOutcome},
     },
     infra::{CancellationToken, ClipboardExecutor, history::HistoryStore, terraform},
 };
@@ -318,19 +318,24 @@ fn run_interactive(
     })
 }
 
-fn report_reviewed(changes: Option<PlanSummary>) {
-    if let Some(summary) = changes {
-        let _ = writeln!(
-            io::stdout(),
-            "Plan: {} to add, {} to change, {} to replace, {} to destroy.\nApply was not run.",
-            summary.creates,
-            summary.updates,
-            summary.replaces,
-            summary.deletes
-        );
-    } else {
-        let _ = writeln!(io::stdout(), "No changes.");
+fn report_reviewed(changes: Option<ReviewedChanges>) {
+    let _ = writeln!(io::stdout(), "{}", reviewed_report(changes));
+}
+
+fn reviewed_report(changes: Option<ReviewedChanges>) -> String {
+    let Some(ReviewedChanges { resources, outputs }) = changes else {
+        return "No changes.".to_owned();
+    };
+    let mut lines = vec![format!(
+        "Plan: {} to add, {} to change, {} to replace, {} to destroy.",
+        resources.creates, resources.updates, resources.replaces, resources.deletes
+    )];
+    // Without resource changes, the zero counts alone would not say what the plan changes.
+    if resources == PlanSummary::default() && outputs > 0 {
+        lines.push(format!("Outputs: {outputs} changed."));
     }
+    lines.push("Apply was not run.".to_owned());
+    lines.join("\n")
 }
 
 fn report_no_changes() {
@@ -812,5 +817,58 @@ mod tests {
         let actual = finalize_ui_result(Ok(outcome.clone()), &apply_join, &plan_join)
             .expect("successful worker joins should preserve the UI result");
         assert_eq!(actual, outcome);
+    }
+
+    #[test]
+    fn reviewed_report_adds_changed_outputs_only_without_resource_changes() {
+        struct ReportCase {
+            name: &'static str,
+            changes: Option<ReviewedChanges>,
+            expected: &'static str,
+        }
+
+        for case in [
+            ReportCase {
+                name: "no_changes",
+                changes: None,
+                expected: "No changes.",
+            },
+            ReportCase {
+                name: "outputs_only",
+                changes: Some(ReviewedChanges {
+                    resources: PlanSummary::default(),
+                    outputs: 3,
+                }),
+                expected: "Plan: 0 to add, 0 to change, 0 to replace, 0 to destroy.\nOutputs: 3 changed.\nApply was not run.",
+            },
+            ReportCase {
+                name: "resources_and_outputs",
+                changes: Some(ReviewedChanges {
+                    resources: PlanSummary {
+                        creates: 1,
+                        updates: 2,
+                        replaces: 3,
+                        deletes: 4,
+                    },
+                    outputs: 1,
+                }),
+                expected: "Plan: 1 to add, 2 to change, 3 to replace, 4 to destroy.\nApply was not run.",
+            },
+            ReportCase {
+                name: "nonstandard_only",
+                changes: Some(ReviewedChanges {
+                    resources: PlanSummary::default(),
+                    outputs: 0,
+                }),
+                expected: "Plan: 0 to add, 0 to change, 0 to replace, 0 to destroy.\nApply was not run.",
+            },
+        ] {
+            assert_eq!(
+                reviewed_report(case.changes),
+                case.expected,
+                "case: {}",
+                case.name
+            );
+        }
     }
 }

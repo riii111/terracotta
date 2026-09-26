@@ -1303,7 +1303,7 @@ mod tests {
             "default".to_owned(),
             document,
             plan,
-            PlanMetadata::new(Vec::new(), true),
+            PlanMetadata::new(true),
             Vec::new(),
         )
     }

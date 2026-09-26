@@ -1916,7 +1916,7 @@ End of synthetic plan body."#;
                 ],
                 ..Plan::empty()
             },
-            PlanMetadata::new(vec!["endpoint".to_owned(), "summary".to_owned()], applyable),
+            PlanMetadata::new(applyable),
             Vec::new(),
         )
         .with_apply_allowed(apply_allowed)
@@ -2079,7 +2079,7 @@ End of synthetic plan body."#;
             "default".to_owned(),
             plan_document_with_blocks(String::new(), Vec::new()),
             Plan::empty(),
-            PlanMetadata::new(Vec::new(), false),
+            PlanMetadata::new(false),
             Vec::new(),
         );
         let state = review_state(plan);
@@ -2584,7 +2584,7 @@ End of synthetic plan body."#;
                 )],
             ),
             Plan::empty(),
-            PlanMetadata::new(Vec::new(), true),
+            PlanMetadata::new(true),
             Vec::new(),
         )
     }
@@ -2641,7 +2641,7 @@ End of synthetic plan body."#;
                     ],
                     ..Plan::empty()
                 },
-                PlanMetadata::new(Vec::new(), true),
+                PlanMetadata::new(true),
                 Vec::new(),
             )
         }
@@ -2655,7 +2655,7 @@ End of synthetic plan body."#;
                     vec![PlanBlock::new(0..2, PlanBlockKind::Common)],
                 ),
                 Plan::empty(),
-                PlanMetadata::new(Vec::new(), true),
+                PlanMetadata::new(true),
                 Vec::new(),
             )
         }
@@ -2957,7 +2957,7 @@ End of synthetic plan body."#;
                     )],
                     ..Plan::empty()
                 },
-                PlanMetadata::new(Vec::new(), true),
+                PlanMetadata::new(true),
                 Vec::new(),
             );
             let filtered = review.document().filter(review.search_query());
@@ -2976,7 +2976,7 @@ End of synthetic plan body."#;
                 "default".to_owned(),
                 plan_document("Plan: application text\nfollowing body text\n".to_owned()),
                 Plan::empty(),
-                PlanMetadata::new(Vec::new(), false),
+                PlanMetadata::new(false),
                 Vec::new(),
             );
             let filtered = review.document().filter(review.search_query());
@@ -3022,7 +3022,7 @@ End of synthetic plan body."#;
                     )],
                     ..Plan::empty()
                 },
-                PlanMetadata::new(vec!["endpoint".to_owned()], true),
+                PlanMetadata::new(true),
                 vec![Diagnostic {
                     severity: DiagnosticSeverity::Warning,
                     summary: "Synthetic diagnostic".to_owned(),
@@ -3830,7 +3830,7 @@ End of synthetic plan body."#;
                     )],
                     ..Plan::empty()
                 },
-                PlanMetadata::new(Vec::new(), true),
+                PlanMetadata::new(true),
                 Vec::new(),
             );
             review.set_search_query("api".to_owned());
@@ -3881,7 +3881,7 @@ End of synthetic plan body."#;
                     )],
                     ..Plan::empty()
                 },
-                PlanMetadata::new(Vec::new(), true),
+                PlanMetadata::new(true),
                 Vec::new(),
             )
         }
@@ -4160,7 +4160,7 @@ End of synthetic plan body."#;
                     )],
                     ..Plan::empty()
                 },
-                PlanMetadata::new(Vec::new(), true),
+                PlanMetadata::new(true),
                 vec![
                     Diagnostic {
                         severity: DiagnosticSeverity::Error,

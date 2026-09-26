@@ -316,10 +316,13 @@ mod tests {
         fs,
         path::PathBuf,
         sync::atomic::{AtomicU64, Ordering},
-        time::{SystemTime, UNIX_EPOCH},
+        time::{Instant, SystemTime, UNIX_EPOCH},
     };
 
     use super::*;
+
+    // Generous enough for an oversubscribed machine; a hang still fails instead of blocking.
+    const WAIT_DEADLINE: Duration = Duration::from_secs(20);
 
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -349,27 +352,39 @@ mod tests {
             fs::write(
                 &path,
                 r#"#!/bin/sh
-if [ "$MODE" = "pre-cancel" ]; then
-  printf '%s\n' "$$" > "$PID_FILE"
-  exit 0
-fi
-if [ "$MODE" = "interrupt" ]; then
-  printf '%s\n' "$$" > "$PID_FILE"
-  while :; do :; done
-fi
-if [ "$MODE" = "interrupt-stream" ]; then
-  printf '%s\n' "$$" > "$PID_FILE"
+record_pid() {
+  printf '%s\n' "$$" > "$PID_FILE.tmp"
+  mv "$PID_FILE.tmp" "$PID_FILE"
+}
+# Also ends once the test directory is removed, so a missing kill does not leak the fake.
+run_until_killed() {
+  while [ -e "$PID_FILE" ]; do :; done
+}
+# 2700 lines of 25 bytes exceed the 64 KiB pipe capacity of each stream.
+write_past_pipe_capacity() {
   i=0
-  while [ "$i" -lt 20000 ]; do
+  while [ "$i" -lt 2700 ]; do
     printf 'stdout-output-0123456789\n'
     printf 'stderr-output-0123456789\n' >&2
     i=$((i + 1))
   done
+}
+if [ "$MODE" = "pre-cancel" ]; then
+  record_pid
+  exit 0
+fi
+if [ "$MODE" = "interrupt" ]; then
+  record_pid
+  run_until_killed
+fi
+if [ "$MODE" = "interrupt-stream" ]; then
+  record_pid
+  write_past_pipe_capacity
   : > "$READY_FILE"
-  while :; do :; done
+  run_until_killed
 fi
 if [ "$MODE" = "race" ]; then
-  printf '%s\n' "$$" > "$PID_FILE"
+  record_pid
   (
     while [ ! -f "$RELEASE_FILE" ]; do
       sleep 0.01
@@ -381,12 +396,7 @@ if [ "$MODE" = "race" ]; then
   exit 0
 fi
 if [ "$MODE" = "stream" ]; then
-  i=0
-  while [ "$i" -lt 20000 ]; do
-    printf 'stdout-output-0123456789\n'
-    printf 'stderr-output-0123456789\n' >&2
-    i=$((i + 1))
-  done
+  write_past_pipe_capacity
   exit 7
 fi
 exit 0
@@ -412,6 +422,124 @@ exit 0
         }
     }
 
+    struct FakeGitRun {
+        cancellation: CancellationToken,
+        worker: Option<JoinHandle<Result<Output, GitCommandError>>>,
+        release_file: Option<PathBuf>,
+    }
+
+    impl FakeGitRun {
+        fn start(
+            directory: &TestDirectory,
+            operation: &'static str,
+            environment: &[(&'static str, &str)],
+        ) -> Self {
+            let cancellation = CancellationToken::new();
+            let worker_cancellation = cancellation.clone();
+            let path = directory.path().to_owned();
+            let mut environment = environment
+                .iter()
+                .map(|(key, value)| (*key, (*value).to_owned()))
+                .collect::<Vec<_>>();
+            environment.push(("PATH", directory.path_environment()));
+            let worker = thread::spawn(move || {
+                let environment = environment
+                    .iter()
+                    .map(|(key, value)| (*key, value.as_str()))
+                    .collect::<Vec<_>>();
+                run_git_with_env(
+                    &path,
+                    operation,
+                    std::iter::empty::<&str>(),
+                    &environment,
+                    &worker_cancellation,
+                )
+            });
+            Self {
+                cancellation,
+                worker: Some(worker),
+                release_file: None,
+            }
+        }
+
+        fn releasing_holder_on_drop(mut self, release_file: &Path) -> Self {
+            self.release_file = Some(release_file.to_owned());
+            self
+        }
+
+        fn cancel(&self) {
+            self.cancellation.cancel();
+        }
+
+        fn finish(mut self) -> Result<Output, GitCommandError> {
+            wait_until("Git worker to return", || {
+                self.worker.as_ref().is_some_and(JoinHandle::is_finished)
+            });
+            self.worker
+                .take()
+                .expect("Git worker should be joined once")
+                .join()
+                .expect("Git worker should join")
+        }
+    }
+
+    impl Drop for FakeGitRun {
+        // A failed assertion must not leave the fake running after the test process exits.
+        fn drop(&mut self) {
+            self.cancellation.cancel();
+            if let Some(release_file) = &self.release_file {
+                let _ = fs::write(release_file, "release");
+            }
+            if let Some(worker) = self.worker.take()
+                && poll_until(|| worker.is_finished())
+            {
+                let _ = worker.join();
+            }
+        }
+    }
+
+    fn wait_until(description: &str, condition: impl FnMut() -> bool) {
+        assert!(
+            poll_until(condition),
+            "timed out after {WAIT_DEADLINE:?} waiting for {description}"
+        );
+    }
+
+    fn poll_until(mut condition: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + WAIT_DEADLINE;
+        loop {
+            if condition() {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::sleep(PROCESS_POLL_INTERVAL);
+        }
+    }
+
+    fn read_pid(pid_file: &Path) -> u32 {
+        fs::read_to_string(pid_file)
+            .expect("Git pid should be recorded")
+            .trim()
+            .parse()
+            .expect("Git pid should be numeric")
+    }
+
+    // `kill -0` also succeeds for a zombie, so this fails until the child is reaped.
+    fn process_is_alive(pid: u32) -> bool {
+        Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stderr(Stdio::null())
+            .status()
+            .expect("kill should start")
+            .success()
+    }
+
+    fn utf8_path(path: &Path) -> &str {
+        path.to_str().expect("test path should be UTF-8")
+    }
+
     #[test]
     fn does_not_spawn_git_after_cancellation() {
         let directory = TestDirectory::new();
@@ -427,10 +555,7 @@ exit 0
             &[
                 ("PATH", directory.path_environment().as_str()),
                 ("MODE", "pre-cancel"),
-                (
-                    "PID_FILE",
-                    pid_file.to_str().expect("pid path should be UTF-8"),
-                ),
+                ("PID_FILE", utf8_path(&pid_file)),
             ],
             &cancellation,
         )
@@ -444,19 +569,13 @@ exit 0
     fn drains_both_pipes_before_returning_git_output() {
         let directory = TestDirectory::new();
         directory.install_fake_git();
-        let cancellation = CancellationToken::new();
 
-        let output = run_git_with_env(
-            directory.path(),
+        let output = FakeGitRun::start(
+            &directory,
             "stream Git output",
-            std::iter::empty::<&str>(),
-            &[
-                ("PATH", directory.path_environment().as_str()),
-                ("MODE", "stream"),
-                ("PID_FILE", "unused"),
-            ],
-            &cancellation,
+            &[("MODE", "stream"), ("PID_FILE", "unused")],
         )
+        .finish()
         .expect("Git output should be collected");
 
         assert_eq!(output.status.code(), Some(7));
@@ -469,54 +588,21 @@ exit 0
         let directory = TestDirectory::new();
         directory.install_fake_git();
         let pid_file = directory.path().join("pid");
-        let cancellation = CancellationToken::new();
-        let worker_cancellation = cancellation.clone();
-        let path = directory.path().to_owned();
-        let path_environment = directory.path_environment();
-        let pid_path = pid_file
-            .to_str()
-            .expect("pid path should be UTF-8")
-            .to_owned();
-        let worker = thread::spawn(move || {
-            run_git_with_env(
-                &path,
-                "interruptible Git command",
-                std::iter::empty::<&str>(),
-                &[
-                    ("PATH", path_environment.as_str()),
-                    ("MODE", "interrupt"),
-                    ("PID_FILE", pid_path.as_str()),
-                ],
-                &worker_cancellation,
-            )
-        });
-        for _ in 0..100 {
-            if pid_file.is_file() {
-                break;
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-        assert!(pid_file.is_file(), "fake Git should have started");
-        cancellation.cancel();
-
-        let error = worker
-            .join()
-            .expect("Git worker should join")
-            .expect_err("cancelled Git should return interruption");
-        assert!(error.is_interrupted());
-        let pid = fs::read_to_string(pid_file)
-            .expect("Git pid should be recorded")
-            .trim()
-            .parse::<u32>()
-            .expect("Git pid should be numeric");
-        assert!(
-            !Command::new("kill")
-                .args(["-0", &pid.to_string()])
-                .stderr(Stdio::null())
-                .status()
-                .expect("kill should start")
-                .success()
+        let run = FakeGitRun::start(
+            &directory,
+            "interruptible Git command",
+            &[("MODE", "interrupt"), ("PID_FILE", utf8_path(&pid_file))],
         );
+        wait_until("fake Git to start", || pid_file.is_file());
+        let pid = read_pid(&pid_file);
+
+        run.cancel();
+        let error = run
+            .finish()
+            .expect_err("cancelled Git should return interruption");
+
+        assert!(error.is_interrupted());
+        assert!(!process_is_alive(pid), "Git process {pid} remains alive");
     }
 
     #[test]
@@ -525,63 +611,25 @@ exit 0
         directory.install_fake_git();
         let pid_file = directory.path().join("pid");
         let ready_file = directory.path().join("ready");
-        let cancellation = CancellationToken::new();
-        let worker_cancellation = cancellation.clone();
-        let path = directory.path().to_owned();
-        let path_environment = directory.path_environment();
-        let pid_path = pid_file
-            .to_str()
-            .expect("pid path should be UTF-8")
-            .to_owned();
-        let ready_path = ready_file
-            .to_str()
-            .expect("ready path should be UTF-8")
-            .to_owned();
-        let worker = thread::spawn(move || {
-            run_git_with_env(
-                &path,
-                "interruptible Git stream",
-                std::iter::empty::<&str>(),
-                &[
-                    ("PATH", path_environment.as_str()),
-                    ("MODE", "interrupt-stream"),
-                    ("PID_FILE", pid_path.as_str()),
-                    ("READY_FILE", ready_path.as_str()),
-                ],
-                &worker_cancellation,
-            )
-        });
-        for _ in 0..100 {
-            if ready_file.is_file() {
-                break;
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-        assert!(
-            ready_file.is_file(),
-            "fake Git should fill both pipes before waiting"
+        let run = FakeGitRun::start(
+            &directory,
+            "interruptible Git stream",
+            &[
+                ("MODE", "interrupt-stream"),
+                ("PID_FILE", utf8_path(&pid_file)),
+                ("READY_FILE", utf8_path(&ready_file)),
+            ],
         );
-        cancellation.cancel();
+        wait_until("fake Git to fill both pipes", || ready_file.is_file());
+        let pid = read_pid(&pid_file);
 
-        let error = worker
-            .join()
-            .expect("Git worker should join")
+        run.cancel();
+        let error = run
+            .finish()
             .expect_err("cancelled Git stream should return interruption");
+
         assert!(error.is_interrupted());
-        let pid = fs::read_to_string(pid_file)
-            .expect("Git pid should be recorded")
-            .trim()
-            .parse::<u32>()
-            .expect("Git pid should be numeric");
-        assert!(
-            !Command::new("kill")
-                .args(["-0", &pid.to_string()])
-                .stderr(Stdio::null())
-                .status()
-                .expect("kill should start")
-                .success(),
-            "Git process {pid} remains alive"
-        );
+        assert!(!process_is_alive(pid), "Git process {pid} remains alive");
     }
 
     #[test]
@@ -592,87 +640,30 @@ exit 0
         let ready_file = directory.path().join("ready");
         let release_file = directory.path().join("release");
         let holder_done_file = directory.path().join("holder-done");
-        let cancellation = CancellationToken::new();
-        let worker_cancellation = cancellation.clone();
-        let path = directory.path().to_owned();
-        let path_environment = directory.path_environment();
-        let pid_path = pid_file
-            .to_str()
-            .expect("pid path should be UTF-8")
-            .to_owned();
-        let ready_path = ready_file
-            .to_str()
-            .expect("ready path should be UTF-8")
-            .to_owned();
-        let release_path = release_file
-            .to_str()
-            .expect("release path should be UTF-8")
-            .to_owned();
-        let holder_done_path = holder_done_file
-            .to_str()
-            .expect("holder-done path should be UTF-8")
-            .to_owned();
-        let worker = thread::spawn(move || {
-            run_git_with_env(
-                &path,
-                "racing Git command",
-                std::iter::empty::<&str>(),
-                &[
-                    ("PATH", path_environment.as_str()),
-                    ("MODE", "race"),
-                    ("PID_FILE", pid_path.as_str()),
-                    ("READY_FILE", ready_path.as_str()),
-                    ("RELEASE_FILE", release_path.as_str()),
-                    ("HOLDER_DONE_FILE", holder_done_path.as_str()),
-                ],
-                &worker_cancellation,
-            )
+        let run = FakeGitRun::start(
+            &directory,
+            "racing Git command",
+            &[
+                ("MODE", "race"),
+                ("PID_FILE", utf8_path(&pid_file)),
+                ("READY_FILE", utf8_path(&ready_file)),
+                ("RELEASE_FILE", utf8_path(&release_file)),
+                ("HOLDER_DONE_FILE", utf8_path(&holder_done_file)),
+            ],
+        )
+        .releasing_holder_on_drop(&release_file);
+        wait_until("fake Git to signal before exit", || ready_file.is_file());
+        let pid = read_pid(&pid_file);
+        wait_until("fake Git to be reaped before cancellation", || {
+            !process_is_alive(pid)
         });
-        for _ in 0..100 {
-            if ready_file.is_file() {
-                break;
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-        assert!(ready_file.is_file(), "fake Git should signal before exit");
-        for _ in 0..100 {
-            let alive = Command::new("kill")
-                .args([
-                    "-0",
-                    fs::read_to_string(&pid_file)
-                        .expect("Git pid should be recorded")
-                        .trim(),
-                ])
-                .stderr(Stdio::null())
-                .status()
-                .expect("kill should start")
-                .success();
-            if !alive {
-                break;
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-        let pid = fs::read_to_string(&pid_file)
-            .expect("Git pid should be recorded")
-            .trim()
-            .parse::<u32>()
-            .expect("Git pid should be numeric");
-        assert!(
-            !Command::new("kill")
-                .args(["-0", &pid.to_string()])
-                .stderr(Stdio::null())
-                .status()
-                .expect("kill should start")
-                .success(),
-            "Git process {pid} should exit before cancellation"
-        );
-        cancellation.cancel();
-        fs::write(&release_file, "release").expect("output holder should be released");
 
-        let error = worker
-            .join()
-            .expect("Git worker should join")
+        run.cancel();
+        fs::write(&release_file, "release").expect("output holder should be released");
+        let error = run
+            .finish()
             .expect_err("cancellation should win the normal-exit race");
+
         assert!(error.is_interrupted());
         assert!(
             holder_done_file.is_file(),

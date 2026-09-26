@@ -649,8 +649,7 @@ mod tests {
                 RelationGraph, RelationGraphGroup, RelationGraphLink, RelationGraphLinkKind,
                 RelationNode, RelationNodeId, RelationSource, RelationUnresolvedReason,
                 ResourceChange, ResourceChangeKind, ResourceMode, ResourceSchema,
-                StateRelationStatus, UnsupportedChange, UnsupportedChangeKind,
-                UnsupportedChangeScope,
+                StateRelationStatus, test_support::output_change,
             },
             review::{PlanBlock, PlanBlockKind, PlanDocument, PlanMetadata},
             session::test_support::overview_session,
@@ -692,7 +691,7 @@ mod tests {
             "default".to_owned(),
             document,
             plan,
-            PlanMetadata::new(vec!["endpoint".to_owned()], true),
+            PlanMetadata::new(true),
             Vec::new(),
         )
     }
@@ -728,14 +727,10 @@ mod tests {
         };
         Plan {
             resource_changes: addresses.into_iter().map(change).collect(),
-            unsupported_changes: vec![UnsupportedChange {
-                scope: UnsupportedChangeScope::Output,
-                address: "endpoint".to_owned(),
-                actions: vec![PlanAction::Update],
-                kind: UnsupportedChangeKind::Output,
-                reason: None,
-                action_type: None,
-            }],
+            output_changes: vec![
+                output_change("endpoint", PlanAction::Update),
+                output_change("unchanged", PlanAction::NoOp),
+            ],
             ..Plan::empty()
         }
     }
@@ -1002,6 +997,57 @@ mod tests {
         let text = buffer_text(&buffer);
         assert!(!text.contains("Space expand"));
         insta::assert_snapshot!(text);
+    }
+
+    #[test]
+    fn empty_changes_notice_ignores_no_op_outputs() {
+        struct EmptyCase {
+            name: &'static str,
+            action: PlanAction,
+            expected: &'static [&'static str],
+        }
+
+        for case in [
+            EmptyCase {
+                name: "no_op_outputs",
+                action: PlanAction::NoOp,
+                expected: &["No resource changes to summarize."],
+            },
+            EmptyCase {
+                name: "changed_output",
+                action: PlanAction::Delete,
+                expected: &[
+                    "Other changes: 1 output/import/move or unsupported change(s).",
+                    "No matching resource changes.",
+                ],
+            },
+        ] {
+            let review = review_with_plan(Plan {
+                output_changes: vec![
+                    output_change("endpoint", case.action),
+                    output_change("unchanged", PlanAction::NoOp),
+                ],
+                ..Plan::empty()
+            });
+            let state = overview_session(review.clone());
+            let content = OverviewContent::project(&state, "", &BTreeSet::new());
+
+            let text = overview_lines(&content, &review, &OverviewViewState::default())
+                .into_iter()
+                .skip(1)
+                .map(|line| line.to_string())
+                .collect::<Vec<_>>();
+
+            assert_eq!(
+                text.len(),
+                case.expected.len(),
+                "case {}: {text:?}",
+                case.name
+            );
+            for (line, expected) in text.iter().zip(case.expected) {
+                assert!(line.starts_with(expected), "case {}: {text:?}", case.name);
+            }
+        }
     }
 
     #[test]

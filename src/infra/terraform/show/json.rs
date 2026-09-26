@@ -79,7 +79,7 @@ pub(super) fn parse_plan_document(document: &Value) -> Result<Plan, PlanParseErr
     }
 
     let output_changes = if let Some(output_changes) = root.get("output_changes") {
-        parse_output_changes(output_changes, &mut unsupported_changes)?
+        parse_output_changes(output_changes)?
     } else {
         Vec::new()
     };
@@ -344,10 +344,7 @@ fn parse_resource_drift(
     Ok(())
 }
 
-fn parse_output_changes(
-    output_changes: &Value,
-    unsupported_changes: &mut Vec<UnsupportedChange>,
-) -> Result<Vec<OutputChange>, PlanParseError> {
+fn parse_output_changes(output_changes: &Value) -> Result<Vec<OutputChange>, PlanParseError> {
     if output_changes.is_null() {
         return Ok(Vec::new());
     }
@@ -371,24 +368,13 @@ fn parse_output_changes(
         };
         changes.push(OutputChange {
             address: address.clone(),
-            actions: actions.clone(),
+            actions,
             before: optional_plan_value(change, "before"),
             after: optional_plan_value(change, "after"),
             before_sensitive: optional_plan_value(change, "before_sensitive"),
             after_sensitive: optional_plan_value(change, "after_sensitive"),
             after_unknown: optional_plan_value(change, "after_unknown"),
         });
-
-        if !matches!(classify_actions(&actions), ActionClassification::NoOp) {
-            unsupported_changes.push(UnsupportedChange {
-                scope: UnsupportedChangeScope::Output,
-                address: address.clone(),
-                actions,
-                kind: UnsupportedChangeKind::Output,
-                reason: None,
-                action_type: None,
-            });
-        }
     }
 
     Ok(changes)
@@ -660,19 +646,6 @@ mod tests {
         }
     }
 
-    impl Plan {
-        fn has_changes(&self) -> bool {
-            self.resource_changes
-                .iter()
-                .any(|change| change.kind.is_standard_change())
-                || !self.unsupported_changes.is_empty()
-        }
-
-        fn unsupported_change_count(&self) -> usize {
-            self.unsupported_changes.len()
-        }
-    }
-
     fn parse_plan_json(input: &str) -> Result<Plan, PlanParseError> {
         let document =
             serde_json::from_str::<Value>(input).map_err(|_| PlanParseError::InvalidJson)?;
@@ -843,7 +816,7 @@ mod tests {
                 .iter()
                 .any(|change| change.kind.is_standard_change())
         );
-        assert_eq!(plan.unsupported_change_count(), 3);
+        assert_eq!(plan.unsupported_changes.len(), 3);
         assert_eq!(
             plan.unsupported_changes[0].kind,
             UnsupportedChangeKind::Move
@@ -948,7 +921,7 @@ mod tests {
     }
 
     #[test]
-    fn retains_unsupported_resource_and_output_changes_without_listing_them() {
+    fn retains_unsupported_resource_changes_apart_from_output_changes() {
         let mut document = json!({
             "format_version": "1.0",
             "resource_changes": [
@@ -982,8 +955,7 @@ mod tests {
                 ResourceChangeKind::Unknown,
             ]
         );
-        assert!(plan.has_changes());
-        assert_eq!(plan.unsupported_change_count(), 5);
+        assert_eq!(plan.unsupported_changes.len(), 4);
         assert_eq!(
             plan.unsupported_changes[0].kind,
             UnsupportedChangeKind::Read
@@ -1000,11 +972,8 @@ mod tests {
             plan.unsupported_changes[3].kind,
             UnsupportedChangeKind::UnknownAction
         );
-        assert_eq!(
-            plan.unsupported_changes[4].scope,
-            UnsupportedChangeScope::Output
-        );
-        assert_eq!(plan.unsupported_changes[4].address, "public_ip");
+        assert_eq!(plan.output_changes.len(), 1);
+        assert_eq!(plan.output_changes[0].address, "public_ip");
     }
 
     #[test]
@@ -1037,8 +1006,8 @@ mod tests {
 
         let plan = parse_plan_json(&input.to_string()).expect("extended plan should parse");
 
-        assert!(plan.has_changes());
-        assert_eq!(plan.unsupported_change_count(), 3);
+        assert!(plan.resource_changes.is_empty());
+        assert_eq!(plan.unsupported_changes.len(), 3);
 
         let deferred = &plan.unsupported_changes[0];
         assert_eq!(deferred.scope, UnsupportedChangeScope::DeferredResource);
@@ -1077,12 +1046,10 @@ mod tests {
 
         let plan = parse_plan_json(&input.to_string()).expect("output-only plan should parse");
 
-        assert!(plan.has_changes());
-        assert_eq!(plan.unsupported_change_count(), 1);
-        assert_eq!(
-            plan.unsupported_changes[0].scope,
-            UnsupportedChangeScope::Output
-        );
+        assert!(plan.resource_changes.is_empty());
+        assert!(plan.unsupported_changes.is_empty());
+        assert_eq!(plan.output_changes.len(), 1);
+        assert_eq!(plan.output_changes[0].actions, vec![PlanAction::Update]);
     }
 
     #[test]
@@ -1100,7 +1067,7 @@ mod tests {
 
         let plan = parse_plan_json(&input.to_string()).expect("plan should parse");
 
-        assert_eq!(plan.unsupported_change_count(), 1);
+        assert_eq!(plan.unsupported_changes.len(), 1);
         assert_eq!(
             plan.unsupported_changes[0].scope,
             UnsupportedChangeScope::ResourceDrift
@@ -1168,8 +1135,9 @@ mod tests {
     fn accepts_empty_plan_and_plan_with_only_noop_resources() {
         let empty =
             parse_plan_json(&plan_with_resources(json!([]))).expect("empty plan should parse");
-        assert!(!empty.has_changes());
-        assert_eq!(empty.summary().total(), 0);
+        assert!(empty.resource_changes.is_empty());
+        assert!(empty.unsupported_changes.is_empty());
+        assert!(empty.output_changes.is_empty());
 
         let noops = parse_plan_json(&plan_with_resources(json!([resource(
             "aws_instance.noop",
@@ -1177,7 +1145,6 @@ mod tests {
             json!(["no-op"])
         )])))
         .expect("no-op plan should parse");
-        assert!(!noops.has_changes());
         assert_eq!(noops.summary().total(), 0);
         assert!(
             noops
@@ -1235,7 +1202,9 @@ mod tests {
         );
         let empty = parse_plan_json(r#"{"format_version":"1.0"}"#)
             .expect("resource_changes may be omitted for an empty plan");
-        assert!(!empty.has_changes());
+        assert!(empty.resource_changes.is_empty());
+        assert!(empty.unsupported_changes.is_empty());
+        assert!(empty.output_changes.is_empty());
         assert_eq!(
             parse_plan_json(r#"{"resource_changes":[]}"#),
             Err(PlanParseError::MissingField("format_version"))

@@ -16,7 +16,7 @@ use super::{
 pub(crate) enum SessionOutcome {
     /// `changes` is `None` when the reviewed plan changes nothing.
     Reviewed {
-        changes: Option<PlanSummary>,
+        changes: Option<ReviewedChanges>,
     },
     NoChanges,
     ApplyCanceled,
@@ -26,6 +26,12 @@ pub(crate) enum SessionOutcome {
     },
     Failed(ExecutionStage),
     Interrupted(ExecutionStage),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ReviewedChanges {
+    pub(crate) resources: PlanSummary,
+    pub(crate) outputs: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -505,7 +511,10 @@ pub(crate) fn update(state: &mut SessionState, action: Action, now: Instant) -> 
                 Some(Effect::Finish(SessionOutcome::ApplyCanceled))
             }
             SessionState::Review(review) => Some(Effect::Finish(SessionOutcome::Reviewed {
-                changes: review.review.has_changes().then(|| review.review.summary()),
+                changes: review.review.has_changes().then(|| ReviewedChanges {
+                    resources: review.review.summary(),
+                    outputs: review.review.changed_outputs(),
+                }),
             })),
             SessionState::Apply(execution) => execution.result().map(|result| {
                 Effect::Finish(SessionOutcome::Applied {
@@ -550,7 +559,8 @@ mod tests {
     use super::super::copy::CopyNotice;
     use super::super::execution::ExecutionContext;
     use super::super::plan::{
-        Plan, PlanAction, ResourceChange, ResourceChangeKind, test_support::resource_change,
+        Plan, PlanAction, ResourceChange, ResourceChangeKind,
+        test_support::{output_change, resource_change},
     };
     use super::super::review::{
         PlanBlock, PlanBlockKind, PlanMetadata,
@@ -566,7 +576,7 @@ mod tests {
             "default".to_owned(),
             plan_document("No changes.\n".to_owned()),
             Plan::empty(),
-            PlanMetadata::new(Vec::new(), false),
+            PlanMetadata::new(false),
             Vec::new(),
         )
     }
@@ -577,8 +587,11 @@ mod tests {
             PathBuf::from("/project"),
             "default".to_owned(),
             plan_document("Terraform will perform actions.\n".to_owned()),
-            Plan::empty(),
-            PlanMetadata::new(vec!["endpoint".to_owned()], true),
+            Plan {
+                output_changes: vec![output_change("endpoint", PlanAction::Create)],
+                ..Plan::empty()
+            },
+            PlanMetadata::new(true),
             Vec::new(),
         )
     }
@@ -828,7 +841,7 @@ mod tests {
                 )],
                 ..Plan::empty()
             },
-            PlanMetadata::new(Vec::new(), false),
+            PlanMetadata::new(false),
             Vec::new(),
         );
         filtered.set_search_query("not-present".to_owned());
@@ -858,9 +871,12 @@ mod tests {
         assert_eq!(
             outcome,
             SessionOutcome::Reviewed {
-                changes: Some(PlanSummary {
-                    creates: 1,
-                    ..PlanSummary::default()
+                changes: Some(ReviewedChanges {
+                    resources: PlanSummary {
+                        creates: 1,
+                        ..PlanSummary::default()
+                    },
+                    outputs: 0,
                 }),
             }
         );
@@ -1016,7 +1032,10 @@ mod tests {
         assert_eq!(
             outcome,
             SessionOutcome::Reviewed {
-                changes: Some(PlanSummary::default()),
+                changes: Some(ReviewedChanges {
+                    resources: PlanSummary::default(),
+                    outputs: 1,
+                }),
             }
         );
 
@@ -1087,7 +1106,7 @@ mod tests {
                 )],
                 ..Plan::empty()
             },
-            PlanMetadata::new(Vec::new(), true),
+            PlanMetadata::new(true),
             Vec::new(),
         );
         let mut state = SessionState::new(ExecutionState::with_context(
@@ -1124,7 +1143,7 @@ mod tests {
                 resource_changes: vec![resource_change("terraform_data.target", kind)],
                 ..Plan::empty()
             },
-            PlanMetadata::new(Vec::new(), true),
+            PlanMetadata::new(true),
             Vec::new(),
         );
         let mut state = SessionState::new(ExecutionState::with_context(
@@ -1180,7 +1199,7 @@ mod tests {
                 ],
                 ..Plan::empty()
             },
-            PlanMetadata::new(Vec::new(), true),
+            PlanMetadata::new(true),
             Vec::new(),
         )
         .with_apply_entry(true);
@@ -1236,7 +1255,7 @@ mod tests {
                 ],
                 ..Plan::empty()
             },
-            PlanMetadata::new(Vec::new(), true),
+            PlanMetadata::new(true),
             Vec::new(),
         )
         .with_previous_durations(vec![Some(api_duration), Some(worker_duration)]);
