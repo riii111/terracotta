@@ -33,7 +33,7 @@ Filter: /terraform_data
 
 Warning: Value for "pending" is not known until apply
 
-Plan: 2 to add, 2 to change, 1 to destroy.
+Plan: 2 to add, 1 to change, 2 to destroy.
 
 Synthetic review text continues below so the viewport and scrollbar remain meaningful.
 The same long body is intentionally reused across every review state and terminal size.
