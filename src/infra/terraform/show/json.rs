@@ -74,10 +74,6 @@ pub(super) fn parse_plan_document(document: &Value) -> Result<Plan, PlanParseErr
         parse_deferred_changes(deferred_changes, &mut unsupported_changes)?;
     }
 
-    if let Some(resource_drift) = root.get("resource_drift") {
-        parse_resource_drift(resource_drift, &mut unsupported_changes)?;
-    }
-
     let output_changes = if let Some(output_changes) = root.get("output_changes") {
         parse_output_changes(output_changes)?
     } else {
@@ -92,11 +88,17 @@ pub(super) fn parse_plan_document(document: &Value) -> Result<Plan, PlanParseErr
         parse_deferred_action_invocations(deferred_action_invocations, &mut unsupported_changes)?;
     }
 
+    let drifted_resources = match root.get("resource_drift") {
+        Some(resource_drift) => parse_resource_drift(resource_drift)?,
+        None => Vec::new(),
+    };
+
     Ok(Plan {
         resource_changes,
         value_addresses: parse_value_addresses(root, true)?,
         unsupported_changes,
         output_changes,
+        drifted_resources,
     })
 }
 
@@ -308,18 +310,16 @@ fn parse_deferred_changes(
     Ok(())
 }
 
-fn parse_resource_drift(
-    resource_drift: &Value,
-    unsupported_changes: &mut Vec<UnsupportedChange>,
-) -> Result<(), PlanParseError> {
+fn parse_resource_drift(resource_drift: &Value) -> Result<Vec<String>, PlanParseError> {
     if resource_drift.is_null() {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     let resource_drift = resource_drift
         .as_array()
         .ok_or(PlanParseError::InvalidField("resource_drift"))?;
 
+    let mut addresses = Vec::new();
     for resource in resource_drift {
         let resource = resource
             .as_object()
@@ -330,18 +330,11 @@ fn parse_resource_drift(
         let actions = parse_actions(change, "resource drift actions")?;
 
         if !matches!(classify_actions(&actions), ActionClassification::NoOp) {
-            unsupported_changes.push(UnsupportedChange {
-                scope: UnsupportedChangeScope::ResourceDrift,
-                address,
-                actions,
-                kind: UnsupportedChangeKind::Drift,
-                reason: None,
-                action_type: None,
-            });
+            addresses.push(address);
         }
     }
 
-    Ok(())
+    Ok(addresses)
 }
 
 fn parse_output_changes(output_changes: &Value) -> Result<Vec<OutputChange>, PlanParseError> {
@@ -1053,29 +1046,25 @@ mod tests {
     }
 
     #[test]
-    fn retains_resource_drift_as_an_unsupported_change() {
+    fn records_changed_resource_drift_apart_from_unsupported_changes() {
         let input = json!({
             "format_version": "1.2",
             "resource_changes": [],
-            "resource_drift": [resource(
-                "aws_instance.drifted",
-                "managed",
-                json!(["update"])
-            )],
+            "resource_drift": [
+                resource("aws_instance.drifted", "managed", json!(["update"])),
+                resource("aws_instance.deleted", "managed", json!(["delete"])),
+                resource("aws_instance.unchanged", "managed", json!(["no-op"]))
+            ],
             "output_changes": null
         });
 
         let plan = parse_plan_json(&input.to_string()).expect("plan should parse");
 
-        assert_eq!(plan.unsupported_changes.len(), 1);
         assert_eq!(
-            plan.unsupported_changes[0].scope,
-            UnsupportedChangeScope::ResourceDrift
+            plan.drifted_resources,
+            ["aws_instance.drifted", "aws_instance.deleted"]
         );
-        assert_eq!(
-            plan.unsupported_changes[0].kind,
-            UnsupportedChangeKind::Drift
-        );
+        assert!(plan.unsupported_changes.is_empty());
     }
 
     #[test]

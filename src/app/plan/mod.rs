@@ -150,14 +150,12 @@ pub(crate) struct PlanSummary {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UnsupportedChangeScope {
     Resource,
-    ResourceDrift,
     DeferredResource,
     ActionInvocation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UnsupportedChangeKind {
-    Drift,
     Read,
     Move,
     Import,
@@ -219,6 +217,7 @@ pub(crate) struct Plan {
     pub(crate) value_addresses: BTreeSet<String>,
     pub(crate) unsupported_changes: Vec<UnsupportedChange>,
     pub(crate) output_changes: Vec<OutputChange>,
+    pub(crate) drifted_resources: Vec<String>,
 }
 
 impl std::fmt::Debug for Plan {
@@ -229,6 +228,7 @@ impl std::fmt::Debug for Plan {
             .field("value_addresses", &self.value_addresses)
             .field("unsupported_changes", &self.unsupported_changes)
             .field("output_changes", &self.output_changes)
+            .field("drifted_resources", &self.drifted_resources)
             .finish()
     }
 }
@@ -241,6 +241,7 @@ impl Plan {
             value_addresses: BTreeSet::new(),
             unsupported_changes: Vec::new(),
             output_changes: Vec::new(),
+            drifted_resources: Vec::new(),
         }
     }
 

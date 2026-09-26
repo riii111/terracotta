@@ -1017,6 +1017,65 @@ mod tests {
     }
 
     #[test]
+    fn quitting_a_drift_only_review_reports_changes_only_when_the_drift_is_applyable() {
+        struct DriftCase {
+            name: &'static str,
+            applyable: bool,
+            expected: Option<ReviewedChanges>,
+        }
+
+        let now = Instant::now();
+        for case in [
+            DriftCase {
+                name: "normal_plan",
+                applyable: false,
+                expected: None,
+            },
+            DriftCase {
+                name: "refresh_only_plan",
+                applyable: true,
+                expected: Some(ReviewedChanges {
+                    resources: PlanSummary::default(),
+                    outputs: 0,
+                }),
+            },
+        ] {
+            let mut state = SessionState::new(ExecutionState::with_context(
+                now,
+                ExecutionContext::loading("/project"),
+            ));
+            let review = PlanReview::new(
+                PathBuf::from("/project"),
+                "default".to_owned(),
+                plan_document("No changes.\n".to_owned()),
+                Plan {
+                    drifted_resources: vec!["terraform_data.drifted".to_owned()],
+                    ..Plan::empty()
+                },
+                PlanMetadata::new(case.applyable),
+                Vec::new(),
+            );
+            update(&mut state, Action::ReviewCompleted(review), now);
+
+            let Some(Effect::Finish(outcome)) = update(&mut state, Action::Quit, now) else {
+                panic!(
+                    "case {}: quitting the review should finish the session",
+                    case.name
+                );
+            };
+
+            assert_eq!(
+                outcome,
+                SessionOutcome::Reviewed {
+                    changes: case.expected,
+                },
+                "case: {}",
+                case.name
+            );
+        }
+    }
+
+    #[test]
     fn quitting_a_plan_entry_confirmation_reports_the_review_without_apply() {
         let now = Instant::now();
         let mut state = SessionState::new(ExecutionState::with_context(

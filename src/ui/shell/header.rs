@@ -183,6 +183,13 @@ fn plan_review_changes_line(review: &PlanReview) -> Line<'static> {
         };
         line.push_span(Span::styled(text, theme::secondary_style()));
     }
+    let drift = review.noted_drift();
+    if drift > 0 {
+        line.push_span(Span::styled(
+            format!("  Drift detected: {drift}"),
+            theme::warning_style(),
+        ));
+    }
     line
 }
 
@@ -538,6 +545,69 @@ mod tests {
 
             let line = plan_review_changes_line(&review).to_string();
             assert!(line.contains(case.expected), "case {}: {line}", case.name);
+        }
+    }
+
+    #[test]
+    fn drift_is_a_note_beside_the_status_unless_the_plan_applies_only_the_drift() {
+        struct DriftCase {
+            name: &'static str,
+            plan: Plan,
+            applyable: bool,
+            expected: &'static str,
+        }
+
+        let drift = |plan| Plan {
+            drifted_resources: vec!["terraform_data.drifted".to_owned()],
+            ..plan
+        };
+        for case in [
+            DriftCase {
+                name: "normal_drift_only",
+                plan: drift(Plan::empty()),
+                applyable: false,
+                expected: "Changes  No changes  Drift detected: 1",
+            },
+            DriftCase {
+                name: "refresh_only_drift_only",
+                plan: drift(Plan::empty()),
+                applyable: true,
+                expected: "Changes  Other changes",
+            },
+            DriftCase {
+                name: "drift_and_resource_update",
+                plan: drift(Plan {
+                    resource_changes: vec![resource_change(
+                        "terraform_data.drifted",
+                        ResourceChangeKind::Update,
+                    )],
+                    ..Plan::empty()
+                }),
+                applyable: true,
+                expected: "Changes  ~1 update  Drift detected: 1",
+            },
+            DriftCase {
+                name: "drift_and_changed_output",
+                plan: drift(Plan {
+                    output_changes: vec![output_change("endpoint", PlanAction::Update)],
+                    ..Plan::empty()
+                }),
+                applyable: true,
+                expected: "Changes  Outputs changed  Drift detected: 1",
+            },
+        ] {
+            let review = PlanReview::new(
+                "/dev".into(),
+                "default".to_owned(),
+                PlanDocument::with_blocks_and_line_kinds(String::new(), Vec::new(), Vec::new()),
+                case.plan,
+                PlanMetadata::new(case.applyable),
+                Vec::new(),
+            );
+
+            let line = plan_review_changes_line(&review).to_string();
+
+            assert_eq!(line, case.expected, "case: {}", case.name);
         }
     }
 
