@@ -164,14 +164,14 @@ fn validate_discovery(environments: &[Environment]) -> io::Result<()> {
     if !environments.iter().any(Environment::is_available) {
         let reasons = environments
             .iter()
-            .map(|environment| match &environment.availability {
+            .filter_map(|environment| match &environment.availability {
                 EnvironmentAvailability::ExcludedHcp { directory } => {
-                    format!("{}: Excluded: HCP execution", directory.display())
+                    Some(format!("{}: Excluded: HCP execution", directory.display()))
                 }
                 EnvironmentAvailability::Error { directory, message } => {
-                    format!("{}: Error: {message}", directory.display())
+                    Some(format!("{}: Error: {message}", directory.display()))
                 }
-                EnvironmentAvailability::Available(_) => unreachable!(),
+                EnvironmentAvailability::Available(_) => None,
             })
             .collect::<Vec<_>>()
             .join("\n");
