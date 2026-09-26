@@ -34,6 +34,8 @@ if pid == 0:
 
 output = bytearray()
 observed = []
+# Ratatui hides the cursor as the last write of every frame, and no screen here places a cursor.
+FRAME_END = b"\x1b[?25l"
 
 
 class Screen:
@@ -280,6 +282,39 @@ def plan_status_is_above_plan_text(current):
     return positions[0] < positions[1]
 
 
+def wait_review(name, timeout=20):
+    # The Overview also shows [2] Changes above the address; only the review footer offers a apply.
+    wait_screen(
+        lambda current: plan_status_is_above_plan_text(current) and "a apply" in current,
+        name,
+        "review header above terraform_data.api with a apply",
+        timeout,
+    )
+
+
+def wait_frame(marker, name, timeout=20):
+    wait_screen(
+        lambda current: marker in current and output.endswith(FRAME_END),
+        name,
+        f"{marker} with a completed frame",
+        timeout,
+    )
+
+
+def wait_redraw(frames, name, timeout=20):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if output.count(FRAME_END) > frames:
+            observed.append(name)
+            return
+        read_available()
+        if child_status() is not None:
+            break
+    raise RuntimeError(
+        f"missing {name}: frame after {frames}; screen={screen.text()!r}; tail={bytes(output)[-1200:]!r}"
+    )
+
+
 def wait_exit(timeout=20):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -362,12 +397,10 @@ def drain_after_exit(status):
 
 
 def resize(columns, rows):
+    # The size change already signals the child. A second SIGWINCH can share a crossterm read
+    # with the next key, and crossterm then leaves that key unreported until more input arrives.
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
     screen.resize(columns, rows)
-    try:
-        os.killpg(pid, signal.SIGWINCH)
-    except OSError:
-        os.kill(pid, signal.SIGWINCH)
 
 
 def kill_child():
@@ -386,7 +419,7 @@ def kill_child():
 
 try:
     if scenario in ("full_text", "user_output", "cli_args", "detailed"):
-        wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
+        wait_review("plan_text", timeout=30)
         observe_current_or_wait("3/", "plan_position")
         exit_code = quit_with_enter()
     elif scenario.startswith("env_"):
@@ -459,7 +492,7 @@ try:
                 wait_environment(name, "Ready")
             send_key(b"]")
             send_key(b"v")
-            wait_parts(["Plan:", "a apply"], "env_plan_detail")
+            wait_review("env_plan_detail")
             send_key(b"a")
             wait_new("Apply this reviewed plan?", "env_apply_confirmation")
             send_text("yes")
@@ -575,7 +608,7 @@ try:
                 send_key(b"\x1b")
             exit_code = quit_with_enter()
     elif scenario == "filter_navigation":
-        wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
+        wait_review("plan_text", timeout=30)
         observe_current_or_wait("3/", "plan_position")
         send_key(b"/")
         wait_new("/ ", "filter_input")
@@ -621,7 +654,7 @@ try:
         )
         exit_code = quit_with_enter()
     elif scenario == "overview_navigation":
-        wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
+        wait_review("plan_text", timeout=30)
         send_key(b"s")
         wait_parts(
             ["Ready", "[2] Changes", "[3] Relations", "terraform_data.server[*]", "Repeated: 2"],
@@ -644,7 +677,7 @@ try:
             "split Overview with Relations focus",
         )
         send_key(b"\r")
-        wait_parts(["Plan:", "terraform_data.api"], "overview_relations_raw")
+        wait_review("overview_relations_raw")
         send_key(b"\x1b")
         wait_screen(
             lambda current: "[2] Changes" in current
@@ -681,7 +714,7 @@ try:
         send_key(b"\r")
         wait_new("display only", "overview_filtered")
         send_key(b"v")
-        wait_parts(["Plan:", "terraform_data.api"], "overview_full_plan")
+        wait_review("overview_full_plan")
         exit_code = quit_with_enter()
     elif scenario == "default_overview":
         wait_parts(
@@ -732,8 +765,7 @@ try:
         wait_new("Apply complete", "demo_apply_success", timeout=300)
         exit_code = quit_with_enter()
     elif scenario == "basic_workflow":
-        wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
-        wait_new("a apply", "plan_ready")
+        wait_review("plan_text", timeout=30)
         send_key(b"a")
         wait_new("Apply this reviewed plan?", "apply_confirmation")
         wait_new("Type ", "apply_target_prompt")
@@ -752,7 +784,7 @@ try:
         "apply_log_view",
         "apply_mapping",
     ):
-        wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
+        wait_review("plan_text", timeout=30)
         if scenario == "apply_success":
             send_key(b"/")
             wait_new("/ ", "apply_filter_input")
@@ -815,25 +847,22 @@ try:
             wait_parts(["Stopping apply", "Apply interrupted"], "apply_interrupted")
             exit_code = quit_with_enter()
     elif scenario == "apply_resize":
-        wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
+        wait_review("plan_text", timeout=30)
         send_key(b"a")
         wait_new("Apply this reviewed plan?", "apply_confirmation")
-        send_key(b"y")
-        wait_parts(["Type yes to apply (exact match).", "y"], "apply_input_y")
-        send_key(b"e")
-        wait_parts(["Type yes to apply (exact match).", "ye"], "apply_input_ye")
-        send_key(b"s")
-        wait_parts(["Type yes to apply (exact match).", "yes"], "apply_input_yes")
+        for typed in ("y", "ye", "yes"):
+            send_key(typed[-1].encode())
+            wait_new(f"> {typed}|", f"apply_input_{typed}")
         resize(24, 6)
-        wait_new("Terminal too small", "apply_confirmation_narrow")
+        wait_frame("Terminal too small", "apply_confirmation_narrow")
+        frames = output.count(FRAME_END)
         send_key(b"\r")
-        time.sleep(0.2)
-        read_available()
-        if "Applying..." in screen.text():
-            raise RuntimeError("apply started while confirmation was not renderable")
+        wait_redraw(frames, "apply_narrow_enter_redrawn")
+        if "Resize or press Esc to" not in screen.text():
+            raise RuntimeError(f"narrow Enter left the apply confirmation; screen={screen.text()!r}")
         resize(100, 24)
         wait_parts(
-            ["Type yes to apply (exact match).", "yes"],
+            ["Type yes to apply (exact match).", "> yes|"],
             "apply_confirmation_resized",
         )
         send_key(b"\r")
@@ -843,7 +872,7 @@ try:
         wait_new("Apply complete", "apply_result", timeout=60)
         exit_code = quit_with_enter()
     elif scenario in ("apply_no", "apply_escape"):
-        wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
+        wait_review("plan_text", timeout=30)
         send_key(b"a")
         wait_new("Apply this reviewed plan?", "apply_confirmation")
         send_text("no") if scenario == "apply_no" else send_key(b"\x1b")
@@ -872,7 +901,7 @@ try:
         )
         exit_code = quit_with_enter()
     elif scenario == "quit_confirmation":
-        wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
+        wait_review("plan_text", timeout=30)
         send_key(b"q")
         wait_new("Quit Terracotta?", "quit_confirmation")
         send_key(b"q")
@@ -896,7 +925,7 @@ try:
         send_key(b"\r")
         exit_code = wait_exit()
     elif scenario == "empty_filter_quit":
-        wait_parts(["Plan:", "terraform_data.api"], "plan_text", timeout=30)
+        wait_review("plan_text", timeout=30)
         send_key(b"/")
         wait_new("/ ", "empty_filter_input")
         send_text("not-present")
@@ -928,7 +957,7 @@ try:
     elif scenario == "narrow":
         wait_new("Terminal too small", "narrow")
         resize(100, 24)
-        wait_new("Plan:", "resized")
+        wait_review("resized")
         exit_code = quit_with_enter()
     elif scenario == "panic":
         exit_code = wait_exit()
