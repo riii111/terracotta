@@ -90,12 +90,13 @@ pub(super) fn read_review_with_arguments(
         .iter()
         .map(|change| change.address.clone())
         .collect::<Vec<_>>();
-    let document = parse_document(
-        text.output.stdout,
-        &resource_addresses,
-        metadata.output_names(),
-    )
-    .map_err(|error| invalid_plan(tool, error))?;
+    let output_names = plan
+        .output_changes
+        .iter()
+        .map(|output| output.address.clone())
+        .collect::<Vec<_>>();
+    let document = parse_document(text.output.stdout, &resource_addresses, &output_names)
+        .map_err(|error| invalid_plan(tool, error))?;
     Ok((
         document,
         metadata,

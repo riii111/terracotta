@@ -5,7 +5,7 @@ use std::{
 
 use crate::app::{
     copy::{self, CopyEffect},
-    execution::{Diagnostic, ExecutionContext, Tool},
+    execution::{Diagnostic, ExecutionContext, Tool, directory_display_name},
     review::PlanReview,
     session::{self, Action, Effect, ReviewSessionState, SessionState},
 };
@@ -328,16 +328,7 @@ impl EnvironmentPlan {
     pub(crate) fn display_name(&self) -> String {
         self.workspace()
             .filter(|workspace| *workspace != "default")
-            .map_or_else(
-                || {
-                    self.directory
-                        .file_name()
-                        .unwrap_or_else(|| self.directory.as_os_str())
-                        .to_string_lossy()
-                        .into_owned()
-                },
-                str::to_owned,
-            )
+            .map_or_else(|| directory_display_name(&self.directory), str::to_owned)
     }
 
     pub(crate) fn is_production(&self) -> bool {
@@ -507,7 +498,7 @@ mod tests {
                 "chosen".to_owned(),
                 plan_document("No changes.\n".to_owned()),
                 Plan::empty(),
-                PlanMetadata::new(Vec::new(), changed),
+                PlanMetadata::new(changed),
                 Vec::new(),
             )),
             changed,
@@ -691,6 +682,33 @@ mod tests {
         let state = EnvironmentSession::new(vec![available_named("default", directory)], false);
 
         assert!(state.plans()[0].is_production());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_default_workspace_environments_get_distinct_escaped_names() {
+        use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+        let environments = [
+            b"/repo/infra-\xff".as_slice(),
+            b"/repo/infra-\xfe".as_slice(),
+        ]
+        .map(|directory| {
+            available_named(
+                "default",
+                PathBuf::from(OsString::from_vec(directory.to_vec())),
+            )
+        });
+
+        let state = EnvironmentSession::new(environments.into(), false);
+
+        assert_eq!(
+            state
+                .plans()
+                .iter()
+                .map(EnvironmentPlan::display_name)
+                .collect::<Vec<_>>(),
+            [r"infra-\xfe", r"infra-\xff"]
+        );
     }
 
     #[test]

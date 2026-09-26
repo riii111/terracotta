@@ -99,7 +99,7 @@ impl OverviewContent {
         }
         Self {
             rows,
-            unsupported: state.review().nonstandard_changes(),
+            unsupported: state.review().nonstandard_changes() + state.review().changed_outputs(),
         }
     }
 }
@@ -651,7 +651,7 @@ mod tests {
                 resource_changes,
                 ..Plan::empty()
             },
-            PlanMetadata::new(Vec::new(), true),
+            PlanMetadata::new(true),
             Vec::new(),
         )
     }

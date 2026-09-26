@@ -946,7 +946,10 @@ mod tests {
             ExecutionEventKind, ExecutionLogLine, ExecutionTargetSpec, HistoryKey,
             SuccessfulTarget,
         },
-        plan::{Plan, PlanAction, ResourceChangeKind, test_support::resource_change},
+        plan::{
+            Plan, PlanAction, ResourceChangeKind,
+            test_support::{output_change, resource_change},
+        },
         review::{PlanMetadata, PlanReview, test_support::plan_document},
     };
     use crate::infra::history::HistoryStore;
@@ -1313,7 +1316,7 @@ mod tests {
                         "default".to_owned(),
                         plan_document("No changes.\n".to_owned()),
                         Plan::empty(),
-                        PlanMetadata::new(Vec::new(), false),
+                        PlanMetadata::new(false),
                         Vec::new(),
                     )))
                     .expect("the receiver should still be alive");
@@ -1392,7 +1395,7 @@ mod tests {
                         "default".to_owned(),
                         plan_document("No changes.\n".to_owned()),
                         Plan::empty(),
-                        PlanMetadata::new(Vec::new(), false),
+                        PlanMetadata::new(false),
                         Vec::new(),
                     )))
                     .expect("the receiver should still be alive");
@@ -1810,7 +1813,7 @@ mod tests {
                         "default".to_owned(),
                         plan_document(copy_plan_text()),
                         Plan::empty(),
-                        PlanMetadata::new(Vec::new(), false),
+                        PlanMetadata::new(false),
                         Vec::new(),
                     );
                     review.set_search_query("terraform_data".to_owned());
@@ -1828,7 +1831,7 @@ mod tests {
                             )],
                             ..Plan::empty()
                         },
-                        PlanMetadata::new(Vec::new(), false),
+                        PlanMetadata::new(false),
                         Vec::new(),
                     )),
                 )),
@@ -2004,7 +2007,7 @@ mod tests {
                             .collect(),
                         ..Plan::empty()
                     },
-                    PlanMetadata::new(Vec::new(), true),
+                    PlanMetadata::new(true),
                     Vec::new(),
                 )),
             ));
@@ -2050,7 +2053,7 @@ mod tests {
                     )],
                     ..Plan::empty()
                 },
-                PlanMetadata::new(Vec::new(), true),
+                PlanMetadata::new(true),
                 Vec::new(),
             );
             let mut state = SessionState::Review(Box::new(ReviewSessionState::new(plan)));
@@ -2098,7 +2101,7 @@ mod tests {
                     )],
                     ..Plan::empty()
                 },
-                PlanMetadata::new(Vec::new(), true),
+                PlanMetadata::new(true),
                 Vec::new(),
             );
             plan.set_search_query("worker".to_owned());
@@ -2264,7 +2267,7 @@ mod tests {
                 "default".to_owned(),
                 plan_document(copy_plan_text()),
                 Plan::empty(),
-                PlanMetadata::new(Vec::new(), false),
+                PlanMetadata::new(false),
                 Vec::new(),
             ))));
             let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
@@ -2303,7 +2306,7 @@ mod tests {
                             .collect(),
                         ..Plan::empty()
                     },
-                    PlanMetadata::new(Vec::new(), true),
+                    PlanMetadata::new(true),
                     Vec::new(),
                 )),
             ));
@@ -2720,8 +2723,11 @@ mod tests {
                 PathBuf::from("/project"),
                 "default".to_owned(),
                 plan_document("Changes to Outputs:\n  + endpoint = \"example\"\n".to_owned()),
-                Plan::empty(),
-                PlanMetadata::new(vec!["endpoint".to_owned()], true),
+                Plan {
+                    output_changes: vec![output_change("endpoint", PlanAction::Create)],
+                    ..Plan::empty()
+                },
+                PlanMetadata::new(true),
                 Vec::new(),
             ))))
         }
@@ -2838,7 +2844,7 @@ mod tests {
             "default".to_owned(),
             plan_document("No changes.\n".to_owned()),
             Plan::empty(),
-            PlanMetadata::new(Vec::new(), false),
+            PlanMetadata::new(false),
             Vec::new(),
         )
     }

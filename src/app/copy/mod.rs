@@ -368,7 +368,7 @@ mod tests {
             Case {
                 name: "summary_only",
                 document: plan_document(plan_text.to_owned()),
-                metadata: PlanMetadata::new(Vec::new(), true),
+                metadata: PlanMetadata::new(true),
                 diagnostics: vec![warning(None)],
                 expected: "Provider warning\nTerraform plan body\n".to_owned(),
                 source: plan_text.to_owned(),
@@ -376,7 +376,7 @@ mod tests {
             Case {
                 name: "summary_and_detail",
                 document: plan_document(plan_text.to_owned()),
-                metadata: PlanMetadata::new(Vec::new(), true),
+                metadata: PlanMetadata::new(true),
                 diagnostics: vec![warning(Some("warning detail"))],
                 expected: "Provider warning\nwarning detail\nTerraform plan body\n".to_owned(),
                 source: plan_text.to_owned(),
@@ -387,7 +387,7 @@ mod tests {
                     show_text.clone(),
                     vec![PlanBlock::new(0..show_end, PlanBlockKind::Common)],
                 ),
-                metadata: PlanMetadata::new(vec!["endpoint".to_owned()], true),
+                metadata: PlanMetadata::new(true),
                 diagnostics: Vec::new(),
                 expected: show_text.clone(),
                 source: show_text,

@@ -40,7 +40,7 @@ fn partial_session() -> EnvironmentSession {
         "default".to_owned(),
         plan_document("Synthetic plan text\n".to_owned()),
         Plan::empty(),
-        PlanMetadata::new(Vec::new(), false),
+        PlanMetadata::new(false),
         Vec::new(),
     )
     .with_apply_allowed(false)
@@ -143,7 +143,7 @@ fn overview_plan_session(names: &[&str]) -> EnvironmentSession {
             "default".to_owned(),
             document,
             plan,
-            PlanMetadata::new(Vec::new(), false),
+            PlanMetadata::new(false),
             Vec::new(),
         )
         .with_apply_allowed(false)
@@ -1536,6 +1536,148 @@ fn ready_review_keeps_position_filter_counts_and_copy_notices() {
     }
 }
 
+#[test]
+fn ready_environments_ignore_no_op_outputs_and_count_output_changes_once() {
+    use crate::app::plan::{
+        PlanAction, ResourceChangeKind, UnsupportedChange, UnsupportedChangeKind,
+        UnsupportedChangeScope,
+        test_support::{output_change, resource_change},
+    };
+
+    struct OutputCase {
+        name: &'static str,
+        plan: Plan,
+        detail: Option<&'static str>,
+    }
+
+    let cases = [
+        OutputCase {
+            name: "a-noop",
+            plan: Plan {
+                output_changes: vec![
+                    output_change("endpoint", PlanAction::NoOp),
+                    output_change("secret", PlanAction::NoOp),
+                ],
+                ..Plan::empty()
+            },
+            detail: None,
+        },
+        OutputCase {
+            name: "b-output",
+            plan: Plan {
+                output_changes: vec![
+                    output_change("endpoint", PlanAction::Update),
+                    output_change("secret", PlanAction::NoOp),
+                ],
+                ..Plan::empty()
+            },
+            detail: Some("Other changes: output changes."),
+        },
+        OutputCase {
+            name: "c-read",
+            plan: Plan {
+                resource_changes: vec![resource_change(
+                    "data.terraform_data.read",
+                    ResourceChangeKind::Read,
+                )],
+                unsupported_changes: vec![UnsupportedChange {
+                    scope: UnsupportedChangeScope::Resource,
+                    address: "data.terraform_data.read".to_owned(),
+                    actions: vec![PlanAction::Read],
+                    kind: UnsupportedChangeKind::Read,
+                    reason: None,
+                    action_type: None,
+                }],
+                output_changes: vec![output_change("endpoint", PlanAction::Create)],
+                ..Plan::empty()
+            },
+            detail: Some("Other changes: 1 other change(s) and output changes."),
+        },
+    ];
+    let state = ready_session(
+        cases
+            .iter()
+            .map(|case| (case.name, case.plan.clone()))
+            .collect(),
+    );
+
+    for (column, case) in cases.iter().enumerate() {
+        let mut view = EnvironmentView {
+            selection: EnvironmentSelection { column, raw: None },
+            ..EnvironmentView::default()
+        };
+
+        let text = render_text(&mut view, &state, (160, 60));
+
+        let status = sidebar_status(&text, case.name);
+        assert_eq!(
+            status.contains("No changes"),
+            case.detail.is_none(),
+            "{}: {status}",
+            case.name
+        );
+        match case.detail {
+            Some(detail) => assert!(text.contains(detail), "{}: {text}", case.name),
+            None => assert!(!text.contains("Other changes"), "{}: {text}", case.name),
+        }
+    }
+}
+
+fn ready_session(plans: Vec<(&str, Plan)>) -> EnvironmentSession {
+    let environments = plans
+        .iter()
+        .map(|(name, _)| Environment {
+            tool: Tool::Terraform,
+            availability: EnvironmentAvailability::Available(EnvironmentIdentity {
+                directory: PathBuf::from(format!("/synthetic/{name}")),
+                workspace: "default".to_owned(),
+            }),
+        })
+        .collect();
+    let mut state = EnvironmentSession::new(environments, false);
+    for (name, plan) in plans {
+        let work = state.start_next().expect("environment should start");
+        let review = |applyable| {
+            PlanReview::new(
+                PathBuf::from(format!("/synthetic/{name}")),
+                "default".to_owned(),
+                plan_document("Synthetic plan text\n".to_owned()),
+                plan.clone(),
+                PlanMetadata::new(applyable),
+                Vec::new(),
+            )
+        };
+        let changed = review(false).has_changes();
+        state.complete(
+            work,
+            PlanResult::Ready {
+                review: Box::new(review(changed)),
+                changed,
+            },
+            Vec::new(),
+        );
+    }
+    state
+}
+
+fn sidebar_status(text: &str, name: &str) -> String {
+    let sidebar = text
+        .lines()
+        .filter_map(|line| line.split("││").next())
+        .collect::<Vec<_>>();
+    let row = sidebar
+        .iter()
+        .position(|line| line.contains(&format!("[x] {name}")))
+        .unwrap_or_else(|| panic!("{name}: sidebar row is missing\n{text}"));
+    sidebar[row + 1..]
+        .iter()
+        .take_while(|line| !line.contains("[x]") && !line.contains('└'))
+        .flat_map(|line| line.split(|c: char| c.is_whitespace() || c == '│'))
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 mod matrix;
 
 fn applyable_session(names: &[&str], ready: usize) -> EnvironmentSession {
@@ -1565,7 +1707,7 @@ fn applyable_session(names: &[&str], ready: usize) -> EnvironmentSession {
                 )],
                 ..Plan::empty()
             },
-            PlanMetadata::new(Vec::new(), true),
+            PlanMetadata::new(true),
             Vec::new(),
         );
         state.complete(

@@ -365,7 +365,7 @@ mod tests {
                 Vec::new(),
             ),
             plan,
-            PlanMetadata::new(Vec::new(), true),
+            PlanMetadata::new(true),
             Vec::new(),
         )
         .with_provider_schemas(schema)
