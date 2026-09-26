@@ -7,11 +7,6 @@ pub(super) fn metadata_from_document(
     root: &Map<String, Value>,
     detailed_exit_has_changes: bool,
 ) -> PlanMetadata {
-    let output_names = root
-        .get("output_changes")
-        .and_then(Value::as_object)
-        .map(|outputs| outputs.keys().cloned().collect())
-        .unwrap_or_default();
     let errored = root.get("errored").and_then(Value::as_bool) == Some(true);
     let applyable = !errored
         && root
@@ -19,7 +14,7 @@ pub(super) fn metadata_from_document(
             .and_then(Value::as_bool)
             .unwrap_or(detailed_exit_has_changes);
 
-    PlanMetadata::new(output_names, applyable).with_sensitive_values(sensitive_values(root))
+    PlanMetadata::new(applyable).with_sensitive_values(sensitive_values(root))
 }
 
 fn sensitive_values(root: &Map<String, Value>) -> Vec<SensitiveValue> {
@@ -125,20 +120,6 @@ mod tests {
     fn parse_metadata(document: &Value, detailed_exit_has_changes: bool) -> PlanMetadata {
         let root = document.as_object().expect("plan JSON root is an object");
         metadata_from_document(root, detailed_exit_has_changes)
-    }
-
-    #[test]
-    fn extracts_output_names_without_values() {
-        let document = json!({
-            "format_version": "1.2",
-            "output_changes": {"endpoint": {"after": "secret-output"}}
-        });
-
-        let metadata = parse_metadata(&document, true);
-
-        assert_eq!(metadata.output_names(), ["endpoint"]);
-        let debug = format!("{metadata:?}");
-        assert!(!debug.contains("secret"));
     }
 
     #[test]

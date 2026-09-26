@@ -150,7 +150,6 @@ pub(crate) struct PlanSummary {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UnsupportedChangeScope {
     Resource,
-    Output,
     ResourceDrift,
     DeferredResource,
     ActionInvocation,
@@ -158,7 +157,6 @@ pub(crate) enum UnsupportedChangeScope {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UnsupportedChangeKind {
-    Output,
     Drift,
     Read,
     Move,
@@ -318,7 +316,19 @@ pub(crate) struct ProviderSchemas {
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    use super::{PlanAction, ResourceChange, ResourceChangeKind, ResourceMode};
+    use super::{OutputChange, PlanAction, ResourceChange, ResourceChangeKind, ResourceMode};
+
+    pub(crate) fn output_change(address: &str, action: PlanAction) -> OutputChange {
+        OutputChange {
+            address: address.to_owned(),
+            actions: vec![action],
+            before: None,
+            after: None,
+            before_sensitive: None,
+            after_sensitive: None,
+            after_unknown: None,
+        }
+    }
 
     /// A resource change whose actions match `kind`, without values or move/import markers.
     pub(crate) fn resource_change(address: &str, kind: ResourceChangeKind) -> ResourceChange {
