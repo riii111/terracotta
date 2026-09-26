@@ -569,19 +569,13 @@ exit 0
     fn drains_both_pipes_before_returning_git_output() {
         let directory = TestDirectory::new();
         directory.install_fake_git();
-        let cancellation = CancellationToken::new();
 
-        let output = run_git_with_env(
-            directory.path(),
+        let output = FakeGitRun::start(
+            &directory,
             "stream Git output",
-            std::iter::empty::<&str>(),
-            &[
-                ("PATH", directory.path_environment().as_str()),
-                ("MODE", "stream"),
-                ("PID_FILE", "unused"),
-            ],
-            &cancellation,
+            &[("MODE", "stream"), ("PID_FILE", "unused")],
         )
+        .finish()
         .expect("Git output should be collected");
 
         assert_eq!(output.status.code(), Some(7));
